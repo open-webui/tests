@@ -6,10 +6,21 @@ External test suite for [Open WebUI](https://github.com/open-webui/open-webui) t
 - **Integration Tests**: SSO, external databases, and other integrations (planned)
 - **Reporting Dashboard**: Allure reports for test result visualization (planned)
 
+## Supported Environments
+
+This test suite works with both Open WebUI deployment types:
+
+| Deployment | Command | Default URL |
+|------------|---------|-------------|
+| **Docker** | `docker run -p 3000:8080 ghcr.io/open-webui/open-webui:dev` | `http://localhost:3000` |
+| **Python/pip** | `pip install open-webui && open-webui serve` | `http://localhost:8080` |
+
+The tests are environment-agnostic - simply point `OPEN_WEBUI_URL` to your running instance.
+
 ## Prerequisites
 
 - Python 3.11+
-- A running Open WebUI instance to test against
+- A running Open WebUI instance to test against (Docker or pip)
 - Test user accounts (regular user and admin) created in Open WebUI
 
 ## Installation
@@ -43,28 +54,7 @@ External test suite for [Open WebUI](https://github.com/open-webui/open-webui) t
 
 ## Configuration
 
-Edit `.env` to configure your test environment:
-
-```bash
-# Base URL of the Open WebUI instance to test
-OPEN_WEBUI_URL=http://localhost:8080
-
-# Test user credentials (must exist in Open WebUI)
-TEST_USER_EMAIL=test@example.com
-TEST_USER_PASSWORD=testpassword123
-
-# Admin user credentials (must have admin role in Open WebUI)
-ADMIN_USER_EMAIL=admin@example.com
-ADMIN_USER_PASSWORD=adminpassword123
-
-# Browser settings
-HEADLESS=true          # Set to false to see browser during tests
-SLOW_MO=0              # Milliseconds to slow down operations (useful for debugging)
-
-# Timeout settings (milliseconds)
-DEFAULT_TIMEOUT=30000
-NAVIGATION_TIMEOUT=60000
-```
+Edit `.env` to configure your test environment, following the comment prompts in `.env.example`. 
 
 ## Running Tests
 

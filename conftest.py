@@ -6,10 +6,19 @@ This module provides pytest fixtures for:
 - Authentication (regular user and admin)
 - Page navigation utilities
 - Console error tracking
+
+Works with both Docker and Python/pip Open WebUI deployments.
+
+Authentication Strategy:
+- Login is performed once per session for each user type
+- Browser storage state (cookies, localStorage) is saved and reused
+- This prevents rate limiting from repeated login attempts
 """
 
 import os
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Generator
 
 import pytest
@@ -25,12 +34,18 @@ class AppConfig:
     """Test configuration loaded from environment variables."""
 
     base_url: str = os.getenv("OPEN_WEBUI_URL", "http://localhost:8080")
+    
+    # Credentials
     test_user_email: str = os.getenv("TEST_USER_EMAIL", "test@example.com")
     test_user_password: str = os.getenv("TEST_USER_PASSWORD", "testpassword123")
     admin_user_email: str = os.getenv("ADMIN_USER_EMAIL", "admin@example.com")
     admin_user_password: str = os.getenv("ADMIN_USER_PASSWORD", "adminpassword123")
+    
+    # Browser settings
     headless: bool = os.getenv("HEADLESS", "true").lower() == "true"
     slow_mo: int = int(os.getenv("SLOW_MO", "0"))
+    
+    # Timeouts
     default_timeout: int = int(os.getenv("DEFAULT_TIMEOUT", "30000"))
     navigation_timeout: int = int(os.getenv("NAVIGATION_TIMEOUT", "60000"))
 
@@ -57,6 +72,13 @@ def browser(playwright_instance: Playwright, config: AppConfig) -> Generator[Bro
     )
     yield browser
     browser.close()
+
+
+@pytest.fixture(scope="session")
+def auth_state_dir() -> Generator[Path, None, None]:
+    """Create a temporary directory for storing authentication state files."""
+    with tempfile.TemporaryDirectory(prefix="openwebui_test_auth_") as tmpdir:
+        yield Path(tmpdir)
 
 
 @pytest.fixture(scope="function")
@@ -171,34 +193,122 @@ def auth_helper(page: Page, config: AppConfig) -> AuthHelper:
     return AuthHelper(page, config)
 
 
-@pytest.fixture(scope="function")
-def authenticated_page(
-    context: BrowserContext, config: AppConfig
-) -> Generator[Page, None, None]:
-    """Provide a page with an authenticated regular user session."""
+# ============================================================================
+# Session-Scoped Authentication State
+# ============================================================================
+# These fixtures log in once per test session and save the browser state
+# (cookies, localStorage) to avoid repeated login requests that trigger
+# rate limiting.
+
+
+def _perform_login(browser: Browser, config: AppConfig, email: str, password: str) -> str | None:
+    """
+    Perform login and return the storage state as JSON string.
+    Returns None if login fails.
+    """
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        base_url=config.base_url,
+    )
+    context.set_default_timeout(config.default_timeout)
+    context.set_default_navigation_timeout(config.navigation_timeout)
+    
     page = context.new_page()
     auth = AuthHelper(page, config)
+    
+    try:
+        if auth.login(email, password):
+            # Save storage state to return
+            state = context.storage_state()
+            return state
+        return None
+    finally:
+        page.close()
+        context.close()
 
-    if not auth.login():
+
+@pytest.fixture(scope="session")
+def user_auth_state(browser: Browser, config: AppConfig, auth_state_dir: Path) -> str | None:
+    """
+    Log in as regular user once per session and save auth state.
+    Returns path to storage state file, or None if login fails.
+    """
+    state = _perform_login(
+        browser, config, 
+        config.test_user_email, 
+        config.test_user_password
+    )
+    if state:
+        state_file = auth_state_dir / "user_auth.json"
+        import json
+        state_file.write_text(json.dumps(state))
+        return str(state_file)
+    return None
+
+
+@pytest.fixture(scope="session")
+def admin_auth_state(browser: Browser, config: AppConfig, auth_state_dir: Path) -> str | None:
+    """
+    Log in as admin user once per session and save auth state.
+    Returns path to storage state file, or None if login fails.
+    """
+    state = _perform_login(
+        browser, config,
+        config.admin_user_email,
+        config.admin_user_password
+    )
+    if state:
+        state_file = auth_state_dir / "admin_auth.json"
+        import json
+        state_file.write_text(json.dumps(state))
+        return str(state_file)
+    return None
+
+
+@pytest.fixture(scope="function")
+def authenticated_page(
+    browser: Browser, config: AppConfig, user_auth_state: str | None
+) -> Generator[Page, None, None]:
+    """Provide a page with an authenticated regular user session."""
+    if user_auth_state is None:
         pytest.skip("Could not authenticate test user - check credentials")
-
+    
+    # Create context with saved auth state
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        base_url=config.base_url,
+        storage_state=user_auth_state,
+    )
+    context.set_default_timeout(config.default_timeout)
+    context.set_default_navigation_timeout(config.navigation_timeout)
+    
+    page = context.new_page()
     yield page
     page.close()
+    context.close()
 
 
 @pytest.fixture(scope="function")
 def admin_page(
-    context: BrowserContext, config: AppConfig
+    browser: Browser, config: AppConfig, admin_auth_state: str | None
 ) -> Generator[Page, None, None]:
     """Provide a page with an authenticated admin session."""
-    page = context.new_page()
-    auth = AuthHelper(page, config)
-
-    if not auth.login_as_admin():
+    if admin_auth_state is None:
         pytest.skip("Could not authenticate admin user - check credentials")
 
+    # Create context with saved auth state
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        base_url=config.base_url,
+        storage_state=admin_auth_state,
+    )
+    context.set_default_timeout(config.default_timeout)
+    context.set_default_navigation_timeout(config.navigation_timeout)
+    
+    page = context.new_page()
     yield page
     page.close()
+    context.close()
 
 
 # ============================================================================
