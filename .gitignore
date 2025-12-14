@@ -5,6 +5,7 @@
 venv/
 .venv/
 .test-venv/
+.test-venv-dev/
 
 # Test script artifacts
 .test-data/

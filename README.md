@@ -8,7 +8,9 @@ External test suite for [Open WebUI](https://github.com/open-webui/open-webui) t
 
 ## Quick Start
 
-The easiest way to run tests is with the included test script, which handles everything:
+The easiest way to run tests is with the included test scripts:
+
+### Test Against Latest Stable (pip)
 
 ```bash
 cd tests
@@ -16,16 +18,32 @@ cd tests
 ```
 
 This will:
-1. Create a virtual environment and install Open WebUI
-2. Start a local Open WebUI server
+1. Create a virtual environment and install Open WebUI via pip
+2. Start a local Open WebUI server (port 8081)
 3. Create test users (admin + regular user)
 4. Run the full test suite
 5. Clean up when done
 
-Pass arguments through to pytest:
+### Test Against Dev Branch (Docker)
+
+```bash
+cd tests
+./test-dev.sh
+```
+
+This will:
+1. Pull the latest `ghcr.io/open-webui/open-webui:dev` image (always fresh)
+2. Start a container (port 8082)
+3. Create test users (admin + regular user)
+4. Run the full test suite
+5. Clean up when done
+
+### Passing Arguments to pytest
+
+Both scripts pass arguments through to pytest:
 ```bash
 ./test.sh -k "admin"           # Run only admin tests
-./test.sh --html=report.html   # Generate HTML report
+./test-dev.sh --html=report.html   # Generate HTML report
 ./test.sh -x                   # Stop on first failure
 ```
 
@@ -57,16 +75,21 @@ pytest -v
 
 | Deployment | How to Test |
 |------------|-------------|
-| **Local (auto-setup)** | `./test.sh` |
-| **Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` |
+| **Latest stable (pip)** | `./test.sh` |
+| **Dev branch (Docker)** | `./test-dev.sh` |
+| **Existing Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` |
 | **Kubernetes** | `OPEN_WEBUI_URL=https://your-cluster pytest` |
 | **Remote server** | `OPEN_WEBUI_URL=https://your-server pytest` |
 
 ## Prerequisites
 
-For `./test.sh` (recommended):
+For `./test.sh`:
 - Python 3.11+
 - Internet connection (to pip install open-webui)
+
+For `./test-dev.sh`:
+- Docker installed and running
+- Python 3.11+ (for test dependencies)
 
 For testing external instances:
 - Python 3.11+
