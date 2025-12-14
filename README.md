@@ -6,24 +6,76 @@ External test suite for [Open WebUI](https://github.com/open-webui/open-webui) t
 - **Integration Tests**: SSO, external databases, and other integrations (planned)
 - **Reporting Dashboard**: Allure reports for test result visualization (planned)
 
+## Quick Start
+
+The easiest way to run tests is with the included test script, which handles everything:
+
+```bash
+cd tests
+./test.sh
+```
+
+This will:
+1. Create a virtual environment and install Open WebUI
+2. Start a local Open WebUI server
+3. Create test users (admin + regular user)
+4. Run the full test suite
+5. Clean up when done
+
+Pass arguments through to pytest:
+```bash
+./test.sh -k "admin"           # Run only admin tests
+./test.sh --html=report.html   # Generate HTML report
+./test.sh -x                   # Stop on first failure
+```
+
+## Testing Against External Instances
+
+To test against an existing Open WebUI deployment (Docker, Kubernetes, etc.):
+
+```bash
+# Set up test environment
+python -m venv venv && source venv/bin/activate
+pip install -e .
+playwright install chromium
+
+# Configure and run
+cp .env.example .env
+# Edit .env with your URL and credentials
+pytest
+```
+
+Or inline:
+```bash
+OPEN_WEBUI_URL=http://your-server:8080 \
+ADMIN_USER_EMAIL=admin@example.com \
+ADMIN_USER_PASSWORD=yourpassword \
+pytest -v
+```
+
 ## Supported Environments
 
-This test suite works with both Open WebUI deployment types:
-
-| Deployment | Command | Default URL |
-|------------|---------|-------------|
-| **Docker** | `docker run -p 3000:8080 ghcr.io/open-webui/open-webui:dev` | `http://localhost:3000` |
-| **Python/pip** | `pip install open-webui && open-webui serve` | `http://localhost:8080` |
-
-The tests are environment-agnostic - simply point `OPEN_WEBUI_URL` to your running instance.
+| Deployment | How to Test |
+|------------|-------------|
+| **Local (auto-setup)** | `./test.sh` |
+| **Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` |
+| **Kubernetes** | `OPEN_WEBUI_URL=https://your-cluster pytest` |
+| **Remote server** | `OPEN_WEBUI_URL=https://your-server pytest` |
 
 ## Prerequisites
 
+For `./test.sh` (recommended):
 - Python 3.11+
-- A running Open WebUI instance to test against (Docker or pip)
-- Test user accounts (regular user and admin) created in Open WebUI
+- Internet connection (to pip install open-webui)
 
-## Installation
+For testing external instances:
+- Python 3.11+
+- A running Open WebUI instance
+- Test user accounts created in Open WebUI
+
+## Manual Installation
+
+If you prefer manual setup over `./test.sh`:
 
 1. **Create a virtual environment:**
 

@@ -1,10 +1,24 @@
+# Environment and secrets
 .env
+
+# Virtual environments
 venv/
+.venv/
+.test-venv/
+
+# Test script artifacts
+.test-data/
+.test-server.log
+.webui_secret_key
+
+# Python cache
 __pycache__/
 *.pyc
-.pytest_cache/
-allure-results/
-reports/
 *.egg-info/
 .mypy_cache/
 .ruff_cache/
+
+# Test results
+.pytest_cache/
+allure-results/
+reports/
