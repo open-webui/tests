@@ -10,7 +10,7 @@ External test suite for [Open WebUI](https://github.com/open-webui/open-webui) t
 
 The easiest way to run tests is with the included test scripts:
 
-### Test Against Latest Stable (pip)
+### Test From Source (Git Clone)
 
 ```bash
 cd tests
@@ -18,34 +18,21 @@ cd tests
 ```
 
 This will:
-1. Create a virtual environment and install Open WebUI via pip
-2. Start a local Open WebUI server (port 8081)
-3. Create test users (admin + regular user)
-4. Run the full test suite
-5. Clean up when done
-
-### Test Against Dev Branch (from source)
-
-```bash
-cd tests
-./test-dev.sh
-```
-
-This will:
 1. Clone the Open WebUI repository (default: `dev` branch)
-2. Set up Python environment and install dependencies
-3. Start the server using uvicorn (port 8083)
-4. Create test users (admin + regular user)
-5. Run the full test suite
-6. Clean up when done
+2. Build the frontend with npm
+3. Set up Python environment and install backend dependencies
+4. Start the server using uvicorn (port 8083)
+5. Create test users (admin + regular user)
+6. Run the full test suite
+7. Clean up venv and data directory when done
 
 **Options:**
 ```bash
-./test-dev.sh                        # Test against dev branch (default)
-./test-dev.sh --branch main          # Test against main branch
-./test-dev.sh --branch feature-xyz   # Test against any branch
-./test-dev.sh --fresh                # Force fresh clone (removes existing)
-./test-dev.sh --fresh --branch main  # Fresh clone of main branch
+./test.sh                        # Test against dev branch (default)
+./test.sh --branch main          # Test against main branch
+./test.sh --branch feature-xyz   # Test against any branch
+./test.sh --fresh                # Force fresh clone (removes existing)
+./test.sh --fresh --branch main  # Fresh clone of main branch
 ```
 
 ### Test Against Docker Images
@@ -72,12 +59,12 @@ This will:
 
 ### Passing Arguments to pytest
 
-All scripts pass arguments through to pytest:
+Both scripts pass arguments through to pytest:
 ```bash
-./test.sh -k "admin"                     # Run only admin tests
-./test-dev.sh --branch main -- -v        # Verbose output
-./test-container.sh --html=report.html   # Generate HTML report
-./test.sh -x                             # Stop on first failure
+./test.sh -- -k "admin"                  # Run only admin tests
+./test.sh --branch main -- -v            # Verbose output
+./test-container.sh -- --html=report.html  # Generate HTML report
+./test.sh -- -x                          # Stop on first failure
 ```
 
 ## Testing Against External Instances
@@ -108,8 +95,7 @@ pytest -v
 
 | Deployment | How to Test | Port |
 |------------|-------------|------|
-| **Latest stable (pip)** | `./test.sh` | 8081 |
-| **Dev branch (source)** | `./test-dev.sh` | 8083 |
+| **From source (git clone)** | `./test.sh` | 8083 |
 | **Docker images** | `./test-container.sh` | 8082 |
 | **Existing Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` | any |
 | **Kubernetes** | `OPEN_WEBUI_URL=https://your-cluster pytest` | any |
@@ -118,10 +104,6 @@ pytest -v
 ## Prerequisites
 
 For `./test.sh`:
-- Python 3.11+
-- Internet connection (to pip install open-webui)
-
-For `./test-dev.sh`:
 - Git
 - Python 3.11+
 - Node.js 18+ with npm (for frontend build)
