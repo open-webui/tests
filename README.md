@@ -24,7 +24,7 @@ This will:
 4. Run the full test suite
 5. Clean up when done
 
-### Test Against Dev Branch (Docker)
+### Test Against Dev Branch (from source)
 
 ```bash
 cd tests
@@ -32,19 +32,52 @@ cd tests
 ```
 
 This will:
-1. Pull the latest `ghcr.io/open-webui/open-webui:dev` image (always fresh)
+1. Clone the Open WebUI repository (default: `dev` branch)
+2. Set up Python environment and install dependencies
+3. Start the server using uvicorn (port 8083)
+4. Create test users (admin + regular user)
+5. Run the full test suite
+6. Clean up when done
+
+**Options:**
+```bash
+./test-dev.sh                        # Test against dev branch (default)
+./test-dev.sh --branch main          # Test against main branch
+./test-dev.sh --branch feature-xyz   # Test against any branch
+./test-dev.sh --fresh                # Force fresh clone (removes existing)
+./test-dev.sh --fresh --branch main  # Fresh clone of main branch
+```
+
+### Test Against Docker Images
+
+```bash
+cd tests
+./test-container.sh
+```
+
+This will:
+1. Pull the specified Docker image (default: `ghcr.io/open-webui/open-webui:dev`)
 2. Start a container (port 8082)
 3. Create test users (admin + regular user)
 4. Run the full test suite
 5. Clean up when done
 
+**Options:**
+```bash
+./test-container.sh                          # Test against :dev image (default)
+./test-container.sh --image :main            # Test against :main image
+./test-container.sh --image :latest          # Test against :latest image
+./test-container.sh --image myregistry/img   # Test against custom image
+```
+
 ### Passing Arguments to pytest
 
-Both scripts pass arguments through to pytest:
+All scripts pass arguments through to pytest:
 ```bash
-./test.sh -k "admin"           # Run only admin tests
-./test-dev.sh --html=report.html   # Generate HTML report
-./test.sh -x                   # Stop on first failure
+./test.sh -k "admin"                     # Run only admin tests
+./test-dev.sh --branch main -- -v        # Verbose output
+./test-container.sh --html=report.html   # Generate HTML report
+./test.sh -x                             # Stop on first failure
 ```
 
 ## Testing Against External Instances
@@ -73,13 +106,14 @@ pytest -v
 
 ## Supported Environments
 
-| Deployment | How to Test |
-|------------|-------------|
-| **Latest stable (pip)** | `./test.sh` |
-| **Dev branch (Docker)** | `./test-dev.sh` |
-| **Existing Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` |
-| **Kubernetes** | `OPEN_WEBUI_URL=https://your-cluster pytest` |
-| **Remote server** | `OPEN_WEBUI_URL=https://your-server pytest` |
+| Deployment | How to Test | Port |
+|------------|-------------|------|
+| **Latest stable (pip)** | `./test.sh` | 8081 |
+| **Dev branch (source)** | `./test-dev.sh` | 8083 |
+| **Docker images** | `./test-container.sh` | 8082 |
+| **Existing Docker** | `OPEN_WEBUI_URL=http://localhost:3000 pytest` | any |
+| **Kubernetes** | `OPEN_WEBUI_URL=https://your-cluster pytest` | any |
+| **Remote server** | `OPEN_WEBUI_URL=https://your-server pytest` | any |
 
 ## Prerequisites
 
@@ -88,6 +122,12 @@ For `./test.sh`:
 - Internet connection (to pip install open-webui)
 
 For `./test-dev.sh`:
+- Git
+- Python 3.11+
+- Node.js 18+ with npm (for frontend build)
+- Internet connection (to clone repo and install dependencies)
+
+For `./test-container.sh`:
 - Docker installed and running
 - Python 3.11+ (for test dependencies)
 
@@ -98,7 +138,7 @@ For testing external instances:
 
 ## Manual Installation
 
-If you prefer manual setup over `./test.sh`:
+If you prefer manual setup over the scripts:
 
 1. **Create a virtual environment:**
 
