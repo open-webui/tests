@@ -10,7 +10,7 @@ venv/
 # Test script artifacts
 .test-data/
 .test-repo/
-.test-server.log
+*.log
 .webui_secret_key
 
 # Python cache
