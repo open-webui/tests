@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "External test suite for Open WebUI - page accessibility, integration, and SSO testing"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 
 dependencies = [
     "pytest~=8.4.1",
@@ -23,6 +23,10 @@ dev = [
     "mypy>=1.0.0",
 ]
 
+# Explicitly disable package discovery since this is a test suite, not a library
+[tool.setuptools]
+py-modules = []
+
 [tool.pytest.ini_options]
 testpaths = ["e2e", "integration", "unit"]
 python_files = ["test_*.py"]
@@ -33,11 +37,18 @@ markers = [
     "auth_required: marks tests that require authentication",
     "admin_required: marks tests that require admin privileges",
     "public: marks tests for public pages (no auth needed)",
+    "unit: marks unit tests that test backend logic directly",
 ]
 addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
+]
+filterwarnings = [
+    # Ignore deprecation warnings from Open WebUI and its dependencies
+    "ignore::sqlalchemy.exc.MovedIn20Warning",
+    "ignore::DeprecationWarning:alembic",
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
 ]
 
 [tool.ruff]

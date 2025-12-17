@@ -82,6 +82,12 @@ cleanup() {
         docker rm "$CONTAINER_NAME" 2>/dev/null || true
     fi
     
+    # Remove the virtual environment if --clean was specified
+    if [[ "${CLEAN_ALL:-}" == "true" ]] && [[ -d "$VENV_DIR" ]]; then
+        log_info "Removing virtual environment..."
+        rm -rf "$VENV_DIR"
+    fi
+    
     log_info "Cleanup complete"
 }
 
@@ -201,6 +207,7 @@ show_help() {
     echo "Options:"
     echo "  --image IMAGE    Docker image to test (default: ghcr.io/open-webui/open-webui:dev)"
     echo "                   Can use :tag shorthand for ghcr.io/open-webui/open-webui:tag"
+    echo "  --clean          Remove virtual environment after testing"
     echo "  --help, -h       Show this help message"
     echo ""
     echo "Examples:"
@@ -208,6 +215,7 @@ show_help() {
     echo "  $0 --image :main                # Test against :main image"
     echo "  $0 --image :latest              # Test against :latest image"
     echo "  $0 --image myregistry/myimage   # Test against custom image"
+    echo "  $0 --clean                      # Clean up venv after tests"
     echo "  $0 -- -k 'admin'                # Pass args to pytest"
     echo "  $0 --image :main -- -v          # Custom image + pytest args"
 }
@@ -235,6 +243,10 @@ main() {
             --help|-h)
                 show_help
                 exit 0
+                ;;
+            --clean)
+                CLEAN_ALL="true"
+                shift
                 ;;
             --)
                 shift

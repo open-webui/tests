@@ -31,8 +31,8 @@ This will:
 ./test.sh                        # Test against dev branch (default)
 ./test.sh --branch main          # Test against main branch
 ./test.sh --branch feature-xyz   # Test against any branch
-./test.sh --fresh                # Force fresh clone (removes existing)
-./test.sh --fresh --branch main  # Fresh clone of main branch
+./test.sh --fresh                # Force fresh clone (removes existing repo)
+./test.sh --clean                # Remove all artifacts after tests (including repo)
 ```
 
 ### Test Against Docker Images
@@ -55,6 +55,7 @@ This will:
 ./test-container.sh --image :main            # Test against :main image
 ./test-container.sh --image :latest          # Test against :latest image
 ./test-container.sh --image myregistry/img   # Test against custom image
+./test-container.sh --clean                  # Remove venv after tests
 ```
 
 ### Passing Arguments to pytest
@@ -218,12 +219,15 @@ tests/
 │   ├── __init__.py
 │   └── test_page_accessibility.py
 │
+├── unit/                    # Unit tests (backend logic)
+│   ├── __init__.py
+│   └── test_model_access_control.py
+│
 ├── utils/                   # Test utilities
 │   ├── __init__.py
 │   └── page_utils.py
 │
 ├── integration/             # API integration tests (planned)
-├── database/                # Database integration tests (planned)
 └── sso/                     # SSO integration tests (planned)
 ```
 
@@ -252,7 +256,24 @@ tests/
 | `@pytest.mark.public` | Tests for public pages |
 | `@pytest.mark.auth_required` | Tests requiring user authentication |
 | `@pytest.mark.admin_required` | Tests requiring admin authentication |
+| `@pytest.mark.unit` | Unit tests for backend logic |
 | `@pytest.mark.slow` | Long-running comprehensive tests |
+
+## Running Specific Test Types
+
+```bash
+# Run only e2e tests
+./test.sh -- e2e/
+
+# Run only unit tests
+./test.sh -- unit/
+
+# Run unit tests by marker
+./test.sh -- -m unit
+
+# Run model access control tests specifically
+./test.sh -- -k "model_access"
+```
 
 ## Writing New Tests
 

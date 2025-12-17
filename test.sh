@@ -73,7 +73,8 @@ show_help() {
     echo ""
     echo "Options:"
     echo "  --branch, -b BRANCH  Git branch to test (default: dev)"
-    echo "  --fresh              Force fresh clone (removes existing repo)"
+    echo "  --fresh              Force fresh clone (removes existing repo before test)"
+    echo "  --clean              Remove all artifacts after testing (including repo)"
     echo "  --help, -h           Show this help message"
     echo ""
     echo "Examples:"
@@ -81,7 +82,7 @@ show_help() {
     echo "  $0 --branch main           # Test against main branch"
     echo "  $0 --branch feature/xyz    # Test against a feature branch"
     echo "  $0 --fresh                 # Force fresh clone"
-    echo "  $0 --fresh --branch main   # Fresh clone of main branch"
+    echo "  $0 --clean                 # Clean up everything after tests"
     echo "  $0 -- -k 'admin'           # Pass args to pytest"
     echo "  $0 --branch main -- -v     # Custom branch + pytest args"
 }
@@ -97,6 +98,11 @@ while [[ $# -gt 0 ]]; do
         --fresh)
             # Force fresh clone
             FRESH_CLONE="true"
+            shift
+            ;;
+        --clean)
+            # Clean up everything after testing (including repo)
+            CLEAN_ALL="true"
             shift
             ;;
         --help|-h)
@@ -161,6 +167,12 @@ cleanup() {
     if [[ -d "$DATA_DIR" ]]; then
         log_info "Removing data directory..."
         rm -rf "$DATA_DIR"
+    fi
+    
+    # Remove the cloned repo if --clean was specified
+    if [[ "${CLEAN_ALL:-}" == "true" ]] && [[ -d "$REPO_DIR" ]]; then
+        log_info "Removing cloned repository..."
+        rm -rf "$REPO_DIR"
     fi
     
     log_info "Cleanup complete"
@@ -438,6 +450,9 @@ main() {
     export ADMIN_USER_PASSWORD="$ADMIN_PASSWORD"
     export TEST_USER_EMAIL="$TEST_EMAIL"
     export TEST_USER_PASSWORD="$TEST_PASSWORD"
+    
+    # Add Open WebUI backend to PYTHONPATH for unit tests
+    export PYTHONPATH="${REPO_DIR}/backend:${PYTHONPATH:-}"
     
     # Run pytest with any additional arguments
     if [[ ${#PYTEST_ARGS[@]} -gt 0 ]]; then
