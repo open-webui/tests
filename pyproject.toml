@@ -33,6 +33,8 @@ markers = [
     "auth_required: marks tests that require authentication",
     "admin_required: marks tests that require admin privileges",
     "public: marks tests for public pages (no auth needed)",
+    "api: marks API-level integration tests (httpx, no browser)",
+    "regression: marks regression tests tied to a specific issue/PR",
 ]
 addopts = [
     "-v",
