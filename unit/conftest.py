@@ -93,3 +93,21 @@ def firecrawl_module(open_webui_backend: Path):
         return importlib.import_module("open_webui.retrieval.web.firecrawl")
     except Exception as e:
         pytest.skip(f"Could not import open_webui.retrieval.web.firecrawl: {e}")
+
+
+@pytest.fixture(scope="session")
+def retrieval_web_utils_module(open_webui_backend: Path):
+    """Load `open_webui.retrieval.web.utils` from the local checkout.
+
+    Heavier than firecrawl — pulls in langchain_community, aiohttp,
+    fastapi, the whole open_webui.config tree, and triggers alembic
+    migration setup on first load. The openwebui-venv has everything;
+    we skip if anything's missing.
+    """
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.retrieval.web.utils", None)
+    try:
+        return importlib.import_module("open_webui.retrieval.web.utils")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.retrieval.web.utils: {e}")
