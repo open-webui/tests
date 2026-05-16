@@ -96,6 +96,22 @@ def firecrawl_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
+def misc_module(open_webui_backend: Path):
+    """Load `open_webui.utils.misc` from the local checkout.
+
+    Lightweight: only pulls aiohttp, mimeparse, and open_webui.env —
+    all present in the openwebui-venv. Skip if anything's missing.
+    """
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.utils.misc", None)
+    try:
+        return importlib.import_module("open_webui.utils.misc")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.utils.misc: {e}")
+
+
+@pytest.fixture(scope="session")
 def retrieval_web_utils_module(open_webui_backend: Path):
     """Load `open_webui.retrieval.web.utils` from the local checkout.
 
