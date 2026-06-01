@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+# open_webui.env raises SystemExit on import if WEBUI_SECRET_KEY is unset
+# (hard requirement when auth is enabled). The supported launchers set it;
+# these source-level tests import env.py directly, so set a throwaway value
+# before any open_webui import. Respects a real value if the caller set one.
+os.environ.setdefault("WEBUI_SECRET_KEY", "test-secret-key-for-unit-tests")
+
 
 def _resolve_open_webui_backend() -> Path | None:
     env = os.getenv("OPEN_WEBUI_SOURCE_DIR")
