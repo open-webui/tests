@@ -118,6 +118,22 @@ def misc_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
+def builtin_tools_module(open_webui_backend: Path):
+    """Load `open_webui.tools.builtin` from the local checkout.
+
+    Pulls the open_webui model layer (Notes/Chats/Knowledges/calendar)
+    and triggers alembic setup on first load. Skip if unavailable.
+    """
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.tools.builtin", None)
+    try:
+        return importlib.import_module("open_webui.tools.builtin")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.tools.builtin: {e}")
+
+
+@pytest.fixture(scope="session")
 def retrieval_utils_module(open_webui_backend: Path):
     """Load `open_webui.retrieval.utils` from the local checkout.
 
