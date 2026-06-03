@@ -118,6 +118,23 @@ def misc_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
+def retrieval_utils_module(open_webui_backend: Path):
+    """Load `open_webui.retrieval.utils` from the local checkout.
+
+    Heavy: pulls langchain, huggingface_hub, the vector-DB clients, the
+    whole open_webui model layer, and triggers alembic setup on first
+    load. The openwebui-venv has everything; skip if anything's missing.
+    """
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.retrieval.utils", None)
+    try:
+        return importlib.import_module("open_webui.retrieval.utils")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.retrieval.utils: {e}")
+
+
+@pytest.fixture(scope="session")
 def retrieval_web_utils_module(open_webui_backend: Path):
     """Load `open_webui.retrieval.web.utils` from the local checkout.
 
