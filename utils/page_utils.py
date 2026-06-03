@@ -252,14 +252,16 @@ def generate_accessibility_report(
         max_load = max(load_times)
         min_load = min(load_times)
 
-        lines.extend([
-            "-" * 70,
-            "PERFORMANCE SUMMARY (Passed Pages)",
-            "-" * 70,
-            f"  Average Load Time: {avg_load:.0f}ms",
-            f"  Fastest: {min_load}ms",
-            f"  Slowest: {max_load}ms",
-        ])
+        lines.extend(
+            [
+                "-" * 70,
+                "PERFORMANCE SUMMARY (Passed Pages)",
+                "-" * 70,
+                f"  Average Load Time: {avg_load:.0f}ms",
+                f"  Fastest: {min_load}ms",
+                f"  Slowest: {max_load}ms",
+            ]
+        )
 
     lines.append("=" * 70)
     return "\n".join(lines)

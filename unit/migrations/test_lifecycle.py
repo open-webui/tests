@@ -34,15 +34,28 @@ from typing import Iterator
 
 import pytest
 
-
 # Tables that every successful upgrade must produce. Catches partial
 # migration chains: any one of these missing means the chain stopped
 # before reaching the migration that creates it.
-_CRITICAL_TABLES: frozenset[str] = frozenset({
-    'auth', 'chat', 'config', 'function', 'group', 'knowledge',
-    'knowledge_directory', 'knowledge_file', 'memory', 'note',
-    'oauth_session', 'prompt', 'tag', 'tool', 'user',
-})
+_CRITICAL_TABLES: frozenset[str] = frozenset(
+    {
+        "auth",
+        "chat",
+        "config",
+        "function",
+        "group",
+        "knowledge",
+        "knowledge_directory",
+        "knowledge_file",
+        "memory",
+        "note",
+        "oauth_session",
+        "prompt",
+        "tag",
+        "tool",
+        "user",
+    }
+)
 
 # Sanity lower-bound on total tables. Each new migration usually adds
 # 1+ tables — currently dev is at ~40. Set well below that so the
@@ -72,20 +85,20 @@ def _run_python(
         """
     )
     return subprocess.run(
-        [sys.executable, '-c', preamble + body],
+        [sys.executable, "-c", preamble + body],
         capture_output=True,
         text=True,
         timeout=timeout,
-        env={**os.environ, 'PYTHONUNBUFFERED': '1'},
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
 
 
 def _assert_ok(result: subprocess.CompletedProcess, sentinel: str, label: str) -> None:
     if result.returncode != 0 or sentinel not in result.stdout:
         pytest.fail(
-            f'{label} failed.\n'
-            f'--- stderr (tail) ---\n{result.stderr[-3000:]}\n'
-            f'--- stdout (tail) ---\n{result.stdout[-1500:]}'
+            f"{label} failed.\n"
+            f"--- stderr (tail) ---\n{result.stderr[-3000:]}\n"
+            f"--- stdout (tail) ---\n{result.stdout[-1500:]}"
         )
 
 
@@ -97,25 +110,25 @@ def _assert_ok(result: subprocess.CompletedProcess, sentinel: str, label: str) -
 @contextmanager
 def _sqlite_fresh(tmp_path: Path) -> Iterator[tuple[str, Path]]:
     """SQLite at tmp_path/webui.db. tmp_path is auto-cleaned by pytest."""
-    db_path = (tmp_path / 'webui.db').resolve()
-    data_dir = tmp_path / 'data'
+    db_path = (tmp_path / "webui.db").resolve()
+    data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
-    yield (f'sqlite:///{db_path.as_posix()}', data_dir)
+    yield (f"sqlite:///{db_path.as_posix()}", data_dir)
 
 
 @contextmanager
 def _postgres_fresh(tmp_path: Path) -> Iterator[tuple[str, Path]]:
     """Embedded Postgres via pgserver. Stops + removes pgdata on exit."""
     pgserver = pytest.importorskip(
-        'pgserver', reason='pgserver not installed (pip install pgserver)'
+        "pgserver", reason="pgserver not installed (pip install pgserver)"
     )
-    pg_dir = tmp_path / 'pgdata'
+    pg_dir = tmp_path / "pgdata"
     pg_dir.mkdir(exist_ok=True)
-    data_dir = tmp_path / 'data'
+    data_dir = tmp_path / "data"
     data_dir.mkdir(exist_ok=True)
     server = pgserver.get_server(str(pg_dir), cleanup_mode=None)
     try:
-        url = server.get_uri().replace('postgresql://', 'postgresql+psycopg2://', 1)
+        url = server.get_uri().replace("postgresql://", "postgresql+psycopg2://", 1)
         yield (url, data_dir)
     finally:
         try:
@@ -124,13 +137,13 @@ def _postgres_fresh(tmp_path: Path) -> Iterator[tuple[str, Path]]:
             pass
 
 
-@pytest.fixture(params=['sqlite', 'postgres'])
+@pytest.fixture(params=["sqlite", "postgres"])
 def fresh_db(request, tmp_path: Path) -> Iterator[tuple[str, Path]]:
     """Yield (DATABASE_URL, DATA_DIR) for a fresh DB; cleans up after.
 
     Parametrised on backend so every test runs against both engines.
     """
-    factory = _sqlite_fresh if request.param == 'sqlite' else _postgres_fresh
+    factory = _sqlite_fresh if request.param == "sqlite" else _postgres_fresh
     with factory(tmp_path) as resource:
         yield resource
 
@@ -160,10 +173,8 @@ command.upgrade(cfg, 'head')
 def test_upgrade_head_runs_clean(open_webui_backend: Path, fresh_db) -> None:
     """alembic upgrade head completes without raising on a fresh DB."""
     db_url, data_dir = fresh_db
-    result = _run_python(
-        open_webui_backend, db_url, data_dir, _BODY_UPGRADE + "\nprint('OK')\n"
-    )
-    _assert_ok(result, 'OK', 'alembic upgrade head')
+    result = _run_python(open_webui_backend, db_url, data_dir, _BODY_UPGRADE + "\nprint('OK')\n")
+    _assert_ok(result, "OK", "alembic upgrade head")
 
 
 @pytest.mark.regression
@@ -178,18 +189,15 @@ def test_critical_tables_exist(open_webui_backend: Path, fresh_db) -> None:
         print('TABLES:', json.dumps(tables))
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'TABLES:', 'collecting table list')
+    _assert_ok(result, "TABLES:", "collecting table list")
 
-    line = next(
-        (l for l in result.stdout.splitlines() if l.startswith('TABLES:')), None
-    )
+    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("TABLES:")), None)
     assert line is not None
-    tables = set(json.loads(line.removeprefix('TABLES:').strip()))
+    tables = set(json.loads(line.removeprefix("TABLES:").strip()))
 
     missing = _CRITICAL_TABLES - tables
     assert not missing, (
-        f'Critical tables missing after upgrade head: {sorted(missing)}. '
-        f'Present: {sorted(tables)}'
+        f"Critical tables missing after upgrade head: {sorted(missing)}. Present: {sorted(tables)}"
     )
 
 
@@ -206,23 +214,19 @@ def test_minimum_table_count(open_webui_backend: Path, fresh_db) -> None:
         print('COUNT:', len(tables))
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'COUNT:', 'collecting table count')
+    _assert_ok(result, "COUNT:", "collecting table count")
 
-    line = next(
-        (l for l in result.stdout.splitlines() if l.startswith('COUNT:')), None
-    )
+    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("COUNT:")), None)
     assert line is not None
-    count = int(line.removeprefix('COUNT:').strip())
+    count = int(line.removeprefix("COUNT:").strip())
     assert count >= _MIN_TABLE_COUNT, (
-        f'Only {count} tables after upgrade head; expected >= {_MIN_TABLE_COUNT}. '
-        f'Migration chain probably stopped partway.'
+        f"Only {count} tables after upgrade head; expected >= {_MIN_TABLE_COUNT}. "
+        f"Migration chain probably stopped partway."
     )
 
 
 @pytest.mark.regression
-def test_open_webui_config_imports_cleanly(
-    open_webui_backend: Path, fresh_db
-) -> None:
+def test_open_webui_config_imports_cleanly(open_webui_backend: Path, fresh_db) -> None:
     """Full user-facing import path: importing `open_webui.config`
     must not raise, and CONFIG_DATA must populate. This is the exact
     path that crashed in urbenlegend's open-webui#24560 report."""
@@ -234,7 +238,7 @@ def test_open_webui_config_imports_cleanly(
         print('CONFIG_OK:', json.dumps(c.CONFIG_DATA))
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'CONFIG_OK', 'open_webui.config import')
+    _assert_ok(result, "CONFIG_OK", "open_webui.config import")
 
 
 @pytest.mark.regression
@@ -281,7 +285,7 @@ def test_user_crud_round_trip(open_webui_backend: Path, fresh_db) -> None:
         print('CRUD_OK')
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'CRUD_OK', 'User CRUD round-trip')
+    _assert_ok(result, "CRUD_OK", "User CRUD round-trip")
 
 
 @pytest.mark.regression
@@ -303,7 +307,7 @@ def test_upgrade_is_idempotent(open_webui_backend: Path, fresh_db) -> None:
         print('IDEMPOTENT_OK')
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'IDEMPOTENT_OK', 're-running upgrade head')
+    _assert_ok(result, "IDEMPOTENT_OK", "re-running upgrade head")
 
 
 @pytest.mark.regression
@@ -334,14 +338,12 @@ def test_downgrade_to_base_clean(open_webui_backend: Path, fresh_db) -> None:
         print('LEFTOVER:', json.dumps(leftover))
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, 'LEFTOVER:', 'downgrade to base')
+    _assert_ok(result, "LEFTOVER:", "downgrade to base")
 
-    line = next(
-        (l for l in result.stdout.splitlines() if l.startswith('LEFTOVER:')), None
-    )
+    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("LEFTOVER:")), None)
     assert line is not None
-    leftover = json.loads(line.removeprefix('LEFTOVER:').strip())
+    leftover = json.loads(line.removeprefix("LEFTOVER:").strip())
     assert not leftover, (
-        f'Tables left after downgrade base: {leftover}. '
+        f"Tables left after downgrade base: {leftover}. "
         f"At least one migration's downgrade() doesn't fully reverse upgrade()."
     )

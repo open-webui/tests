@@ -24,7 +24,7 @@ raise at construction.
 from __future__ import annotations
 
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -113,9 +113,7 @@ def test_external_engine_constructs_without_raising_when_unconfigured(
 
 
 @pytest.mark.regression
-@pytest.mark.parametrize(
-    "engine", ["", "ollama", "openai", "azure_openai"]
-)
+@pytest.mark.parametrize("engine", ["", "ollama", "openai", "azure_openai"])
 def test_valid_engine_construction_never_raises(
     retrieval_utils_module: ModuleType, engine: str
 ) -> None:

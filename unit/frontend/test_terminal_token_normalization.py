@@ -46,9 +46,7 @@ _NORMALIZED = re.compile(r"normalizeTerminalToken\s*\(|\.trim\s*\(")
 _BEARER_INTERP = re.compile(r"Bearer \$\{([^}]*)\}")
 
 # The WebSocket first-message auth payload's token expression.
-_WS_AUTH_TOKEN = re.compile(
-    r"type:\s*['\"]auth['\"]\s*,\s*token:\s*([^}]+?)\s*\}"
-)
+_WS_AUTH_TOKEN = re.compile(r"type:\s*['\"]auth['\"]\s*,\s*token:\s*([^}]+?)\s*\}")
 
 
 def _read(path: Path) -> str:
@@ -71,13 +69,7 @@ def test_xterminal_websocket_auth_token_is_normalized(open_webui_backend: Path) 
     normalized (trimmed) or a trailing space silently closes the terminal
     while every REST path still works.
     """
-    src = _read(
-        _frontend(open_webui_backend)
-        / "lib"
-        / "components"
-        / "chat"
-        / "XTerminal.svelte"
-    )
+    src = _read(_frontend(open_webui_backend) / "lib" / "components" / "chat" / "XTerminal.svelte")
 
     auth_tokens = _WS_AUTH_TOKEN.findall(src)
     assert auth_tokens, (
@@ -98,13 +90,7 @@ def test_xterminal_websocket_auth_token_is_normalized(open_webui_backend: Path) 
 def test_xterminal_applies_normalization_somewhere(open_webui_backend: Path) -> None:
     """Belt-and-suspenders: XTerminal.svelte must apply token normalization
     at all (catches a refactor that drops the helper import)."""
-    src = _read(
-        _frontend(open_webui_backend)
-        / "lib"
-        / "components"
-        / "chat"
-        / "XTerminal.svelte"
-    )
+    src = _read(_frontend(open_webui_backend) / "lib" / "components" / "chat" / "XTerminal.svelte")
     assert _NORMALIZED.search(src), (
         "XTerminal.svelte applies no token normalization (.trim() / "
         "normalizeTerminalToken) — the terminal bearer token is used raw."

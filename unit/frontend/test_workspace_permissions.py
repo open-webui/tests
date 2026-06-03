@@ -32,10 +32,7 @@ from pathlib import Path
 
 import pytest
 
-
-_BACKEND_ACCESS_RE = re.compile(
-    r"USER_PERMISSIONS_WORKSPACE_([A-Z]+)_ACCESS\b"
-)
+_BACKEND_ACCESS_RE = re.compile(r"USER_PERMISSIONS_WORKSPACE_([A-Z]+)_ACCESS\b")
 
 
 @pytest.fixture(scope="module")
@@ -70,9 +67,7 @@ def _open_webui_frontend(open_webui_backend: Path) -> Path:
 
 def _extract_sidebar_workspace_block(text: str) -> str:
     """Return the body of the `case 'workspace':` branch in Sidebar.svelte."""
-    m = re.search(
-        r"case\s+'workspace'\s*:(?P<body>.*?)case\s+'", text, re.DOTALL
-    )
+    m = re.search(r"case\s+'workspace'\s*:(?P<body>.*?)case\s+'", text, re.DOTALL)
     assert m, "Couldn't locate `case 'workspace':` in Sidebar.svelte"
     return m.group("body")
 
@@ -101,12 +96,7 @@ def _extract_workspace_route_guards(text: str) -> str:
 
 
 def _keys_referenced(body: str) -> set[str]:
-    return {
-        m.group(1)
-        for m in re.finditer(
-            r"permissions\?\.workspace\?\.([A-Za-z_]+)", body
-        )
-    }
+    return {m.group(1) for m in re.finditer(r"permissions\?\.workspace\?\.([A-Za-z_]+)", body)}
 
 
 # -----------------------------------------------------------------------------
@@ -141,7 +131,13 @@ def test_sidebar_workspace_visibility_covers_every_access_key(
     The original bug: only models / knowledge / prompts / tools were
     in the chain; `skills` was missing.
     """
-    sidebar = _open_webui_frontend(open_webui_backend) / "lib" / "components" / "layout" / "Sidebar.svelte"
+    sidebar = (
+        _open_webui_frontend(open_webui_backend)
+        / "lib"
+        / "components"
+        / "layout"
+        / "Sidebar.svelte"
+    )
     body = _extract_sidebar_workspace_block(sidebar.read_text(encoding="utf-8"))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced
@@ -164,7 +160,9 @@ def test_workspace_index_redirect_covers_every_access_key(
 
     Same root cause as #24719: the chain was missing `skills`.
     """
-    page = _open_webui_frontend(open_webui_backend) / "routes" / "(app)" / "workspace" / "+page.svelte"
+    page = (
+        _open_webui_frontend(open_webui_backend) / "routes" / "(app)" / "workspace" / "+page.svelte"
+    )
     body = _extract_workspace_index_chain(page.read_text(encoding="utf-8"))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced
@@ -191,7 +189,13 @@ def test_workspace_route_guards_cover_every_access_key(
     workspace section without adding a corresponding URL guard fails
     loudly.
     """
-    layout = _open_webui_frontend(open_webui_backend) / "routes" / "(app)" / "workspace" / "+layout.svelte"
+    layout = (
+        _open_webui_frontend(open_webui_backend)
+        / "routes"
+        / "(app)"
+        / "workspace"
+        / "+layout.svelte"
+    )
     body = _extract_workspace_route_guards(layout.read_text(encoding="utf-8"))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced

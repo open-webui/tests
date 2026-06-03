@@ -152,7 +152,9 @@ class TestPublicPages:
         result = check_page_accessibility(page, path, description)
 
         # Assert page loaded
-        assert result.success, f"Page '{description}' ({path}) failed to load: {result.error_message}"
+        assert result.success, (
+            f"Page '{description}' ({path}) failed to load: {result.error_message}"
+        )
 
         # Assert no critical console errors (warnings are okay)
         critical_errors = [e for e in result.console_errors if "error" in e.lower()]
@@ -246,9 +248,7 @@ class TestUserPages:
 
         # Should be redirected to auth page
         current_url = page.url
-        assert "/auth" in current_url, (
-            f"Expected redirect to /auth, but got {current_url}"
-        )
+        assert "/auth" in current_url, f"Expected redirect to /auth, but got {current_url}"
 
 
 # ============================================================================
@@ -310,20 +310,23 @@ class TestAdminPages:
         config: AppConfig,
     ):
         """Test that regular (non-admin) users cannot access admin pages.
-        
+
         This test is skipped if TEST_USER and ADMIN_USER are the same,
         since we need a non-admin user to test access denial.
         """
         # Skip if using the same credentials for both users
-        if (config.test_user_email == config.admin_user_email and 
-            config.test_user_password == config.admin_user_password):
-            pytest.skip("TEST_USER and ADMIN_USER are the same - cannot test non-admin access denial")
+        if (
+            config.test_user_email == config.admin_user_email
+            and config.test_user_password == config.admin_user_password
+        ):
+            pytest.skip(
+                "TEST_USER and ADMIN_USER are the same - cannot test non-admin access denial"
+            )
 
         # Login as regular user (not admin)
         page = context.new_page()
-        from conftest import AuthHelper
         auth = AuthHelper(page, config)
-        
+
         if not auth.login(config.test_user_email, config.test_user_password):
             pytest.skip("Could not authenticate as regular test user")
 
@@ -342,7 +345,7 @@ class TestAdminPages:
                 phrase in body_text.lower()
                 for phrase in ["access denied", "forbidden", "not authorized", "permission"]
             ), "Regular user appears to have access to admin page"
-        
+
         page.close()
 
 
@@ -367,11 +370,11 @@ class TestFullPageScan:
         passed = sum(1 for r in results if r.success)
         failed = len(results) - passed
 
-        print(f"\n{'='*60}")
-        print(f"PUBLIC PAGES SUMMARY")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("PUBLIC PAGES SUMMARY")
+        print(f"{'=' * 60}")
         print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for result in results:
             status = "✅" if result.success else "❌"
@@ -401,11 +404,11 @@ class TestFullPageScan:
         passed = sum(1 for r in results if r.success)
         failed = len(results) - passed
 
-        print(f"\n{'='*60}")
-        print(f"USER PAGES SUMMARY")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("USER PAGES SUMMARY")
+        print(f"{'=' * 60}")
         print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for result in results:
             status = "✅" if result.success else "❌"
@@ -435,11 +438,11 @@ class TestFullPageScan:
         passed = sum(1 for r in results if r.success)
         failed = len(results) - passed
 
-        print(f"\n{'='*60}")
-        print(f"ADMIN PAGES SUMMARY")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("ADMIN PAGES SUMMARY")
+        print(f"{'=' * 60}")
         print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for result in results:
             status = "✅" if result.success else "❌"

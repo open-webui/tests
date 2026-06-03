@@ -54,9 +54,7 @@ def test_note_create_and_get_roundtrip_does_not_crash(api_client: httpx.Client):
             detail = create_resp.json().get("detail", "")
         except ValueError:
             detail = create_resp.text
-        assert "is_pinned" not in detail, (
-            f"Regression of #24484 (create path): HTTP 400 {detail!r}"
-        )
+        assert "is_pinned" not in detail, f"Regression of #24484 (create path): HTTP 400 {detail!r}"
 
     assert create_resp.status_code == 200, (
         f"Note create failed unexpectedly: HTTP {create_resp.status_code} {create_resp.text}"

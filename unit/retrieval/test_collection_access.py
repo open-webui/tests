@@ -30,7 +30,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # -----------------------------------------------------------------------------
 # Fakes
 # -----------------------------------------------------------------------------
@@ -79,9 +78,7 @@ async def test_unsafe_names_always_rejected(retrieval_utils_module, fac, role) -
     }
     safe = {"file-1", "web-search-abc"}
     # KB checks pass so 'safe' non-special names survive for the user role.
-    with patch.object(
-        retrieval_utils_module, "has_access_to_file", AsyncMock(return_value=True)
-    ):
+    with patch.object(retrieval_utils_module, "has_access_to_file", AsyncMock(return_value=True)):
         result = await fac(unsafe | safe, _user(role=role))
     assert not (result & unsafe), f"unsafe names leaked: {result & unsafe}"
 
@@ -145,9 +142,7 @@ async def test_knowledge_base_requires_access_grant(retrieval_utils_module, fac)
     with patch.object(retrieval_utils_module, "Knowledges", kb_deny):
         # A real KB the user can't access stays denied even if the
         # unscoped escape hatch is on.
-        with patch.object(
-            retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", True
-        ):
+        with patch.object(retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", True):
             assert await fac({"kb1"}, _user()) == set()
 
 
@@ -162,9 +157,7 @@ async def test_unknown_collection_denied_by_default(retrieval_utils_module, fac)
         get_knowledge_by_id=AsyncMock(return_value=None),
     )
     with patch.object(retrieval_utils_module, "Knowledges", kb):
-        with patch.object(
-            retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", False
-        ):
+        with patch.object(retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", False):
             assert await fac({"legacy-coll"}, _user()) == set()
 
 
@@ -180,9 +173,7 @@ async def test_unknown_collection_allowed_when_unscoped_enabled(
         get_knowledge_by_id=AsyncMock(return_value=None),
     )
     with patch.object(retrieval_utils_module, "Knowledges", kb):
-        with patch.object(
-            retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", True
-        ):
+        with patch.object(retrieval_utils_module, "ENABLE_RETRIEVAL_UNSCOPED_COLLECTIONS", True):
             assert await fac({"legacy-coll"}, _user()) == {"legacy-coll"}
 
 
@@ -195,8 +186,9 @@ async def test_mixed_batch_partitions_correctly(retrieval_utils_module, fac) -> 
         check_access_by_user_id=AsyncMock(return_value=False),
         get_knowledge_by_id=AsyncMock(return_value=SimpleNamespace(id="kbX")),
     )
-    with patch.object(retrieval_utils_module, "Knowledges", kb), patch.object(
-        retrieval_utils_module, "has_access_to_file", AsyncMock(return_value=True)
+    with (
+        patch.object(retrieval_utils_module, "Knowledges", kb),
+        patch.object(retrieval_utils_module, "has_access_to_file", AsyncMock(return_value=True)),
     ):
         result = await fac(
             {

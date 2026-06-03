@@ -39,10 +39,10 @@ def test_generate_title_does_not_404_on_empty_model(api_client: httpx.Client):
         assertion.
     """
     resp = api_client.post(
-        '/api/v1/tasks/title/completions',
+        "/api/v1/tasks/title/completions",
         json={
-            'model': '',
-            'messages': [{'role': 'user', 'content': 'ping'}],
+            "model": "",
+            "messages": [{"role": "user", "content": "ping"}],
         },
     )
 
@@ -50,25 +50,24 @@ def test_generate_title_does_not_404_on_empty_model(api_client: httpx.Client):
         body = resp.json()
     except ValueError:
         body = {}
-    detail = body.get('detail', '') if isinstance(body, dict) else ''
+    detail = body.get("detail", "") if isinstance(body, dict) else ""
 
     # Endpoint short-circuits with 200 when title-gen is disabled —
     # nothing to regress.
-    if resp.status_code == 200 and 'disabled' in detail.lower():
-        pytest.skip('Title generation disabled on this instance')
+    if resp.status_code == 200 and "disabled" in detail.lower():
+        pytest.skip("Title generation disabled on this instance")
 
     # The original symptom from rotemdan's report.
     assert "Model '' was not found" not in detail, (
-        f'Regression of open-webui/open-webui#24604: empty model_id still '
-        f'falls through to the model-not-found check.\n'
-        f'HTTP {resp.status_code}: {detail!r}'
+        f"Regression of open-webui/open-webui#24604: empty model_id still "
+        f"falls through to the model-not-found check.\n"
+        f"HTTP {resp.status_code}: {detail!r}"
     )
 
     # Stronger positive check: the fix returns 400 with a message that
     # makes the actual problem clear. Skipped if some other failure
     # mode is in the way (e.g. permissions, pipeline filters).
     if resp.status_code == 400 and detail:
-        assert 'No model specified' in detail or 'model' in detail.lower(), (
-            f'400 response detail should explain the missing-model case, '
-            f'got: {detail!r}'
+        assert "No model specified" in detail or "model" in detail.lower(), (
+            f"400 response detail should explain the missing-model case, got: {detail!r}"
         )

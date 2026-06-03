@@ -1,424 +1,224 @@
 # Open WebUI Test Suite
 
-External test suite for [Open WebUI](https://github.com/open-webui/open-webui) that provides:
+External test suite for [Open WebUI](https://github.com/open-webui/open-webui).
 
-- **Page Accessibility Tests** (`e2e/`): Playwright UI smoke tests that load each route and check for console errors
-- **API Integration Tests** (`integration/`): `httpx`-based tests that hit the backend HTTP API directly — fast, no browser, ideal for regression coverage of specific issues/PRs
-- **SSO / DB Integration Tests**: planned
-- **Reporting Dashboard**: Allure reports for test result visualization (planned)
+Three kinds of test, by how close they run to the product:
 
-## TL;DR — run everything against a local Open WebUI
+| Layer | Dir | Runs against | Needs a running instance? |
+|-------|-----|--------------|---------------------------|
+| **Unit** | `unit/` | the backend **source** (imported directly, or its source read and audited) | No |
+| **Integration** | `integration/` | the HTTP **API** via `httpx` | Yes |
+| **E2E** | `e2e/` | the **UI** via Playwright | Yes (+ browser) |
+
+The bulk of the suite is `unit/` — fast, source-level regression tests pinned to specific upstream issues/PRs. They don't need a server: they import an `open_webui.*` module from a local checkout and exercise it with mocks, or read a source file and assert a contract over it. That's what makes them cheap enough to grow to thousands.
+
+---
+
+## Layout
+
+```
+tests/
+├── conftest.py                 # browser + API fixtures (Playwright, httpx, auth, route lists)
+├── pyproject.toml              # pytest config, marker registry, ruff/mypy
+├── .env.example                # copy to .env for integration/e2e credentials
+│
+├── unit/                       # source-level tests — no running instance
+│   ├── conftest.py             # source resolver + module-loader fixtures
+│   ├── retrieval/              # RAG, web search, collection access control
+│   ├── migrations/             # alembic schema: fresh install + full lifecycle
+│   ├── tools/                  # builtin tool functions
+│   ├── config/                 # boot / env / embedding-config safety
+│   ├── chat/                   # chat message reconstruction
+│   └── frontend/               # Svelte/TS source-contract audits
+│
+├── integration/                # httpx API tests, grouped by endpoint/router
+│   ├── test_chat_completions.py
+│   ├── test_notes.py
+│   └── test_tasks.py
+│
+├── e2e/                        # Playwright UI tests
+│   └── test_page_accessibility.py
+│
+└── utils/                      # shared helpers for the browser tests
+```
+
+**Where a new test goes**
+
+- Exercises a backend function/module in isolation, or audits a source file → `unit/<subsystem>/`. Pick the subsystem dir that matches the code under test; add a new one if none fits (it's just a directory with an `__init__.py`).
+- Hits an HTTP endpoint → `integration/test_<router>.py` (one file per router/endpoint group).
+- Drives the browser → `e2e/`.
+
+`unit/` is organised by **subsystem** (what part of the code), `integration/` by **endpoint** (what API surface). Both scale by adding files/dirs, not by growing existing files without bound.
+
+---
+
+## Setup
+
+Python 3.11+. Install into any venv:
 
 ```bash
-# 1. Open WebUI must be running locally, e.g. http://localhost:8080
-# 2. Install the test deps into any Python 3.11+ env
-pip install "pytest~=8.4.1" "pytest-playwright>=0.5.0" "playwright==1.49.1" \
-            "httpx==0.28.1" "python-dotenv>=1.0.0" "allure-pytest>=2.13.0" \
-            "pytest-html>=4.0.0"
+pip install -e ".[dev]"          # suite + ruff/mypy/pgserver
+# or just the runtime deps:
+pip install -e .
+```
+
+> `pip install -e .` works, but you can also install the dependency list directly if you prefer not to install the project package — see `pyproject.toml`.
+
+For the **e2e** browser tests:
+
+```bash
 playwright install chromium
+```
 
-# 3. Configure credentials (or set API_JWT directly)
+For the **postgres** migration tests (otherwise they skip):
+
+```bash
+pip install pgserver                     # embedded PostgreSQL, no system install
+```
+
+For **integration/e2e** credentials, copy and edit the env file:
+
+```bash
 cp .env.example .env
-$EDITOR .env
-
-# 4. Run everything
-pytest                                   # all tests
-pytest -m api                            # only API integration tests (no browser)
-pytest -m regression                     # only regression tests pinned to issues/PRs
-pytest -m "api and regression"           # both: only API regression tests
-pytest -m "not slow"                     # skip slow comprehensive scans
 ```
 
-## Prerequisites
+### Pointing unit tests at the backend source
 
-- Python 3.11+
-- A running Open WebUI instance to test against
-- Test user accounts (regular user and admin) created in Open WebUI
+Unit tests need the Open WebUI **source tree** (not a server). Resolution order:
 
-## Installation
+1. `OPEN_WEBUI_SOURCE_DIR` env var, if set, pointing at `.../open-webui/backend`.
+2. Otherwise the `open_webui_backend` fixture walks up from the suite looking for a sibling `open-webui/backend/` checkout.
 
-1. **Create a virtual environment** (or reuse one — the suite has no `setup.py`/`__init__.py` of its own that pip needs to install):
-
-   ```bash
-   cd tests
-   python -m venv venv
-   source venv/bin/activate                # macOS/Linux
-   .\venv\Scripts\Activate.ps1             # Windows PowerShell
-   ```
-
-2. **Install dependencies.** `pip install -e .` is currently broken because setuptools auto-discovery can't pick a single top-level package from `e2e/`, `utils/`, and `integration/` — install from the dep list directly:
-
-   ```bash
-   pip install "pytest~=8.4.1" "pytest-asyncio>=0.23.0" \
-               "pytest-playwright>=0.5.0" "playwright==1.49.1" \
-               "httpx==0.28.1" "python-dotenv>=1.0.0" \
-               "allure-pytest>=2.13.0" "pytest-html>=4.0.0"
-   ```
-
-3. **Install Playwright browsers** (only needed for the `e2e/` UI tests):
-
-   ```bash
-   playwright install chromium
-   ```
-
-4. **Configure environment:**
-
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Open WebUI URL and test credentials
-   ```
-
-## Configuration
-
-Edit `.env` to configure your test environment:
+If neither resolves, the source-level tests **skip** (they never hard-fail for a missing checkout).
 
 ```bash
-# Base URL of the Open WebUI instance to test
-OPEN_WEBUI_URL=http://localhost:8080
+# explicit:
+OPEN_WEBUI_SOURCE_DIR=/path/to/open-webui/backend pytest unit/
 
-# Test user credentials (must exist in Open WebUI)
-TEST_USER_EMAIL=test@example.com
-TEST_USER_PASSWORD=testpassword123
-
-# Admin user credentials (must have admin role in Open WebUI)
-ADMIN_USER_EMAIL=admin@example.com
-ADMIN_USER_PASSWORD=adminpassword123
-
-# Browser settings
-HEADLESS=true          # Set to false to see browser during tests
-SLOW_MO=0              # Milliseconds to slow down operations (useful for debugging)
-
-# Timeout settings (milliseconds)
-DEFAULT_TIMEOUT=30000
-NAVIGATION_TIMEOUT=60000
-
-# Optional: pre-issued JWT for API tests. If set, the api_client fixture
-# uses it directly and skips the signin call (useful for CI or when the
-# test user is OAuth-only and has no usable password).
-# API_JWT=
+# implicit — works when this repo sits next to the open-webui checkout:
+#   repos/
+#   ├── open-webui/
+#   └── tests/        <-- you are here
+pytest unit/
 ```
 
-### Getting an `API_JWT`
+`WEBUI_SECRET_KEY` is required by `open_webui.env` at import time; `unit/conftest.py` sets a throwaway default so you don't have to (a real value in the environment still wins).
 
-If you'd rather not put credentials in `.env`, mint a JWT once and reuse it:
+---
+
+## Running
 
 ```bash
-curl -s -X POST "$OPEN_WEBUI_URL/api/v1/auths/signin" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"..."}' | jq -r .token
+pytest                                   # everything (integration/e2e skip without a server)
+pytest unit/                             # all source-level tests — no server needed
+pytest unit/retrieval/                   # one subsystem
+pytest unit/retrieval/test_firecrawl.py  # one file
+pytest -k collection_access              # name filter
+pytest -m regression                     # only issue/PR-pinned regressions
+pytest -m "not slow"                     # skip the long ones
+pytest --lf                              # rerun last-failed
+pytest -v                                # verbose (off by default; the suite is large)
 ```
 
-Then export it before running tests:
-
-```bash
-export API_JWT="eyJhbGciOi..."
-pytest -m api
-```
-
-## Running Tests
-
-### Toggling test categories with markers
-
-Every test carries one or more markers (see the [marker table below](#test-markers)). Markers are how you switch test sets on and off without editing files. The grammar is the standard pytest expression:
-
-```bash
-pytest -m api                            # only API tests (no browser)
-pytest -m "auth_required and not slow"   # logged-in tests, but skip the comprehensive scans
-pytest -m "regression"                   # only regressions tied to a specific issue/PR
-pytest -m "public or api"                # union of two categories
-pytest -m "not admin_required"           # everything that doesn't need an admin account
-```
-
-The markers are orthogonal axes (type / purpose / scope / cost) — combine them freely.
-
-### Common invocations
-
-```bash
-pytest                                              # all tests
-pytest e2e/test_page_accessibility.py -v            # single file
-pytest e2e -m public                                # public UI smoke only
-pytest integration -m regression                    # all regression API tests
-pytest -k chat_completion                           # name-substring filter
-pytest --lf                                         # rerun last-failed only
-HEADLESS=false SLOW_MO=300 pytest e2e -m public     # watch the browser
-```
+A run against the latest `dev` is expected to show **red for any regression whose fix isn't merged yet** — that's the point. Each failing test names the issue/PR that turns it green.
 
 ### Reports
 
 ```bash
-pytest --html=reports/report.html --self-contained-html    # standalone HTML
-
-pytest --alluredir=allure-results                          # Allure
-allure serve allure-results
+pytest --html=reports/report.html --self-contained-html
+pytest --alluredir=allure-results && allure serve allure-results
 ```
 
-### Running just the API integration tests
+---
 
-The `integration/` suite uses `httpx` — no browser, no playwright. Fast enough for a pre-push hook:
+## Markers
+
+Registered in `pyproject.toml` (`--strict-markers` is on, so an unregistered marker fails collection). Combine with `-m "<expr>"`.
+
+| Marker | Axis | Meaning |
+|--------|------|---------|
+| `regression` | purpose | Pinned to a specific upstream issue/PR; fails only if that bug returns |
+| `slow` | cost | Long-running (comprehensive scans, real postgres boot) |
+| `public` | scope | Public pages, no auth |
+| `auth_required` | scope | Needs an authenticated user |
+| `admin_required` | scope | Needs an admin |
+| `api` | type | API-level via `httpx`, no browser |
+| `requires_source` | capability | Needs the backend source checkout |
+| `requires_instance` | capability | Needs a running Open WebUI |
+| `requires_browser` | capability | Needs Playwright browsers |
+| `requires_postgres` | capability | Needs the `pgserver` package |
+
+Capability markers are for **positive selection** in CI lanes. Tests also **auto-skip** when their dependency is absent (no source, no server, no `pgserver`, no browser), so you can run the whole suite anywhere and only the runnable subset executes.
+
+---
+
+## Writing tests
+
+### The three unit patterns
+
+1. **Behavioral** — import the real module from the checkout and drive it with mocks. Best when the function is callable in isolation.
+   ```python
+   async def test_search_web_coerces_string_count(builtin_tools_module):
+       with patch.object(builtin_tools_module, "_search_web", AsyncMock(return_value=...)):
+           out = await builtin_tools_module.search_web(query="x", count="3", ...)
+       assert len(json.loads(out)) == 3
+   ```
+
+2. **Source audit** — read a source file and assert a contract over it. Best for code that's hard to call in isolation (Svelte components, shell scripts, cross-cutting invariants like "every numeric tool param is coerced").
+   ```python
+   def test_all_terminal_api_bearer_headers_are_normalized(open_webui_backend):
+       src = (open_webui_backend.parent / "src" / "lib" / "apis" / "terminal" / "index.ts").read_text()
+       ...  # assert no raw `Bearer ${token}` survives
+   ```
+
+3. **Subprocess** — run a real entrypoint (alembic, `start.sh`) in a child process and assert on exit code / output. Best for boot-time behavior that caches module state.
+
+### Conventions
+
+- **Lead the docstring with the issue:** `Regression for open-webui/open-webui#NNNNN.` then the before/after symptom. Future-you needs the link.
+- **Assert the specific symptom**, not general behavior — a regression test should fail *only* if that bug comes back. Substring/contract assertions beat exact-match (wording drifts).
+- **Verify discrimination:** a good regression test fails against the buggy ref and passes against the fix. Check both before committing (e.g. with `OPEN_WEBUI_SOURCE_DIR` pointed at a worktree of the fix branch).
+- **Cover the class, not just the instance:** pair the specific repro with a broad guard (e.g. one behavioral test for the reported function + a source audit asserting *every* sibling does the right thing). This is what catches the *next* instance.
+- **Clean up state:** integration tests that create notes/chats/files wrap in `try/finally` and delete in `finally`.
+
+### Fixtures
+
+**`unit/conftest.py`** (source-level)
+
+| Fixture | Gives you |
+|---------|-----------|
+| `open_webui_backend` | `Path` to `.../open-webui/backend` (skips if not found) |
+| `firecrawl_module` | imported `open_webui.retrieval.web.firecrawl` |
+| `retrieval_utils_module` | imported `open_webui.retrieval.utils` |
+| `retrieval_web_utils_module` | imported `open_webui.retrieval.web.utils` |
+| `misc_module` | imported `open_webui.utils.misc` |
+| `builtin_tools_module` | imported `open_webui.tools.builtin` |
+
+Module-loader fixtures are session-scoped and `pytest.skip` if the import fails (missing dep). Need another module? Add a one-line loader fixture following the same pattern.
+
+**`conftest.py`** (root — browser/API)
+
+| Fixture | Gives you |
+|---------|-----------|
+| `api_client` | authenticated `httpx.Client`, `base_url` prefilled |
+| `api_jwt` | a JWT (from `$API_JWT` or a signin) |
+| `page` / `authenticated_page` / `admin_page` | Playwright pages |
+| `config` | `AppConfig` from env |
+| `public_routes` / `user_routes` / `admin_routes` | route lists for parametrization |
+
+---
+
+## Linting
 
 ```bash
-# With credentials in .env:
-pytest integration -v
-
-# Or pass a JWT directly (good for CI):
-API_JWT="$(curl -sX POST $OPEN_WEBUI_URL/api/v1/auths/signin \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"...","password":"..."}' | jq -r .token)" \
-  pytest integration -v -m api
+ruff check .       # lint (E, F, I, W)
+ruff format .      # format (line length 100)
 ```
 
-Each test starts session-scoped via the `api_jwt` fixture: it prefers `$API_JWT`; otherwise it signs in once at session start and reuses the token across tests.
+Both are clean in CI. Run them before pushing.
 
-## Test Structure
-
-```
-tests/
-├── conftest.py              # Shared fixtures (auth, browser, api_client)
-├── pyproject.toml           # Pytest config + marker definitions
-├── .env.example             # Environment variable template
-├── .env                     # Your local configuration (not in git)
-│
-├── e2e/                     # Playwright UI tests
-│   ├── __init__.py
-│   └── test_page_accessibility.py
-│
-├── integration/             # httpx-based API tests
-│   ├── __init__.py
-│   ├── test_chat_completions.py    # regression: open-webui#24553
-│   └── test_notes.py               # regression: open-webui#24484
-│
-├── utils/                   # Shared helpers
-│   ├── __init__.py
-│   └── page_utils.py
-│
-├── database/                # Database integration tests (planned)
-└── sso/                     # SSO integration tests (planned)
-```
-
-## Page Categories
-
-### Public Pages (No Authentication)
-- `/auth` - Login/signup page
-- `/error` - Error page
-
-### User Pages (Requires Authentication)
-- `/` - Home
-- `/playground` - Playground
-- `/workspace/*` - Workspace pages (models, prompts, tools, knowledge)
-- `/notes/*` - Notes pages
-
-### Admin Pages (Requires Admin Role)
-- `/admin` - Admin dashboard
-- `/admin/settings/*` - Admin settings pages
-- `/admin/users` - User management
-- `/admin/functions` - Admin functions
-
-## Test Markers
-
-Markers are the toggle scheme — combine them with `pytest -m "<expr>"`. They're orthogonal axes; a single test can carry several.
-
-| Marker | Axis | Description |
-|--------|------|-------------|
-| `@pytest.mark.public` | scope | Tests for public pages (no auth) |
-| `@pytest.mark.auth_required` | scope | Tests requiring user authentication |
-| `@pytest.mark.admin_required` | scope | Tests requiring admin authentication |
-| `@pytest.mark.api` | type | API-level test using `httpx` (no browser) |
-| `@pytest.mark.regression` | purpose | Pinned to a specific issue / PR fix |
-| `@pytest.mark.slow` | cost | Long-running comprehensive scans |
-
-When adding a new marker, register it in `[tool.pytest.ini_options].markers` in `pyproject.toml` — `--strict-markers` is on, so unregistered markers fail collection.
-
-## Writing New Tests
-
-### Basic Page Test (UI / Playwright)
-
-```python
-import pytest
-from playwright.sync_api import Page
-
-@pytest.mark.auth_required
-def test_my_page(authenticated_page: Page):
-    """Test a specific page functionality."""
-    authenticated_page.goto("/my-page")
-    authenticated_page.wait_for_load_state("networkidle")
-    
-    # Check for expected element
-    assert authenticated_page.locator("h1").is_visible()
-```
-
-### Basic API Test (`httpx`)
-
-```python
-import httpx
-import pytest
-
-@pytest.mark.api
-@pytest.mark.auth_required
-def test_models_endpoint(api_client: httpx.Client):
-    """List models for the authenticated user."""
-    resp = api_client.get("/api/models")
-    assert resp.status_code == 200
-    assert "data" in resp.json()
-```
-
-The `api_client` fixture (function-scoped, in `conftest.py`) yields an authenticated `httpx.Client` with `base_url` prefilled — just call `.get()` / `.post()` with paths.
-
-### Writing a regression test
-
-Each known-bug regression test follows the same pattern: small, focused, narrowly-asserting. The goal is to fail *only* if the specific bug reappears — not to drift into general feature testing.
-
-```python
-@pytest.mark.api
-@pytest.mark.auth_required
-@pytest.mark.regression
-def test_something_does_not_regress(api_client):
-    """Regression for open-webui/open-webui#NNNNN.
-
-    In version X.Y.Z, doing <thing> returned HTTP <code> with
-    <error message>. Fixed in PR #MMMM by <one-line summary>.
-    """
-    resp = api_client.post("/api/...", json={...})
-
-    # The specific symptom — assert it can't come back.
-    if resp.status_code == 400:
-        detail = resp.json().get("detail", "")
-        assert "<the exact substring from the original crash>" not in detail, (
-            f"Regression of #NNNNN: {detail!r}"
-        )
-```
-
-Conventions:
-- File name: `integration/test_<endpoint-group>.py` (collect related issues in one file).
-- Docstring: lead with `Regression for open-webui/open-webui#NNNNN.` followed by the before/after symptom. Future-you will thank you.
-- Substring assertions over exact-match — provider error wording drifts.
-- If the test creates state (notes, chats, files), wrap in `try / finally` and delete in `finally` so re-runs don't leak.
-
-### Using Test Utilities
-
-```python
-from utils import PageCheckResult, create_page_visitor
-
-def test_multiple_pages(page: Page):
-    visitor = create_page_visitor(page)
-    
-    results = []
-    for path, desc in [("/page1", "Page 1"), ("/page2", "Page 2")]:
-        result = visitor(path, desc)
-        results.append(result)
-    
-    failed = [r for r in results if not r.status == PageStatus.PASSED]
-    assert not failed, f"Pages failed: {[r.path for r in failed]}"
-```
-
-## Troubleshooting
-
-### API tests skip with "Could not reach Open WebUI for signin"
-
-The `api_jwt` fixture couldn't sign in to mint a token. Either:
-- Start Open WebUI at `$OPEN_WEBUI_URL`, or
-- Export `$API_JWT` directly (see [Getting an `API_JWT`](#getting-an-api_jwt))
-
-### API tests skip with `Signin failed: HTTP 4xx`
-
-Credentials in `.env` don't match a real user, or password auth is disabled on that instance. Mint a JWT manually via UI/browser devtools and export it as `API_JWT`.
-
-### Browser tests skip with "Could not authenticate"
-
-1. Ensure Open WebUI is running at the URL in `.env`
-2. Verify test user credentials are correct
-3. Check that the users exist in Open WebUI
-
-### Timeout errors
-
-Increase timeouts in `.env`:
-
-```bash
-DEFAULT_TIMEOUT=60000
-NAVIGATION_TIMEOUT=120000
-```
-
-### Browser not found
-
-Run Playwright browser installation:
-
-```bash
-playwright install chromium
-```
-
-### See what's happening in the browser
-
-```bash
-HEADLESS=false SLOW_MO=500 pytest e2e/test_page_accessibility.py -v -k "test_auth"
-```
-
-## CI/CD Integration
-
-Example GitHub Actions workflow:
-
-```yaml
-name: Page Accessibility Tests
-
-on: [push, pull_request]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    
-    services:
-      open-webui:
-        image: ghcr.io/open-webui/open-webui:main
-        ports:
-          - 8080:8080
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        working-directory: tests
-        run: |
-          pip install "pytest~=8.4.1" "pytest-asyncio>=0.23.0" \
-                      "pytest-playwright>=0.5.0" "playwright==1.49.1" \
-                      "httpx==0.28.1" "python-dotenv>=1.0.0" \
-                      "allure-pytest>=2.13.0" "pytest-html>=4.0.0"
-          playwright install chromium
-      
-      - name: Run tests
-        working-directory: tests
-        env:
-          OPEN_WEBUI_URL: http://localhost:8080
-          TEST_USER_EMAIL: test@example.com
-          TEST_USER_PASSWORD: testpassword
-        run: pytest --alluredir=allure-results
-      
-      - name: Run API regression tests only (fast)
-        working-directory: tests
-        env:
-          OPEN_WEBUI_URL: http://localhost:8080
-          API_JWT: ${{ secrets.OPENWEBUI_TEST_JWT }}
-        run: pytest -m "api and regression"
-      
-      - name: Upload Allure results
-        uses: actions/upload-artifact@v4
-        with:
-          name: allure-results
-          path: tests/allure-results
-```
-
-## Future Development
-
-- [x] API endpoint tests (initial regression coverage)
-- [ ] Database integration tests (PostgreSQL, MySQL)
-- [ ] SSO integration tests (OAuth, OIDC, LDAP)
-- [ ] Performance benchmarking
-- [ ] Accessibility compliance (WCAG)
-- [ ] Allure dashboard hosting
-- [ ] Fix `pip install -e .` (configure `[tool.setuptools]` packages or switch to a `src/` layout)
+---
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT — see LICENSE.

@@ -34,7 +34,6 @@ from pathlib import Path
 
 import pytest
 
-
 _LAUNCH_MARKERS = (
     "# ── Launch uvicorn",
     "exec env",

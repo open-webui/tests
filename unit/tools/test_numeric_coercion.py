@@ -34,7 +34,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # =============================================================================
 # Behavioral — the documented repro
 # =============================================================================
@@ -55,8 +54,7 @@ def _request_with_config(engine: str = "searxng", result_count=5) -> SimpleNames
 
 def _fake_results(n: int) -> list[SimpleNamespace]:
     return [
-        SimpleNamespace(title=f"t{i}", link=f"https://e/{i}", snippet=f"s{i}")
-        for i in range(n)
+        SimpleNamespace(title=f"t{i}", link=f"https://e/{i}", snippet=f"s{i}") for i in range(n)
     ]
 
 
@@ -183,9 +181,7 @@ def test_every_builtin_tool_coerces_its_numeric_params(
     passes the raw value into a comparison/arithmetic/slice will crash
     when a native-function-calling model sends it as a string.
     """
-    builtin = (
-        open_webui_backend / "open_webui" / "tools" / "builtin.py"
-    )
+    builtin = open_webui_backend / "open_webui" / "tools" / "builtin.py"
     assert builtin.is_file(), builtin
     tree = ast.parse(builtin.read_text(encoding="utf-8"))
 

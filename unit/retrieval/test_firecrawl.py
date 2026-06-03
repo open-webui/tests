@@ -28,15 +28,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # =============================================================================
 # Regressions — open-webui/open-webui#23966
 # =============================================================================
 
 # Match `requests.<word>(`, excluding things like `self.requests_kwargs`.
-_REQUESTS_CALL_RE = re.compile(
-    r"(?<![A-Za-z0-9_.])requests\.[A-Za-z_][A-Za-z0-9_]*\s*\("
-)
+_REQUESTS_CALL_RE = re.compile(r"(?<![A-Za-z0-9_.])requests\.[A-Za-z_][A-Za-z0-9_]*\s*\(")
 # Match `import requests`, `import requests as X`, `from requests import ...`.
 _IMPORT_REQUESTS_RE = re.compile(
     r"^\s*(?:import\s+requests(?:\s|$|,|;|\sas\s)|from\s+requests\b)",
@@ -116,8 +113,7 @@ def test_search_firecrawl_does_not_attribute_error_on_list_data(
     assert isinstance(results, list), repr(results)
 
     logged_errors = [
-        str(call.args[0]) if call.args else ""
-        for call in mock_log.error.call_args_list
+        str(call.args[0]) if call.args else "" for call in mock_log.error.call_args_list
     ]
     bug2_signature = "'list' object has no attribute 'get'"
     matches = [msg for msg in logged_errors if bug2_signature in msg]
@@ -395,18 +391,14 @@ def test_scrape_firecrawl_url_returns_none_when_content_empty(firecrawl_module) 
     """Whitespace-only markdown isn't worth surfacing as a document."""
     fc = firecrawl_module
     with patch.object(fc, "request_firecrawl_json", return_value={"data": {"markdown": "   "}}):
-        doc = fc.scrape_firecrawl_url(
-            "https://api.firecrawl.dev", "dummy", "https://example.com"
-        )
+        doc = fc.scrape_firecrawl_url("https://api.firecrawl.dev", "dummy", "https://example.com")
     assert doc is None
 
 
 def test_scrape_firecrawl_url_returns_none_when_no_data(firecrawl_module) -> None:
     fc = firecrawl_module
     with patch.object(fc, "request_firecrawl_json", return_value={}):
-        doc = fc.scrape_firecrawl_url(
-            "https://api.firecrawl.dev", "dummy", "https://example.com"
-        )
+        doc = fc.scrape_firecrawl_url("https://api.firecrawl.dev", "dummy", "https://example.com")
     assert doc is None
 
 
@@ -427,14 +419,16 @@ def test_scrape_firecrawl_url_falls_back_to_request_url_for_source(firecrawl_mod
 # ----- request_firecrawl_json: retry & error semantics -----------------------
 
 
-def _fake_response(status: int, body: dict[str, Any] | None = None,
-                   headers: dict[str, str] | None = None) -> MagicMock:
+def _fake_response(
+    status: int, body: dict[str, Any] | None = None, headers: dict[str, str] | None = None
+) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status
     resp.headers = headers or {}
     resp.json.return_value = body or {}
     if status >= 400:
         import requests as _requests
+
         resp.raise_for_status.side_effect = _requests.HTTPError(f"HTTP {status}")
     else:
         resp.raise_for_status.return_value = None
@@ -446,9 +440,12 @@ def test_request_firecrawl_json_succeeds_on_first_try(firecrawl_module) -> None:
     fc = firecrawl_module
     body = {"success": True, "data": {"web": []}}
 
-    with patch("time.sleep") as fake_sleep, \
-            patch.object(fc.requests, "request",
-                         return_value=_fake_response(200, body)) as fake_request:
+    with (
+        patch("time.sleep") as fake_sleep,
+        patch.object(
+            fc.requests, "request", return_value=_fake_response(200, body)
+        ) as fake_request,
+    ):
         out = fc.request_firecrawl_json(
             "POST",
             "https://api.firecrawl.dev/v2/search",
@@ -472,8 +469,10 @@ def test_request_firecrawl_json_retries_on_429_then_succeeds(firecrawl_module) -
         _fake_response(200, body),
     ]
 
-    with patch("time.sleep") as fake_sleep, \
-            patch.object(fc.requests, "request", side_effect=responses) as fake_request:
+    with (
+        patch("time.sleep") as fake_sleep,
+        patch.object(fc.requests, "request", side_effect=responses) as fake_request,
+    ):
         out = fc.request_firecrawl_json(
             "POST",
             "https://api.firecrawl.dev/v2/search",
@@ -494,8 +493,7 @@ def test_request_firecrawl_json_raises_after_persistent_5xx(firecrawl_module) ->
     import requests as _requests
 
     responses = [_fake_response(500) for _ in range(3)]
-    with patch("time.sleep"), \
-            patch.object(fc.requests, "request", side_effect=responses):
+    with patch("time.sleep"), patch.object(fc.requests, "request", side_effect=responses):
         with pytest.raises(_requests.HTTPError):
             fc.request_firecrawl_json(
                 "POST",
@@ -514,9 +512,10 @@ def test_request_firecrawl_json_raises_on_persistent_connection_error(
     fc = firecrawl_module
     import requests as _requests
 
-    with patch("time.sleep"), \
-            patch.object(fc.requests, "request",
-                         side_effect=_requests.ConnectionError("refused")):
+    with (
+        patch("time.sleep"),
+        patch.object(fc.requests, "request", side_effect=_requests.ConnectionError("refused")),
+    ):
         with pytest.raises(_requests.ConnectionError):
             fc.request_firecrawl_json(
                 "POST",
@@ -537,8 +536,10 @@ def test_request_firecrawl_json_respects_retry_after_header(firecrawl_module) ->
         _fake_response(200, body),
     ]
 
-    with patch("time.sleep") as fake_sleep, \
-            patch.object(fc.requests, "request", side_effect=responses):
+    with (
+        patch("time.sleep") as fake_sleep,
+        patch.object(fc.requests, "request", side_effect=responses),
+    ):
         fc.request_firecrawl_json(
             "POST",
             "https://api.firecrawl.dev/v2/search",
@@ -565,9 +566,12 @@ def test_search_firecrawl_calls_v2_search_with_bearer_token(firecrawl_module) ->
     fc = firecrawl_module
     body = {"data": {"web": []}}
 
-    with patch("time.sleep"), \
-            patch.object(fc.requests, "request",
-                         return_value=_fake_response(200, body)) as fake_request:
+    with (
+        patch("time.sleep"),
+        patch.object(
+            fc.requests, "request", return_value=_fake_response(200, body)
+        ) as fake_request,
+    ):
         fc.search_firecrawl(
             firecrawl_url="https://api.firecrawl.dev",
             firecrawl_api_key="sk-abc",
@@ -593,9 +597,12 @@ def test_scrape_firecrawl_url_calls_v2_scrape_with_payload(firecrawl_module) -> 
     fc = firecrawl_module
     body = {"data": {"markdown": "hello", "metadata": {}}}
 
-    with patch("time.sleep"), \
-            patch.object(fc.requests, "request",
-                         return_value=_fake_response(200, body)) as fake_request:
+    with (
+        patch("time.sleep"),
+        patch.object(
+            fc.requests, "request", return_value=_fake_response(200, body)
+        ) as fake_request,
+    ):
         fc.scrape_firecrawl_url(
             firecrawl_url="https://api.firecrawl.dev",
             firecrawl_api_key="sk-abc",

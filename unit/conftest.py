@@ -66,6 +66,7 @@ def _install_langchain_document_stub() -> None:
     """
     try:
         import langchain_core.documents  # noqa: F401
+
         return
     except ImportError:
         pass
@@ -74,9 +75,7 @@ def _install_langchain_document_stub() -> None:
     sub = types.ModuleType("langchain_core.documents")
 
     class _Document:
-        def __init__(
-            self, page_content: str = "", metadata: dict | None = None
-        ) -> None:
+        def __init__(self, page_content: str = "", metadata: dict | None = None) -> None:
             self.page_content = page_content
             self.metadata = metadata or {}
 

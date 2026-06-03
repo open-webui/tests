@@ -1,7 +1,7 @@
 [project]
 name = "open-webui-tests"
 version = "0.1.0"
-description = "External test suite for Open WebUI - page accessibility, integration, and SSO testing"
+description = "External test suite for Open WebUI — unit (source-level), API integration, and end-to-end browser tests"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -17,29 +17,51 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+# This is a test suite, not an importable library: tell setuptools there
+# are no packages to build so `pip install -e .` installs deps + metadata
+# without choking on the flat unit/ integration/ e2e/ layout.
+[tool.setuptools]
+py-modules = []
+
 [project.optional-dependencies]
+# Embedded PostgreSQL for the migration tests that run against a real
+# postgres (unit/migrations/*). Tests skip cleanly when it's absent.
+postgres = [
+    "pgserver>=0.1.4",
+]
 dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "pgserver>=0.1.4",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["e2e", "integration", "unit"]
+testpaths = ["unit", "integration", "e2e"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Tests opt in with an explicit @pytest.mark.asyncio (strict mode).
+asyncio_mode = "strict"
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "auth_required: marks tests that require authentication",
-    "admin_required: marks tests that require admin privileges",
-    "public: marks tests for public pages (no auth needed)",
-    "api: marks API-level integration tests (httpx, no browser)",
-    "regression: marks regression tests tied to a specific issue/PR",
+    # ── purpose ────────────────────────────────────────────────────────────
+    "regression: pinned to a specific upstream issue/PR; fails only if that bug returns",
+    # ── cost ───────────────────────────────────────────────────────────────
+    "slow: long-running (comprehensive scans, real postgres boot). Deselect with -m 'not slow'",
+    # ── scope / auth (browser + API tests) ─────────────────────────────────
+    "public: public pages, no authentication",
+    "auth_required: requires an authenticated user session",
+    "admin_required: requires an admin session",
+    "api: API-level test via httpx, no browser",
+    # ── capability (positive selection; tests also auto-skip when unmet) ────
+    "requires_source: needs the open-webui backend source checkout (OPEN_WEBUI_SOURCE_DIR)",
+    "requires_instance: needs a running Open WebUI at OPEN_WEBUI_URL",
+    "requires_browser: needs Playwright browsers (e2e)",
+    "requires_postgres: needs the pgserver package (embedded PostgreSQL)",
 ]
 addopts = [
-    "-v",
     "--tb=short",
     "--strict-markers",
+    "--strict-config",
 ]
 
 [tool.ruff]

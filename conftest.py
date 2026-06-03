@@ -118,10 +118,10 @@ class AuthHelper:
 
             # Fill in credentials using id selectors (more reliable)
             # For LDAP mode, use username field; for signin mode, use email field
-            email_field = self.page.locator('#email, #username').first
+            email_field = self.page.locator("#email, #username").first
             email_field.fill(email)
 
-            password_field = self.page.locator('#password')
+            password_field = self.page.locator("#password")
             password_field.fill(password)
 
             # Click sign in button
@@ -129,8 +129,7 @@ class AuthHelper:
 
             # Wait for successful login - either redirect to home or URL changes from /auth
             self.page.wait_for_function(
-                "() => !window.location.pathname.startsWith('/auth')",
-                timeout=15000
+                "() => !window.location.pathname.startsWith('/auth')", timeout=15000
             )
             return True
         except Exception as e:
@@ -173,9 +172,7 @@ def auth_helper(page: Page, config: AppConfig) -> AuthHelper:
 
 
 @pytest.fixture(scope="function")
-def authenticated_page(
-    context: BrowserContext, config: AppConfig
-) -> Generator[Page, None, None]:
+def authenticated_page(context: BrowserContext, config: AppConfig) -> Generator[Page, None, None]:
     """Provide a page with an authenticated regular user session."""
     page = context.new_page()
     auth = AuthHelper(page, config)
@@ -188,9 +185,7 @@ def authenticated_page(
 
 
 @pytest.fixture(scope="function")
-def admin_page(
-    context: BrowserContext, config: AppConfig
-) -> Generator[Page, None, None]:
+def admin_page(context: BrowserContext, config: AppConfig) -> Generator[Page, None, None]:
     """Provide a page with an authenticated admin session."""
     page = context.new_page()
     auth = AuthHelper(page, config)

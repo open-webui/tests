@@ -39,7 +39,9 @@ from pathlib import Path
 import pytest
 
 
-def _run_alembic_upgrade_head(backend: Path, database_url: str, data_dir: Path) -> tuple[int, str, str]:
+def _run_alembic_upgrade_head(
+    backend: Path, database_url: str, data_dir: Path
+) -> tuple[int, str, str]:
     """Run alembic upgrade head as a subprocess with the given DB URL.
 
     Uses a subprocess so each invocation gets a fresh sys.modules — the
@@ -141,15 +143,11 @@ def test_alembic_upgrade_head_succeeds_on_fresh_postgres(
     try:
         # pgserver gives us a postgresql:// URI; switch to the
         # postgresql+psycopg2:// form sqlalchemy expects.
-        db_url = server.get_uri().replace(
-            "postgresql://", "postgresql+psycopg2://", 1
-        )
+        db_url = server.get_uri().replace("postgresql://", "postgresql+psycopg2://", 1)
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        rc, stdout, stderr = _run_alembic_upgrade_head(
-            open_webui_backend, db_url, data_dir
-        )
+        rc, stdout, stderr = _run_alembic_upgrade_head(open_webui_backend, db_url, data_dir)
 
         if rc != 0:
             pytest.fail(
