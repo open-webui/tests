@@ -52,6 +52,8 @@ markers = [
     "auth_required: requires an authenticated user session",
     "admin_required: requires an admin session",
     "api: API-level test via httpx, no browser",
+    # ── dependency contract tests (unit/deps/) ─────────────────────────────
+    "depcheck: per-dependency API-surface / usage contract test (run after a bump)",
     # ── capability (positive selection; tests also auto-skip when unmet) ────
     "requires_source: needs the open-webui backend source checkout (OPEN_WEBUI_SOURCE_DIR)",
     "requires_instance: needs a running Open WebUI at OPEN_WEBUI_URL",
