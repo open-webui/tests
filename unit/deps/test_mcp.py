@@ -48,7 +48,7 @@ USED_SYMBOLS = [
     # client session (top-level re-export lives here)
     "client.session.ClientSession",
     # transports
-    "client.streamable_http.streamable_http_client",
+    "client.streamable_http.streamablehttp_client",
     "client.stdio.stdio_client",
     "client.sse.sse_client",
     # client-side OAuth provider + storage protocol
@@ -169,29 +169,38 @@ def test_clientsession_read_resource_accepts_uri(depcheck):
 # --- Transport context managers ---------------------------------------------
 
 
-def test_streamable_http_client_signature(depcheck):
+def test_streamablehttp_client_signature(depcheck):
     """client.py opens the Streamable-HTTP transport with
-    `streamable_http_client(url, headers=..., httpx_client_factory=...)`.
-    All three of those parameters must remain accepted."""
+    `streamablehttp_client(url, headers=..., httpx_client_factory=...)`.
+    All three of those parameters must remain accepted.
+
+    NOTE: mcp also ships a *different* function `streamable_http_client`
+    (singular-spaced) with a DIFFERENT signature — it takes a prebuilt
+    `http_client=` instead of `headers=`/`httpx_client_factory=`. It is NOT
+    a drop-in rename; the backend correctly uses `streamablehttp_client`."""
     mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.streamable_http.streamable_http_client")
+    fn = depcheck.resolve(mod, "client.streamable_http.streamablehttp_client")
     assert callable(fn)
     depcheck.assert_params(fn, ["url", "headers", "httpx_client_factory"])
 
 
-def test_streamable_http_client_is_context_manager_factory(depcheck):
-    """`async with streamable_http_client(...)` is used via enter_async_context;
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_streamablehttp_client_is_context_manager_factory(depcheck):
+    """`async with streamablehttp_client(...)` is used via enter_async_context;
     calling it (without awaiting/connecting) must yield an async context
     manager object. This does NOT open any network connection.
 
-    The backend uses the `streamable_http_client` spelling (the older
-    `streamablehttp_client` remains as a deprecated alias in mcp >= 1.27)."""
+    Note: 1.27.x marks `streamablehttp_client` deprecated, but its
+    replacement `streamable_http_client` has a different signature (takes a
+    prebuilt http_client), so migrating is a refactor, not a rename. The
+    backend keeps using `streamablehttp_client` (functional); we pin it and
+    silence the bump-time warning."""
     mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.streamable_http.streamable_http_client")
+    fn = depcheck.resolve(mod, "client.streamable_http.streamablehttp_client")
     cm = fn("http://localhost:0/never-connected")
     try:
         assert hasattr(cm, "__aenter__") and hasattr(cm, "__aexit__"), (
-            "streamable_http_client() no longer returns an async context manager"
+            "streamablehttp_client() no longer returns an async context manager"
         )
     finally:
         aclose = getattr(cm, "aclose", None)
