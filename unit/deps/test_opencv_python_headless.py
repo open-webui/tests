@@ -238,15 +238,15 @@ def test_resize_with_interpolation_flag(depcheck):
 # ---------------------------------------------------------------------------
 
 
-def test_headless_has_no_working_gui(depcheck):
-    """The headless wheel ships without a functional highgui backend. If
-    imshow exists at all, calling it must fail (no GUI) rather than open a
-    window — assert that the headless guarantee holds. If imshow is absent
-    entirely, that is also acceptable (and even cleaner)."""
-    mod = depcheck.load(IMPORT_NAME)
-    np = _np(depcheck)
-    imshow = getattr(mod, "imshow", None)
-    if imshow is None:
-        return  # no GUI symbol at all — definitively headless
-    with pytest.raises(Exception):  # noqa: B017 - any failure proves no real GUI
-        imshow("window", _bgr_image(np))
+def test_headless_distribution_is_installed(depcheck):
+    """The backend pins opencv-python-headless (no GUI / system libGL deps). Pin
+    that the headless distribution is installed so a regression dropping it is
+    caught. (Older headless builds made imshow raise; 4.x no longer guarantees
+    that, so we assert the distribution instead of imshow's behaviour, since the
+    backend never calls any highgui function. A transitive dep such as rapidocr
+    may ALSO pull the GUI `opencv-python` wheel; both can coexist and cv2 still
+    works, so absence of the GUI wheel is not asserted.)"""
+    depcheck.load(IMPORT_NAME)  # skip cleanly if cv2 is not importable
+    assert depcheck.dist_version("opencv-python-headless") is not None, (
+        "opencv-python-headless (the pinned OpenCV distribution) is not installed"
+    )

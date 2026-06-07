@@ -213,15 +213,17 @@ def test_decode_first_positional_is_the_token(depcheck):
     ), f"jwt.decode first parameter {first.name!r} is no longer positional"
 
 
-def test_encode_algorithm_defaults_to_hs256(depcheck):
-    """headers.py and auth.py both pass algorithm explicitly, but pin the
-    documented default so a change in PyJWT's default signing alg is noticed."""
+def test_encode_accepts_algorithm_param(depcheck):
+    """auth.py and headers.py pass algorithm='HS256' explicitly to jwt.encode,
+    so the contract is that encode accepts an `algorithm` parameter. (PyJWT 2.13
+    changed the *default* from 'HS256' to an internal sentinel; that's irrelevant
+    here since the backend never relies on the default. HS256 is exercised
+    behaviourally by the roundtrip tests.)"""
     mod = depcheck.load(IMPORT_NAME)
     sig = inspect.signature(mod.encode)
-    alg = sig.parameters.get("algorithm")
-    if alg is None or alg.default is inspect.Parameter.empty:
-        pytest.skip("jwt.encode.algorithm has no introspectable default")
-    assert alg.default == "HS256"
+    assert "algorithm" in sig.parameters, (
+        f"jwt.encode no longer accepts an 'algorithm' parameter: {sig}"
+    )
 
 
 # --------------------------------------------------------------------------- #

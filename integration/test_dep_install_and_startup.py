@@ -135,33 +135,40 @@ def test_backend_boots_subprocess(tmp_path: Path) -> None:
         "ENABLE_OLLAMA_API": "false",
         "ENABLE_OPENAI_API": "false",
     }
-    proc = subprocess.Popen(
-        [py, "-m", "uvicorn", "open_webui.main:app", "--host", "127.0.0.1", "--port", port],
-        cwd=str(backend),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    try:
-        deadline = time.time() + 120
-        last_err = None
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                out = proc.stdout.read() if proc.stdout else ""
-                pytest.fail(f"backend exited early (code {proc.returncode}):\n{out[-3000:]}")
-            try:
-                r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=3.0)
-                if r.status_code == 200:
-                    return  # booted cleanly
-                last_err = f"HTTP {r.status_code}"
-            except httpx.HTTPError as e:
-                last_err = str(e)
-            time.sleep(2)
-        pytest.fail(f"backend did not become healthy within 120s (last: {last_err})")
-    finally:
-        proc.terminate()
+    # Write child output to a file, NOT a PIPE: an undrained PIPE deadlocks the
+    # subprocess once verbose startup fills the OS buffer (notably on Windows),
+    # which presents as a boot hang. A log file sidesteps that entirely.
+    log_path = tmp_path / "uvicorn.log"
+    with open(log_path, "w", encoding="utf-8") as logf:
+        proc = subprocess.Popen(
+            [py, "-m", "uvicorn", "open_webui.main:app", "--host", "127.0.0.1", "--port", port],
+            cwd=str(backend),
+            env=env,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+        )
         try:
-            proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            deadline = time.time() + 180
+            last_err = None
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    out = log_path.read_text(encoding="utf-8", errors="replace")
+                    pytest.fail(f"backend exited early (code {proc.returncode}):\n{out[-4000:]}")
+                try:
+                    r = httpx.get(f"http://127.0.0.1:{port}/health", timeout=3.0)
+                    if r.status_code == 200:
+                        return  # booted cleanly
+                    last_err = f"HTTP {r.status_code}"
+                except httpx.HTTPError as e:
+                    last_err = str(e)
+                time.sleep(2)
+            out = log_path.read_text(encoding="utf-8", errors="replace")
+            pytest.fail(
+                f"backend did not become healthy within 180s (last: {last_err})\n{out[-4000:]}"
+            )
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()

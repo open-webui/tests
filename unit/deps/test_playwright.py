@@ -180,14 +180,24 @@ def test_launch_accepts_headless_and_proxy(depcheck):
     depcheck.assert_params(sync_api.BrowserType.launch, ["headless", "proxy"])
 
 
-def test_connect_accepts_ws_endpoint(depcheck):
-    """p.chromium.connect(self.playwright_ws_url) passes the ws endpoint as the
-    first positional. Pin the parameter name."""
+def test_connect_accepts_ws_endpoint_positionally(depcheck):
+    """SafePlaywrightURLLoader calls `p.chromium.connect(self.playwright_ws_url)`
+    with the ws endpoint as the FIRST POSITIONAL arg, so the contract is that
+    connect accepts a positional endpoint. (Playwright renamed the parameter
+    ws_endpoint -> endpoint; the backend's positional call is unaffected, so we
+    pin positionality + accept either name rather than the exact old name.)"""
     sync_api = _sync_api(depcheck)
     sig = inspect.signature(sync_api.BrowserType.connect)
     params = [p for p in sig.parameters.values() if p.name != "self"]
     assert params, "BrowserType.connect takes no params besides self"
-    assert params[0].name == "ws_endpoint"
+    first = params[0]
+    assert first.kind in (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    ), f"connect's first param {first.name!r} is not positional ({first.kind})"
+    assert first.name in {"ws_endpoint", "endpoint", "endpoint_url"}, (
+        f"unexpected connect endpoint param name: {first.name!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #

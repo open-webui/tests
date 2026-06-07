@@ -338,20 +338,24 @@ def test_detect_accepts_bytearray(depcheck):
     _assert_result_shape(result, sample_name="bytearray-ascii")
 
 
-def test_detect_empty_bytes_returns_none_encoding(depcheck):
-    """Empty input -> dict whose 'encoding' is None.
+def test_detect_empty_bytes_encoding_none_or_str(depcheck):
+    """Empty input -> dict whose 'encoding' is None or a str (never raises).
 
-    The loader short-circuits empty files before reaching chardet, but its
-    ``(detected.get('encoding') or '')`` idiom is precisely what tolerates a
-    None here. Pin that contract so a future 'raise on empty' regression is
-    caught.
+    The loader short-circuits empty files before reaching chardet, and its
+    ``(detected.get('encoding') or '')`` idiom tolerates either None (chardet 5)
+    or a low-confidence str like 'utf-8' (chardet 7). Pin that the call returns a
+    well-formed dict and never raises on empty input.
     """
     _mod, detect = _detect(depcheck)
     result = detect(b"")
     assert isinstance(result, dict), f"detect(b'') returned {type(result)!r}"
     assert "encoding" in result, f"detect(b'') missing 'encoding' key: {result}"
-    assert result.get("encoding") is None, (
-        f"detect(b'') encoding expected None, got {result.get('encoding')!r}"
+    # chardet 5 returned None here; chardet 7 returns a low-confidence 'utf-8'.
+    # The loader's `(detected.get('encoding') or '')` idiom tolerates either, so
+    # the contract is: encoding is None or a str, and the call never raises.
+    enc = result.get("encoding")
+    assert enc is None or isinstance(enc, str), (
+        f"detect(b'') encoding must be None or str, got {enc!r}"
     )
 
 
