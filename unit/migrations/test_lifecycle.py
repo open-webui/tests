@@ -227,15 +227,20 @@ def test_minimum_table_count(open_webui_backend: Path, fresh_db) -> None:
 
 @pytest.mark.regression
 def test_open_webui_config_imports_cleanly(open_webui_backend: Path, fresh_db) -> None:
-    """Full user-facing import path: importing `open_webui.config`
-    must not raise, and CONFIG_DATA must populate. This is the exact
-    path that crashed in urbenlegend's open-webui#24560 report."""
+    """Full user-facing import path: importing `open_webui.config` must not
+    raise. It runs the DB-backed config load at import time — the exact path
+    that crashed in urbenlegend's open-webui#24560 report.
+
+    (Dev reshaped the legacy module-level CONFIG_DATA dict into per-key `config`
+    rows, so the regression check is that the import path completes and the
+    module surface is intact, not that the old dict is present.)"""
     db_url, data_dir = fresh_db
     body = textwrap.dedent("""
         import open_webui.config as c
-        assert isinstance(c.CONFIG_DATA, dict), repr(c.CONFIG_DATA)
-        # STATE.load() ran without raising — that's the regression check.
-        print('CONFIG_OK:', json.dumps(c.CONFIG_DATA))
+        assert c.__name__ == 'open_webui.config'
+        # reaching here means the import + DB-backed config load did not raise
+        assert hasattr(c, 'run_migrations'), 'config module did not fully initialize'
+        print('CONFIG_OK')
     """)
     result = _run_python(open_webui_backend, db_url, data_dir, body)
     _assert_ok(result, "CONFIG_OK", "open_webui.config import")

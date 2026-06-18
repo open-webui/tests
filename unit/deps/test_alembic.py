@@ -42,6 +42,8 @@ engine against SQLite ``:memory:`` (no network, no external DB). Uses the
 from __future__ import annotations
 
 import inspect
+import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -250,11 +252,25 @@ def test_context_proxy_requires_active_environment(depcheck):
     run. env.py is itself executed by alembic inside that run, so its calls
     work; calling them at import-time outside a run raises NameError. Pin that
     contract — it documents *why* these calls live in env.py's run path, and the
-    end-to-end migration tests below exercise them for real."""
+    end-to-end migration tests below exercise them for real.
+
+    Run in a CLEAN subprocess: importing open_webui.config elsewhere in the
+    suite runs alembic in-process (run_migrations) and binds the global context
+    proxy, which would otherwise pollute this assertion."""
     depcheck.load(IMPORT_NAME)
-    context = depcheck.load("alembic.context")
-    with pytest.raises(NameError):
-        context.is_offline_mode()
+    code = (
+        "import alembic.context as c\n"
+        "try:\n"
+        "    c.is_offline_mode()\n"
+        "    print('NO_RAISE')\n"
+        "except NameError:\n"
+        "    print('RAISED_NAMEERROR')\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+    assert "RAISED_NAMEERROR" in out.stdout, (
+        "alembic.context.is_offline_mode() must raise NameError outside a migration "
+        f"run (stdout={out.stdout!r}, stderr={out.stderr[-500:]!r})"
+    )
 
 
 # --------------------------------------------------------------------------- #
