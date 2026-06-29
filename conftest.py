@@ -319,3 +319,72 @@ def user_routes() -> list[tuple[str, str]]:
 def admin_routes() -> list[tuple[str, str]]:
     """Return list of admin-authenticated routes (path, description)."""
     return ADMIN_ROUTES
+
+
+# ============================================================================
+# Skeptic verification layer
+# ----------------------------------------------------------------------------
+# Printed after any FAILING run. Regression guards in this suite can produce
+# FALSE POSITIVES — a test may exercise a behavior through a shortcut that
+# production never uses (e.g. calling a function directly while production
+# routes through a wrapper that coerces/validates first), assert something
+# already fixed/merged, or depend on stale source / an absent service. So a
+# failure is a HYPOTHESIS, not a verdict. This prints the verification an agent
+# (or human) must run before reporting any failure as a real bug.
+# (Born from #25641: a direct-call test wrongly flagged a TypeError that the
+# tool wrapper coerces away — the failure was unreachable in production.)
+# ============================================================================
+
+SKEPTIC_PROMPT = """\
+These failures are HYPOTHESES, not verdicts. Each is a regression guard and may be a
+FALSE POSITIVE. Before reporting ANY of them as a real bug, run the skeptic pass below.
+Default to doubt: assume the issue is already handled until you prove otherwise.
+
+A failure is NOT a real bug if any of these hold — check them:
+  - Layer-handled: the test exercises the behavior through a shortcut production never
+    uses (e.g. it calls a function directly, but production routes through a wrapper that
+    coerces/validates/guards the input first). Trace the REAL call path and list every
+    layer between the entrypoint and the asserted code (wrappers, middleware, schema /
+    pydantic validation, decorators, coercion).
+  - Already fixed: a recent commit addresses it (git log / blame / grep the touched code).
+  - Test artifact: direct-call bypass, cross-test state pollution, or a missing
+    service / instance / env (not a code bug).
+  - Stale assumption: the source moved or was renamed and the test's premise no longer holds.
+
+For EACH failure, produce a verdict WITH evidence:
+  real            -> reproduced THROUGH the real production path  (file:line of the repro)
+  already-handled -> the layer or commit that handles it          (file:line / commit sha)
+  test-artifact   -> why the test's path is unreachable / what service or env it needs
+
+Report ONLY the 'real' survivors as bugs; annotate the rest with their evidence.
+If you cannot reproduce a failure through the real production path, it is NOT real."""
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Append the skeptic-verification instruction whenever tests fail."""
+    tr = terminalreporter
+    failed = tr.stats.get("failed", [])
+    errored = tr.stats.get("error", [])
+
+    if not failed:
+        if errored:
+            tr.write_sep("-", "skeptic note", yellow=True)
+            tr.write_line(
+                f"{len(errored)} setup error(s) and no failures — usually a missing "
+                "service/instance (e.g. e2e needs a running Open WebUI), not a code bug. "
+                "Verify the environment before treating these as real."
+            )
+        return
+
+    tr.write_sep("=", "SKEPTIC VERIFICATION REQUIRED", red=True, bold=True)
+    for line in SKEPTIC_PROMPT.splitlines():
+        tr.write_line(line)
+    tr.write_line("")
+    tr.write_line("Verify each before reporting it as a bug:")
+    for rep in failed:
+        tr.write_line(f"  [ ] {rep.nodeid}")
+    if errored:
+        tr.write_line(
+            f"  (+ {len(errored)} setup error(s) — usually a missing service/instance, not bugs.)"
+        )
+    tr.write_sep("=", "trace the real path; default to doubt", red=True, bold=True)
