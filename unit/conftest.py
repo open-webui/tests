@@ -141,6 +141,21 @@ def automations_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
+def config_model_module(open_webui_backend: Path):
+    """Load `open_webui.models.config` (the per-key Config store)."""
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.models.config", None)
+    try:
+        # Importing open_webui.config runs the alembic migrations (creating the
+        # `config` table), so Config.upsert/get have a schema to hit.
+        importlib.import_module("open_webui.config")
+        return importlib.import_module("open_webui.models.config")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.models.config: {e}")
+
+
+@pytest.fixture(scope="session")
 def builtin_tools_module(open_webui_backend: Path):
     """Load `open_webui.tools.builtin` from the local checkout.
 
