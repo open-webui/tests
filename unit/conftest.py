@@ -117,6 +117,30 @@ def misc_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
+def web_search_main_module(open_webui_backend: Path):
+    """Load `open_webui.retrieval.web.main` (get_filtered_results)."""
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.retrieval.web.main", None)
+    try:
+        return importlib.import_module("open_webui.retrieval.web.main")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.retrieval.web.main: {e}")
+
+
+@pytest.fixture(scope="session")
+def automations_module(open_webui_backend: Path):
+    """Load `open_webui.utils.automations` (_resolve_model_features)."""
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+    sys.modules.pop("open_webui.utils.automations", None)
+    try:
+        return importlib.import_module("open_webui.utils.automations")
+    except Exception as e:
+        pytest.skip(f"Could not import open_webui.utils.automations: {e}")
+
+
+@pytest.fixture(scope="session")
 def builtin_tools_module(open_webui_backend: Path):
     """Load `open_webui.tools.builtin` from the local checkout.
 
