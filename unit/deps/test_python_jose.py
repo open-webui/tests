@@ -515,8 +515,14 @@ def test_not_directly_imported_by_backend(depcheck, open_webui_backend):
             stripped = line.strip()
             if "authlib.jose" in stripped:
                 continue
-            if stripped.startswith("import jose") or stripped.startswith("from jose"):
-                hits.append(f"{path.name}:{lineno}: {stripped}")
+            if stripped.startswith(("import jose", "from jose")):
+                # `jose` must be a complete module token, not just a prefix:
+                # `from joserfc...` (a *different* JOSE library, used by
+                # utils/oauth.py) also starts with "from jose" but is not
+                # python-jose.
+                rest = stripped.split("jose", 1)[1]
+                if rest[:1] in ("", " ", ".", ",", ")"):
+                    hits.append(f"{path.name}:{lineno}: {stripped}")
     assert not hits, (
         "python-jose is now imported directly by the backend; update this "
         f"contract from the real call sites: {hits}"
