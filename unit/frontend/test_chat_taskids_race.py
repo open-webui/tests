@@ -2,19 +2,23 @@
 
 Regression for open-webui/open-webui#25217.
 
-`chatCompletedHandler` (Chat.svelte) ran fire-and-forget and, after
-`await getChatList(...)`, unconditionally did `taskIds = null`. A
+After a chat completed, the task-id reconciliation ran fire-and-forget
+and, after `await getTaskIdsByChatId(...)`, wrote back to `taskIds`. A
 concurrent `sendMessage` that resolved during that await would assign
-fresh task IDs; the handler then resumed and wiped them, so
-`stopResponse()` saw an empty list and the stop-generation button went
+fresh task IDs; the reconciliation then resumed and clobbered them, so
+`stopResponse()` saw the wrong list and the stop-generation button went
 inactive — in-flight title/follow-up/tag tasks could no longer be
 cancelled.
 
-Fix (PR #25687) has TWO interdependent parts:
+The fix moved the reconciliation OUT of `chatCompletedHandler` (which
+is now trivial — it just refreshes the sidebar) and INTO the `loadChat`
+region, where it guards against the race with TWO interdependent parts:
 
-  1. chatCompletedHandler snapshots `const capturedTaskIds = taskIds`
-     before the await and only clears when `taskIds === capturedTaskIds`
-     (nothing was written while it was suspended).
+  1. loadChat snapshots `const activeTaskIds = taskIds` before the
+     await and bails on a reference-inequality check
+     (`await getTaskIdsByChatId(...); if (taskIds !== activeTaskIds)
+     { return; }`) — if anything was written while it was suspended,
+     it leaves those fresh IDs alone.
 
   2. sendMessage writes a NEW array every time
      (`taskIds = [...(taskIds ?? []), ...newTaskIds]`) instead of
@@ -24,8 +28,8 @@ Fix (PR #25687) has TWO interdependent parts:
 
 Either part regressing silently re-opens the race — which is exactly
 why a source audit earns its keep here (a behavioral test of a Svelte
-component would miss the (2) ↔ (1) coupling). The external suite has no
-JS toolchain; same approach as test_workspace_permissions.py.
+component would miss the (2) <-> (1) coupling). The external suite has
+no JS toolchain; same approach as test_workspace_permissions.py.
 """
 
 from __future__ import annotations
@@ -35,12 +39,18 @@ from pathlib import Path
 
 import pytest
 
-_AWAIT = re.compile(r"\bawait\b")
+# `const activeTaskIds = taskIds;` — the pre-await snapshot.
 _SNAPSHOT = re.compile(r"(?:const|let)\s+(\w+)\s*=\s*taskIds\s*;")
-# `if (taskIds === <snap>) { taskIds = null }`
-_GUARDED_CLEAR = re.compile(
-    r"if\s*\(\s*taskIds\s*===\s*\w+\s*\)\s*\{\s*taskIds\s*=\s*null\s*;?\s*\}"
-)
+# `await getTaskIdsByChatId(...)` — the suspension point being guarded.
+_AWAIT_GET_TASK_IDS = re.compile(r"await\s+getTaskIdsByChatId\s*\(")
+
+
+def _guard(snapshot: str) -> re.Pattern[str]:
+    """`if (taskIds !== <snapshot>) { return; }` — the reference-
+    inequality early return that discards a stale reconciliation."""
+    return re.compile(
+        r"if\s*\(\s*taskIds\s*!==\s*" + re.escape(snapshot) + r"\s*\)\s*\{\s*return\s*;?\s*\}"
+    )
 
 
 def _chat_svelte(open_webui_backend: Path) -> Path:
@@ -71,43 +81,50 @@ def _extract_arrow_body(src: str, decl_pattern: str) -> str:
 
 
 # =============================================================================
-# Specific — chatCompletedHandler must guard the clear (#25217)
+# Specific — loadChat must snapshot-and-guard the reconciliation (#25217)
 # =============================================================================
 
 
 @pytest.mark.regression
-def test_chat_completed_handler_guards_taskids_clear(open_webui_backend: Path) -> None:
+def test_loadchat_guards_taskids_reconciliation(open_webui_backend: Path) -> None:
     """Regression for open-webui/open-webui#25217.
 
-    chatCompletedHandler must not unconditionally null taskIds after its
-    await. It has to snapshot taskIds before the await and only clear
-    when the reference is unchanged — otherwise it wipes IDs a
-    concurrent sendMessage registered while it was suspended.
+    The fix moved the taskIds reconciliation into loadChat, which must
+    snapshot taskIds into a local const BEFORE `await
+    getTaskIdsByChatId(...)` and then bail on a reference-inequality
+    check (`if (taskIds !== <snapshot>) { return; }`) before using the
+    result — otherwise it clobbers IDs a concurrent sendMessage
+    registered while it was suspended.
     """
     src = _read(_chat_svelte(open_webui_backend))
-    body = _extract_arrow_body(src, r"const\s+chatCompletedHandler\s*=\s*async[^=]*?=>\s*\{")
+    body = _extract_arrow_body(src, r"const\s+loadChat\s*=\s*async[^=]*?=>\s*\{")
 
-    # (a) a snapshot of taskIds is taken before the first await.
-    snap = _SNAPSHOT.search(body)
-    first_await = _AWAIT.search(body)
-    assert snap and first_await and snap.start() < first_await.start(), (
-        "Regression of #25217: chatCompletedHandler doesn't snapshot taskIds "
-        "before its await. Add `const capturedTaskIds = taskIds;` before "
-        "`await getChatList(...)`."
+    # (a) taskIds is snapshotted into a local const, and (b) that
+    #     snapshot precedes the `await getTaskIdsByChatId(...)` it guards.
+    await_get = _AWAIT_GET_TASK_IDS.search(body)
+    assert await_get, (
+        "Regression of #25217: loadChat no longer awaits getTaskIdsByChatId "
+        "— the reconciliation that must be guarded is gone."
+    )
+    snap = None
+    for candidate in _SNAPSHOT.finditer(body):
+        if candidate.start() < await_get.start():
+            snap = candidate  # last snapshot before the await wins
+    assert snap, (
+        "Regression of #25217: loadChat doesn't snapshot taskIds before its "
+        "`await getTaskIdsByChatId(...)`. Add `const activeTaskIds = taskIds;` "
+        "before the await so the write-back can be reference-compared."
     )
 
-    # (b) the only `taskIds = null` is the guarded one. Strip the guarded
-    #     form; if a bare clear remains, it's the unconditional bug.
-    stripped = _GUARDED_CLEAR.sub("", body)
-    assert "taskIds = null" not in stripped, (
-        "Regression of #25217: chatCompletedHandler clears taskIds "
-        "unconditionally. Guard it with `if (taskIds === <snapshot>) { "
-        "taskIds = null; }` so a concurrent sendMessage's IDs survive."
-    )
-    # (c) ...and that guarded clear actually exists (not merely removed).
-    assert _GUARDED_CLEAR.search(body), (
-        "Regression of #25217: no reference-compared `taskIds = null` guard "
-        "found in chatCompletedHandler."
+    # (c) after the await, a reference-inequality guard on that exact
+    #     snapshot short-circuits before taskIds is reassigned.
+    guard = _guard(snap.group(1))
+    guard_m = guard.search(body)
+    assert guard_m and guard_m.start() > await_get.start(), (
+        "Regression of #25217: loadChat doesn't bail when taskIds changed "
+        f"during the await. Add `if (taskIds !== {snap.group(1)}) {{ return; }}` "
+        "after `await getTaskIdsByChatId(...)` so a concurrent sendMessage's "
+        "fresh IDs survive instead of being clobbered."
     )
 
 
@@ -121,15 +138,14 @@ def test_taskids_is_never_mutated_in_place(open_webui_backend: Path) -> None:
     """The snapshot guard compares taskIds by reference, so every write
     must REPLACE the array, never mutate it. A `taskIds.push(...)`
     anywhere leaves the reference intact and silently defeats the guard
-    in chatCompletedHandler — re-opening #25217 even with the guard in
-    place."""
+    in loadChat — re-opening #25217 even with the guard in place."""
     src = _read(_chat_svelte(open_webui_backend))
     assert "taskIds.push(" not in src, (
         "Regression of #25217: taskIds is mutated in place via "
-        "`taskIds.push(...)`. The chatCompletedHandler snapshot guard "
-        "detects concurrent writes by reference identity; an in-place push "
-        "keeps the same reference and defeats it. Replace with a fresh "
-        "array, e.g. `taskIds = [...(taskIds ?? []), ...newTaskIds]`."
+        "`taskIds.push(...)`. The loadChat snapshot guard detects concurrent "
+        "writes by reference identity; an in-place push keeps the same "
+        "reference and defeats it. Replace with a fresh array, e.g. "
+        "`taskIds = [...(taskIds ?? []), ...newTaskIds]`."
     )
 
 
@@ -137,7 +153,7 @@ def test_taskids_is_never_mutated_in_place(open_webui_backend: Path) -> None:
 def test_sendmessage_registers_task_ids_as_new_array(open_webui_backend: Path) -> None:
     """Corroborating: sendMessage must register the backend's task ids by
     assigning a new array (spread), so the reference changes and the
-    handler guard can see the concurrent write."""
+    loadChat guard can see the concurrent write."""
     src = _read(_chat_svelte(open_webui_backend))
     # A spread assignment to taskIds must exist (the fresh-array write).
     assert re.search(r"taskIds\s*=\s*\[\s*\.\.\.", src), (
