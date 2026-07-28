@@ -187,12 +187,15 @@ def test_build_firecrawl_headers_includes_bearer_token(firecrawl_module) -> None
     assert headers["Content-Type"] == "application/json"
 
 
-def test_build_firecrawl_headers_handles_missing_api_key(firecrawl_module) -> None:
-    """An unset API key shouldn't blow up header construction — the
-    request will be rejected by Firecrawl, but we want to fail at the
-    server, not in our helper."""
-    headers = firecrawl_module.build_firecrawl_headers(None)
-    assert headers["Authorization"] == "Bearer "
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_build_firecrawl_headers_omits_auth_when_api_key_unset(firecrawl_module, api_key) -> None:
+    """An unset API key must omit the Authorization header entirely, not
+    send an empty `Bearer `. Self-hosted Firecrawl deployments that allow
+    unauthenticated access reject the empty credential, so sending it
+    turns a working setup into a 401."""
+    headers = firecrawl_module.build_firecrawl_headers(api_key)
+    assert "Authorization" not in headers
+    assert headers["Content-Type"] == "application/json"
 
 
 # ----- Timeout parsing -------------------------------------------------------

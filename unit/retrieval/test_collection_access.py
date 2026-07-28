@@ -85,13 +85,26 @@ async def test_unsafe_names_always_rejected(retrieval_utils_module, fac, role) -
 
 @pytest.mark.regression
 @pytest.mark.asyncio
-async def test_web_search_collections_always_allowed(retrieval_utils_module, fac) -> None:
-    """open-webui#25585 invariant: ephemeral web-search-* collections are
-    always readable by the requesting non-admin user. The whole web-search
-    feature depends on this being a no-questions-asked allow."""
-    names = {"web-search-e51138a673bc", "web-search-deadbeef"}
-    result = await fac(names, _user())
-    assert result == names
+async def test_web_search_collections_allowed_only_for_their_owner(
+    retrieval_utils_module, fac
+) -> None:
+    """0.11.0 fix #26706 narrowed this. Ephemeral web-search collections used to
+    be a no-questions-asked allow for any non-admin, which let one user read the
+    pages another user's search had fetched. They are now owner-bound as
+    `web-search-<user id>-<query hash>` and readable only by that owner."""
+    owned = {"web-search-u1-e51138a673bc", "web-search-u1-deadbeef"}
+    assert await fac(owned, _user(uid="u1")) == owned
+    assert await fac(owned, _user(uid="u2")) == set(), (
+        "another user reached a web-search collection minted by u1's search (#26706)"
+    )
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_unbound_web_search_collection_denied(retrieval_utils_module, fac) -> None:
+    """The pre-0.11.0 unbound form carries no owner, so it can no longer be
+    admitted at all. Accepting it would re-open the shared-results hole."""
+    assert await fac({"web-search-e51138a673bc"}, _user(uid="u1")) == set()
 
 
 @pytest.mark.regression
@@ -194,13 +207,14 @@ async def test_mixed_batch_partitions_correctly(retrieval_utils_module, fac) -> 
             {
                 "user-memory-u1",
                 "file-7",
-                "web-search-abc",
+                "web-search-u1-abc",
+                "web-search-u2-abc",
                 "user-memory-someone-else",
                 "kbX",
             },
             _user(uid="u1"),
         )
-    assert result == {"user-memory-u1", "file-7", "web-search-abc"}
+    assert result == {"user-memory-u1", "file-7", "web-search-u1-abc"}
 
 
 # =============================================================================
@@ -208,7 +222,7 @@ async def test_mixed_batch_partitions_correctly(retrieval_utils_module, fac) -> 
 # =============================================================================
 
 
-def _web_search_item(collection_name: str = "web-search-e51138a673bc") -> dict:
+def _web_search_item(collection_name: str = "web-search-u1-e51138a673bc") -> dict:
     """Shape produced by chat_web_search_handler when embedding & retrieval
     are enabled (the legacy path)."""
     return {
@@ -293,8 +307,12 @@ async def test_untyped_collection_name_item_allowed_with_bypass(
     retrieval_utils_module,
 ) -> None:
     """The BYPASS_RETRIEVAL_ACCESS_CONTROL escape hatch still works for
-    bare collection_name items (admin-style trust-everything mode)."""
-    item = {"collection_name": "web-search-trusted", "name": "x"}
+    bare collection_name items (admin-style trust-everything mode).
+
+    The flag only governs dispatch: `filter_accessible_collections` still runs
+    afterwards either way, so the name must also be one this user may read. Since
+    #26706 that means web-search names carry the owner id."""
+    item = {"collection_name": "web-search-u1-trusted", "name": "x"}
     with patch.object(retrieval_utils_module, "BYPASS_RETRIEVAL_ACCESS_CONTROL", True):
         sources, qc = await _run_get_sources(retrieval_utils_module, [item], _user())
     qc.assert_awaited_once()

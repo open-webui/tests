@@ -46,10 +46,12 @@ _AWAIT_GET_TASK_IDS = re.compile(r"await\s+getTaskIdsByChatId\s*\(")
 
 
 def _guard(snapshot: str) -> re.Pattern[str]:
-    """`if (taskIds !== <snapshot>) { return; }` — the reference-
-    inequality early return that discards a stale reconciliation."""
+    """`if (taskIds !== <snapshot>) { ... return; }`, the reference-
+    inequality early return that discards a stale reconciliation.
+    `[^{}]*` tolerates plain statements (logging) before the return while
+    still requiring the return to be unconditional."""
     return re.compile(
-        r"if\s*\(\s*taskIds\s*!==\s*" + re.escape(snapshot) + r"\s*\)\s*\{\s*return\s*;?\s*\}"
+        r"if\s*\(\s*taskIds\s*!==\s*" + re.escape(snapshot) + r"\s*\)\s*\{[^{}]*?\breturn\s*;"
     )
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -21,6 +22,15 @@ import pytest
 # these source-level tests import env.py directly, so set a throwaway value
 # before any open_webui import. Respects a real value if the caller set one.
 os.environ.setdefault("WEBUI_SECRET_KEY", "test-secret-key-for-unit-tests")
+
+# Importing open_webui.config creates DATA_DIR and deletes tracked files under
+# STATIC_DIR. Unset, both resolve inside the open-webui checkout itself, so a
+# bare `pytest` run mutates the very source tree under test.
+_SCRATCH = Path(tempfile.gettempdir()) / "owui-unit-tests"
+os.environ.setdefault("DATA_DIR", str(_SCRATCH / "data"))
+os.environ.setdefault("STATIC_DIR", str(_SCRATCH / "static"))
+for _path in (os.environ["DATA_DIR"], os.environ["STATIC_DIR"]):
+    Path(_path).mkdir(parents=True, exist_ok=True)
 
 
 def _resolve_open_webui_backend() -> Path | None:
@@ -145,7 +155,9 @@ def config_model_module(open_webui_backend: Path):
     """Load `open_webui.models.config` (the per-key Config store)."""
     if str(open_webui_backend) not in sys.path:
         sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.models.config", None)
+    # Never evict a module that declares ORM tables: re-executing it re-registers
+    # the table against the same MetaData and raises "Table is already defined"
+    # in whichever unrelated test imports it next.
     try:
         # Importing open_webui.config runs the alembic migrations (creating the
         # `config` table), so Config.upsert/get have a schema to hit.
@@ -153,6 +165,45 @@ def config_model_module(open_webui_backend: Path):
         return importlib.import_module("open_webui.models.config")
     except Exception as e:
         pytest.skip(f"Could not import open_webui.models.config: {e}")
+
+
+@pytest.fixture(scope="session")
+def owui_module(open_webui_backend: Path):
+    """Generic loader: `owui_module("open_webui.routers.folders")`.
+
+    Lets a test pull in whatever backend module it needs without every new
+    target growing its own fixture. Never evicts from sys.modules: re-executing
+    a backend module hands the test a second module object whose globals are not
+    the ones the routers hold, so patches silently miss, and re-executing one
+    that declares ORM tables raises "Table is already defined".
+    """
+    if str(open_webui_backend) not in sys.path:
+        sys.path.insert(0, str(open_webui_backend))
+
+    def _load(dotted_name: str):
+        try:
+            return importlib.import_module(dotted_name)
+        except ModuleNotFoundError as e:
+            # Only a genuinely absent target is an environment problem worth
+            # skipping for. Any other import error is real breakage, and
+            # swallowing it turns a broken backend into a green run.
+            if e.name != dotted_name:
+                raise
+            pytest.skip(f"{dotted_name} not present in this checkout")
+
+    return _load
+
+
+@pytest.fixture(scope="session")
+def terminals_router_module(owui_module):
+    """`open_webui.routers.terminals` (_sanitize_proxy_path)."""
+    return owui_module("open_webui.routers.terminals")
+
+
+@pytest.fixture(scope="session")
+def access_control_module(owui_module):
+    """`open_webui.utils.access_control` (has_base_model_access etc.)."""
+    return owui_module("open_webui.utils.access_control")
 
 
 @pytest.fixture(scope="session")
