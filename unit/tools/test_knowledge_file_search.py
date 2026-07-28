@@ -108,12 +108,7 @@ def kb_exec(owui_module):
             command, __user__=ADMIN_USER, __model_knowledge__=MODEL_KNOWLEDGE
         )
 
-    _run.module = module
     return _run
-
-
-def _reported_line_numbers(output: str) -> list[int]:
-    return [int(line.split(":", 1)[0]) for line in output.split("\n")]
 
 
 # --- narrow ----------------------------------------------------------------
@@ -134,7 +129,7 @@ async def test_alternation_pattern_matches_every_alternative(kb_exec) -> None:
     with knowledge_base(_stored_file("f-notes", "notes.md", NOTES)):
         output = await kb_exec('grep "alpha|omega" notes.md')
 
-    assert _reported_line_numbers(output) == [1, 5], (
+    assert [int(line.split(":", 1)[0]) for line in output.split("\n")] == [1, 5], (
         f'"alpha|omega" must find both alternatives, got {output!r}: a pattern listing '
         "alternatives silently reported the terms as absent (#26781)"
     )
@@ -244,9 +239,8 @@ async def test_cross_file_search_attributes_each_hit_to_its_own_file(kb_exec) ->
     ], f"each hit must carry its own file and line number, got {output!r}"
 
 
-async def test_match_cap_truncates_and_reports_the_true_total(kb_exec) -> None:
-    module = kb_exec.module
-    cap = getattr(module, "KNOWLEDGE_GREP_MAX_MATCHES", None) or module.MAX_GREP_MATCHES
+async def test_match_cap_truncates_and_reports_the_true_total(kb_exec, owui_module) -> None:
+    cap = owui_module("open_webui.tools.knowledge_fs").KNOWLEDGE_GREP_MAX_MATCHES
     total = cap + 10
     content = "\n".join(f"hit {i}" for i in range(total))
 

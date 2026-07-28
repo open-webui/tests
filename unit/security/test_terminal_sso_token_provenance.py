@@ -97,9 +97,10 @@ def run_proxy(terminals_router_module, monkeypatch):
     """Drive the real `proxy_terminal` and hand back the captured outbound request."""
     mod = terminals_router_module
     captured = []
+    auth_type = None
 
     async def fake_config_get(key, default=None):
-        return [_connection(fake_config_get.auth_type)]
+        return [_connection(auth_type)]
 
     async def fake_get_groups(_user_id):
         return []
@@ -114,8 +115,9 @@ def run_proxy(terminals_router_module, monkeypatch):
         mod.aiohttp, "ClientSession", lambda **kwargs: _CapturingSession(captured, **kwargs)
     )
 
-    async def _run(auth_type, request):
-        fake_config_get.auth_type = auth_type
+    async def _run(connection_auth_type, request):
+        nonlocal auth_type
+        auth_type = connection_auth_type
         user = types.SimpleNamespace(id="caller-user-id", role="user")
         response = await mod.proxy_terminal("term-1", "session/start", request, user)
         assert response.status_code == 200, "proxy did not reach the upstream request"

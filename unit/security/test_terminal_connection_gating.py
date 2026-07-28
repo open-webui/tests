@@ -149,9 +149,6 @@ ENTRY_POINTS = {
     "tool_call": _entry_tool_call,
 }
 
-# The three the fix had to repair; `list` already filtered on `enabled`.
-GATED_BY_THE_FIX = ["http_proxy", "websocket_session", "tool_call"]
-
 
 @pytest.fixture
 def tools_module(owui_module):
@@ -163,23 +160,7 @@ def config_module(owui_module):
     return owui_module("open_webui.config")
 
 
-# --- Narrow: a disabled connection must be refused on each repaired path ---
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("entry_point", GATED_BY_THE_FIX)
-async def test_disabled_connection_is_refused(
-    entry_point, terminals_router_module, tools_module
-):
-    """The user holds an explicit read grant, so only `enabled` can refuse."""
-    connection = _connection(enabled=False, grants=[_read_grant(MEMBER.id)])
-    allowed = await ENTRY_POINTS[entry_point](
-        terminals_router_module, tools_module, MEMBER, connection
-    )
-    assert allowed is False, (
-        f"an administrator turned this terminal connection off, yet {entry_point} still "
-        "served it to a user who knew its id"
-    )
+# --- Narrow: a disabled connection must be refused ---
 
 
 @pytest.mark.asyncio

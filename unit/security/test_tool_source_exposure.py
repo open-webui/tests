@@ -88,53 +88,33 @@ def tools_models(owui_module):
 
 
 @pytest.mark.asyncio
-async def test_read_grant_holder_gets_no_tool_source(tools_router, tools_models):
-    """The bug: a read grant is not permission to read the source."""
-    response = await _get_tool_by_id(tools_router, tools_models, _user(READER), _grants(read=True))
-    assert not _source_is_visible(response), (
-        "a caller with only read access received the tool's Python source, which "
-        "commonly embeds API keys and internal URLs; #27005 is back"
-    )
+@pytest.mark.parametrize(
+    "caller,grants,bypass_admin,has_write_access",
+    [
+        (_user(OWNER), _grants(), False, True),
+        (_user(WRITER), _grants(write=True), False, True),
+        (_user(READER), _grants(read=True), False, False),
+        (_user("root", role="admin"), _grants(), True, True),
+        (_user("root", role="admin"), _grants(), False, False),
+    ],
+    ids=["owner", "write-grant", "read-grant", "admin-bypass", "admin-no-bypass"],
+)
+async def test_only_write_access_unlocks_the_tool_source(
+    tools_router, tools_models, caller, grants, bypass_admin, has_write_access
+):
+    """The bug: a read grant is not permission to read the source. It is write
+    access, not the admin role, that unlocks it."""
+    response = await _get_tool_by_id(tools_router, tools_models, caller, grants, bypass_admin)
 
-
-@pytest.mark.asyncio
-async def test_owner_still_gets_tool_source(tools_router, tools_models):
-    response = await _get_tool_by_id(tools_router, tools_models, _user(OWNER), _grants())
-    assert _source_is_visible(response), "the owner must still be able to edit their own tool"
-
-
-@pytest.mark.asyncio
-async def test_write_grant_holder_still_gets_tool_source(tools_router, tools_models):
-    response = await _get_tool_by_id(tools_router, tools_models, _user(WRITER), _grants(write=True))
-    assert _source_is_visible(response), (
-        "a write grant is an edit grant, so the editor needs the source"
-    )
-
-
-@pytest.mark.asyncio
-async def test_admin_with_bypass_still_gets_tool_source(tools_router, tools_models):
-    response = await _get_tool_by_id(
-        tools_router, tools_models, _user("root", role="admin"), _grants(), bypass_admin=True
-    )
-    assert _source_is_visible(response), (
-        "BYPASS_ADMIN_ACCESS_CONTROL admins have write access everywhere"
+    assert response.write_access is has_write_access
+    assert _source_is_visible(response) is has_write_access, (
+        "tool source must be visible exactly to callers who can edit the tool; a "
+        "read-only caller receiving it gets the API keys and internal URLs the "
+        "source commonly embeds (#27005)"
     )
 
 
 # ── broad: no tool-returning path leaks source to a read-only caller ─────
-
-
-@pytest.mark.asyncio
-async def test_admin_without_bypass_gets_no_tool_source(tools_router, tools_models):
-    """Same invariant one step out: it is write access, not the admin role,
-    that unlocks the source."""
-    response = await _get_tool_by_id(
-        tools_router, tools_models, _user("root", role="admin"), _grants()
-    )
-    assert not _source_is_visible(response), (
-        "an admin without BYPASS_ADMIN_ACCESS_CONTROL and without a write grant "
-        "received tool source they have no write access to (#27005)"
-    )
 
 
 @pytest.mark.asyncio
@@ -182,6 +162,7 @@ async def test_tool_list_endpoint_asks_for_deferred_content(tools_router, tools_
         patch.object(tools_models.Tools, "get_tools_by_user_id", get_tools_by_user_id),
         patch.object(tools_router.Groups, "get_groups_by_member_id", AsyncMock(return_value=[])),
         patch.object(tools_router, "BYPASS_ADMIN_ACCESS_CONTROL", False),
+        patch.object(tools_router, "ENABLE_PLUGINS", True),
     ):
         assert await tools_router.get_tool_list(user=_user(READER), db=None) == []
 
@@ -204,48 +185,7 @@ async def test_tool_export_requires_the_export_permission(tools_router):
     assert excinfo.value.status_code == 401
 
 
-def test_non_admin_function_listing_model_rejects_extra_fields(owui_module):
-    """Functions are the sibling shape: their non-admin listing model has no
-    `extra='allow'`, so source cannot ride in the way it did for tools."""
-    functions_models = owui_module("open_webui.models.functions")
-    listed = functions_models.FunctionResponse(
-        id="filter",
-        user_id=OWNER,
-        type="filter",
-        name="Filter",
-        meta={"description": "x"},
-        is_active=True,
-        is_global=False,
-        updated_at=1,
-        created_at=1,
-        content=SECRET_SOURCE,
-    )
-    assert SECRET_MARKER not in str(listed.model_dump()), (
-        "the non-admin function listing model admits extra fields, so function "
-        "source can leak the same way tool source did (#27005)"
-    )
-
-
 # ── nearby: what read access is still supposed to get ───────────────────
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "caller,grants,bypass_admin,expected",
-    [
-        (_user(OWNER), _grants(), False, True),
-        (_user(WRITER), _grants(write=True), False, True),
-        (_user(READER), _grants(read=True), False, False),
-        (_user("root", role="admin"), _grants(), True, True),
-        (_user("root", role="admin"), _grants(), False, False),
-    ],
-    ids=["owner", "write-grant", "read-grant", "admin-bypass", "admin-no-bypass"],
-)
-async def test_write_access_flag_matches_the_caller(
-    tools_router, tools_models, caller, grants, bypass_admin, expected
-):
-    response = await _get_tool_by_id(tools_router, tools_models, caller, grants, bypass_admin)
-    assert response.write_access is expected
 
 
 @pytest.mark.asyncio

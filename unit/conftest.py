@@ -94,80 +94,6 @@ def _install_langchain_document_stub() -> None:
 
 
 @pytest.fixture(scope="session")
-def firecrawl_module(open_webui_backend: Path):
-    """Load `open_webui.retrieval.web.firecrawl` from the local checkout.
-
-    Session-scoped: each test patches its own targets within a `with`
-    block, so the module object can be safely shared.
-    """
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    _install_langchain_document_stub()
-    sys.modules.pop("open_webui.retrieval.web.firecrawl", None)
-    try:
-        return importlib.import_module("open_webui.retrieval.web.firecrawl")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.retrieval.web.firecrawl: {e}")
-
-
-@pytest.fixture(scope="session")
-def misc_module(open_webui_backend: Path):
-    """Load `open_webui.utils.misc` from the local checkout.
-
-    Lightweight: only pulls aiohttp, mimeparse, and open_webui.env —
-    all present in the openwebui-venv. Skip if anything's missing.
-    """
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.utils.misc", None)
-    try:
-        return importlib.import_module("open_webui.utils.misc")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.utils.misc: {e}")
-
-
-@pytest.fixture(scope="session")
-def web_search_main_module(open_webui_backend: Path):
-    """Load `open_webui.retrieval.web.main` (get_filtered_results)."""
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.retrieval.web.main", None)
-    try:
-        return importlib.import_module("open_webui.retrieval.web.main")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.retrieval.web.main: {e}")
-
-
-@pytest.fixture(scope="session")
-def automations_module(open_webui_backend: Path):
-    """Load `open_webui.utils.automations` (_resolve_model_features)."""
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.utils.automations", None)
-    try:
-        return importlib.import_module("open_webui.utils.automations")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.utils.automations: {e}")
-
-
-@pytest.fixture(scope="session")
-def config_model_module(open_webui_backend: Path):
-    """Load `open_webui.models.config` (the per-key Config store)."""
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    # Never evict a module that declares ORM tables: re-executing it re-registers
-    # the table against the same MetaData and raises "Table is already defined"
-    # in whichever unrelated test imports it next.
-    try:
-        # Importing open_webui.config runs the alembic migrations (creating the
-        # `config` table), so Config.upsert/get have a schema to hit.
-        importlib.import_module("open_webui.config")
-        return importlib.import_module("open_webui.models.config")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.models.config: {e}")
-
-
-@pytest.fixture(scope="session")
 def owui_module(open_webui_backend: Path):
     """Generic loader: `owui_module("open_webui.routers.folders")`.
 
@@ -207,51 +133,73 @@ def access_control_module(owui_module):
 
 
 @pytest.fixture(scope="session")
-def builtin_tools_module(open_webui_backend: Path):
-    """Load `open_webui.tools.builtin` from the local checkout.
+def firecrawl_module(owui_module):
+    """`open_webui.retrieval.web.firecrawl`.
+
+    Session-scoped: each test patches its own targets within a `with`
+    block, so the module object can be safely shared.
+    """
+    _install_langchain_document_stub()
+    return owui_module("open_webui.retrieval.web.firecrawl")
+
+
+@pytest.fixture(scope="session")
+def misc_module(owui_module):
+    """`open_webui.utils.misc`.
+
+    Lightweight: only pulls aiohttp, mimeparse, and open_webui.env —
+    all present in the openwebui-venv.
+    """
+    return owui_module("open_webui.utils.misc")
+
+
+@pytest.fixture(scope="session")
+def web_search_main_module(owui_module):
+    """`open_webui.retrieval.web.main` (get_filtered_results)."""
+    return owui_module("open_webui.retrieval.web.main")
+
+
+@pytest.fixture(scope="session")
+def automations_module(owui_module):
+    """`open_webui.utils.automations` (_resolve_model_features)."""
+    return owui_module("open_webui.utils.automations")
+
+
+@pytest.fixture(scope="session")
+def config_model_module(owui_module):
+    """`open_webui.models.config` (the per-key Config store)."""
+    # Importing open_webui.config runs the alembic migrations (creating the
+    # `config` table), so Config.upsert/get have a schema to hit.
+    owui_module("open_webui.config")
+    return owui_module("open_webui.models.config")
+
+
+@pytest.fixture(scope="session")
+def builtin_tools_module(owui_module):
+    """`open_webui.tools.builtin`.
 
     Pulls the open_webui model layer (Notes/Chats/Knowledges/calendar)
-    and triggers alembic setup on first load. Skip if unavailable.
+    and triggers alembic setup on first load.
     """
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.tools.builtin", None)
-    try:
-        return importlib.import_module("open_webui.tools.builtin")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.tools.builtin: {e}")
+    return owui_module("open_webui.tools.builtin")
 
 
 @pytest.fixture(scope="session")
-def retrieval_utils_module(open_webui_backend: Path):
-    """Load `open_webui.retrieval.utils` from the local checkout.
+def retrieval_utils_module(owui_module):
+    """`open_webui.retrieval.utils`.
 
     Heavy: pulls langchain, huggingface_hub, the vector-DB clients, the
-    whole open_webui model layer, and triggers alembic setup on first
-    load. The openwebui-venv has everything; skip if anything's missing.
+    whole open_webui model layer, and triggers alembic setup on first load.
     """
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.retrieval.utils", None)
-    try:
-        return importlib.import_module("open_webui.retrieval.utils")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.retrieval.utils: {e}")
+    return owui_module("open_webui.retrieval.utils")
 
 
 @pytest.fixture(scope="session")
-def retrieval_web_utils_module(open_webui_backend: Path):
-    """Load `open_webui.retrieval.web.utils` from the local checkout.
+def retrieval_web_utils_module(owui_module):
+    """`open_webui.retrieval.web.utils`.
 
     Heavier than firecrawl — pulls in langchain_community, aiohttp,
     fastapi, the whole open_webui.config tree, and triggers alembic
-    migration setup on first load. The openwebui-venv has everything;
-    we skip if anything's missing.
+    migration setup on first load.
     """
-    if str(open_webui_backend) not in sys.path:
-        sys.path.insert(0, str(open_webui_backend))
-    sys.modules.pop("open_webui.retrieval.web.utils", None)
-    try:
-        return importlib.import_module("open_webui.retrieval.web.utils")
-    except Exception as e:
-        pytest.skip(f"Could not import open_webui.retrieval.web.utils: {e}")
+    return owui_module("open_webui.retrieval.web.utils")

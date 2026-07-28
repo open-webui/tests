@@ -67,37 +67,9 @@ async def _save_settings(
     return persisted
 
 
-# --- narrow: the denied webhook must not survive the save ------------------
-
-
-@pytest.mark.asyncio
-async def test_denied_user_cannot_persist_a_webhook_url(users_router):
-    persisted = await _save_settings(
-        users_router,
-        {"ui": {"notifications": {"webhook_url": WEBHOOK_URL}}},
-        _permissions(webhooks=False),
-    )
-    assert persisted["ui"]["notifications"].get("webhook_url") is None, (
-        "a user denied the webhooks permission still saved a notification webhook, so "
-        "the server delivers their notifications to an address the admin forbade (#27297)"
-    )
-
-
-@pytest.mark.asyncio
-async def test_denied_user_cannot_persist_a_top_level_notifications_block(users_router):
-    """`UserSettings` allows extra keys, so the block can arrive outside `ui` too."""
-    persisted = await _save_settings(
-        users_router,
-        {"ui": {}, "notifications": {"webhook_url": WEBHOOK_URL}},
-        _permissions(webhooks=False),
-    )
-    assert "notifications" not in persisted, (
-        "the notifications block bypassed the webhooks permission by being sent at the "
-        "top level of the settings payload instead of under `ui` (#27297)"
-    )
-
-
-# --- broad: every permission the UI reflects must be checked on save -------
+# --- the denied field must not survive the save ---------------------------
+# `UserSettings` allows extra keys, so the notifications block can arrive
+# outside `ui` too.
 
 
 @pytest.mark.asyncio

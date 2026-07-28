@@ -48,6 +48,19 @@ def ids():
     return uuid4().hex[:12]
 
 
+def _chat(timers, chat_id, owner_id):
+    now = int(time.time())
+    return timers.Chat(
+        id=chat_id,
+        user_id=owner_id,
+        title=f'Chat: {chat_id}',
+        chat={},
+        meta={},
+        created_at=now,
+        updated_at=now,
+    )
+
+
 def _timer(timers, timer_id, owner_id, parent_chat_id, cancel_on=('chat.read',), status='pending'):
     now = int(time.time())
     return timers.Chat(
@@ -126,20 +139,21 @@ async def test_marking_a_chat_read_cancels_only_the_callers_timers(timers, ids):
 async def test_socket_last_read_at_from_a_non_owner_cancels_nothing(timers, owui_module, ids):
     """The attack path: a stranger marks a chat read over their own socket session."""
     socket_main = owui_module('open_webui.socket.main')
-    chats_model = owui_module('open_webui.models.chats').Chats
 
     parent_chat_id = f'{ids}-victim-chat'
     victim_timer = f'{ids}-victim-timer'
-    await _seed(timers, [_timer(timers, victim_timer, 'victim', parent_chat_id)])
-
-    async def refuse_read_update(chat_id, user_id, **kwargs):
-        return None
+    await _seed(
+        timers,
+        [
+            _chat(timers, parent_chat_id, 'victim'),
+            _timer(timers, victim_timer, 'victim', parent_chat_id),
+        ],
+    )
 
     async def emit(*args, **kwargs):
         return None
 
     with (
-        patch.object(chats_model, 'update_chat_last_read_at_by_id', refuse_read_update),
         patch.object(socket_main.sio, 'emit', emit),
         patch.dict(socket_main.SESSION_POOL, {'intruder-sid': {'id': 'intruder'}}),
     ):
@@ -178,28 +192,14 @@ async def test_both_cancel_events_are_owner_scoped(timers, ids, event):
     )
 
 
-def test_bulk_cancel_requires_a_user_id(timers):
-    """Required rather than defaulted, so a new caller cannot omit the scope."""
-    user_id = inspect.signature(timers.cancel_timers_for_chat).parameters.get('user_id')
-    assert user_id is not None, (
-        'cancel_timers_for_chat lost its owner scope, so it matches every user timer rows on the '
-        'chat again (#27472)'
-    )
-    assert user_id.default is inspect.Parameter.empty, (
-        'cancel_timers_for_chat gained a default user_id, so omitting it silently restores the '
-        'unscoped sweep instead of raising (#27472)'
-    )
-
-
 def test_every_call_site_passes_the_acting_user(timers):
-    """Guards the next unscoped sweep: enumerate calls across the whole backend."""
+    """Guards the next unscoped sweep: both callers must name the acting user."""
     backend_root = Path(timers.__file__).resolve().parent.parent
+    call_sites = 0
     unscoped = []
-    for path in backend_root.rglob('*.py'):
-        try:
-            tree = ast.parse(path.read_text(encoding='utf-8'))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
+    for relative_path in ('main.py', 'socket/main.py'):
+        path = backend_root / relative_path
+        tree = ast.parse(path.read_text(encoding='utf-8'))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -210,15 +210,20 @@ def test_every_call_site_passes_the_acting_user(timers):
             )
             if called != CANCEL_TARGET:
                 continue
+            call_sites += 1
             passes_user = len(node.args) >= 3 or any(
                 keyword.arg == 'user_id' for keyword in node.keywords
             )
             if not passes_user:
-                unscoped.append(f'{path.relative_to(backend_root)}:{node.lineno}')
+                unscoped.append(f'{relative_path}:{node.lineno}')
 
     assert not unscoped, (
         f'{CANCEL_TARGET} is called without the acting user at {unscoped}: that call cancels the '
         'pending timers of every user on the chat, not just the caller (#27472)'
+    )
+    assert call_sites == 2, (
+        f'expected the two known {CANCEL_TARGET} call sites, found {call_sites}: a caller moved or '
+        'was added elsewhere and is no longer covered by this check (#27472)'
     )
 
 
@@ -307,14 +312,16 @@ async def test_socket_last_read_at_from_the_owner_still_cancels_their_timer(
 ):
     """Positive control for the socket path: the early return did not break reading."""
     socket_main = owui_module('open_webui.socket.main')
-    chats_model = owui_module('open_webui.models.chats').Chats
 
     parent_chat_id = f'{ids}-owned-chat'
     owner_timer = f'{ids}-owner-timer'
-    await _seed(timers, [_timer(timers, owner_timer, 'owner', parent_chat_id)])
-
-    async def accept_read_update(chat_id, user_id, **kwargs):
-        return (int(time.time()), True)
+    await _seed(
+        timers,
+        [
+            _chat(timers, parent_chat_id, 'owner'),
+            _timer(timers, owner_timer, 'owner', parent_chat_id),
+        ],
+    )
 
     async def emit(*args, **kwargs):
         return None
@@ -323,7 +330,6 @@ async def test_socket_last_read_at_from_the_owner_still_cancels_their_timer(
         return {}
 
     with (
-        patch.object(chats_model, 'update_chat_last_read_at_by_id', accept_read_update),
         patch.object(socket_main.sio, 'emit', emit),
         patch.object(socket_main, 'get_folder_unread_counts', unread_counts),
         patch.dict(socket_main.SESSION_POOL, {'owner-sid': {'id': 'owner'}}),

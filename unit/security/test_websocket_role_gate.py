@@ -15,7 +15,6 @@ Discriminates: passes on v0.11.0, fails on v0.10.2 (a `pending` token still
 authenticates on both WebSocket entry points).
 """
 
-import inspect
 import json
 import time
 from datetime import timedelta
@@ -183,43 +182,60 @@ async def test_terminal_websocket_rejects_pending_role(
 # --- broad: no entry point may reimplement the token dance -----------------
 
 
-def _entry_point_sources(socket_module, terminals_module):
-    return {
-        "socket.connect": socket_module.connect,
-        "socket.user_join": socket_module.user_join,
-        "socket.join_channel": socket_module.join_channel,
-        "socket.join_note": socket_module.join_note,
-        "terminals._resolve_authenticated_connection": (
-            terminals_module._resolve_authenticated_connection
-        ),
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler_name", ["user_join", "join_channel", "join_note"]
+)
+async def test_every_socket_join_handler_rejects_pending_role(
+    auth_module, users_module, socket_module, handler_name
+):
+    """The other join handlers re-authenticate per event and must gate the same way."""
+    mod = socket_module
+    session_pool = {}
+    sio_stub = SimpleNamespace(
+        get_environ=lambda sid: {},
+        save_session=AsyncMock(),
+        enter_room=AsyncMock(),
+    )
+    data = {
+        "auth": {"token": auth_module.create_token({"id": "alice"})},
+        "note_id": "note-1",
+        "channel_id": "channel-1",
     }
 
+    # Everything downstream of the gate is made permissive, so a handler that let the
+    # pending user through would reach `enter_room` and the assertions would catch it.
+    with (
+        _patch_user_row(users_module, _user(users_module, "pending")),
+        patch.object(mod, "SESSION_POOL", session_pool),
+        patch.object(mod, "sio", sio_stub),
+        patch.object(mod, "has_permission", AsyncMock(return_value=True)),
+        patch.object(
+            mod,
+            "Channels",
+            SimpleNamespace(
+                get_channels_by_user_id=AsyncMock(
+                    return_value=[SimpleNamespace(id="channel-1")]
+                )
+            ),
+        ),
+        patch.object(
+            mod,
+            "Notes",
+            SimpleNamespace(
+                get_note_by_id=AsyncMock(
+                    return_value=SimpleNamespace(id="note-1", user_id="alice")
+                )
+            ),
+        ),
+    ):
+        await getattr(mod, handler_name)("sid-1", data)
 
-@pytest.mark.parametrize(
-    "handler_name",
-    [
-        "socket.connect",
-        "socket.user_join",
-        "socket.join_channel",
-        "socket.join_note",
-        "terminals._resolve_authenticated_connection",
-    ],
-)
-def test_every_websocket_entry_point_uses_the_shared_gate(
-    socket_module, terminals_module, handler_name
-):
-    """A third entry point that re-decodes the token would fail open again."""
-    source = inspect.getsource(
-        _entry_point_sources(socket_module, terminals_module)[handler_name]
+    assert session_pool == {}, (
+        f"{handler_name} pooled a session for a deactivated account, so demoting the "
+        "user left it live access to channels and shared notes (#27537)"
     )
-    assert "get_verified_user_by_token" in source, (
-        f"{handler_name} authenticates outside the shared verified-user gate, so a "
-        "role change does not reach it (#27537)"
-    )
-    assert "decode_token" not in source and "is_valid_token" not in source, (
-        f"{handler_name} still decodes the token itself, which is how the role check "
-        "was missed in the first place (#27537)"
-    )
+    sio_stub.enter_room.assert_not_awaited()
 
 
 @pytest.mark.asyncio

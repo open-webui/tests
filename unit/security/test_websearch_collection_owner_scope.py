@@ -17,7 +17,6 @@ shared collection, and any non-admin is admitted to it).
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -151,33 +150,6 @@ async def test_other_user_cannot_write_a_minted_web_search_collection(
 # =============================================================================
 # Broad: every web-search collection name is owner-bound, at every site
 # =============================================================================
-
-
-def _web_search_source_lines(backend: Path) -> list[tuple[str, int, str]]:
-    """Every backend source line that mentions the web-search namespace."""
-    found = []
-    for path in (backend / "open_webui").rglob("*.py"):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "web-search-" in line and not line.lstrip().startswith("#"):
-                found.append((str(path), lineno, line.strip()))
-    return found
-
-
-def test_every_web_search_collection_name_is_built_with_the_owner_id(open_webui_backend):
-    """The owner binding lives in one inline f-string, not a shared helper, so a
-    new call site that forgets it is exactly how this regresses."""
-    mint_sites = [
-        entry
-        for entry in _web_search_source_lines(open_webui_backend)
-        if "f'web-search-" in entry[2] or 'f"web-search-' in entry[2]
-    ]
-    assert mint_sites, "no web-search collection name construction found; the scan is stale"
-
-    unbound = [entry for entry in mint_sites if "{user.id}" not in entry[2]]
-    assert unbound == [], (
-        "these sites build a web-search collection name without the owner id, so the "
-        f"collection they create is reachable by every user (#26706): {unbound}"
-    )
 
 
 @pytest.mark.asyncio

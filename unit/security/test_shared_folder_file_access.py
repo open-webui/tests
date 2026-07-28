@@ -123,13 +123,12 @@ def _backend_world(files: dict[str, SimpleNamespace], readable_collections=()):
     ]
     with ExitStack() as stack:
         for target, attribute, stub in stubs:
-            if hasattr(target, attribute):
-                stack.enter_context(patch.object(target, attribute, stub))
+            stack.enter_context(patch.object(target, attribute, stub))
         yield
 
 
 @contextmanager
-def _folders_router(folders_module, folder: SimpleNamespace, actor_has_write: bool = True):
+def _folders_router(folders_module, folder: SimpleNamespace):
     """Patch the folders router's own collaborators and hand back the two write
     mocks, so a test can assert nothing was persisted."""
     import open_webui.models.folders as folders_model_module
@@ -140,9 +139,7 @@ def _folders_router(folders_module, folder: SimpleNamespace, actor_has_write: bo
         stack.enter_context(patch.object(folders_module, "check_folders_permission", AsyncMock()))
         stack.enter_context(patch.object(folders_module, "publish_event", AsyncMock()))
         stack.enter_context(
-            patch.object(
-                folders_module, "_has_folder_access", AsyncMock(return_value=actor_has_write)
-            )
+            patch.object(folders_module, "_has_folder_access", AsyncMock(return_value=True))
         )
         stack.enter_context(
             patch.object(
@@ -219,10 +216,9 @@ def _retrieval_world(retrieval_module, folder: SimpleNamespace, files: dict[str,
                 folders_model_module.Folders, "get_folder_by_id", AsyncMock(return_value=folder)
             )
         )
-        if hasattr(retrieval_module, "has_folder_access"):
-            stack.enter_context(
-                patch.object(retrieval_module, "has_folder_access", AsyncMock(return_value=True))
-            )
+        stack.enter_context(
+            patch.object(retrieval_module, "has_folder_access", AsyncMock(return_value=True))
+        )
         yield
 
 

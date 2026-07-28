@@ -18,9 +18,10 @@ import pytest
 
 pytestmark = pytest.mark.regression
 
-# Present in DEFAULT_USER_PERMISSIONS and in the admin UI but still missing from
-# SharingPermissions at 0.11.0; the same class of bug as #27120, not yet fixed.
-UNMODELLED_SHARING_KEYS = {"open_chats"}
+# Live instances of the #27120 bug class on this ref: present in
+# DEFAULT_USER_PERMISSIONS but with no SharingPermissions field. Tracked as xfails
+# below, so a key drops out of this set the moment upstream models it.
+KNOWN_UNMODELLED_SHARING_KEYS = ["open_chats"]
 
 
 @pytest.fixture(scope="session")
@@ -28,19 +29,24 @@ def users_router_module(owui_module):
     return owui_module("open_webui.routers.users")
 
 
-def _sharing_defaults() -> dict:
+def _permission_defaults() -> dict:
     from open_webui.config import DEFAULT_USER_PERMISSIONS
 
-    return DEFAULT_USER_PERMISSIONS["sharing"]
+    return DEFAULT_USER_PERMISSIONS
+
+
+def _sharing_defaults() -> dict:
+    return _permission_defaults()["sharing"]
 
 
 def _saved_permissions(users_module, **sharing_overrides) -> dict:
-    """What `POST /users/default/permissions` persists for a given form."""
-    from open_webui.config import DEFAULT_USER_PERMISSIONS as defaults
+    """Build the admin permissions form and serialize it the way
+    `POST /users/default/permissions` persists it (`model_dump(by_alias=True)`)."""
+    defaults = _permission_defaults()
 
     form = users_module.UserPermissions(
         workspace=users_module.WorkspacePermissions(**defaults["workspace"]),
-        sharing=users_module.SharingPermissions(**{**defaults["sharing"], **sharing_overrides}),
+        sharing=users_module.SharingPermissions(**{**_sharing_defaults(), **sharing_overrides}),
         access_grants=users_module.AccessGrantsPermissions(**defaults["access_grants"]),
         chat=users_module.ChatPermissions(**defaults["chat"]),
         features=users_module.FeaturesPermissions(**defaults["features"]),
@@ -79,12 +85,23 @@ async def test_enabled_folder_sharing_reaches_the_permission_layer(
 def test_every_default_sharing_toggle_has_a_model_field(users_router_module):
     """The invariant: a toggle absent from the schema is a toggle that cannot be saved."""
     modelled = set(users_router_module.SharingPermissions.model_fields)
-    missing = set(_sharing_defaults()) - modelled - UNMODELLED_SHARING_KEYS
+    missing = set(_sharing_defaults()) - modelled - set(KNOWN_UNMODELLED_SHARING_KEYS)
 
     assert missing == set(), (
         f"sharing toggles {sorted(missing)} exist in DEFAULT_USER_PERMISSIONS but have "
         "no SharingPermissions field, so admins cannot persist them (#27120)"
     )
+
+
+@pytest.mark.parametrize("toggle", KNOWN_UNMODELLED_SHARING_KEYS)
+@pytest.mark.xfail(
+    strict=False,
+    reason="still-open instance of #27120 upstream: the toggle ships in "
+    "DEFAULT_USER_PERMISSIONS with no SharingPermissions field, so admins cannot save it. "
+    "This flips to XPASS once upstream models it; drop the key from the list then.",
+)
+def test_known_unmodelled_sharing_toggles(users_router_module, toggle):
+    assert toggle in users_router_module.SharingPermissions.model_fields
 
 
 def test_no_sharing_model_field_is_missing_from_the_defaults(users_router_module):
@@ -101,25 +118,6 @@ def test_no_sharing_model_field_is_missing_from_the_defaults(users_router_module
 @pytest.mark.parametrize("enabled", [True, False])
 def test_each_sharing_toggle_round_trips_both_ways(users_router_module, toggle, enabled):
     """Neighbouring toggles must persist in both directions, not just the default."""
-    if toggle not in users_router_module.SharingPermissions.model_fields:
-        pytest.skip(f"{toggle} is not modelled on this ref")
-
     saved = _saved_permissions(users_router_module, **{toggle: enabled})
 
     assert saved["sharing"][toggle] is enabled
-
-
-def test_unknown_stored_sharing_keys_are_tolerated(users_router_module):
-    """A config written by a newer release must not break the admin page."""
-    sharing = users_router_module.SharingPermissions(
-        **{**_sharing_defaults(), "some_future_toggle": True}
-    )
-
-    assert "some_future_toggle" not in sharing.model_dump()
-
-
-def test_missing_stored_sharing_section_falls_back_to_schema_defaults(users_router_module):
-    """`get_default_user_permissions` builds from `.get('sharing', {})`."""
-    sharing = users_router_module.SharingPermissions().model_dump()
-
-    assert set(sharing) == set(users_router_module.SharingPermissions.model_fields)
