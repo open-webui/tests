@@ -9,7 +9,9 @@ This module provides pytest fixtures for:
 """
 
 import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Generator
 
 import httpx
@@ -19,6 +21,29 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 
 # Load environment variables
 load_dotenv()
+
+# The venv ships a .pth that puts a fixed open-webui checkout on sys.path at
+# interpreter startup. It otherwise wins over OPEN_WEBUI_SOURCE_DIR, and once
+# anything imports open_webui the package __path__ is pinned, so submodule
+# lookups follow that __path__ and no later sys.path edit can redirect them.
+# This runs in the root conftest because pytest imports it before any test
+# module, which is the last point where the ordering can still be corrected.
+_source_dir = os.getenv("OPEN_WEBUI_SOURCE_DIR")
+if _source_dir:
+    _target = Path(_source_dir).expanduser().resolve()
+    if "open_webui" in sys.modules:
+        raise RuntimeError(
+            "open_webui was imported before conftest could point it at "
+            f"{_target}; the suite would silently test a different checkout."
+        )
+    sys.path[:] = [
+        entry
+        for entry in sys.path
+        if not (
+            entry and (Path(entry) / "open_webui").is_dir() and Path(entry).resolve() != _target
+        )
+    ]
+    sys.path.insert(0, str(_target))
 
 
 @dataclass
