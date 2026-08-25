@@ -18,8 +18,9 @@ open-webui 0.11.0 fix `56183fcb1` (PR #27464). Two halves:
 Only the DB boundary is mocked: in this world a file is readable exactly by the
 user who owns it, so the real `has_access_to_file` decides every case.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (attach checked against the
-caller, folder items never re-checked against the owner).
+Discriminates: passes on v0.11.1, fails whenever the attach is checked against the
+caller and folder items are never re-checked against the owner (v0.10.2 shape).
+Stubs track the 0.11.1 model/knowledge accessors.
 """
 
 from contextlib import ExitStack, contextmanager
@@ -97,14 +98,11 @@ def _backend_world(files: dict[str, SimpleNamespace], readable_collections=()):
         (knowledge_module.Knowledges, "get_knowledge_by_id", AsyncMock(return_value=None)),
         (
             knowledge_module.Knowledges,
-            "get_knowledge_bases_by_user_id",
-            AsyncMock(return_value=[]),
-        ),
-        (
-            knowledge_module.Knowledges,
             "check_access_by_user_id",
             AsyncMock(
-                side_effect=lambda id, user_id, permission, db=None: (id, user_id) in grants
+                side_effect=lambda id, user_id, permission, db=None, user_group_ids=None: (
+                    (id, user_id) in grants
+                )
             ),
         ),
         (
@@ -113,7 +111,7 @@ def _backend_world(files: dict[str, SimpleNamespace], readable_collections=()):
             AsyncMock(return_value=[]),
         ),
         (chats_module.Chats, "get_shared_chat_ids_by_file_id", AsyncMock(return_value=[])),
-        (models_module.Models, "get_models_by_user_id", AsyncMock(return_value=[])),
+        (models_module.Models, "get_model_owners_attaching_file", AsyncMock(return_value={})),
         (access_grants_module.AccessGrants, "has_access", AsyncMock(return_value=False)),
         (
             access_grants_module.AccessGrants,

@@ -18,11 +18,6 @@ import pytest
 
 pytestmark = pytest.mark.regression
 
-# Live instances of the #27120 bug class on this ref: present in
-# DEFAULT_USER_PERMISSIONS but with no SharingPermissions field. Tracked as xfails
-# below, so a key drops out of this set the moment upstream models it.
-KNOWN_UNMODELLED_SHARING_KEYS = ["open_chats"]
-
 
 @pytest.fixture(scope="session")
 def users_router_module(owui_module):
@@ -85,23 +80,12 @@ async def test_enabled_folder_sharing_reaches_the_permission_layer(
 def test_every_default_sharing_toggle_has_a_model_field(users_router_module):
     """The invariant: a toggle absent from the schema is a toggle that cannot be saved."""
     modelled = set(users_router_module.SharingPermissions.model_fields)
-    missing = set(_sharing_defaults()) - modelled - set(KNOWN_UNMODELLED_SHARING_KEYS)
+    missing = set(_sharing_defaults()) - modelled
 
     assert missing == set(), (
         f"sharing toggles {sorted(missing)} exist in DEFAULT_USER_PERMISSIONS but have "
         "no SharingPermissions field, so admins cannot persist them (#27120)"
     )
-
-
-@pytest.mark.parametrize("toggle", KNOWN_UNMODELLED_SHARING_KEYS)
-@pytest.mark.xfail(
-    strict=False,
-    reason="still-open instance of #27120 upstream: the toggle ships in "
-    "DEFAULT_USER_PERMISSIONS with no SharingPermissions field, so admins cannot save it. "
-    "This flips to XPASS once upstream models it; drop the key from the list then.",
-)
-def test_known_unmodelled_sharing_toggles(users_router_module, toggle):
-    assert toggle in users_router_module.SharingPermissions.model_fields
 
 
 def test_no_sharing_model_field_is_missing_from_the_defaults(users_router_module):

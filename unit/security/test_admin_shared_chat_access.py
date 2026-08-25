@@ -10,14 +10,21 @@ folder, was refused it while any other recipient could open it. The fix tries th
 admin-only path first, then lets every role fall through to the grant and folder
 checks, so the setting still closes admin access to chats nobody shared.
 
+0.11.1 `7d4747dfd` moved that resolution out of the router into
+`Chats.get_chat_by_id_for_user` (`models/chats.py:1731`) unchanged: owner, then
+admin plus setting, then grant, then shared folder. The router now only turns the
+resolved chat into a response, so these tests stub the DB boundary on the model
+layer and drive the router endpoint on top of it.
+
 The regression lived entirely inside the 0.11.0 cycle: `7088d245b` introduced the
 role branch and `a35b37adc` removed it, so v0.10.2 predates the bug and passes
-these tests. Discrimination was confirmed against `a35b37adc~1`, where the four
-share-with-an-admin cases raise HTTPException 401 instead of returning the chat.
+these tests.
 
-Discriminates: passes on v0.11.0, fails on a35b37adc~1 (admin plus setting off
-raises HTTPException 401 instead of returning the deliberately shared chat).
-Does NOT discriminate against v0.10.2, which never had the bug.
+Discriminates: passes on v0.11.1, fails when the admin branch stops falling
+through to the grant and folder checks (a35b37adc~1 shape), where admin plus
+setting off raises HTTPException 401 instead of returning the deliberately shared
+chat. Targets the post-`7d4747dfd` layout, so it does not run against v0.11.0 or
+earlier, and v0.10.2 never had the bug anyway.
 """
 
 from contextlib import ExitStack, contextmanager
@@ -45,6 +52,11 @@ def chat_models(owui_module):
     return owui_module("open_webui.models.chats")
 
 
+@pytest.fixture(scope="module")
+def folders_access(owui_module):
+    return owui_module("open_webui.utils.access_control.folders")
+
+
 def build_chat(chat_models, folder_id: str | None = None, meta: dict | None = None):
     return chat_models.ChatModel(
         id=CHAT_ID,
@@ -58,9 +70,15 @@ def build_chat(chat_models, folder_id: str | None = None, meta: dict | None = No
     )
 
 
+def make_request():
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+
+
 @contextmanager
 def chat_backend(
     chats_router,
+    chat_models,
+    folders_access,
     *,
     stored_chat,
     admin_chat_access: bool,
@@ -68,8 +86,8 @@ def chat_backend(
     has_grant: bool = False,
     folder_readable: bool = False,
 ):
-    """Stub the DB boundary `get_chat_by_id` reads, leaving its logic untouched."""
-    mod = chats_router
+    """Stub the DB boundary the access resolution reads, leaving its logic untouched."""
+    mod = chat_models
     folder = SimpleNamespace(id=FOLDER_ID, user_id=OWNER_ID) if stored_chat else None
     with ExitStack() as stack:
         stack.enter_context(patch.object(mod, "ENABLE_ADMIN_CHAT_ACCESS", admin_chat_access))
@@ -90,17 +108,23 @@ def chat_backend(
             patch.object(mod.Folders, "get_folder_by_id", AsyncMock(return_value=folder))
         )
         stack.enter_context(
-            patch.object(mod, "has_folder_access", AsyncMock(return_value=folder_readable))
-        )
-        if hasattr(mod, "get_chat_context_usage"):
-            stack.enter_context(
-                patch.object(mod, "get_chat_context_usage", AsyncMock(return_value={}))
+            patch.object(
+                folders_access, "has_folder_access", AsyncMock(return_value=folder_readable)
             )
+        )
+        stack.enter_context(
+            patch.object(
+                chats_router, "get_response_streams_by_chat_id", AsyncMock(return_value=[])
+            )
+        )
+        stack.enter_context(
+            patch.object(chats_router, "get_chat_context_usage", AsyncMock(return_value={}))
+        )
         yield
 
 
 def returned_chat_id(result) -> str:
-    """v0.11.0 returns a dict (it adds `context_usage`), v0.10.2 a ChatResponse."""
+    """v0.11.0+ returns a dict (it adds `context_usage`), v0.10.2 a ChatResponse."""
     return result["id"] if isinstance(result, dict) else result.id
 
 
@@ -112,12 +136,21 @@ def make_user(role: str, user_id: str = "dana"):
 
 
 @pytest.mark.asyncio
-async def test_admin_recipient_reads_shared_chat_with_blanket_access_off(chats_router, chat_models):
+async def test_admin_recipient_reads_shared_chat_with_blanket_access_off(
+    chats_router, chat_models, folders_access
+):
     stored_chat = build_chat(chat_models)
     with chat_backend(
-        chats_router, stored_chat=stored_chat, admin_chat_access=False, has_grant=True
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=False,
+        has_grant=True,
     ):
-        result = await chats_router.get_chat_by_id(CHAT_ID, user=make_user("admin"), db=None)
+        result = await chats_router.get_chat_by_id(
+            CHAT_ID, request=make_request(), user=make_user("admin"), db=None
+        )
 
     assert returned_chat_id(result) == CHAT_ID, (
         "an admin who was explicitly added as a recipient was refused a chat any "
@@ -127,12 +160,21 @@ async def test_admin_recipient_reads_shared_chat_with_blanket_access_off(chats_r
 
 
 @pytest.mark.asyncio
-async def test_admin_reads_chat_in_shared_folder_with_blanket_access_off(chats_router, chat_models):
+async def test_admin_reads_chat_in_shared_folder_with_blanket_access_off(
+    chats_router, chat_models, folders_access
+):
     stored_chat = build_chat(chat_models, folder_id=FOLDER_ID)
     with chat_backend(
-        chats_router, stored_chat=stored_chat, admin_chat_access=False, folder_readable=True
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=False,
+        folder_readable=True,
     ):
-        result = await chats_router.get_chat_by_id(CHAT_ID, user=make_user("admin"), db=None)
+        result = await chats_router.get_chat_by_id(
+            CHAT_ID, request=make_request(), user=make_user("admin"), db=None
+        )
 
     assert returned_chat_id(result) == CHAT_ID, (
         "an admin lost a chat reachable through a folder shared with them, while a "
@@ -142,13 +184,21 @@ async def test_admin_reads_chat_in_shared_folder_with_blanket_access_off(chats_r
 
 @pytest.mark.asyncio
 async def test_admin_without_any_share_stays_denied_with_blanket_access_off(
-    chats_router, chat_models
+    chats_router, chat_models, folders_access
 ):
     """The half the setting exists for: no grant, no folder, no access."""
     stored_chat = build_chat(chat_models)
-    with chat_backend(chats_router, stored_chat=stored_chat, admin_chat_access=False):
+    with chat_backend(
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=False,
+    ):
         with pytest.raises(HTTPException) as excinfo:
-            await chats_router.get_chat_by_id(CHAT_ID, user=make_user("admin"), db=None)
+            await chats_router.get_chat_by_id(
+                CHAT_ID, request=make_request(), user=make_user("admin"), db=None
+            )
 
     assert excinfo.value.status_code == 401, (
         "ENABLE_ADMIN_CHAT_ACCESS=false must still keep an arbitrary user's chat out "
@@ -164,18 +214,22 @@ async def test_admin_without_any_share_stays_denied_with_blanket_access_off(
 @pytest.mark.parametrize("role", ["admin", "user"])
 @pytest.mark.parametrize("share_kind", ["direct_grant", "shared_folder"])
 async def test_explicit_share_beats_blanket_access_toggle_for_every_role(
-    chats_router, chat_models, role, share_kind
+    chats_router, chat_models, folders_access, role, share_kind
 ):
     is_direct = share_kind == "direct_grant"
     stored_chat = build_chat(chat_models, folder_id=None if is_direct else FOLDER_ID)
     with chat_backend(
         chats_router,
+        chat_models,
+        folders_access,
         stored_chat=stored_chat,
         admin_chat_access=False,
         has_grant=is_direct,
         folder_readable=not is_direct,
     ):
-        result = await chats_router.get_chat_by_id(CHAT_ID, user=make_user(role), db=None)
+        result = await chats_router.get_chat_by_id(
+            CHAT_ID, request=make_request(), user=make_user(role), db=None
+        )
 
     assert returned_chat_id(result) == CHAT_ID, (
         f"a {role} holding a {share_kind} was refused the chat; the blanket-access "
@@ -198,17 +252,13 @@ async def test_shared_link_path_honours_the_grant_with_blanket_access_off(
             patch.object(mod.SharedChats, "get_by_id", AsyncMock(return_value=shared))
         )
         stack.enter_context(
-            patch.object(
-                mod.Chats, "get_chat_by_share_id", AsyncMock(return_value=stored_chat)
-            )
+            patch.object(mod.Chats, "get_chat_by_share_id", AsyncMock(return_value=stored_chat))
         )
         stack.enter_context(
             patch.object(mod.AccessGrants, "has_access", AsyncMock(return_value=True))
         )
         stack.enter_context(
-            patch.object(
-                mod.AccessGrants, "has_anyone_access", AsyncMock(return_value=False)
-            )
+            patch.object(mod.AccessGrants, "has_anyone_access", AsyncMock(return_value=False))
         )
         result = await mod.get_shared_chat_by_id(SHARE_ID, user=make_user(role), db=None)
 
@@ -221,41 +271,70 @@ async def test_shared_link_path_honours_the_grant_with_blanket_access_off(
 
 
 @pytest.mark.asyncio
-async def test_admin_reads_any_chat_when_blanket_access_is_on(chats_router, chat_models):
-    stored_chat = build_chat(chat_models)
-    with chat_backend(chats_router, stored_chat=stored_chat, admin_chat_access=True):
-        result = await chats_router.get_chat_by_id(CHAT_ID, user=make_user("admin"), db=None)
-
-    assert returned_chat_id(result) == CHAT_ID
-
-
-@pytest.mark.asyncio
-async def test_non_admin_without_share_is_denied(chats_router, chat_models):
-    stored_chat = build_chat(chat_models, folder_id=FOLDER_ID)
-    with chat_backend(chats_router, stored_chat=stored_chat, admin_chat_access=True):
-        with pytest.raises(HTTPException) as excinfo:
-            await chats_router.get_chat_by_id(CHAT_ID, user=make_user("user"), db=None)
-
-    assert excinfo.value.status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_owner_reads_own_chat_regardless_of_the_setting(chats_router, chat_models):
+async def test_admin_reads_any_chat_when_blanket_access_is_on(
+    chats_router, chat_models, folders_access
+):
     stored_chat = build_chat(chat_models)
     with chat_backend(
-        chats_router, stored_chat=stored_chat, admin_chat_access=False, owned_by_caller=True
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=True,
     ):
         result = await chats_router.get_chat_by_id(
-            CHAT_ID, user=make_user("user", OWNER_ID), db=None
+            CHAT_ID, request=make_request(), user=make_user("admin"), db=None
         )
 
     assert returned_chat_id(result) == CHAT_ID
 
 
 @pytest.mark.asyncio
-async def test_missing_chat_is_denied_not_crashed(chats_router):
-    with chat_backend(chats_router, stored_chat=None, admin_chat_access=True):
+async def test_non_admin_without_share_is_denied(chats_router, chat_models, folders_access):
+    stored_chat = build_chat(chat_models, folder_id=FOLDER_ID)
+    with chat_backend(
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=True,
+    ):
         with pytest.raises(HTTPException) as excinfo:
-            await chats_router.get_chat_by_id("no-such-chat", user=make_user("admin"), db=None)
+            await chats_router.get_chat_by_id(
+                CHAT_ID, request=make_request(), user=make_user("user"), db=None
+            )
+
+    assert excinfo.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_owner_reads_own_chat_regardless_of_the_setting(
+    chats_router, chat_models, folders_access
+):
+    stored_chat = build_chat(chat_models)
+    with chat_backend(
+        chats_router,
+        chat_models,
+        folders_access,
+        stored_chat=stored_chat,
+        admin_chat_access=False,
+        owned_by_caller=True,
+    ):
+        result = await chats_router.get_chat_by_id(
+            CHAT_ID, request=make_request(), user=make_user("user", OWNER_ID), db=None
+        )
+
+    assert returned_chat_id(result) == CHAT_ID
+
+
+@pytest.mark.asyncio
+async def test_missing_chat_is_denied_not_crashed(chats_router, chat_models, folders_access):
+    with chat_backend(
+        chats_router, chat_models, folders_access, stored_chat=None, admin_chat_access=True
+    ):
+        with pytest.raises(HTTPException) as excinfo:
+            await chats_router.get_chat_by_id(
+                "no-such-chat", request=make_request(), user=make_user("admin"), db=None
+            )
 
     assert excinfo.value.status_code == 401

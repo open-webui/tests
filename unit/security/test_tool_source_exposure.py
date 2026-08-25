@@ -157,16 +157,18 @@ async def test_deferred_tool_listing_query_omits_the_source_column(tools_models)
 async def test_tool_list_endpoint_asks_for_deferred_content(tools_router, tools_models):
     """`GET /tools/list` must never ask the model layer for source in the
     first place; it dumps whole models into an `extra='allow'` response."""
-    get_tools_by_user_id = AsyncMock(return_value=[])
+    get_tools = AsyncMock(return_value=[])
     with (
-        patch.object(tools_models.Tools, "get_tools_by_user_id", get_tools_by_user_id),
+        patch.object(tools_models.Tools, "get_tools", get_tools),
         patch.object(tools_router.Groups, "get_groups_by_member_id", AsyncMock(return_value=[])),
         patch.object(tools_router, "BYPASS_ADMIN_ACCESS_CONTROL", False),
         patch.object(tools_router, "ENABLE_PLUGINS", True),
     ):
         assert await tools_router.get_tool_list(user=_user(READER), db=None) == []
 
-    assert get_tools_by_user_id.call_args.kwargs.get("defer_content") is True, (
+    # 0.11.1 fetches through Tools.get_tools with the caller's own access filter.
+    assert get_tools.call_args.kwargs.get("user_id") == READER
+    assert get_tools.call_args.kwargs.get("defer_content") is True, (
         "the tool list endpoint fetched full tool records, so source rides along "
         "into an extra='allow' response model (#27005)"
     )

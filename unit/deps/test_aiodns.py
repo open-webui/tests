@@ -1,22 +1,29 @@
 """Dependency contract: aiodns.
 
-`aiodns==4.0.4` was added to `backend/requirements.txt` and `pyproject.toml`
-by commit 2196b4e1f (PR #27440). Despite the "makes aiohttp resolve DNS on
-the event loop instead of the threadpool" comment on the pin, it is a HARD
-runtime requirement, not an optional speedup: the Mistral OCR loader
-(`retrieval/loaders/mistral.py`) builds
-`aiohttp.TCPConnector(resolver=aiohttp.AsyncResolver())`, and aiohttp's
-`AsyncResolver.__init__` raises `RuntimeError("Resolver requires aiodns
-library")` when aiodns is not importable. Before this pin existed, Mistral
-OCR failed on a stock install.
+`aiodns` was added to `backend/requirements.txt` and `pyproject.toml` by
+commit 2196b4e1f (PR #27440) so that aiohttp resolves DNS on the event loop
+(c-ares) instead of the threadpool. 0.11.1 walked that back in commit
+c5ec01b1f (PR #28242, "make the aiodns resolver opt-in and pin aiodns to
+3.6.1"): c-ares broke name resolution on some hosts (#28013, #28215), so
+`env.py` now forces aiohttp's `DefaultResolver` back to `ThreadedResolver`
+unless `AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER=true`, and the Mistral OCR loader
+no longer builds its own `AsyncResolver` connector.
 
-The backend never imports `aiodns` itself; it reaches it only through
-aiohttp. So the contract pinned here is the *reachability* one: aiodns
-imports, aiohttp sees it (`aiohttp.resolver.aiodns_default`), and
+aiodns stays a hard requirement because the opt-in has to work the moment it
+is switched on: aiohttp's `AsyncResolver.__init__` raises
+`RuntimeError("Resolver requires aiodns library")` when aiodns is not
+importable. The backend never imports `aiodns` itself, it reaches it only
+through aiohttp, so the contract pinned here is the *reachability* one:
+aiodns imports, aiohttp sees it (`aiohttp.resolver.aiodns_default`), and
 `aiohttp.AsyncResolver()` actually CONSTRUCTS inside a running loop and is
 accepted as `TCPConnector(resolver=...)`. That construction test is what a
 future aiohttp or aiodns bump would break (aiohttp probes
 `aiodns.DNSResolver.getaddrinfo` at import and falls back when absent).
+
+Discriminates: aiodns missing or its aiohttp-facing API drifting, which
+makes `AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER=true` blow up at connector setup;
+plus the env.py opt-in gate itself, whose absence would put every install
+back on c-ares by default.
 
 All checks are OFFLINE: resolvers and connectors are constructed and closed,
 never used to look anything up. Uses the `depcheck` fixture from
@@ -26,6 +33,7 @@ unit/deps/conftest.py.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -100,23 +108,52 @@ def test_aiohttp_detects_aiodns(depcheck):
     aiohttp_resolver = depcheck.resolve(depcheck.load("aiohttp"), "resolver")
     assert aiohttp_resolver.aiodns is not None, (
         "aiohttp could not import aiodns; aiohttp.AsyncResolver() raises "
-        "RuntimeError and the Mistral OCR loader fails at connector setup."
+        "RuntimeError, so AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER=true breaks every "
+        "outbound request at connector setup."
     )
     assert aiohttp_resolver.aiodns_default is True
 
 
-def test_default_resolver_is_async_resolver(depcheck):
-    """With aiodns installed, aiohttp aliases DefaultResolver to AsyncResolver,
-    so every connector that does not pass a resolver also resolves on the loop."""
+def test_async_dns_is_opt_in_and_off_by_default(open_webui_backend):
+    """0.11.1 (c5ec01b1f) demoted c-ares to opt-in. env.py must keep the gate
+    defaulting to False and must rewrite all three DefaultResolver aliases:
+    connectors read `aiohttp.connector.DefaultResolver`, plugin code reads the
+    top-level one, so missing any alias leaves that path on c-ares."""
+    env_source = (open_webui_backend / "open_webui" / "env.py").read_text(encoding="utf-8")
+
+    gate = re.search(
+        r"AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER\s*=\s*os\.getenv\(\s*['\"]AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER['\"]\s*,\s*['\"](\w+)['\"]",
+        env_source,
+    )
+    assert gate, "env.py no longer reads AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER"
+    assert gate.group(1).lower() == "false", (
+        f"async DNS default flipped to {gate.group(1)!r}; c-ares resolution is back on "
+        "for every install (#28013, #28215)."
+    )
+
+    assert re.search(
+        r"if\s+not\s+AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER\s*:", env_source
+    ), "the ThreadedResolver override is no longer gated on the opt-in flag"
+
+    for alias in ("aiohttp", "aiohttp.resolver", "aiohttp.connector"):
+        assert re.search(
+            rf"{re.escape(alias)}\.DefaultResolver\s*=\s*aiohttp\.resolver\.ThreadedResolver",
+            env_source,
+        ), f"env.py no longer pins {alias}.DefaultResolver to ThreadedResolver"
+
+
+def test_threaded_resolver_override_target_exists(depcheck):
+    """env.py assigns `aiohttp.resolver.ThreadedResolver`; if aiohttp ever drops
+    or renames it, importing env.py dies at startup."""
     aiohttp_resolver = depcheck.resolve(depcheck.load("aiohttp"), "resolver")
-    assert aiohttp_resolver.DefaultResolver is aiohttp_resolver.AsyncResolver
+    assert isinstance(aiohttp_resolver.ThreadedResolver, type)
 
 
 def test_async_resolver_constructs_offline(depcheck):
-    """mistral.py's exact call: `aiohttp.AsyncResolver()`. It needs a running
-    loop and raises RuntimeError without aiodns, so constructing it inside
-    asyncio.run() is the one assertion that proves the dependency works. No
-    DNS query is issued by construction."""
+    """What the opt-in resolves to: `aiohttp.AsyncResolver()`. It needs a
+    running loop and raises RuntimeError without aiodns, so constructing it
+    inside asyncio.run() is the one assertion that proves the dependency works.
+    No DNS query is issued by construction."""
     aiohttp = depcheck.load("aiohttp")
     depcheck.load(IMPORT_NAME)
 
@@ -128,7 +165,7 @@ def test_async_resolver_constructs_offline(depcheck):
 
 
 def test_async_resolver_accepted_by_tcp_connector_offline(depcheck):
-    """The full mistral.py expression:
+    """The shape the opt-in produces:
     `aiohttp.TCPConnector(resolver=aiohttp.AsyncResolver(), ...)`. Build it
     and close it without connecting anywhere."""
     aiohttp = depcheck.load("aiohttp")

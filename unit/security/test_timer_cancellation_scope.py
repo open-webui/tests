@@ -13,8 +13,12 @@ each other's. The fix makes `user_id` a required parameter, filters on
 Tests run the real query against a real SQLite session, so the assertions are on the
 rows the production SQL actually touched.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (`open_webui.utils.timers` does
-not exist on v0.10.2, so the timer feature and its fix both landed inside the 0.11.0
+0.11.1 `16c2a9eda` (#27663) rewrote the query to key off a new `Chat.timer_at` column
+instead of the internal/type meta keys, keeping the `Chat.user_id` filter. Seeding sets
+that column when the model has it, so the tests run against both shapes.
+
+Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (`open_webui.utils.timers`
+does not exist on v0.10.2, so the timer feature and its fix both landed inside the 0.11.0
 cycle and these tests skip there; they fail behaviourally on `e140d8f3c^`, the last
 commit carrying the bug, where the unscoped query cancels the other user's timers).
 """
@@ -63,7 +67,8 @@ def _chat(timers, chat_id, owner_id):
 
 def _timer(timers, timer_id, owner_id, parent_chat_id, cancel_on=('chat.read',), status='pending'):
     now = int(time.time())
-    return timers.Chat(
+    due_at = time.time_ns()
+    row = timers.Chat(
         id=timer_id,
         user_id=owner_id,
         title=f'Timer: {timer_id}',
@@ -74,11 +79,15 @@ def _timer(timers, timer_id, owner_id, parent_chat_id, cancel_on=('chat.read',),
             'parent_chat_id': parent_chat_id,
             'status': status,
             'cancel_on': list(cancel_on),
-            'timer_at': time.time_ns(),
+            'timer_at': due_at,
         },
         created_at=now,
         updated_at=now,
     )
+    # 0.11.1 moved the due time onto a real column the queries key off; claiming clears it.
+    if 'timer_at' in timers.Chat.__table__.columns:
+        row.timer_at = due_at if status == 'pending' else None
+    return row
 
 
 async def _seed(timers, rows):
@@ -141,29 +150,36 @@ async def test_socket_last_read_at_from_a_non_owner_cancels_nothing(timers, owui
     socket_main = owui_module('open_webui.socket.main')
 
     parent_chat_id = f'{ids}-victim-chat'
-    victim_timer = f'{ids}-victim-timer'
     await _seed(
         timers,
         [
             _chat(timers, parent_chat_id, 'victim'),
-            _timer(timers, victim_timer, 'victim', parent_chat_id),
+            _timer(timers, f'{ids}-victim-timer', 'victim', parent_chat_id),
         ],
     )
 
     async def emit(*args, **kwargs):
         return None
 
+    cancel_calls = []
+
+    async def record_cancel(*args, **kwargs):
+        cancel_calls.append((args, kwargs))
+
+    # The handler imports the helper at call time, so patch it on its own module.
     with (
         patch.object(socket_main.sio, 'emit', emit),
+        patch.object(timers, CANCEL_TARGET, record_cancel),
         patch.dict(socket_main.SESSION_POOL, {'intruder-sid': {'id': 'intruder'}}),
     ):
         await socket_main.chat_events(
             'intruder-sid', {'chat_id': parent_chat_id, 'data': {'type': 'last_read_at'}}
         )
 
-    assert await _cancelled(timers, [victim_timer]) == set(), (
-        'a user who merely knew another user chat id cancelled that owner pending timer over '
-        'the socket: the scheduled action never fires and the owner gets no notification (#27472)'
+    assert cancel_calls == [], (
+        'the socket handler ran the timer cancellation for a user who does not own the chat: '
+        'only the ownership filter inside the query then stands between a stranger and the '
+        'owner pending timers (#27472)'
     )
 
 

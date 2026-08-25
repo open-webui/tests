@@ -61,7 +61,8 @@ def _patch_access_boundary(
     import open_webui.models.knowledge as knowledge_model
     import open_webui.models.notes as notes_model
 
-    async def check_collection(id, user_id, permission="read", db=None):
+    # 0.11.1 (#28810) resolves group membership once and passes it down as user_group_ids.
+    async def check_collection(id, user_id, permission="read", db=None, user_group_ids=None):
         return id in readable_collection_ids
 
     async def get_file(id, db=None):
@@ -109,14 +110,14 @@ async def _run_completed(
     return request, seen
 
 
-async def _run_action(main_module, model_item, readable=frozenset(), owned_files=frozenset()):
+async def _run_action(main_module, model_item, readable=frozenset()):
     seen, handler = _knowledge_recorder()
 
     async def action_handler(request, action_id, *args, **kwargs):
         return await handler(request)
 
     request = _FakeRequest()
-    groups, knowledge, files, notes = _patch_access_boundary(set(readable), set(owned_files))
+    groups, knowledge, files, notes = _patch_access_boundary(set(readable), set())
     with groups, knowledge, files, notes:
         with patch.object(main_module, "chat_action_handler", action_handler):
             await main_module.chat_action(
@@ -143,7 +144,7 @@ async def test_claimed_knowledge_is_filtered_on_chat_completed(owui_module):
 
     assert retrieved_ids == [READABLE_COLLECTION], (
         "a browser-supplied direct-connection model named knowledge the caller "
-        f"cannot read and it still reached retrieval ({retrieved_ids}) — #26723 is back"
+        f"cannot read and it still reached retrieval ({retrieved_ids}): #26723 is back"
     )
 
 
@@ -161,7 +162,7 @@ async def test_claimed_knowledge_is_filtered_on_chat_action(owui_module):
 
     assert retrieved_ids == [READABLE_COLLECTION], (
         "the chat action route accepted unauthorized knowledge off the client's "
-        f"model object ({retrieved_ids}) — #26723 is back"
+        f"model object ({retrieved_ids}): #26723 is back"
     )
 
 
@@ -186,7 +187,7 @@ async def test_no_claimed_entry_type_bypasses_the_access_check(owui_module):
 
     assert retrieved_ids == [], (
         "at least one claimed knowledge entry reached retrieval without an "
-        f"access check ({retrieved_ids}) — #26723"
+        f"access check ({retrieved_ids}), #26723"
     )
 
 
@@ -219,11 +220,11 @@ def test_every_direct_connection_entrypoint_uses_the_shared_filter(owui_module):
 
     assert assigning_functions == {"_set_direct_model"}, (
         "a route copies the browser-supplied model onto request.state without "
-        f"filtering its claimed knowledge: {sorted(assigning_functions)} — #26723"
+        f"filtering its claimed knowledge, {sorted(assigning_functions)} (#26723)"
     )
     assert {"chat_completion", "chat_completed", "chat_action"} <= filtering_functions, (
         "a direct-connection entrypoint stopped routing through the shared "
-        f"access filter; only {sorted(filtering_functions)} do — #26723"
+        f"access filter; only {sorted(filtering_functions)} do (#26723)"
     )
 
 
