@@ -8,6 +8,7 @@ This module provides pytest fixtures for:
 - Console error tracking
 """
 
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -196,28 +197,78 @@ def auth_helper(page: Page, config: AppConfig) -> AuthHelper:
     return AuthHelper(page, config)
 
 
-@pytest.fixture(scope="function")
-def authenticated_page(context: BrowserContext, config: AppConfig) -> Generator[Page, None, None]:
-    """Provide a page with an authenticated regular user session."""
+def _api_token(config: AppConfig, email: str, password: str, role: str) -> str:
+    """Sign in over the API once per session and hand back the token.
+
+    The browser login form is driven by test_auth_page_has_login_form; every other
+    test only needs a session, and doing that through the UI 45 times is both the
+    bulk of the runtime and a standing source of flakes.
+    """
+    try:
+        response = httpx.post(
+            f"{config.base_url}/api/v1/auths/signin",
+            json={"email": email, "password": password},
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        pytest.skip(f"Could not reach Open WebUI to sign in as {role}: {e}")
+
+    if response.status_code != 200:
+        pytest.skip(f"Signin as {role} ({email}) failed: HTTP {response.status_code}")
+
+    token = response.json()["token"]
+    # The changelog modal covers the page on first load and is gated on this flag.
+    httpx.post(
+        f"{config.base_url}/api/v1/users/user/settings/update",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"ui": {"showChangelog": False}},
+        timeout=30.0,
+    )
+    return token
+
+
+@pytest.fixture(scope="session")
+def user_token(config: AppConfig) -> str:
+    return _api_token(config, config.test_user_email, config.test_user_password, "test user")
+
+
+@pytest.fixture(scope="session")
+def admin_token(config: AppConfig) -> str:
+    return _api_token(config, config.admin_user_email, config.admin_user_password, "admin")
+
+
+def _page_with_token(context: BrowserContext, config: AppConfig, token: str) -> Page:
+    """A page whose localStorage already carries the session token.
+
+    Written through an init script rather than after a navigation: the sign-in route
+    clears the token as it loads, so a value written by visiting /auth first is gone
+    again before the app reads it. An init script runs ahead of the app on every
+    document, so the session survives whatever the page does next.
+    """
     page = context.new_page()
-    auth = AuthHelper(page, config)
+    page.add_init_script(
+        f"try {{ localStorage.setItem('token', {json.dumps(token)}); }} catch (e) {{}}"
+    )
+    page.goto("/")
+    return page
 
-    if not auth.login():
-        pytest.skip("Could not authenticate test user - check credentials")
 
+@pytest.fixture(scope="function")
+def authenticated_page(
+    context: BrowserContext, config: AppConfig, user_token: str
+) -> Generator[Page, None, None]:
+    """Provide a page with an authenticated regular user session."""
+    page = _page_with_token(context, config, user_token)
     yield page
     page.close()
 
 
 @pytest.fixture(scope="function")
-def admin_page(context: BrowserContext, config: AppConfig) -> Generator[Page, None, None]:
+def admin_page(
+    context: BrowserContext, config: AppConfig, admin_token: str
+) -> Generator[Page, None, None]:
     """Provide a page with an authenticated admin session."""
-    page = context.new_page()
-    auth = AuthHelper(page, config)
-
-    if not auth.login_as_admin():
-        pytest.skip("Could not authenticate admin user - check credentials")
-
+    page = _page_with_token(context, config, admin_token)
     yield page
     page.close()
 

@@ -4,7 +4,26 @@ Read this before adding or repairing a test here.
 
 ## What this suite is
 
-Source-level tests that import the Open WebUI backend directly from a local checkout. They do not talk to a running instance. `unit/` is the substantial part and is expected to be green. `integration/` and `e2e/` need a live Open WebUI at `localhost:8080` with seeded accounts, and are skipped or red without one.
+Source-level tests that import the Open WebUI backend directly from a local checkout. They do not talk to a running instance. `unit/` is the substantial part and is expected to be green. `integration/` and `e2e/` need a live Open WebUI with seeded accounts.
+
+## Running the browser tests
+
+`scripts/e2e_instance.py` starts an isolated instance and creates the two accounts the suite expects. It uses its own port and a scratch data directory, so an instance you are already running is left alone, and it never writes to the checkout.
+
+```
+python scripts/e2e_instance.py --clone /path/to/open-webui
+```
+
+It prints the environment to use and serves until interrupted. From another shell:
+
+```
+OPEN_WEBUI_URL=http://localhost:8081 \
+TEST_USER_EMAIL=test@example.com TEST_USER_PASSWORD=testpassword123 \
+ADMIN_USER_EMAIL=admin@example.com ADMIN_USER_PASSWORD=adminpassword123 \
+  python -m pytest e2e -q
+```
+
+Two things that are easy to get wrong here. The backend must be started the way `open-webui serve` starts it: a bare uvicorn run on Windows leaves the websocket transport unwired, which shows up as chats that never stream rather than as an error. And the suite authenticates once per session over the API and injects the token through a Playwright init script, because the sign-in route clears `localStorage.token` as it loads, so a token written after visiting `/auth` is gone before the app reads it.
 
 Point the suite at a checkout with `OPEN_WEBUI_SOURCE_DIR`. Always set `DATA_DIR` and `STATIC_DIR` to scratch paths as well: importing `open_webui.config` creates `DATA_DIR` and deletes tracked files under `STATIC_DIR`, so an unset pair mutates the tree under test.
 

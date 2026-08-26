@@ -37,7 +37,14 @@ import pytest
 pytestmark = pytest.mark.regression
 
 # Far in the future so these rows sort ahead of anything else in the scratch database.
+# The wall clock is added so each run sits above the rows its previous runs left behind:
+# the scratch database persists, and a fixed constant accumulates ties on the same second.
 FUTURE_EPOCH = 4_000_000_000
+
+
+def _newest_epochs(count: int) -> list[int]:
+    base = FUTURE_EPOCH + int(time.time())
+    return [base + offset for offset in range(1, count + 1)]
 
 
 @pytest.fixture(scope="module")
@@ -305,17 +312,16 @@ async def test_scim_user_lookup_returns_provisioned_account(owui, oauth, scim):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_user_list_without_search_is_newest_first(owui):
     """Narrow: an unsearched, unsorted admin listing falls back to created_at desc."""
-    oldest = _user(owui, "Oldest", created_at=FUTURE_EPOCH + 1)
-    newest = _user(owui, "Newest", created_at=FUTURE_EPOCH + 3)
-    middle = _user(owui, "Middle", created_at=FUTURE_EPOCH + 2)
+    low, mid, high = _newest_epochs(3)
+    oldest = _user(owui, "Oldest", created_at=low)
+    newest = _user(owui, "Newest", created_at=high)
+    middle = _user(owui, "Middle", created_at=mid)
     await _add(owui, oldest, newest, middle)  # insertion order differs from created_at order
 
+    # Unsearched and unsorted, which is the fallback under test. These three are the
+    # newest rows in the database, so they lead the first page.
     result = await owui.users_router.get_users(user=None, db=None)
-    # Compare only our own three in the order they came back. Slicing the top of the
-    # listing assumes nothing else in the shared database is newer, which is not ours
-    # to assume once the whole suite shares a DATA_DIR.
-    mine = {oldest.id, newest.id, middle.id}
-    listed_ids = [user.id for user in result["users"] if user.id in mine]
+    listed_ids = [user.id for user in result["users"]][:3]
 
     assert listed_ids == [newest.id, middle.id, oldest.id]
 
