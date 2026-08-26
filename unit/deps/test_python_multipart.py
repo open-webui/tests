@@ -24,6 +24,7 @@ the API surface, plus offline behavioural contracts. Uses the
 from __future__ import annotations
 
 import inspect
+import re
 from io import BytesIO
 
 import pytest
@@ -384,3 +385,27 @@ def test_starlette_binds_python_multipart(depcheck):
         pytest.skip("starlette not installed; surface tests still cover the API")
     src = inspect.getsource(fp)
     assert "multipart" in src, "starlette.formparsers no longer references multipart"
+
+
+def test_requirements_pin_is_at_or_above_the_security_floor(open_webui_backend):
+    """The checkout under test must not pin python-multipart below 0.0.32.
+
+    A security advisory in the multipart parsing path (#26991) was fixed by moving to
+    0.0.32. A floor rather than an exact
+    version, so an ordinary bump stays quiet and only a downgrade past the fix
+    is reported.
+    """
+    requirements = (open_webui_backend / "requirements.txt").read_text(encoding="utf-8")
+    pinned = re.search(
+        r"^python\-multipart(?:\[[^\]]*\])?==([0-9][^\s#]*)", requirements, re.MULTILINE
+    )
+
+    assert pinned, "python-multipart is not pinned in requirements.txt"
+    assert _version_tuple(pinned.group(1)) >= _version_tuple("0.0.32"), (
+        f"python-multipart is pinned at {pinned.group(1)}, below the 0.0.32 that fixed "
+        "a security advisory in the multipart parsing path (#26991)"
+    )
+
+
+def _version_tuple(raw: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", raw))

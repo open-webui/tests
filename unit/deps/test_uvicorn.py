@@ -29,6 +29,7 @@ Uses the ``depcheck`` fixture from unit/deps/conftest.py.
 from __future__ import annotations
 
 import inspect
+import re
 
 import pytest
 
@@ -200,3 +201,25 @@ def test_run_does_not_execute_on_signature_inspection(depcheck):
     mod = depcheck.load(IMPORT_NAME)
     sig = inspect.signature(mod.run)
     assert sig is not None
+
+
+def test_requirements_pin_is_at_or_above_the_security_floor(open_webui_backend):
+    """The checkout under test must not pin uvicorn below 0.51.0.
+
+    Live connections were cut by a routine keepalive check on the legacy websocket
+    implementation (#27553, issue #27550), fixed by moving to 0.51.0. A floor rather than an exact
+    version, so an ordinary bump stays quiet and only a downgrade past the fix
+    is reported.
+    """
+    requirements = (open_webui_backend / "requirements.txt").read_text(encoding="utf-8")
+    pinned = re.search(r"^uvicorn(?:\[[^\]]*\])?==([0-9][^\s#]*)", requirements, re.MULTILINE)
+
+    assert pinned, "uvicorn is not pinned in requirements.txt"
+    assert _version_tuple(pinned.group(1)) >= _version_tuple("0.51.0"), (
+        f"uvicorn is pinned at {pinned.group(1)}, below the 0.51.0 that fixed "
+        "the keepalive check cutting live connections (#27553)"
+    )
+
+
+def _version_tuple(raw: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", raw))
