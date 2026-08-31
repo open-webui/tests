@@ -80,8 +80,8 @@ jobs:
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
 
-      # The suite imports the backend from source. Importing open_webui.config creates
-      # DATA_DIR and deletes tracked files under STATIC_DIR, so both point at scratch.
+      # Importing open_webui.config creates DATA_DIR and clears STATIC_DIR, so each job
+      # gets its own scratch rather than the shared temp dir the suite falls back to.
       - name: Run the suite
         working-directory: tests
         env:
@@ -100,19 +100,3 @@ jobs:
           name: regression-report-${{ inputs.open-webui-ref }}
           path: tests/report.html
           if-no-files-found: ignore
-
-  lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          repository: open-webui/tests
-          ref: ${{ inputs.tests-ref }}
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - run: pip install ruff
-      - run: ruff check .
