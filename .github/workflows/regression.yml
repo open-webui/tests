@@ -1,0 +1,118 @@
+# Runs the source-level regression suite against a given Open WebUI ref.
+# Callable from open-webui/open-webui so a release can be gated on it.
+name: Regression suite
+
+on:
+  workflow_call:
+    inputs:
+      open-webui-ref:
+        description: Ref of open-webui/open-webui to test (tag, branch or SHA)
+        required: true
+        type: string
+      tests-ref:
+        description: Ref of open-webui/tests to run
+        required: false
+        type: string
+        default: main
+      suite:
+        description: Test paths to run
+        required: false
+        type: string
+        default: unit
+  workflow_dispatch:
+    inputs:
+      open-webui-ref:
+        description: Ref of open-webui/open-webui to test (tag, branch or SHA)
+        required: true
+        type: string
+        default: dev
+      tests-ref:
+        description: Ref of open-webui/tests to run
+        required: false
+        type: string
+        default: main
+      suite:
+        description: Test paths to run
+        required: false
+        type: string
+        default: unit
+
+concurrency:
+  group: regression-${{ inputs.open-webui-ref }}-${{ inputs.tests-ref }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            open-webui/backend/requirements.txt
+            tests/pyproject.toml
+
+      # torch comes in transitively via sentence-transformers and defaults to the CUDA
+      # build, which is several GB of nvidia-* wheels this suite never runs. Pinning the
+      # CPU build first, as the Dockerfile does, keeps the install to a few minutes.
+      - name: Install dependencies
+        run: |
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+
+      # The suite imports the backend from source. Importing open_webui.config creates
+      # DATA_DIR and deletes tracked files under STATIC_DIR, so both point at scratch.
+      - name: Run the suite
+        working-directory: tests
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          DATA_DIR: ${{ runner.temp }}/owui-data
+          STATIC_DIR: ${{ runner.temp }}/owui-static
+          WEBUI_SECRET_KEY: ci-regression-key
+        run: |
+          mkdir -p "$DATA_DIR" "$STATIC_DIR"
+          pytest ${{ inputs.suite }} -q --html=report.html --self-contained-html
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report-${{ inputs.open-webui-ref }}
+          path: tests/report.html
+          if-no-files-found: ignore
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install ruff
+      - run: ruff check .
