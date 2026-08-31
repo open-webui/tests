@@ -37,9 +37,11 @@ on:
         type: string
         default: unit
 
+# Queued rather than cancelled: a caller gating a release on this workflow would
+# otherwise see its required check go red because another run took the slot.
 concurrency:
   group: regression-${{ inputs.open-webui-ref }}-${{ inputs.tests-ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   run:
