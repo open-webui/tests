@@ -11,8 +11,13 @@ permission could therefore repoint the image model for every user by adding a
 `model` to a normal generation request. The fix gates that call on
 `user.role == 'admin'`.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (a non-admin's `model` still
-reaches `set_image_model`, so the checkpoint POST and the config write happen).
+0.11.2 `aeb126b95` changed `upload_image` to return a file descriptor dict that
+`image_generations` appends verbatim, so the stub and the return assertion follow that
+shape; the admin gate itself is unchanged.
+
+Discriminates: passes on v0.11.0 through v0.11.3, fails on v0.10.2 (a non-admin's
+`model` still reaches `set_image_model`, so the checkpoint POST and the config write
+happen).
 """
 
 import inspect
@@ -26,6 +31,13 @@ pytestmark = pytest.mark.regression
 BASE_URL = "http://a1111.local:7860"
 CONFIGURED_CHECKPOINT = "configured.safetensors"
 ATTACKER_CHECKPOINT = "attacker-choice.safetensors"
+# 0.11.2 `aeb126b95` made `upload_image` return the file descriptor the route appends verbatim.
+UPLOADED_IMAGE = {
+    "id": "f1",
+    "url": "/file/f1",
+    "name": "generated-image.png",
+    "content_type": "image/png",
+}
 
 
 class FakeResponse:
@@ -117,7 +129,7 @@ async def _generate(images_module, form_data, user, engine="automatic1111"):
         patch.object(
             images_module,
             "upload_image",
-            AsyncMock(return_value=(SimpleNamespace(id="f1"), "/file/f1")),
+            AsyncMock(return_value=(SimpleNamespace(id="f1"), UPLOADED_IMAGE)),
         ),
         patch.object(config_module.Config, "upsert", upsert),
     ):
@@ -217,7 +229,7 @@ async def test_non_admin_without_override_generates_on_configured_checkpoint(owu
 
     server, upsert, result = await _generate(images, form, _user("user"))
 
-    assert result == [{"url": "/file/f1"}]
+    assert result == [UPLOADED_IMAGE]
     assert server.checkpoint == CONFIGURED_CHECKPOINT
     assert upsert.await_count == 0
 

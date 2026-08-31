@@ -17,7 +17,10 @@ rows the production SQL actually touched.
 instead of the internal/type meta keys, keeping the `Chat.user_id` filter. Seeding sets
 that column when the model has it, so the tests run against both shapes.
 
-Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (`open_webui.utils.timers`
+0.11.2 `d7674c517` (#28835) routed every socket handler through `get_socket_session_user`,
+which reads only Socket.IO's local session store, so the socket tests stub that store.
+
+Discriminates: passes on v0.11.0 through v0.11.3, fails on v0.10.2 (`open_webui.utils.timers`
 does not exist on v0.10.2, so the timer feature and its fix both landed inside the 0.11.0
 cycle and these tests skip there; they fail behaviourally on `e140d8f3c^`, the last
 commit carrying the bug, where the unscoped query cancels the other user's timers).
@@ -110,6 +113,18 @@ async def _cancelled(timers, timer_ids):
     return {timer_id for timer_id, status in statuses.items() if status == 'cancelled'}
 
 
+def _socket_session(sessions):
+    """0.11.2 `d7674c517` (#28835) made the socket handlers read the acting user only from
+    Socket.IO's own local session store, so stub that store rather than `SESSION_POOL`."""
+
+    async def get_session(sid, namespace=None):
+        if sid not in sessions:
+            raise KeyError(sid)
+        return {'user': sessions[sid]}
+
+    return get_session
+
+
 async def _read_chat_as(timers, parent_chat_id, event, user_id):
     """Tolerate the pre-fix two-argument signature so the assertion lands on which rows
     were cancelled rather than on a TypeError."""
@@ -170,7 +185,9 @@ async def test_socket_last_read_at_from_a_non_owner_cancels_nothing(timers, owui
     with (
         patch.object(socket_main.sio, 'emit', emit),
         patch.object(timers, CANCEL_TARGET, record_cancel),
-        patch.dict(socket_main.SESSION_POOL, {'intruder-sid': {'id': 'intruder'}}),
+        patch.object(
+            socket_main.sio, 'get_session', _socket_session({'intruder-sid': {'id': 'intruder'}})
+        ),
     ):
         await socket_main.chat_events(
             'intruder-sid', {'chat_id': parent_chat_id, 'data': {'type': 'last_read_at'}}
@@ -348,7 +365,9 @@ async def test_socket_last_read_at_from_the_owner_still_cancels_their_timer(
     with (
         patch.object(socket_main.sio, 'emit', emit),
         patch.object(socket_main, 'get_folder_unread_counts', unread_counts),
-        patch.dict(socket_main.SESSION_POOL, {'owner-sid': {'id': 'owner'}}),
+        patch.object(
+            socket_main.sio, 'get_session', _socket_session({'owner-sid': {'id': 'owner'}})
+        ),
     ):
         await socket_main.chat_events(
             'owner-sid', {'chat_id': parent_chat_id, 'data': {'type': 'last_read_at'}}

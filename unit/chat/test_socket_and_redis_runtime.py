@@ -34,8 +34,13 @@ number of awaits, and each drive is additionally wrapped in `asyncio.wait_for`.
 chunks that keep the lock alive while waiting, so the wait is asserted as a budget rather
 than as one fixed delay.
 
-Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (pre-fix the cleanup loop gives up,
-the lock renews/releases without an owner check, the connection cache collides,
+0.11.2 `d7674c517` (#28835) rewrote the reaper to sweep the pool in batches and to remove
+expired entries with `pop(sid, None)` (or `delete_many` under Redis) instead of `del`, so the
+pool stub records both removal calls and the sweep is bounded by the lock renew rather than
+by a fixed sleep count.
+
+Discriminates: passes on v0.11.0 through v0.11.3, fails on v0.10.2 (pre-fix the cleanup loop
+gives up, the lock renews/releases without an owner check, the connection cache collides,
 `socket_timeout` cannot be disabled, sentinel timeouts are fatal, and `chat_id.py`
 does not exist so `temporary:` chats persist and get the task tools).
 """
@@ -259,7 +264,12 @@ def test_chat_completion_passes_the_id_it_stamped_into_the_metadata(app_main_tre
 
 
 class _UndeletablePool(dict):
-    """SESSION_POOL whose entry vanishes between the scan and the delete."""
+    """SESSION_POOL whose entry vanishes between the scan and the delete.
+
+    Models `RedisDict`, which raises `KeyError` when the HDEL removes nothing. 0.11.2
+    `d7674c517` (#28835) switched the local-manager branch of the reaper from
+    `del SESSION_POOL[sid]` to `pop(sid, None)`, so both removal calls are recorded.
+    """
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -267,6 +277,12 @@ class _UndeletablePool(dict):
 
     def __delitem__(self, key):
         self.delete_attempts.append(key)
+        raise KeyError(key)
+
+    def pop(self, key, *default):
+        self.delete_attempts.append(key)
+        if default:
+            return default[0]
         raise KeyError(key)
 
 
@@ -334,20 +350,30 @@ async def test_session_cleanup_survives_a_session_reaped_by_another_instance(soc
         {"stale": {"id": "u-1", "last_seen_at": now - socket_main.SESSION_POOL_TIMEOUT - 60}}
     )
     sleeps: list[float] = []
+    renews: list[int] = []
+
+    def renew():
+        """Exit on the second renew so exactly one sweep runs whatever the wait looks like."""
+        renews.append(len(renews))
+        if len(renews) > 1:
+            raise _LoopExit
+        return True
 
     with (
         patch.object(socket_main, "SESSION_POOL", pool),
         patch.object(socket_main, "session_aquire_func", lambda: True),
-        patch.object(socket_main, "session_renew_func", lambda: True),
+        patch.object(socket_main, "session_renew_func", renew),
         patch.object(socket_main, "session_release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 1)),
+        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 8)),
         pytest.raises(_LoopExit),
     ):
         await _drive(socket_main.periodic_session_pool_cleanup())
 
+    # 0.11.2 `d7674c517` yields with a bare `sleep(0)` per batch; the wait is the positive one.
+    waits = [delay for delay in sleeps if delay > 0]
     assert pool.delete_attempts == ["stale"], "the stale session was never reaped"
-    assert sleeps, "the KeyError escaped before the loop reached its wait"
-    assert all(0 < delay <= socket_main.SESSION_POOL_TIMEOUT for delay in sleeps)
+    assert waits, "the KeyError escaped before the loop reached its wait"
+    assert all(delay <= socket_main.SESSION_POOL_TIMEOUT for delay in waits)
 
 
 # --- 🧹 846ba80: RedisLock only renews and releases a lock it actually holds -----------------

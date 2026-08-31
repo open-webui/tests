@@ -27,8 +27,14 @@ Every loop test is bounded by construction: a stub raises `_LoopExit` (a
 after a fixed number of calls, and each drive is additionally wrapped in
 `asyncio.wait_for`.
 
-Discriminates: passes on v0.11.1, fails on v0.11.0 (pre-fix sinks, loops, and
-caches behave as described above).
+0.11.2 reshaped the same surface without changing any of these behaviours, so the stubs
+follow it: `d7674c517` (#28835) made the socket handlers read the acting user from
+Socket.IO's own session store instead of `SESSION_POOL` and gave the session reaper a
+per-batch `sleep(0)` yield, and `a5ea8b0b8` (#29165) made the task command listener call
+`redis.initialize()` before each subscribe.
+
+Discriminates: passes on v0.11.1 through v0.11.3, fails on v0.11.0 (pre-fix sinks, loops,
+and caches behave as described above).
 """
 
 from __future__ import annotations
@@ -137,6 +143,24 @@ class FakePubSub:
 
     async def close(self):
         self.closed = True
+
+
+class FakeAsyncRedis:
+    """Async client stand-in. 0.11.2 `a5ea8b0b8` (#29165) made the listener call
+    `initialize()` before every subscribe so RedisCluster can route the channel."""
+
+    def __init__(self, make_pubsub):
+        self._make_pubsub = make_pubsub
+
+    async def initialize(self):
+        return None
+
+    def pubsub(self):
+        return self._make_pubsub()
+
+
+def _listener_app(make_pubsub) -> SimpleNamespace:
+    return SimpleNamespace(state=SimpleNamespace(redis=FakeAsyncRedis(make_pubsub)))
 
 
 @pytest.fixture(scope="session")
@@ -293,9 +317,13 @@ async def test_session_cleanup_never_sleeps_past_the_lock_timeout(socket_main):
     ):
         await _drive(socket_main.periodic_session_pool_cleanup())
 
+    # 0.11.2 `d7674c517` (#28835) added a bare `sleep(0)` yield per scanned batch; only the
+    # real waits between renews are part of the lock budget.
+    waits = [delay for delay in sleeps if delay > 0]
     assert len(sleeps) == 6
-    assert max(sleeps) <= socket_main.WEBSOCKET_REDIS_LOCK_TIMEOUT / 2
-    assert len(renews) >= len(sleeps)
+    assert waits
+    assert max(waits) <= socket_main.WEBSOCKET_REDIS_LOCK_TIMEOUT / 2
+    assert len(renews) >= len(waits)
 
 
 @pytest.mark.asyncio
@@ -469,7 +497,7 @@ async def test_task_command_listener_resubscribes_after_the_stream_ends(tasks_mo
         pubsubs.append(FakePubSub())
         return pubsubs[-1]
 
-    app = SimpleNamespace(state=SimpleNamespace(redis=SimpleNamespace(pubsub=make_pubsub)))
+    app = _listener_app(make_pubsub)
     sleeps: list[float] = []
 
     with (
@@ -496,7 +524,7 @@ async def test_reconnect_backoff_doubles_while_the_cache_stays_down(tasks_module
         pubsubs.append(FakePubSub(fail_subscribe=True))
         return pubsubs[-1]
 
-    app = SimpleNamespace(state=SimpleNamespace(redis=SimpleNamespace(pubsub=make_pubsub)))
+    app = _listener_app(make_pubsub)
     sleeps: list[float] = []
 
     with (
@@ -512,6 +540,18 @@ async def test_reconnect_backoff_doubles_while_the_cache_stays_down(tasks_module
 # --- 186: resync updates keeping the pending note save ---------------------------------------
 
 
+def _socket_session(sessions):
+    """0.11.2 `d7674c517` (#28835) made the socket handlers read the acting user only from
+    Socket.IO's own local session store, so stub that store as well as `SESSION_POOL`."""
+
+    async def get_session(sid, namespace=None):
+        if sid not in sessions:
+            raise KeyError(sid)
+        return {"user": sessions[sid]}
+
+    return get_session
+
+
 def _yjs_patches(socket_main, pool, stop_item_tasks, create_task):
     return (
         patch.object(socket_main, "get_session_ids_from_room", lambda room: ["sid-1"]),
@@ -520,6 +560,7 @@ def _yjs_patches(socket_main, pool, stop_item_tasks, create_task):
         patch.object(socket_main.sio, "emit", AsyncMock()),
         patch.object(socket_main, "stop_item_tasks", stop_item_tasks),
         patch.object(socket_main, "create_task", create_task),
+        patch.object(socket_main.sio, "get_session", _socket_session(pool)),
     )
 
 
@@ -529,7 +570,7 @@ async def _run_yjs_update(socket_main, data):
     create_task = AsyncMock(side_effect=lambda redis, coro, *a, **kw: coro.close())
 
     patches = _yjs_patches(socket_main, pool, stop_item_tasks, create_task)
-    with patches[0], patches[1], patches[2] as ydoc, patches[3], patches[4], patches[5]:
+    with patches[0], patches[1], patches[2] as ydoc, patches[3], patches[4], patches[5], patches[6]:
         await socket_main.yjs_document_update("sid-1", data)
 
     ydoc.append_to_updates.assert_awaited_once()

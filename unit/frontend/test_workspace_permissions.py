@@ -23,6 +23,15 @@ These tests scan both source trees and assert every backend ACCESS key
 is wired up in each of the three frontend gates. Adding a new
 workspace ACCESS permission to the backend will fail this test until
 the corresponding frontend wiring is in place.
+
+Fixed upstream by 359590ca9 ("fix: wire workspace.skills into the
+sidebar + workspace-index gates", PR #24729), which shipped before
+v0.11.1, so both v0.11.1 and v0.11.3 are post-fix refs here.
+
+Discriminates: passes on 359590ca9 and later (v0.11.1, v0.11.3), fails
+on 359590ca9^ = eba1540a9 (sidebar OR-chain and /workspace index
+redirect chain both omit `workspace.skills`). The route-guard test is
+the broad-invariant layer and passes on both.
 """
 
 from __future__ import annotations
@@ -58,6 +67,12 @@ def _open_webui_frontend(open_webui_backend: Path) -> Path:
     is its parent's `src/` sibling.
     """
     return open_webui_backend.parent / "src"
+
+
+def _read(path: Path) -> str:
+    if not path.is_file():
+        pytest.skip(f"frontend source file not found: {path}")
+    return path.read_text(encoding="utf-8")
 
 
 # -----------------------------------------------------------------------------
@@ -138,7 +153,7 @@ def test_sidebar_workspace_visibility_covers_every_access_key(
         / "layout"
         / "Sidebar.svelte"
     )
-    body = _extract_sidebar_workspace_block(sidebar.read_text(encoding="utf-8"))
+    body = _extract_sidebar_workspace_block(_read(sidebar))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced
     assert not missing, (
@@ -163,7 +178,7 @@ def test_workspace_index_redirect_covers_every_access_key(
     page = (
         _open_webui_frontend(open_webui_backend) / "routes" / "(app)" / "workspace" / "+page.svelte"
     )
-    body = _extract_workspace_index_chain(page.read_text(encoding="utf-8"))
+    body = _extract_workspace_index_chain(_read(page))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced
     assert not missing, (
@@ -196,7 +211,7 @@ def test_workspace_route_guards_cover_every_access_key(
         / "workspace"
         / "+layout.svelte"
     )
-    body = _extract_workspace_route_guards(layout.read_text(encoding="utf-8"))
+    body = _extract_workspace_route_guards(_read(layout))
     referenced = _keys_referenced(body)
     missing = workspace_access_keys - referenced
     assert not missing, (

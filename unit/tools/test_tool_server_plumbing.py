@@ -295,15 +295,20 @@ class FakeRedis:
 
 @pytest.fixture
 def cache_env(tools_module, monkeypatch):
-    """Counts every rebuild by counting reads of the connections config."""
-    reads = []
+    """Counts every rebuild by counting spec fetches. A connections read is not a proxy: since
+    81b9afb73 `get_terminal_servers` reads them to decide whether a cached empty list is stale."""
+    rebuilds = []
 
-    async def config_get(key, default=None):
-        reads.append(key)
+    async def config_get(_key, default=None):
+        return []
+
+    async def fetch_servers_data(server_configs):
+        rebuilds.append(server_configs)
         return []
 
     monkeypatch.setattr(tools_module, "Config", SimpleNamespace(get=config_get))
-    return reads
+    monkeypatch.setattr(tools_module, "get_tool_servers_data", fetch_servers_data)
+    return rebuilds
 
 
 def request_with_cache(value):

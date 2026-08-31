@@ -1,32 +1,41 @@
-"""Regression tests for six 0.11.0 repairs in `open_webui/utils/middleware.py`.
+"""Regression tests for six 0.11.0 and two 0.11.2 repairs in `open_webui/utils/middleware.py`.
 
-All six sit on the path that assembles a chat turn: the payload the model is asked with, the
-items a stream accumulates, and what survives a page reload.
+All of them sit on the path that assembles a chat turn: the payload the model is asked with,
+the items a stream accumulates, and what survives a page reload.
 
-* #27414 / #27017 (`381149ea5`, `outlet_filter_handler`) — the outlet payload embedded
+* #27414 / #27017 (`381149ea5`, `outlet_filter_handler`): the outlet payload embedded
   `m['output']` by reference, so a filter mutating `output` in place mutated the stored
   baseline too. The change check then compared the object with itself, found nothing changed
   and never persisted: the edit showed up live and vanished on reload. Fixed with
   `copy.deepcopy`.
-* #26687 / #26645 (`051a1f6`, `streaming_chat_response_handler`) — reasoning arriving after a
+* #26687 / #26645 (`051a1f6`, `streaming_chat_response_handler`): reasoning arriving after a
   `message` item already existed was appended after it, so the thinking block rendered below
   the answer; and a `reasoning_details` payload carrying no text, summary or data opened an
   empty thinking block. The fix inserts late reasoning at the message index (stamped
   completed) and only opens a block for details that carry content.
-* #26857 / #26836 (`d3cfcd801`, `process_chat_payload`) — `metadata['system_prompt']` read the
+* #26857 / #26836 (`d3cfcd801`, `process_chat_payload`): `metadata['system_prompt']` read the
   model default from `form_data['params']['system']` after `apply_params_to_form_data` had
   already popped `params`, so it was always empty. The native tool-call loop runs with
   `bypass_system_prompt=True` and restores from that metadata, so from the second round the
   model's system prompt was gone, leaving only the injected `<memory_context>` block.
-* #26986 (`b9d7274`, `process_chat_payload`) — `skill_ids` was a raw set union, so the order
+* #26986 (`b9d7274`, `process_chat_payload`): `skill_ids` was a raw set union, so the order
   skills were injected in varied per process and defeated provider prompt caching. Now
   `sorted`.
-* #27426 / #27411 (`8ab44ed`, `streaming_chat_response_handler`) — a reply that raised while
+* #27426 / #27411 (`8ab44ed`, `streaming_chat_response_handler`): a reply that raised while
   continuing after a tool call or a code-interpreter run logged at debug and broke out, ending
   mid-answer with nothing said. The fix emits `chat:message:error` and persists it.
-* #27365 / #27074 (`dd514ee20`, `streaming_chat_response_handler`) — the plain-JSON (no
+* #27365 / #27074 (`dd514ee20`, `streaming_chat_response_handler`): the plain-JSON (no
   `data:` prefix) error branch called the message upsert without `await`, so the coroutine
   never ran and the error vanished on reload.
+* #29053 / #29035 (`3749e7dc7`, `streaming_chat_response_handler`): a chunk carrying both
+  reasoning text and `reasoning_details`, which is what OpenRouter sends, had its already
+  built `response.reasoning_text.delta` cleared by the details branch, so nothing was emitted
+  for the whole reasoning phase and the answer only appeared once generation finished. The
+  event is now dropped only when the details were all the chunk reported.
+* #29052 / #29040 (`87bed3f0b`, `streaming_chat_response_handler`): a finished tool round
+  appended an empty `message` item for the next response. Reasoning routing keys off the first
+  `message` item, so the next round's thinking was folded into the previous, already closed
+  Thoughts block instead of opening a live one. The pre-append is gone.
 
 `outlet_filter_handler` and `process_chat_payload` are module-level and are driven for real.
 The other sites live inside `streaming_chat_response_handler` and `process_chat_payload`,
@@ -39,11 +48,14 @@ Two 0.11.1 refactors are absorbed at runtime rather than pinned: `dbf715cb6` (#2
 made the reasoning branch await the stream save, so the lifted block now runs in a coroutine.
 Neither changes what the assertions check.
 
-Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (an outlet edit to `output` is
-never persisted, late reasoning lands below the answer, a contentless reasoning_details opens an
-empty thinking block, the model system prompt is missing from the tool-call metadata,
-`skill_ids` iterates in set order, a continuation failure is silent, and a plain-JSON error
-line is never written to the chat).
+Discriminates: passes on v0.11.2, fails on v0.10.2 for the 0.11.0 sections (an outlet edit to
+`output` is never persisted, late reasoning lands below the answer, a contentless
+reasoning_details opens an empty thinking block, the model system prompt is missing from the
+tool-call metadata, `skill_ids` iterates in set order, a continuation failure is silent, and a
+plain-JSON error line is never written to the chat) and fails on v0.11.1 for the 0.11.2
+sections (a reasoning delta that arrives with reasoning_details is emitted as nothing, and the
+message item a tool round pre-appends diverts the next round's thinking into a closed Thoughts
+block).
 """
 
 from __future__ import annotations
@@ -187,6 +199,17 @@ def _exec(statements: list[ast.stmt], namespace: dict) -> dict:
     return namespace
 
 
+def _rebound_names(statements: list[ast.stmt]) -> list[str]:
+    """Names the lifted code assigns; they must stay in the namespace, not become locals."""
+    names = {
+        node.id
+        for statement in statements
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return sorted(names)
+
+
 def _exec_async_loop_body(statements: list[ast.stmt], namespace: dict):
     """Same, for statements that `await` and may `break` or `continue`."""
     once = ast.For(
@@ -200,7 +223,7 @@ def _exec_async_loop_body(statements: list[ast.stmt], namespace: dict):
     function = ast.AsyncFunctionDef(
         name="_extracted",
         args=_no_args(),
-        body=[once],
+        body=[ast.Global(names=_rebound_names(statements)), once],
         decorator_list=[],
         returns=None,
         type_params=[],
@@ -279,8 +302,40 @@ def _raw_json_error_branch(source: str) -> list[ast.stmt]:
     return hits
 
 
+def _delta_block(source: str) -> list[ast.stmt]:
+    """The whole per-chunk delta branch: `value = delta['content']` through `if value:`."""
+    for block in _blocks(_function(source, "streaming_chat_response_handler")):
+        if not _assigns(block, "reasoning_details"):
+            continue
+        start = _assigns(block, "value")[0]
+        end = next(
+            index
+            for index, node in enumerate(block)
+            if index > start and isinstance(node, ast.If) and ast.unparse(node.test) == "value"
+        )
+        return block[start : end + 1]
+    raise AssertionError("delta block no longer matches the shipped middleware")
+
+
+def _tool_round_block(source: str) -> list[ast.stmt]:
+    """What a finished tool round leaves in `output`, up to the citation emit."""
+    for block in _blocks(_function(source, "streaming_chat_response_handler")):
+        targets = _assigns(block, "result_status_by_call_id")
+        if not targets:
+            continue
+        end = next(
+            index
+            for index, node in enumerate(block)
+            if index > targets[0]
+            and isinstance(node, ast.If)
+            and ast.unparse(node.test) == "citations_enabled"
+        )
+        return block[targets[0] : end]
+    raise AssertionError("tool round block no longer matches the shipped middleware")
+
+
 # =============================================================================
-# #27414 — an outlet filter's in-place edit to `output` must be persisted
+# #27414: an outlet filter's in-place edit to `output` must be persisted
 # =============================================================================
 
 CHAT_ID = "chat-outlet-aliasing"
@@ -475,7 +530,7 @@ async def test_outlet_content_edit_is_still_persisted(
 
 
 # =============================================================================
-# #26687 — late reasoning must sit above the answer, empty details add nothing
+# #26687: late reasoning must sit above the answer, empty details add nothing
 # =============================================================================
 
 
@@ -596,7 +651,7 @@ async def test_reasoning_details_with_text_still_open_a_block(middleware_module,
 
 
 # =============================================================================
-# #26857 — the system prompt a tool-call round is rebuilt from
+# #26857: the system prompt a tool-call round is rebuilt from
 # =============================================================================
 
 MODEL_SYSTEM_PROMPT = "You are Ada, a terse assistant."
@@ -748,7 +803,7 @@ async def test_no_system_prompt_anywhere_stays_none(
 
 
 # =============================================================================
-# #26986 — skill order must not depend on set iteration
+# #26986: skill order must not depend on set iteration
 # =============================================================================
 
 # Enough ids that a set landing in sorted order by chance is not a real risk.
@@ -804,7 +859,7 @@ def test_model_skills_are_included(middleware_module, middleware_source):
 
 
 # =============================================================================
-# #27426 — a failure while continuing after a tool call must be reported
+# #27426: a failure while continuing after a tool call must be reported
 # =============================================================================
 
 
@@ -889,7 +944,7 @@ async def test_continuation_failure_on_an_unsaved_chat_still_emits(
 
 
 # =============================================================================
-# #27365 — a plain-JSON error line must actually reach the chat
+# #27365: a plain-JSON error line must actually reach the chat
 # =============================================================================
 
 
@@ -972,3 +1027,308 @@ async def test_raw_json_error_on_an_unsaved_chat_still_emits(
     )
 
     assert emitted[0]["data"]["error"] == "nope"
+
+
+# =============================================================================
+# 0.11.2: the two streaming repairs in `streaming_chat_response_handler`
+# =============================================================================
+
+
+def _tag_output_handler(middleware_module, source):
+    """The handler's own nested tag detector, lifted so the content branch can call it."""
+    hits = [
+        node
+        for node in ast.walk(_function(source, "streaming_chat_response_handler"))
+        if isinstance(node, ast.FunctionDef) and node.name == "tag_output_handler"
+    ]
+    assert len(hits) == 1, f"expected one nested `tag_output_handler`, found {len(hits)}"
+    # the two per-stream scan tables it closes over in the handler
+    namespace = _namespace(
+        middleware_module, hits, tag_scan_positions={}, tag_boundary_positions={}
+    )
+    return _exec(hits, namespace)["tag_output_handler"]
+
+
+def _stream_namespace(middleware_module, statements, output, chunk, content_parts, tag_handler):
+    return _namespace(
+        middleware_module,
+        statements,
+        delta=chunk,
+        data=chunk,
+        output=output,
+        full_output=lambda: output,
+        content_parts=content_parts,
+        save_current_response_stream=AsyncMock(return_value=None),
+        request=_request(),
+        metadata={"chat_id": CHAT_ID, "message_id": MESSAGE_ID},
+        user=None,
+        DETECT_REASONING_TAGS=True,
+        DETECT_CODE_INTERPRETER=False,
+        tag_output_handler=tag_handler,
+        reasoning_tags=middleware_module.DEFAULT_REASONING_TAGS,
+        # base64 image rewriting is the I/O boundary of this branch
+        ENABLE_CHAT_RESPONSE_BASE64_IMAGE_URL_CONVERSION=False,
+    )
+
+
+async def _stream_deltas(middleware_module, middleware_source, chunks: list[dict], output=None):
+    """Drive the shipped delta branch over a finite chunk list; returns output and events."""
+    statements = _delta_block(middleware_source)
+    tag_handler = _tag_output_handler(middleware_module, middleware_source)
+    output = [] if output is None else output
+    content_parts: list[str] = []
+    events = []
+    for chunk in chunks:
+        namespace = _stream_namespace(
+            middleware_module, statements, output, chunk, content_parts, tag_handler
+        )
+        await _exec_async_loop_body(statements, namespace)
+        events.append(namespace["data"])
+    return output, events
+
+
+def _finish_tool_round(middleware_module, middleware_source, output, call_id, name="search_web"):
+    """Run the shipped end-of-tool-round bookkeeping against one in-progress call."""
+    output.append(
+        {
+            "type": "function_call",
+            "id": call_id,
+            "call_id": call_id,
+            "name": name,
+            "arguments": "",
+            "status": "in_progress",
+        }
+    )
+    statements = _tool_round_block(middleware_source)
+    namespace = _namespace(
+        middleware_module,
+        statements,
+        output=output,
+        results=[{"tool_call_id": call_id, "content": "tool said hello"}],
+        response_tool_calls=[{"id": call_id, "function": {"name": name, "arguments": "{}"}}],
+    )
+    _exec(statements, namespace)
+    return output
+
+
+def _reasoning_items(output: list) -> list[dict]:
+    return [item for item in output if item["type"] == "reasoning"]
+
+
+def _message_text(output: list) -> str:
+    return "".join(
+        part.get("text", "")
+        for item in output
+        if item["type"] == "message"
+        for part in item.get("content", [])
+    )
+
+
+def _reasoning_text(item: dict) -> str:
+    return "".join(part.get("text", "") for part in item.get("content", []))
+
+
+# --- Narrow: #29035, a reasoning delta carrying details must still be emitted -
+
+
+REASONING_WITH_DETAILS = {
+    "reasoning": "weighing the options",
+    "reasoning_details": [{"type": "reasoning.text", "index": 0, "text": "weighing the options"}],
+}
+
+
+@pytest.mark.asyncio
+async def test_reasoning_delta_with_details_is_still_emitted(middleware_module, middleware_source):
+    _, events = await _stream_deltas(
+        middleware_module, middleware_source, [REASONING_WITH_DETAILS]
+    )
+
+    assert events[0] is not None, (
+        "a reasoning chunk that also carried reasoning_details was dropped, so a reasoning "
+        "model streamed nothing until generation finished (#29035)"
+    )
+    assert events[0]["type"] == "response.reasoning_text.delta"
+    assert events[0]["delta"] == "weighing the options"
+
+
+@pytest.mark.asyncio
+async def test_every_reasoning_chunk_with_details_reaches_the_client(
+    middleware_module, middleware_source
+):
+    chunks = [
+        {
+            "reasoning": word,
+            "reasoning_details": [{"type": "reasoning.text", "index": 0, "text": word}],
+        }
+        for word in ("first ", "second ", "third")
+    ]
+    output, events = await _stream_deltas(middleware_module, middleware_source, chunks)
+
+    assert [event and event["delta"] for event in events] == ["first ", "second ", "third"], (
+        "the stream stalled: every reasoning delta accompanied by details was swallowed (#29035)"
+    )
+    assert _reasoning_text(_reasoning_items(output)[0]) == "first second third"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_details_arriving_alone_emit_nothing(middleware_module, middleware_source):
+    _, events = await _stream_deltas(
+        middleware_module,
+        middleware_source,
+        [{"reasoning_details": [{"type": "reasoning.text", "index": 0, "text": "detail only"}]}],
+    )
+
+    assert events == [None], "a details-only chunk has no text delta to send and must stay dropped"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_without_details_is_emitted(middleware_module, middleware_source):
+    _, events = await _stream_deltas(
+        middleware_module, middleware_source, [{"reasoning_content": "plain thought"}]
+    )
+
+    assert events[0]["type"] == "response.reasoning_text.delta"
+    assert events[0]["delta"] == "plain thought"
+
+
+# --- Narrow: #29040, thinking after a tool call belongs in Thoughts ----------
+
+
+@pytest.mark.asyncio
+async def test_post_tool_call_reasoning_opens_a_live_thoughts_block(
+    middleware_module, middleware_source
+):
+    output = _finish_tool_round(middleware_module, middleware_source, [], "call_1")
+    await _stream_deltas(
+        middleware_module, middleware_source, [{"reasoning": "now I know"}], output
+    )
+
+    assert [item["type"] for item in output] == [
+        "function_call",
+        "function_call_output",
+        "reasoning",
+    ], (
+        "a finished tool round left an empty message item behind, so the next round's thinking "
+        "was routed relative to it instead of opening a Thoughts block of its own (#29040)"
+    )
+    reasoning = _reasoning_items(output)
+    assert _reasoning_text(reasoning[0]) == "now I know"
+    assert reasoning[0]["status"] == "in_progress", (
+        "the empty message item pre-appended after a tool call made the next round's thinking "
+        "land in a Thoughts block stamped completed on the spot instead of a live one (#29040)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_tool_call_reasoning_is_not_merged_into_the_earlier_thoughts(
+    middleware_module, middleware_source
+):
+    output, _ = await _stream_deltas(
+        middleware_module, middleware_source, [{"reasoning": "I should search"}]
+    )
+    _finish_tool_round(middleware_module, middleware_source, output, "call_1")
+    await _stream_deltas(
+        middleware_module, middleware_source, [{"reasoning": "the result says 42"}], output
+    )
+
+    reasoning = _reasoning_items(output)
+    assert len(reasoning) == 2, (
+        "reasoning for the step after a tool call was folded back into the previous, already "
+        "completed thinking block (#29040)"
+    )
+    assert _reasoning_text(reasoning[0]) == "I should search"
+    assert _reasoning_text(reasoning[1]) == "the result says 42"
+    tool_result_index = next(
+        index for index, item in enumerate(output) if item["type"] == "function_call_output"
+    )
+    assert output.index(reasoning[1]) > tool_result_index
+
+
+# --- Broad: reasoning routes to a live Thoughts block wherever it arrives ----
+
+
+@pytest.mark.asyncio
+async def test_reasoning_routes_to_a_live_block_before_after_and_without_tools(
+    middleware_module, middleware_source
+):
+    before: list = []
+    await _stream_deltas(middleware_module, middleware_source, [{"reasoning": "why"}], before)
+    _finish_tool_round(middleware_module, middleware_source, before, "call_1")
+
+    after = _finish_tool_round(middleware_module, middleware_source, [], "call_1")
+    await _stream_deltas(middleware_module, middleware_source, [{"reasoning": "why"}], after)
+
+    without: list = []
+    await _stream_deltas(middleware_module, middleware_source, [{"reasoning": "why"}], without)
+
+    for label, output in (("before", before), ("after", after), ("none", without)):
+        assert [item["type"] for item in output if item["type"] in ("reasoning", "message")] == [
+            "reasoning"
+        ], f"{label}: thinking did not land in a Thoughts block of its own"
+        item = next(item for item in output if item["type"] == "reasoning")
+        assert item["status"] == "in_progress", f"{label}: Thoughts block was already closed"
+        assert _reasoning_text(item) == "why"
+
+
+@pytest.mark.asyncio
+async def test_consecutive_tool_calls_keep_routing_reasoning_correctly(
+    middleware_module, middleware_source
+):
+    output: list = []
+    for round_index, call_id in enumerate(("call_1", "call_2", "call_3")):
+        await _stream_deltas(
+            middleware_module, middleware_source, [{"reasoning": f"step {round_index}"}], output
+        )
+        _finish_tool_round(middleware_module, middleware_source, output, call_id)
+
+    await _stream_deltas(
+        middleware_module, middleware_source, [{"reasoning": "done"}, {"content": "42"}], output
+    )
+
+    reasoning = _reasoning_items(output)
+    assert [_reasoning_text(item) for item in reasoning] == [
+        "step 0",
+        "step 1",
+        "step 2",
+        "done",
+    ], "reasoning across consecutive tool calls was merged or misplaced (#29040)"
+    assert _message_text(output) == "42"
+
+
+# --- Nearby: streams without reasoning or without tools are unchanged -------
+
+
+@pytest.mark.asyncio
+async def test_plain_content_stream_assembles_one_message(middleware_module, middleware_source):
+    output, events = await _stream_deltas(
+        middleware_module,
+        middleware_source,
+        [{"content": "Hello"}, {"content": ", "}, {"content": "world"}],
+    )
+
+    assert [item["type"] for item in output] == ["message"]
+    assert _message_text(output) == "Hello, world"
+    assert [event["type"] for event in events] == ["response.output_text.delta"] * 3
+
+
+@pytest.mark.asyncio
+async def test_empty_stream_assembles_nothing(middleware_module, middleware_source):
+    output, events = await _stream_deltas(middleware_module, middleware_source, [])
+
+    assert output == []
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_reasoning_then_answer_without_tools_is_unchanged(
+    middleware_module, middleware_source
+):
+    output, _ = await _stream_deltas(
+        middleware_module,
+        middleware_source,
+        [{"reasoning": "hmm"}, {"content": "The answer is 42"}],
+    )
+
+    assert [item["type"] for item in output] == ["reasoning", "message"]
+    assert output[0]["status"] == "completed"
+    assert _message_text(output) == "The answer is 42"
