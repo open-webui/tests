@@ -30,65 +30,17 @@ Both reproduce on a *fresh* DB with no prior peewee migration history.
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import textwrap
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, inspect
 
-
-def _run_alembic_upgrade_head(
-    backend: Path, database_url: str, data_dir: Path
-) -> tuple[int, str, str]:
-    """Run alembic upgrade head as a subprocess with the given DB URL.
-
-    Uses a subprocess so each invocation gets a fresh sys.modules — the
-    open_webui.config module caches state in module globals after first
-    import. Bypasses open_webui.config's run_migrations() wrapper
-    (which silently swallows migration errors with `log.exception(...)`),
-    so the alembic exception propagates as a non-zero exit code.
-    """
-    script = textwrap.dedent(
-        f"""
-        import os, sys
-        os.environ['DATABASE_URL'] = {database_url!r}
-        os.environ['DATA_DIR'] = {str(data_dir)!r}
-        sys.path.insert(0, {str(backend)!r})
-
-        from alembic import command
-        from alembic.config import Config as AlembicConfig
-        from open_webui.env import OPEN_WEBUI_DIR
-
-        cfg = AlembicConfig(OPEN_WEBUI_DIR / 'alembic.ini')
-        cfg.set_main_option('script_location', str(OPEN_WEBUI_DIR / 'migrations'))
-        command.upgrade(cfg, 'head')
-
-        # Sanity check: the config table — the one that surfaced the
-        # original symptom — must exist after upgrade.
-        from sqlalchemy import create_engine, inspect
-        engine = create_engine({database_url!r})
-        tables = set(inspect(engine).get_table_names())
-        engine.dispose()
-        assert 'config' in tables, f'config table missing after upgrade; got: {{sorted(tables)}}'
-
-        print('OK')
-        """
-    )
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
-    )
-    return result.returncode, result.stdout, result.stderr
+from .conftest import AlembicUpgradeRunner
 
 
 @pytest.mark.regression
 def test_alembic_upgrade_head_succeeds_on_fresh_sqlite(
-    open_webui_backend: Path, tmp_path: Path
+    open_webui_backend: Path, tmp_path: Path, run_alembic_upgrade_head: AlembicUpgradeRunner
 ) -> None:
     """Regression: alembic upgrade head must succeed on a fresh SQLite DB.
 
@@ -101,7 +53,7 @@ def test_alembic_upgrade_head_succeeds_on_fresh_sqlite(
     data_dir = tmp_path / "data"
     data_dir.mkdir()
 
-    rc, stdout, stderr = _run_alembic_upgrade_head(open_webui_backend, db_url, data_dir)
+    rc, stdout, stderr = run_alembic_upgrade_head(open_webui_backend, db_url, data_dir)
 
     if rc != 0:
         pytest.fail(
@@ -114,10 +66,16 @@ def test_alembic_upgrade_head_succeeds_on_fresh_sqlite(
 
     assert "OK" in stdout, stdout
 
+    # Sanity check: the config table — the one that surfaced the original symptom — exists.
+    engine = create_engine(db_url)
+    tables = set(inspect(engine).get_table_names())
+    engine.dispose()
+    assert "config" in tables, f"config table missing after upgrade; got: {sorted(tables)}"
+
 
 @pytest.mark.regression
 def test_alembic_upgrade_head_succeeds_on_fresh_postgres(
-    open_webui_backend: Path, tmp_path: Path
+    open_webui_backend: Path, tmp_path: Path, run_alembic_upgrade_head: AlembicUpgradeRunner
 ) -> None:
     """Regression: alembic upgrade head must succeed on a fresh Postgres DB.
 
@@ -147,7 +105,7 @@ def test_alembic_upgrade_head_succeeds_on_fresh_postgres(
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        rc, stdout, stderr = _run_alembic_upgrade_head(open_webui_backend, db_url, data_dir)
+        rc, stdout, stderr = run_alembic_upgrade_head(open_webui_backend, db_url, data_dir)
 
         if rc != 0:
             pytest.fail(
@@ -161,6 +119,12 @@ def test_alembic_upgrade_head_succeeds_on_fresh_postgres(
             )
 
         assert "OK" in stdout, stdout
+
+        # Sanity check: the config table — the one that surfaced the original symptom — exists.
+        engine = create_engine(db_url)
+        tables = set(inspect(engine).get_table_names())
+        engine.dispose()
+        assert "config" in tables, f"config table missing after upgrade; got: {sorted(tables)}"
     finally:
         try:
             server.cleanup()
