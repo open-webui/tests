@@ -160,7 +160,7 @@ def _resolve_http_patch_target(fc: ModuleType, response_body: dict[str, Any]):
 
 
 @pytest.mark.parametrize(
-    "base_url, path, expected",
+    "configured_url, path, expected",
     [
         # Default v2 path is appended when base lacks /v2.
         ("https://api.firecrawl.dev", "search", "https://api.firecrawl.dev/v2/search"),
@@ -175,10 +175,10 @@ def _resolve_http_patch_target(fc: ModuleType, response_body: dict[str, Any]):
         ("", "search", "https://api.firecrawl.dev/v2/search"),
     ],
 )
-def test_build_firecrawl_url(firecrawl_module, base_url, path, expected) -> None:
+def test_build_firecrawl_url(firecrawl_module, configured_url, path, expected) -> None:
     """Request URLs target Firecrawl's v2 endpoints, regardless of how
     the operator configured FIRECRAWL_API_BASE_URL."""
-    assert firecrawl_module.build_firecrawl_url(base_url, path) == expected
+    assert firecrawl_module.build_firecrawl_url(configured_url, path) == expected
 
 
 def test_build_firecrawl_headers_includes_bearer_token(firecrawl_module) -> None:

@@ -147,8 +147,8 @@ def test_ordinary_static_assets_keep_their_type(probe, name, expected):
     assert probe['served'][name]['content_type'] == expected
 
 
-def test_unknown_extension_falls_back_to_text_plain(probe):
-    assert probe['served'][UNKNOWN_ASSET]['content_type'] == 'text/plain'
+def test_unknown_extension_falls_back_to_the_starlette_default(probe):
+    assert probe['served'][UNKNOWN_ASSET]['content_type'] == 'application/octet-stream'
 
 
 def test_cors_header_is_still_set_on_served_assets(probe):

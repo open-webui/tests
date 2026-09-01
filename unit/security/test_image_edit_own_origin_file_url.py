@@ -141,7 +141,7 @@ async def test_own_origin_file_url_is_served_from_the_file_store(edit):
 
 
 @pytest.mark.parametrize(
-    "base_url,url",
+    "origin,url",
     [
         ("https://chat.example.com/", f"https://chat.example.com/api/v1/files/{FILE_ID}/content"),
         ("http://localhost:8080/", f"http://localhost:8080/api/v1/files/{FILE_ID}/content?x=1"),
@@ -149,8 +149,8 @@ async def test_own_origin_file_url_is_served_from_the_file_store(edit):
     ],
 )
 @pytest.mark.asyncio
-async def test_every_shape_of_own_origin_content_url_stays_local(edit, base_url, url):
-    outcome = await edit(url, base_url=base_url)
+async def test_every_shape_of_own_origin_content_url_stays_local(edit, origin, url):
+    outcome = await edit(url, base_url=origin)
 
     assert outcome.session.requested_urls == []
     assert outcome.served_file_ids == [FILE_ID]

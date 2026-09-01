@@ -16,9 +16,10 @@ the metadata).
 So the contract the backend depends on is: the ``unstructured.partition.*``
 partitioners exist and return a list of ``Element`` objects whose text is
 ``str(element)`` and which carry an ``.metadata`` attribute. This module
-pins that surface and exercises it OFFLINE with the lightest partitioner
-(``partition_text``), which needs no model, no network, and no external
-binary — the same machinery the heavier file loaders feed into.
+pins that surface and exercises it with the lightest partitioner
+(``partition_text``), the same machinery the heavier file loaders feed into.
+Recent ``unstructured`` releases fetch a spaCy model on first use, so the
+behavioural tests skip when the model cannot be downloaded.
 
 NOTE (version drift): both ``backend/requirements.txt`` and
 ``pyproject.toml`` pin ``unstructured==0.22.31``, but the test venv here has
@@ -68,6 +69,17 @@ def _partition_text(depcheck):
 def _elements(depcheck):
     mod = depcheck.load(IMPORT_NAME)
     return depcheck.resolve(mod, "documents.elements")
+
+
+def _partition(depcheck, text=SAMPLE):
+    """partition_text downloads a spaCy model on first use, which a runner
+    without egress cannot do."""
+    try:
+        return _partition_text(depcheck)(text=text)
+    except RuntimeError as exc:
+        if "spaCy" not in str(exc):
+            raise
+        pytest.skip("partition_text needs a spaCy model download and the network is unavailable")
 
 
 # --------------------------------------------------------------------------- #
@@ -123,9 +135,8 @@ def test_partition_subpackage_exposes_common_partitioners(depcheck):
 def test_partition_text_returns_list_of_elements(depcheck):
     """The core contract LangChain relies on: a partitioner returns a list of
     Element objects."""
-    partition_text = _partition_text(depcheck)
     el = _elements(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     assert isinstance(result, list)
     assert result, "partition_text returned no elements for non-empty input"
     for e in result:
@@ -135,8 +146,7 @@ def test_partition_text_returns_list_of_elements(depcheck):
 def test_element_str_is_the_text(depcheck):
     """LangChain builds Document.page_content from str(element). Pin that
     str(element) yields the element's text content."""
-    partition_text = _partition_text(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     joined = "\n".join(str(e) for e in result)
     assert "Hello world." in joined
     assert "second paragraph" in joined
@@ -144,8 +154,7 @@ def test_element_str_is_the_text(depcheck):
 
 def test_element_has_text_attribute(depcheck):
     """Element instances expose a .text attribute mirroring str(element)."""
-    partition_text = _partition_text(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     first = result[0]
     assert hasattr(first, "text")
     assert first.text == str(first)
@@ -155,9 +164,8 @@ def test_element_has_metadata(depcheck):
     """LangChain reads element.metadata (an ElementMetadata) when building the
     Document.metadata dict. Pin that attribute is present and convertible to a
     dict."""
-    partition_text = _partition_text(depcheck)
     el = _elements(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     first = result[0]
     assert hasattr(first, "metadata")
     assert isinstance(first.metadata, el.ElementMetadata)
@@ -169,8 +177,7 @@ def test_element_has_metadata(depcheck):
 def test_element_has_category(depcheck):
     """Elements classify content (Title / NarrativeText / ...); the category
     attribute is part of the data model LangChain may surface."""
-    partition_text = _partition_text(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     for e in result:
         assert hasattr(e, "category")
         assert isinstance(e.category, str)
@@ -179,8 +186,7 @@ def test_element_has_category(depcheck):
 def test_partition_splits_paragraphs(depcheck):
     """Two blank-line-separated paragraphs partition into at least two
     elements — the chunking behaviour downstream retrieval depends on."""
-    partition_text = _partition_text(depcheck)
-    result = partition_text(text=SAMPLE)
+    result = _partition(depcheck)
     assert len(result) >= 2
 
 
