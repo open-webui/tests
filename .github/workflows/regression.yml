@@ -197,3 +197,44 @@ jobs:
           name: integration-report-${{ inputs.open-webui-ref }}
           path: tests/integration-report.html
           if-no-files-found: ignore
+
+  # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            open-webui/package-lock.json
+            tests/frontend/package-lock.json
+
+      - name: Install Open WebUI dependencies
+        working-directory: open-webui
+        run: npm ci --force
+
+      - name: Install the suite
+        working-directory: tests/frontend
+        run: npm ci
+
+      - name: Run the frontend suite
+        working-directory: tests/frontend
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+        run: npx vitest run

@@ -2,11 +2,12 @@
 
 External test suite for [Open WebUI](https://github.com/open-webui/open-webui).
 
-Three kinds of test, by how close they run to the product:
+Four kinds of test, by how close they run to the product:
 
 | Layer | Dir | Runs against | Needs a running instance? |
 |-------|-----|--------------|---------------------------|
 | **Unit** | `unit/` | the backend **source** (imported directly, or its source read and audited) | No |
+| **Frontend** | `frontend/` | the frontend **source** (`src/lib` modules imported into vitest) | No |
 | **Integration** | `integration/` | the HTTP **API** via `httpx` | Yes |
 | **E2E** | `e2e/` | the **UI** via Playwright | Yes (+ browser) |
 
@@ -29,7 +30,14 @@ tests/
 │   ├── tools/                  # builtin tool functions
 │   ├── config/                 # boot / env / embedding-config safety
 │   ├── chat/                   # chat message reconstruction
-│   └── frontend/               # Svelte/TS source-contract audits
+│   └── frontend/               # Svelte/TS source-contract audits (python, reads the files)
+│
+├── frontend/                   # vitest tests importing src/lib modules from the checkout
+│   ├── package.json            # vitest only; app deps come from the checkout's node_modules
+│   ├── vitest.config.ts        # $lib alias + resolver into the checkout
+│   ├── shortcuts.test.ts
+│   ├── i18n/
+│   └── marked/
 │
 ├── integration/                # httpx API tests, grouped by endpoint/router
 │   ├── test_chat_completions.py
@@ -45,6 +53,7 @@ tests/
 **Where a new test goes**
 
 - Exercises a backend function/module in isolation, or audits a source file → `unit/<subsystem>/`. Pick the subsystem dir that matches the code under test; add a new one if none fits (it's just a directory with an `__init__.py`).
+- Calls a frontend `src/lib` module directly (TypeScript, vitest) → `frontend/<area>/<module>.test.ts`, importing through `$lib/...`.
 - Hits an HTTP endpoint → `integration/test_<router>.py` (one file per router/endpoint group).
 - Drives the browser → `e2e/`.
 
@@ -82,6 +91,18 @@ For **integration/e2e** credentials, copy and edit the env file:
 cp .env.example .env
 ```
 
+### Frontend suite
+
+`frontend/` runs on vitest and imports `src/lib` modules straight out of the checkout, so the checkout needs its own `npm ci` first. Bare imports in a test (`marked`, `i18next`, `svelte/store`) resolve from the checkout's `node_modules`, so a test and the module it drives share one instance.
+
+```bash
+(cd ../open-webui && npm ci --force)
+cd frontend && npm ci
+OPEN_WEBUI_SOURCE_DIR=/path/to/open-webui/backend npx vitest run
+```
+
+Without `OPEN_WEBUI_SOURCE_DIR` it looks for a sibling `open-webui/` checkout, like the python suites.
+
 ### Pointing unit tests at the backend source
 
 Unit tests need the Open WebUI **source tree** (not a server). Resolution order:
@@ -118,6 +139,7 @@ pytest -m regression                     # only issue/PR-pinned regressions
 pytest -m "not slow"                     # skip the long ones
 pytest --lf                              # rerun last-failed
 pytest -v                                # verbose (off by default; the suite is large)
+(cd frontend && npx vitest run)          # the vitest suite; pytest never collects it
 ```
 
 A run against the latest `dev` is expected to show **red for any regression whose fix isn't merged yet** — that's the point. Each failing test names the issue/PR that turns it green.
