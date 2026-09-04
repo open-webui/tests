@@ -225,9 +225,12 @@ jobs:
             open-webui/package-lock.json
             tests/frontend/package-lock.json
 
+      # The checkout's tsconfig extends the one svelte-kit sync generates.
       - name: Install Open WebUI dependencies
         working-directory: open-webui
-        run: npm ci --force
+        run: |
+          npm ci --force
+          npx svelte-kit sync
 
       - name: Install the suite
         working-directory: tests/frontend

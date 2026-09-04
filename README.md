@@ -93,10 +93,10 @@ cp .env.example .env
 
 ### Frontend suite
 
-`frontend/` runs on vitest and imports `src/lib` modules straight out of the checkout, so the checkout needs its own `npm ci` first. Bare imports in a test (`marked`, `i18next`, `svelte/store`) resolve from the checkout's `node_modules`, so a test and the module it drives share one instance.
+`frontend/` runs on vitest and imports `src/lib` modules straight out of the checkout, so the checkout needs its own `npm ci` and a `svelte-kit sync` first (its `tsconfig.json` extends the generated one). Bare imports in a test (`marked`, `i18next`, `svelte/store`) resolve from the checkout's `node_modules`, so a test and the module it drives share one instance.
 
 ```bash
-(cd ../open-webui && npm ci --force)
+(cd ../open-webui && npm ci --force && npx svelte-kit sync)
 cd frontend && npm ci
 OPEN_WEBUI_SOURCE_DIR=/path/to/open-webui/backend npx vitest run
 ```
