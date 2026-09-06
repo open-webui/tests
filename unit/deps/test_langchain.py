@@ -1,13 +1,10 @@
-"""Dependency contract: langchain (and its split ecosystem distributions).
+"""Dependency contract: the langchain split distributions.
 
-`langchain` is the umbrella RAG framework Open WebUI builds retrieval on. In
-modern langchain the surface is split across several PyPI distributions, and
-Open WebUI imports from each of them:
+langchain is the RAG framework Open WebUI builds retrieval on. Its surface is
+split across several PyPI distributions and Open WebUI pins and imports each of
+them directly; the umbrella ``langchain`` package is no longer a dependency
+(dropped in e07e8ed0d).
 
-  - `langchain`            (dist ``langchain``)            — umbrella package;
-        depended on, but the backend imports its building blocks from the
-        split distributions below rather than from the ``langchain.*``
-        namespace directly. Pinned here as an import + version sanity check.
   - `langchain_core`       (dist ``langchain-core``)       — ``Document`` (the
         unit of content threaded through every loader/splitter/retriever),
         ``BaseRetriever`` / ``CallbackManagerForRetrieverRun`` / ``Callbacks``
@@ -51,9 +48,6 @@ pytestmark = pytest.mark.depcheck
 # Import-name -> distribution-name map (these differ, and the dist names are
 # what the bump tooling pins in requirements.txt).
 # --------------------------------------------------------------------------- #
-LANGCHAIN_IMPORT = "langchain"
-LANGCHAIN_DIST = "langchain"
-
 CORE_IMPORT = "langchain_core"
 CORE_DIST = "langchain-core"
 
@@ -126,23 +120,6 @@ CLASSIC_SYMBOLS = [
     "retrievers.ContextualCompressionRetriever",
     "retrievers.EnsembleRetriever",
 ]
-
-
-# --------------------------------------------------------------------------- #
-# langchain (umbrella distribution)
-# --------------------------------------------------------------------------- #
-def test_langchain_import(depcheck):
-    """The umbrella `langchain` distribution must remain importable; it's a
-    declared backend dependency even though the load-bearing symbols come from
-    the split distributions tested below."""
-    mod = depcheck.load(LANGCHAIN_IMPORT)
-    assert mod.__name__ == "langchain"
-
-
-def test_langchain_version_reported(depcheck):
-    """Installed `langchain` distribution version is resolvable, so bump tooling
-    and this suite agree on what's under test."""
-    assert depcheck.dist_version(LANGCHAIN_DIST) is not None
 
 
 # --------------------------------------------------------------------------- #

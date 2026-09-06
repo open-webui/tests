@@ -17,8 +17,8 @@ process comes up at all:
   a file named by `%RANDOM%`, printing a run of file-not-found errors and leaving no
   key file; `%KEY_FILE%` was also unquoted, breaking install paths with spaces.
 * 120 (0480ca9653 + 4d5084025 / PR28866, Dockerfile, issue #27651) — the bundled
-  faster-whisper cache was root-only and nltk data landed in root's home, so
-  runAsNonRoot deployments would not start.
+  faster-whisper cache was root-only, so runAsNonRoot deployments would not start.
+  The nltk download_dir half of that fix is gone with nltk itself (ca9ec06c7).
 * 167 (PR27754, baeb2dfb8, internal/db.py + retrieval/vector/dbs/pgvector.py, issue
   #27752) — the pgvector engine never got the RDS IAM `do_connect` listener, so
   startup died with `fe_sendauth: no password supplied`; the listener now also
@@ -27,8 +27,8 @@ process comes up at all:
 
 Discriminates: passes on v0.11.1, fails on v0.11.0 (aiohttp still on AsyncResolver,
 openGauss import raises KeyError('RAG'), the ColBERT log record cannot be formatted,
-start_windows.bat writes no key file, the Dockerfile lacks the cache chmod and the
-nltk download_dir, and the pgvector engine carries no IAM listener while
+start_windows.bat writes no key file, the Dockerfile lacks the cache chmod, and the
+pgvector engine carries no IAM listener while
 enable_iam_token_auth attaches to any engine handed to it).
 """
 
@@ -301,14 +301,6 @@ def test_dockerfile_makes_the_model_cache_world_readable(dockerfile_text: str) -
         r'if \[ -d /app/backend/data/cache \]; then\s+chmod -R a\+rX /app/backend/data/cache; fi',
         dockerfile_text,
     ), 'Dockerfile does not relax permissions on /app/backend/data/cache'
-
-
-def test_dockerfile_downloads_nltk_data_outside_root_home(dockerfile_text: str) -> None:
-    """Narrow: both the CUDA and the CPU branch must pin nltk's download_dir."""
-    downloads = re.findall(r"nltk\.download\((.*?)\)", dockerfile_text)
-    assert len(downloads) == 2, f'expected one nltk download per build branch, found {downloads}'
-    for args in downloads:
-        assert "download_dir='/usr/local/share/nltk_data'" in args, args
 
 
 def test_dockerfile_still_chowns_the_data_dir(dockerfile_text: str) -> None:

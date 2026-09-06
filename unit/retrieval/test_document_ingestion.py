@@ -379,7 +379,7 @@ class _AbortingVectorClient:
 def _split_document(monkeypatch, retrieval_router_module, text: str):
     pytest.importorskip("tiktoken", reason="tiktoken not installed in this env")
     document = retrieval_router_module.Document(page_content=text, metadata={"name": "doc"})
-    monkeypatch.setattr(retrieval_router_module, "VECTOR_DB_CLIENT", _AbortingVectorClient())
+    monkeypatch.setattr(retrieval_router_module, "get_vector_db_client", _AbortingVectorClient)
     with pytest.raises(_Probe):
         retrieval_router_module.save_docs_to_vector_db(
             SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace())),
