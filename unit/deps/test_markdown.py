@@ -1,27 +1,20 @@
 """Dependency contract: Markdown (PyPI ``Markdown``, import name ``markdown``).
 
-Open WebUI converts Markdown to HTML with this library in two places:
+Open WebUI converts Markdown to HTML with this library in ``env.py`` (startup):
+``import markdown`` then ``html_content = markdown.markdown(changelog_content)``.
+The bundled CHANGELOG.md is rendered to HTML and then parsed with BeautifulSoup
+to build the in-app "what's new" structure. A render failure here happens at
+import time. The PDF export that also rendered through it is gone with
+``utils/pdf_generator.py`` (508de2077).
 
-  * ``env.py`` (startup): ``import markdown`` then
-    ``html_content = markdown.markdown(changelog_content)`` — the bundled
-    CHANGELOG.md is rendered to HTML and then parsed with BeautifulSoup to build
-    the in-app "what's new" structure. A render failure here happens at import
-    time.
-  * ``utils/pdf_generator.py``: ``from markdown import markdown`` — message
-    content is rendered to HTML before being laid into the export PDF (the
-    commented-out reference shows the intended extension path,
-    ``markdown(content, extensions=["pymdownx.extra"])``, from the
-    pinned ``pymdown-extensions`` package).
-
-Both call sites use the plain ``markdown.markdown(text)`` form (no extensions
-at the live call), so the load-bearing contract is: ``markdown.markdown`` exists
-and turns standard Markdown (headings, bold/italic, lists, links, code, code
-fences, blockquotes) into the corresponding HTML. This module pins that surface
-and exercises the conversions for real, and additionally pins that the
-``pymdownx.*`` extensions the codebase references are loadable (a pinned
-dependency the PDF path is built to use). A `Markdown` bump that removed/renamed
-``markdown.markdown`` or broke a core conversion fails loudly here instead of at
-changelog-render / PDF-export time.
+The call site uses the plain ``markdown.markdown(text)`` form (no extensions),
+so the load-bearing contract is: ``markdown.markdown`` exists and turns standard
+Markdown (headings, bold/italic, lists, links, code, code fences, blockquotes)
+into the corresponding HTML. This module pins that surface and exercises the
+conversions for real. The ``pymdownx.*`` checks below skip when
+pymdown-extensions is not installed; it is no longer a pinned dependency.
+A `Markdown` bump that removed/renamed ``markdown.markdown`` or broke a core
+conversion fails loudly here instead of at changelog-render time.
 
 Pattern mirrors the unit/deps/ exemplar: symbol-existence + signature checks,
 plus offline render contracts (pure CPU, no network). Uses the `depcheck`
