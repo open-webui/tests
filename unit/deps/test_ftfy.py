@@ -5,13 +5,18 @@ wrong codec, producing garbage like ``donâ€™t`` for ``don't``. Open WebUI r
 every loaded document through it in ``retrieval/loaders/main.py``:
 
     return [
-        Document(page_content=ftfy.fix_text(doc.page_content), metadata=doc.metadata)
+        Document(
+            page_content=ftfy.fix_text(doc.page_content, unescape_html=False),
+            metadata=doc.metadata,
+        )
         for doc in docs
     ]
 
 This is the cleanup step after the encoding-detection fallback chain (which can
 land on latin-1, leaving Windows-1252 mojibake that ftfy then repairs). The
-backend uses exactly one entry point: ``ftfy.fix_text(str) -> str``.
+backend uses exactly one entry point: ``ftfy.fix_text(str, unescape_html=False)
+-> str``. The keyword argument keeps ftfy's default entity decoding off, so a
+document's literal ``&amp;`` survives extraction instead of being rewritten.
 
 This module pins that contract so an ftfy bump that renamed ``fix_text``,
 changed its signature, or regressed the core repair behaviour fails loudly
@@ -59,8 +64,8 @@ def test_version_reported(depcheck):
 
 
 def test_fix_text_exists_and_callable(depcheck):
-    """loaders/main.py: ftfy.fix_text(doc.page_content). The function must exist
-    and be callable."""
+    """loaders/main.py: ftfy.fix_text(doc.page_content, unescape_html=False).
+    The function must exist and be callable."""
     mod = depcheck.load(IMPORT_NAME)
     depcheck.assert_callable(mod, "fix_text")
 
@@ -151,6 +156,17 @@ def test_behaviour_preserves_valid_unicode(depcheck):
     # the words rather than exact equality of punctuation).
     for token in ("café", "naïve", "日本語", "Ωμέγα"):
         assert token in fixed, f"valid unicode token {token!r} lost: {fixed!r}"
+
+
+def test_behaviour_unescape_html_off_keeps_entities(depcheck):
+    """The loader passes unescape_html=False so a document's own HTML entities
+    survive extraction. Pin both that ftfy still accepts the keyword and that it
+    honours it: by default fix_text decodes entities on every line before the
+    first literal '<', which rewrites the stored document text."""
+    mod = depcheck.load(IMPORT_NAME)
+    escaped = "if (a &amp;&amp; b) return a &gt; b;"
+    assert mod.fix_text(escaped, unescape_html=False) == escaped
+    assert mod.fix_text(escaped) != escaped
 
 
 def test_behaviour_strips_control_chars(depcheck):
