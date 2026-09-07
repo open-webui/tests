@@ -32,7 +32,7 @@ def users_router(owui_module):
 
 def _permissions(**feature_overrides) -> dict:
     features = {"webhooks": True, "direct_tool_servers": True, **feature_overrides}
-    return {"features": features, "settings": {"interface": True}}
+    return {"features": features, "settings": {"personal": True, "interface": True}}
 
 
 async def _save_settings(
@@ -157,10 +157,11 @@ async def test_settings_without_a_notifications_block_are_untouched(users_router
 
 
 @pytest.mark.asyncio
-async def test_interface_permission_still_rejects_the_whole_save(users_router):
+async def test_settings_permission_still_rejects_the_whole_save(users_router):
     from fastapi import HTTPException
 
     permissions = _permissions()
+    permissions["settings"]["personal"] = False
     permissions["settings"]["interface"] = False
     with pytest.raises(HTTPException) as excinfo:
         await _save_settings(users_router, {"ui": {"theme": "dark"}}, permissions)

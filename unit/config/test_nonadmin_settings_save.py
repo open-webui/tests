@@ -59,19 +59,19 @@ def _function_body(open_webui_backend) -> str:
     return rest[: nxt.start()] if nxt else rest
 
 
-def test_interface_check_reads_permissions_from_config_store(open_webui_backend):
-    """The fixed behavior: the non-admin `settings.interface` gate must source
+def test_settings_check_reads_permissions_from_config_store(open_webui_backend):
+    """The fixed behavior: the non-admin `settings.*` gate must source
     its permissions from `Config.get('user.permissions')` (the live persisted
     dict), which is what makes the check work for non-admins."""
     body = _function_body(open_webui_backend)
-    interface_check = [
+    settings_check = [
         ln.strip()
         for ln in body.splitlines()
-        if "settings.interface" in ln and "Config.get('user.permissions')" in ln
+        if "'settings." in ln and "Config.get('user.permissions')" in ln
     ]
-    assert interface_check, (
-        "the settings.interface has_permission call no longer passes "
-        "Config.get('user.permissions'); non-admin interface-settings saves "
+    assert settings_check, (
+        "the settings.* has_permission call no longer passes "
+        "Config.get('user.permissions'); non-admin settings saves "
         "regress to the #26627 500 if the permissions dict isn't sourced here"
     )
 
