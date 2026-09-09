@@ -1,0 +1,38 @@
+# The suite has to install the same way with pip and with uv; each lane
+# builds an environment from scratch and collects the suites that need no checkout.
+name: Install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - run: pip install -e ".[dev]"
+      - run: pytest --collect-only -q integration e2e
+
+  uv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run pytest --collect-only -q integration e2e

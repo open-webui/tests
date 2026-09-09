@@ -63,7 +63,16 @@ tests/
 
 ## Setup
 
-Python 3.11+. Install into any venv:
+Python 3.11+. Either package manager works; CI checks both.
+
+With **uv** (creates `.venv` from `uv.lock`, picks Python from `.python-version`):
+
+```bash
+uv sync --extra dev              # suite + ruff/mypy/pgserver
+uv run pytest unit/
+```
+
+With **pip**, into any venv:
 
 ```bash
 pip install -e ".[dev]"          # suite + ruff/mypy/pgserver
@@ -72,6 +81,12 @@ pip install -e .
 ```
 
 > `pip install -e .` works, but you can also install the dependency list directly if you prefer not to install the project package — see `pyproject.toml`.
+
+The **unit** tests import the Open WebUI backend from a checkout (see below), so that checkout's own dependencies go into the same environment. They track the ref under test, which is why they are not part of `uv.lock`:
+
+```bash
+uv pip install -r ../open-webui/backend/requirements.txt   # or: pip install -r ...
+```
 
 For the **e2e** browser tests:
 
