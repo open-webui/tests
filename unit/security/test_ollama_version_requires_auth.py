@@ -12,6 +12,7 @@ Discriminates: passes on v0.11.0, fails on v0.10.2 (both version routes resolve
 with no auth dependency at all).
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -131,7 +132,9 @@ async def test_authenticated_user_reads_a_single_backend_version(ollama_router):
         patch.object(ollama_router.Config, "get", config),
         patch.object(ollama_router, "send_request", AsyncMock(return_value={"version": "0.5.7"})),
     ):
-        result = await ollama_router.get_ollama_versions(request=None, url_idx=0)
+        result = await ollama_router.get_ollama_versions(
+            request=None, url_idx=0, user=SimpleNamespace(role="admin")
+        )
     assert result == {"version": "0.5.7"}
 
 

@@ -157,12 +157,19 @@ async def test_settings_without_a_notifications_block_are_untouched(users_router
 
 
 @pytest.mark.asyncio
-async def test_settings_permission_still_rejects_the_whole_save(users_router):
+async def test_settings_permission_still_gates_interface_fields(users_router):
+    """Earlier refs 403 the whole save; dev drops the Interface panel's fields and keeps
+    the rest. Either way a denied user cannot land an Interface setting."""
     from fastapi import HTTPException
 
     permissions = _permissions()
     permissions["settings"]["personal"] = False
     permissions["settings"]["interface"] = False
-    with pytest.raises(HTTPException) as excinfo:
-        await _save_settings(users_router, {"ui": {"theme": "dark"}}, permissions)
-    assert excinfo.value.status_code == 403
+    settings = {"ui": {"theme": "dark", "showUsername": True}}
+    try:
+        persisted = await _save_settings(users_router, settings, permissions)
+    except HTTPException as exc:
+        assert exc.status_code == 403
+        return
+    assert "showUsername" not in persisted["ui"], "a denied Interface field was saved"
+    assert persisted["ui"]["theme"] == "dark"

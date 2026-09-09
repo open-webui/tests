@@ -18,6 +18,7 @@ value is forwarded as the upstream Bearer token).
 
 from __future__ import annotations
 
+import inspect
 import types
 
 import pytest
@@ -82,13 +83,15 @@ class _FakeOAuthManager:
         return self._token
 
 
-def _connection(auth_type):
+def _connection(auth_type, forward_cookies=True):
     return {
         "id": "term-1",
         "url": "http://terminal.internal",
         "enabled": True,
         "auth_type": auth_type,
         "key": CONNECTION_KEY,
+        # opt-in on dev; refs that predate the flag forward cookies unconditionally
+        "forward_cookies": forward_cookies,
     }
 
 
@@ -98,9 +101,10 @@ def run_proxy(terminals_router_module, monkeypatch):
     mod = terminals_router_module
     captured = []
     auth_type = None
+    forward_cookies = True
 
     async def fake_config_get(key, default=None):
-        return [_connection(auth_type)]
+        return [_connection(auth_type, forward_cookies)]
 
     async def fake_get_groups(_user_id):
         return []
@@ -115,9 +119,10 @@ def run_proxy(terminals_router_module, monkeypatch):
         mod.aiohttp, "ClientSession", lambda **kwargs: _CapturingSession(captured, **kwargs)
     )
 
-    async def _run(connection_auth_type, request):
-        nonlocal auth_type
+    async def _run(connection_auth_type, request, forward=True):
+        nonlocal auth_type, forward_cookies
         auth_type = connection_auth_type
+        forward_cookies = forward
         user = types.SimpleNamespace(id="caller-user-id", role="user")
         response = await mod.proxy_terminal("term-1", "session/start", request, user)
         assert response.status_code == 200, "proxy did not reach the upstream request"
@@ -285,3 +290,19 @@ async def test_cookies_are_forwarded_for_oauth_connections(run_proxy):
     outbound = await run_proxy("system_oauth", request)
 
     assert outbound["cookies"] == cookies
+
+
+@pytest.mark.asyncio
+async def test_cookies_stay_home_unless_the_connection_opts_in(
+    run_proxy, terminals_router_module
+):
+    """dev gates cookie forwarding behind the connection's forward_cookies flag."""
+    if "forward_cookies" not in inspect.getsource(terminals_router_module):
+        pytest.skip("this ref forwards cookies unconditionally")
+    cookies = {"oauth_session_id": "caller-oauth-session", "token": "jwt-cookie"}
+    request = _FakeRequest(cookies=cookies, oauth_token={"access_token": SESSION_TOKEN})
+
+    outbound = await run_proxy("system_oauth", request, forward=False)
+
+    assert outbound["cookies"] == {}
+    assert outbound["headers"]["Authorization"] == f"Bearer {SESSION_TOKEN}"

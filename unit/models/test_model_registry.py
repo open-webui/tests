@@ -42,6 +42,7 @@ names the pre-fix behaviour it observes).
 from __future__ import annotations
 
 import ast
+import inspect
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -153,17 +154,48 @@ FANNED_OUT_ROUTES = [
 ]
 
 
+async def _call_listing(route: APIRoute, user):
+    kwargs = {"request": _request(), "url_idx": 0, "user": user}
+    if "db" in inspect.signature(route.endpoint).parameters:
+        kwargs["db"] = None
+    return await route.endpoint(**kwargs)
+
+
 @pytest.mark.parametrize(("fixture_name", "path"), PER_CONNECTION_ROUTES)
-def test_per_connection_model_listing_is_admin_only(request, fixture_name, path):
+@pytest.mark.asyncio
+async def test_per_connection_model_listing_is_admin_only(request, fixture_name, path):
     """Narrow. Naming a `url_idx` targets one configured backend directly, which
-    is admin territory; pre-fix any verified user could enumerate it."""
+    is admin territory; pre-fix any verified user could enumerate it. v0.11.1 gated
+    it with a route dependency, 4b1019009 moved the check into the handler."""
     module = request.getfixturevalue(fixture_name)
     routes = _routes(module, path)
     assert routes, f"{path} is no longer registered, so this test proves nothing"
     for route in routes:
-        assert "get_admin_user" in _dependency_names(route), (
+        if "get_admin_user" in _dependency_names(route):
+            continue
+        with patch.object(module.Config, "get", _config_get({})):
+            with pytest.raises(HTTPException) as excinfo:
+                await _call_listing(route, _user(role="user"))
+        assert excinfo.value.status_code in (401, 403), (
             f"{path} lets a non-admin enumerate a single named backend"
         )
+
+
+@pytest.mark.parametrize(("fixture_name", "path"), PER_CONNECTION_ROUTES)
+@pytest.mark.asyncio
+async def test_per_connection_model_listing_admits_an_admin(request, fixture_name, path):
+    """Nearby. The in-handler gate must let an admin through to the config read."""
+    module = request.getfixturevalue(fixture_name)
+    for route in _routes(module, path):
+        if "get_admin_user" in _dependency_names(route):
+            continue
+
+        class _ReachedConfig(Exception):
+            pass
+
+        with patch.object(module.Config, "get", AsyncMock(side_effect=_ReachedConfig)):
+            with pytest.raises(_ReachedConfig):
+                await _call_listing(route, _user(role="admin"))
 
 
 @pytest.mark.parametrize(("fixture_name", "path"), FANNED_OUT_ROUTES)

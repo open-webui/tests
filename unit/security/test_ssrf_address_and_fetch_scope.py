@@ -339,7 +339,7 @@ def test_sub_resource_request_is_not_waved_through_unvalidated(
 ):
     mod = retrieval_web_utils_module
     _install_fake_dns(monkeypatch, mod)
-    route = FakeRoute("http://public.example/logo.png", resource_type="image")
+    route = FakeRoute("http://public.example/app.js", resource_type="script")
 
     _drive_sync_hook(mod, route)
 
@@ -461,6 +461,9 @@ class FakePage:
 
     def route_web_socket(self, pattern, handler):
         self.ws_handlers.append(handler)
+
+    def unroute_all(self, behavior=None):
+        pass
 
     def goto(self, url, timeout=None):
         return CannedResponse(url)

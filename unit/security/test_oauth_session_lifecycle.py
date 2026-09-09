@@ -55,6 +55,7 @@ import textwrap
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -838,17 +839,66 @@ async def test_handle_login_404s_for_unknown_provider(monkeypatch, oauth_module)
 # ── 5+6. token expiry normalisation (#27520, #26802) ───────────────────────
 
 
-def test_expiry_capped_at_id_token_exp(oauth_module):
-    """NARROW: an access token outliving its id_token must not keep forwarding a dead JWT."""
+def _capped_by_normalize(oauth_module) -> bool:
+    """c055203f2 capped expires_at itself; aaaf26fb8 reads the id_token exp at fetch time."""
     now = int(time.time())
-    token = {'expires_in': 7200, 'id_token': _id_token(now + 600)}
-
-    result = oauth_module._normalize_token_expiry(token)
-
-    assert abs(result['expires_at'] - (now + 600)) <= 5, (
-        'expires_at was not capped at the id_token exp'
+    token = oauth_module._normalize_token_expiry(
+        {'expires_in': 7200, 'id_token': _id_token(now + 600)}
     )
-    assert result['issued_at'] == pytest.approx(now, abs=5)
+    return abs(token['expires_at'] - (now + 600)) <= 5
+
+
+@pytest.mark.asyncio
+async def test_expiry_capped_at_id_token_exp(oauth_module):
+    """NARROW: an access token outliving its id_token must not keep forwarding a dead JWT."""
+    if _capped_by_normalize(oauth_module):
+        return
+    now = int(time.time())
+    session = SimpleNamespace(
+        id='s1',
+        provider='oidc',
+        expires_at=now + 7200,
+        token={'access_token': 'live', 'id_token': _id_token(now + 60)},
+    )
+    manager = oauth_module.OAuthManager(app=SimpleNamespace(state=SimpleNamespace()))
+    refreshed = {'access_token': 'fresh'}
+    with (
+        patch.object(
+            oauth_module.OAuthSessions,
+            'get_session_by_id_and_user_id',
+            AsyncMock(return_value=session),
+        ),
+        patch.object(manager, '_refresh_token', AsyncMock(return_value=refreshed)) as refresh,
+    ):
+        result = await manager.get_oauth_token('u1', 's1')
+
+    assert refresh.await_count == 1, 'an id_token about to expire did not trigger a refresh'
+    assert result == refreshed
+
+
+@pytest.mark.asyncio
+async def test_live_id_token_does_not_force_a_refresh(oauth_module):
+    """NEARBY: the fetch-time cap must leave a session alone while both tokens are live."""
+    now = int(time.time())
+    session = SimpleNamespace(
+        id='s1',
+        provider='oidc',
+        expires_at=now + 7200,
+        token={'access_token': 'live', 'id_token': _id_token(now + 7200)},
+    )
+    manager = oauth_module.OAuthManager(app=SimpleNamespace(state=SimpleNamespace()))
+    with (
+        patch.object(
+            oauth_module.OAuthSessions,
+            'get_session_by_id_and_user_id',
+            AsyncMock(return_value=session),
+        ),
+        patch.object(manager, '_refresh_token', AsyncMock()) as refresh,
+    ):
+        result = await manager.get_oauth_token('u1', 's1')
+
+    assert refresh.await_count == 0
+    assert result == session.token
 
 
 def test_no_expiry_and_no_refresh_token_is_treated_as_non_expiring(oauth_module):

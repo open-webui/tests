@@ -196,9 +196,10 @@ def tool_server_env(tools_module, monkeypatch):
             "specs": [openapi_spec("fn_session")],
         },
     ]
+    # forward_cookies is opt-in on dev; earlier refs ignore the key and always forward
     connections = [
         {"auth_type": "bearer", "key": "server-key"},
-        {"auth_type": "session"},
+        {"auth_type": "session", "forward_cookies": True},
     ]
 
     async def get_servers(_request):

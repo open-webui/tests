@@ -511,6 +511,9 @@ class _FakeSyncPage:
     def route_web_socket(self, *args, **kwargs) -> None:
         return None
 
+    def unroute_all(self, *args, **kwargs) -> None:
+        return None
+
     def goto(self, url, timeout=None):
         return self.browser.goto(url)
 
@@ -573,6 +576,9 @@ class _FakeAsyncPage:
         return None
 
     async def route_web_socket(self, *args, **kwargs) -> None:
+        return None
+
+    async def unroute_all(self, *args, **kwargs) -> None:
         return None
 
     async def goto(self, url, timeout=None):
