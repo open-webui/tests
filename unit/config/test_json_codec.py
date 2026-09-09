@@ -28,8 +28,11 @@ import json as stdlib_json
 from pathlib import Path
 from unittest import mock
 
-import aiohttp
 import pytest
+
+pytest.importorskip("aiohttp")
+
+import aiohttp
 
 pytestmark = pytest.mark.regression
 

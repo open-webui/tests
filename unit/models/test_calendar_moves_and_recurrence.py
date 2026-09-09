@@ -32,6 +32,9 @@ import time
 from uuid import uuid4
 
 import pytest
+
+pytest.importorskip("pydantic")
+
 from pydantic import ValidationError
 
 pytestmark = pytest.mark.regression

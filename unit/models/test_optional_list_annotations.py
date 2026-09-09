@@ -17,6 +17,9 @@ import types
 import typing
 
 import pytest
+
+pytest.importorskip("pydantic")
+
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 pytestmark = pytest.mark.regression

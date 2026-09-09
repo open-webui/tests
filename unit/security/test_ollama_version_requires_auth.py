@@ -15,6 +15,9 @@ with no auth dependency at all).
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.routing import APIRoute
 
 pytestmark = pytest.mark.regression

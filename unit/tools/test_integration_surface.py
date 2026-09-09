@@ -30,8 +30,11 @@ import sys
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-import aiohttp
 import pytest
+
+pytest.importorskip("aiohttp")
+
+import aiohttp
 
 pytestmark = pytest.mark.regression
 

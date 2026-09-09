@@ -21,6 +21,9 @@ import base64
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi.responses import FileResponse
 
 pytestmark = pytest.mark.regression

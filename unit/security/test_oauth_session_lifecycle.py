@@ -56,8 +56,15 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-import jwt as pyjwt
 import pytest
+
+pytest.importorskip("fastapi")
+pytest.importorskip("joserfc")
+pytest.importorskip("jwt")
+pytest.importorskip("sqlalchemy")
+pytest.importorskip("starlette")
+
+import jwt as pyjwt
 import sqlalchemy as sa
 from fastapi import HTTPException
 from joserfc.errors import BadSignatureError as JoseRFCBadSignatureError

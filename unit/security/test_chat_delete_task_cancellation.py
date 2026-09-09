@@ -17,6 +17,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+
+pytest.importorskip("fastapi")
+
 from fastapi import HTTPException
 
 pytestmark = pytest.mark.regression

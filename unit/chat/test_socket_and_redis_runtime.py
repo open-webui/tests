@@ -56,6 +56,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+pytest.importorskip("redis")
+
 import redis as redis_pkg
 
 pytestmark = pytest.mark.regression

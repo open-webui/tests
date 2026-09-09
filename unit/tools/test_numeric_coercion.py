@@ -37,6 +37,9 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+pytest.importorskip("open_webui")
+
 from open_webui.utils.tools import get_async_tool_function_and_apply_extra_params
 
 pytestmark = [pytest.mark.regression, pytest.mark.asyncio]

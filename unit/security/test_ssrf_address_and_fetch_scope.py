@@ -42,6 +42,9 @@ from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("multidict")
+
 from multidict import CIMultiDict
 
 pytestmark = pytest.mark.regression

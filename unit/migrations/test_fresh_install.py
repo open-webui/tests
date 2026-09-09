@@ -33,9 +33,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
 
 from .conftest import AlembicUpgradeRunner
+
+pytest.importorskip("sqlalchemy")
+
+from sqlalchemy import create_engine, inspect
 
 
 @pytest.mark.regression

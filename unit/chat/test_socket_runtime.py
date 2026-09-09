@@ -47,6 +47,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+pytest.importorskip("socketio")
+
 import socketio
 
 pytestmark = pytest.mark.regression

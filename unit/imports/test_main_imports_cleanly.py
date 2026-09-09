@@ -18,9 +18,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
 
 from .conftest import ImportRunner
+
+pytest.importorskip("sqlalchemy")
+
+from sqlalchemy import create_engine, inspect
 
 
 @pytest.mark.regression

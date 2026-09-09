@@ -41,6 +41,10 @@ import logging
 from types import SimpleNamespace
 
 import pytest
+
+pytest.importorskip("fastapi")
+pytest.importorskip("pydantic")
+
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel

@@ -36,10 +36,13 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import aiohttp
 import pytest
 import requests
 import requests.adapters
+
+pytest.importorskip("aiohttp")
+
+import aiohttp
 
 pytestmark = pytest.mark.regression
 

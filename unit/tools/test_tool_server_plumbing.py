@@ -28,8 +28,12 @@ import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
 
-import aiohttp
 import pytest
+
+pytest.importorskip("aiohttp")
+pytest.importorskip("starlette")
+
+import aiohttp
 from starlette.requests import ClientDisconnect
 
 pytestmark = pytest.mark.regression

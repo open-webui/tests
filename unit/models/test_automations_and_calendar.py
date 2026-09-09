@@ -44,6 +44,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
+
+pytest.importorskip("sqlalchemy")
+
 from sqlalchemy import select, text
 
 pytestmark = pytest.mark.regression
