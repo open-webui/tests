@@ -30,6 +30,7 @@ tests/
 │   ├── tools/                  # builtin tool functions
 │   ├── config/                 # boot / env / embedding-config safety
 │   ├── chat/                   # chat message reconstruction
+│   ├── resilience/             # behaviour while Redis or the vector DB is degraded
 │   └── frontend/               # Svelte/TS source-contract audits (python, reads the files)
 │
 ├── frontend/                   # vitest tests importing src/lib modules from the checkout
@@ -40,6 +41,10 @@ tests/
 │   └── marked/
 │
 ├── integration/                # httpx API tests, grouped by endpoint/router
+│   ├── conftest.py             # launched_instance / degraded_instance: scratch backends the tests own
+│   ├── fake_redis.py           # empty-database Redis stand-in with per-command delays
+│   ├── footprint/              # memory, log volume and per-chunk cost of a launched instance
+│   ├── resilience/             # a launched instance whose Redis or vector DB is degraded
 │   ├── test_chat_completions.py
 │   ├── test_notes.py
 │   └── test_tasks.py
@@ -54,7 +59,7 @@ tests/
 
 - Exercises a backend function/module in isolation, or audits a source file → `unit/<subsystem>/`. Pick the subsystem dir that matches the code under test; add a new one if none fits (it's just a directory with an `__init__.py`).
 - Calls a frontend `src/lib` module directly (TypeScript, vitest) → `frontend/<area>/<module>.test.ts`, importing through `$lib/...`.
-- Hits an HTTP endpoint → `integration/test_<router>.py` (one file per router/endpoint group).
+- Hits an HTTP endpoint → `integration/test_<router>.py` (one file per router/endpoint group), unless it boots its own instance, then `integration/<concern>/`.
 - Drives the browser → `e2e/`.
 
 `unit/` is organised by **subsystem** (what part of the code), `integration/` by **endpoint** (what API surface). Both scale by adding files/dirs, not by growing existing files without bound.
@@ -145,7 +150,7 @@ pytest unit/
 ## Running
 
 ```bash
-pytest                                   # everything (integration/e2e skip without a server)
+pytest                                   # everything (integration/e2e skip without a server; footprint/resilience boot their own)
 pytest unit/                             # all source-level tests — no server needed
 pytest unit/retrieval/                   # one subsystem
 pytest unit/retrieval/test_firecrawl.py  # one file
@@ -158,6 +163,8 @@ pytest -v                                # verbose (off by default; the suite is
 ```
 
 A run against the latest `dev` is expected to show **red for any regression whose fix isn't merged yet** — that's the point. Each failing test names the issue/PR that turns it green.
+
+`integration/footprint/` and `integration/resilience/` do not use `OPEN_WEBUI_URL`: they boot their own scratch backends from the checkout (same resolution as the unit tests) with a mock model provider. One of them also runs on a fake Redis and a dead vector DB. That lets the tests read the server log, measure the server process and make one dependency slow. Each boot takes about a minute; both are marked `slow`.
 
 ### Reports
 
