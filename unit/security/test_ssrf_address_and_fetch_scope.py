@@ -468,6 +468,9 @@ class FakePage:
     def goto(self, url, timeout=None):
         return CannedResponse(url)
 
+    def content(self):
+        return "<html><body><p>page text</p></body></html>"
+
 
 class FakeBrowser:
     def __init__(self):

@@ -25,6 +25,9 @@ proposed in PR #24600 / #24601 / #24602 — drop the explicit
 in `self.requests_kwargs`, so the SSRF protection is preserved.
 
 Source: https://github.com/open-webui/open-webui/issues/24560
+
+Discriminates: passes on dev c0fb36c9b; adding an explicit allow_redirects alongside
+the merged request options fails at the real session.get call.
 """
 
 from __future__ import annotations
@@ -93,7 +96,7 @@ async def test_safe_web_base_loader_fetch_does_not_pass_allow_redirects_twice(
     utils = retrieval_web_utils_module
     SafeWebBaseLoader = utils.SafeWebBaseLoader
 
-    loader = SafeWebBaseLoader(web_path="https://example.invalid/x")
+    loader = SafeWebBaseLoader(web_paths=["https://example.invalid/x"])
 
     # Make sure the loader's __init__ actually injects allow_redirects —
     # otherwise this whole test would be a no-op (the bug requires the

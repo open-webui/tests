@@ -12,6 +12,8 @@
   `OutlookMessageLoader` at module level; it needs `extract_msg`, which conflicts
   with `beautifulsoup4<4.14` and is therefore not installed, so every .msg upload
   raised ImportError. Now `UnstructuredEmailLoader` is imported lazily.
+  Commit 05484aa05 moved this to the local `UnstructuredLoader`; the tests now
+  verify partition dispatch, attachment handling and returned documents.
 - PaddleOCR-VL routing (PR #27529, commit 225e23885, issues #24988/#26759): with
   the engine selected, the dispatch matched every file type, so Word, markdown
   and spreadsheet uploads were sent to an OCR endpoint that rejects them.
@@ -28,20 +30,22 @@
   an explicit INVERTED index and never fails collection creation, which is what
   broke on embedded Milvus Lite.
 
-Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (pre-fix the three external
+Originally verified on v0.11.0 and v0.11.1 against v0.10.2 (pre-fix the three external
 retrievers embed the query with no prefix, requirements.txt pins the old OCR
 distribution, a .msg upload raises ImportError, PaddleOCR-VL swallows every file
 type, token splitting raises on `<|endoftext|>`, the KB link is written before
 processing and configured media mime types are rejected, and the Milvus
 multitenancy client drives the ORM API).
+
+Discriminates: passes on dev c0fb36c9b; changing the email attachment flag, ODT partition
+or missing-package error type fails the adapted ingestion tests.
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
-import sys
-import types
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -234,36 +238,50 @@ def msg_file(tmp_path) -> str:
     return str(path)
 
 
-def test_msg_upload_uses_the_unstructured_email_loader(loaders_main_module, msg_file):
+def test_msg_upload_uses_the_unstructured_email_loader(
+    loaders_main_module, msg_file, monkeypatch, owui_module
+):
+    from unstructured.file_utils import filetype
+
+    monkeypatch.setattr(filetype, "detect_filetype", lambda path: SimpleNamespace(name="MSG"))
+    calls = _record_partition(monkeypatch, owui_module, "msg")
     loader = loaders_main_module.Loader(engine="")._get_loader(
         "mail.msg", "application/vnd.ms-outlook", msg_file
     )
-    assert type(loader).__name__ == "UnstructuredEmailLoader"
+    documents = loader.load()
+    assert calls == [{"filename": msg_file, "process_attachments": False}]
+    assert [document.page_content for document in documents] == ["first\n\nsecond"]
+    assert documents[0].metadata["source"] == msg_file
 
 
-class _ModuleWithoutEmailLoader(types.ModuleType):
-    """`langchain_community.document_loaders` as it looks without `unstructured` installed."""
+def _record_partition(monkeypatch, owui_module, file_format):
+    module = owui_module("open_webui.retrieval.loaders.local")
+    calls = []
 
-    def __init__(self, wrapped) -> None:
-        super().__init__(wrapped.__name__)
-        self._wrapped = wrapped
+    def partition(**kwargs):
+        calls.append(kwargs)
+        return ["first", "second"]
 
-    def __getattr__(self, name):
-        if name == "UnstructuredEmailLoader":
-            raise AttributeError(name)
-        return getattr(self._wrapped, name)
+    def import_module(name):
+        if name == f"unstructured.partition.{file_format}":
+            return SimpleNamespace(**{f"partition_{file_format}": partition})
+        return importlib.import_module(name)
+
+    monkeypatch.setattr(module, "import_module", import_module)
+    return calls
 
 
 def test_msg_upload_without_unstructured_reports_a_readable_error(
-    monkeypatch, loaders_main_module, msg_file
+    monkeypatch, loaders_main_module, msg_file, owui_module
 ):
-    import langchain_community.document_loaders as document_loaders
+    module = owui_module("open_webui.retrieval.loaders.local")
 
-    monkeypatch.setitem(
-        sys.modules,
-        "langchain_community.document_loaders",
-        _ModuleWithoutEmailLoader(document_loaders),
-    )
+    def import_module(name):
+        if name == "unstructured":
+            raise ModuleNotFoundError("No module named 'unstructured'", name=name)
+        return importlib.import_module(name)
+
+    monkeypatch.setattr(module, "import_module", import_module)
 
     with pytest.raises(ValueError, match=r"requires the 'unstructured' package"):
         loaders_main_module.Loader(engine="")._get_loader(
@@ -282,13 +300,19 @@ def test_loaders_module_does_not_import_outlook_message_loader(open_webui_backen
     assert "OutlookMessageLoader" not in imported
 
 
-def test_odt_still_uses_the_unstructured_odt_loader(loaders_main_module, tmp_path):
+def test_odt_still_uses_the_unstructured_odt_loader(
+    loaders_main_module, tmp_path, monkeypatch, owui_module
+):
     path = tmp_path / "doc.odt"
     path.write_bytes(b"PK\x03\x04")
+    calls = _record_partition(monkeypatch, owui_module, "odt")
     loader = loaders_main_module.Loader(engine="")._get_loader(
         "doc.odt", "application/vnd.oasis.opendocument.text", str(path)
     )
-    assert type(loader).__name__ == "UnstructuredODTLoader"
+    documents = loader.load()
+    assert calls == [{"filename": str(path)}]
+    assert [document.page_content for document in documents] == ["first\n\nsecond"]
+    assert documents[0].metadata["source"] == str(path)
 
 
 # =============================================================================

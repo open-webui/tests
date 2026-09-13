@@ -3,7 +3,8 @@
 langchain is the RAG framework Open WebUI builds retrieval on. Its surface is
 split across several PyPI distributions and Open WebUI pins and imports each of
 them directly; the umbrella ``langchain`` package is no longer a dependency
-(dropped in e07e8ed0d).
+(dropped in e07e8ed0d). Commit 05484aa05 also removed langchain-community;
+BM25 and document loaders now live in the backend.
 
   - `langchain_core`       (dist ``langchain-core``)       — ``Document`` (the
         unit of content threaded through every loader/splitter/retriever),
@@ -11,10 +12,6 @@ them directly; the umbrella ``langchain`` package is no longer a dependency
         (subclassed by ``VectorSearchRetriever``), ``BaseDocumentCompressor``
         (subclassed by ``RerankCompressor``), ``BaseLoader``, and
         ``convert_to_openai_function`` (tool-spec generation).
-  - `langchain_community`  (dist ``langchain-community``)  — ``BM25Retriever``
-        (lexical half of hybrid search) and the document loaders
-        (``WebBaseLoader``, ``PlaywrightURLLoader``, ``PyPDFLoader``, the
-        Unstructured* family, etc.).
   - `langchain_text_splitters` (dist ``langchain-text-splitters``) — the
         chunkers (``RecursiveCharacterTextSplitter``,
         ``MarkdownHeaderTextSplitter``, ``TokenTextSplitter``,
@@ -51,9 +48,6 @@ pytestmark = pytest.mark.depcheck
 CORE_IMPORT = "langchain_core"
 CORE_DIST = "langchain-core"
 
-COMMUNITY_IMPORT = "langchain_community"
-COMMUNITY_DIST = "langchain-community"
-
 SPLITTERS_IMPORT = "langchain_text_splitters"
 SPLITTERS_DIST = "langchain-text-splitters"
 
@@ -77,32 +71,6 @@ CORE_SYMBOLS = [
     "callbacks.Callbacks",
     # utils/tools.py: pydantic model -> OpenAI function spec.
     "utils.function_calling.convert_to_openai_function",
-]
-
-COMMUNITY_SYMBOLS = [
-    # retrieval/utils.py: lexical retriever for hybrid search.
-    "retrievers.BM25Retriever",
-    # retrieval/web/utils.py: web page loaders.
-    "document_loaders.WebBaseLoader",
-    "document_loaders.PlaywrightURLLoader",
-    "document_loaders.base.BaseLoader",
-    # retrieval/loaders/main.py: file loaders imported at module top.
-    "document_loaders.YoutubeLoader",
-    "document_loaders.AzureAIDocumentIntelligenceLoader",
-    "document_loaders.BSHTMLLoader",
-    "document_loaders.CSVLoader",
-    "document_loaders.Docx2txtLoader",
-    "document_loaders.OutlookMessageLoader",
-    "document_loaders.PyPDFLoader",
-    "document_loaders.TextLoader",
-    # retrieval/loaders/main.py: lazily-imported Unstructured* loaders.
-    "document_loaders.UnstructuredRSTLoader",
-    "document_loaders.UnstructuredXMLLoader",
-    "document_loaders.UnstructuredEPubLoader",
-    "document_loaders.UnstructuredWordDocumentLoader",
-    "document_loaders.UnstructuredExcelLoader",
-    "document_loaders.UnstructuredPowerPointLoader",
-    "document_loaders.UnstructuredODTLoader",
 ]
 
 SPLITTERS_SYMBOLS = [
@@ -331,64 +299,38 @@ def test_character_text_splitter_contract(depcheck):
 
 
 # --------------------------------------------------------------------------- #
-# langchain_community — BM25 retriever + loaders
+# Backend BM25 retriever + loaders
 # --------------------------------------------------------------------------- #
-def test_community_import(depcheck):
-    mod = depcheck.load(COMMUNITY_IMPORT)
-    assert mod.__name__ == "langchain_community"
+def test_backend_loaders_use_core_base_class(depcheck, retrieval_web_utils_module):
+    base = depcheck.resolve(depcheck.load(CORE_IMPORT), "document_loaders.BaseLoader")
+    for name in ("SafeWebBaseLoader", "SafePlaywrightURLLoader"):
+        assert issubclass(getattr(retrieval_web_utils_module, name), base)
 
 
-def test_community_symbols_exist(depcheck):
-    """Every langchain_community symbol the backend imports (BM25 + the loader
-    family) must still resolve at its current dotted path."""
-    mod = depcheck.load(COMMUNITY_IMPORT)
-    depcheck.assert_symbols(mod, COMMUNITY_SYMBOLS)
+def _bm25_retriever(depcheck, module, texts, metadatas):
+    from rank_bm25 import BM25Okapi
+
+    Document = depcheck.resolve(depcheck.load(CORE_IMPORT), "documents.Document")
+    return module.BM25Retriever(
+        docs=[Document(page_content=text, metadata=meta) for text, meta in zip(texts, metadatas)],
+        vectorizer=BM25Okapi([text.split() for text in texts]),
+        k=2,
+    )
 
 
-def test_community_version_reported(depcheck):
-    assert depcheck.dist_version(COMMUNITY_DIST) is not None
-
-
-def test_bm25_retriever_contract(depcheck):
-    """retrieval/utils.py builds BM25Retriever.from_texts(texts=, metadatas=),
-    sets `.k`, and the ensemble invokes it. Contract (offline, no embeddings):
-    from_texts builds a retriever, `.k` caps results, and invoke(query) returns
-    Documents whose metadata is the per-text metadata we supplied."""
-    community = depcheck.load(COMMUNITY_IMPORT)
-    BM25Retriever = depcheck.resolve(community, "retrievers").BM25Retriever
-
-    # rank_bm25 backs BM25Retriever; skip cleanly if the extra isn't present.
-    if depcheck.try_load("rank_bm25") is None:
-        pytest.skip("rank_bm25 (BM25Retriever backend) not importable in this env")
-
+def test_bm25_retriever_contract(depcheck, retrieval_utils_module):
+    """The production BM25 retriever ranks Documents and preserves their metadata."""
     texts = ["the cat sat on the mat", "dogs run fast", "a feline on a rug"]
     metas = [{"i": 0}, {"i": 1}, {"i": 2}]
-    r = BM25Retriever.from_texts(texts=texts, metadatas=metas)
-    r.k = 2
+    retriever = _bm25_retriever(depcheck, retrieval_utils_module, texts, metas)
 
-    out = r.invoke("cat")
+    out = retriever.invoke("cat")
     assert isinstance(out, list) and len(out) == 2
-    assert all(type(d).__name__ == "Document" for d in out)
+    assert all(type(document).__name__ == "Document" for document in out)
     # metadata threaded through from the per-text metadatas.
-    assert all("i" in d.metadata for d in out)
-
-
-def test_loader_subclassing_base_contract(depcheck):
-    """retrieval/web/utils.py imports document_loaders.base.BaseLoader and the
-    backend's custom loaders subclass langchain_core.document_loaders.BaseLoader.
-    The community `base.BaseLoader` must remain the same class object as the core
-    one (community re-exports core) so both import sites agree, and `.load()`
-    must remain the abstract entry point."""
-    community = depcheck.load(COMMUNITY_IMPORT)
-    core = depcheck.load(CORE_IMPORT)
-    community_base = depcheck.resolve(community, "document_loaders.base").BaseLoader
-    core_base = depcheck.resolve(core, "document_loaders").BaseLoader
-
-    assert community_base is core_base, (
-        "community document_loaders.base.BaseLoader diverged from core's "
-        "BaseLoader; the backend imports both and expects one class."
-    )
-    assert hasattr(core_base, "load"), "BaseLoader lost its .load() entry point"
+    assert all("i" in document.metadata for document in out)
+    assert out[0].page_content == texts[0]
+    assert out[0].metadata == metas[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -411,15 +353,13 @@ def test_classic_version_reported(depcheck):
     assert depcheck.dist_version(CLASSIC_DIST) is not None
 
 
-def test_ensemble_retriever_contract(depcheck):
+def test_ensemble_retriever_contract(depcheck, retrieval_utils_module):
     """retrieval/utils.py builds EnsembleRetriever(retrievers=[...], weights=[...],
     id_key=CHUNK_HASH_KEY) and invokes it. Contract (offline, BM25-only member):
     construction with an explicit id_key works, and invoke(query) returns
     Documents (RRF-fused) from the wrapped retriever."""
     classic = depcheck.load(CLASSIC_IMPORT)
-    community = depcheck.load(COMMUNITY_IMPORT)
     EnsembleRetriever = depcheck.resolve(classic, "retrievers").EnsembleRetriever
-    BM25Retriever = depcheck.resolve(community, "retrievers").BM25Retriever
 
     if depcheck.try_load("rank_bm25") is None:
         pytest.skip("rank_bm25 (BM25Retriever backend) not importable in this env")
@@ -427,7 +367,9 @@ def test_ensemble_retriever_contract(depcheck):
     # id_key is the dedup key the backend passes (CHUNK_HASH_KEY) so enriched
     # BM25 texts don't defeat RRF. The RRF path reads doc.metadata[id_key], so
     # every text must carry that key — mirror the backend, whose chunks do.
-    bm25 = BM25Retriever.from_texts(
+    bm25 = _bm25_retriever(
+        depcheck,
+        retrieval_utils_module,
         texts=["alpha beta", "beta gamma", "gamma delta"],
         metadatas=[{"hash": "h0"}, {"hash": "h1"}, {"hash": "h2"}],
     )

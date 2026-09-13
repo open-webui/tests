@@ -27,13 +27,19 @@
   URL loop finished normally, so a page timeout or an abandoned search left
   pages and the remote browser session open until the server was restarted.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (pre-fix `get_loader` builds
+Commit 05484aa05 replaced the batch parser helper and evaluator with direct parsing.
+The parser tests now drive `aload`; browser doubles expose Playwright's `content` API.
+
+Originally verified on v0.11.0 against v0.10.2 (pre-fix `get_loader` builds
 the built-in loader whatever engine the admin picked, `process_web_search`
 passes the startup config values, a four-element socket option reaches
 `setsockopt` intact, an embedding failure returns a healthy-looking collection,
 the second document of a mixed batch is parsed with the first URL's parser, and
 neither the page nor the browser is closed when `goto` times out or the caller
 abandons the loader).
+
+Discriminates: passes on dev c0fb36c9b; caching the first parser across the batch or
+removing browser cleanup fails the adapted tests.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ import asyncio
 import socket
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import playwright.async_api
 import playwright.sync_api
@@ -429,20 +435,33 @@ XML_BODY = "<feed><entry><title>a</title></entry></feed>"
 HTML_BODY = "<html><body><p>b</p></body></html>"
 
 
-def _web_base_loader(module):
-    return module.SafeWebBaseLoader(
-        web_paths=["https://example.com/page"],
-        verify_ssl=False,
-        continue_on_failure=True,
-        trust_env=False,
-    )
+async def _load_batch(module, bodies, urls, default_parser="lxml"):
+    import bs4
+
+    loader = module.SafeWebBaseLoader(web_paths=urls, default_parser=default_parser)
+    soups = []
+    parse = bs4.BeautifulSoup
+
+    def record_parser(*args, **kwargs):
+        soup = parse(*args, **kwargs)
+        soups.append(soup)
+        return soup
+
+    with (
+        patch.object(loader, "_fetch", AsyncMock(side_effect=bodies)),
+        patch.object(bs4, "BeautifulSoup", record_parser),
+    ):
+        documents = await loader.aload()
+    assert [document.metadata["source"] for document in documents] == urls
+    assert [document.page_content for document in documents] == [soup.get_text() for soup in soups]
+    return soups
 
 
-def test_html_after_xml_is_not_parsed_as_xml(retrieval_web_utils_module) -> None:
+@pytest.mark.asyncio
+async def test_html_after_xml_is_not_parsed_as_xml(retrieval_web_utils_module) -> None:
     """Regression for PR #27367: the first URL's parser was reused for the batch."""
-    loader = _web_base_loader(retrieval_web_utils_module)
-
-    soups = loader._unpack_fetch_results(
+    soups = await _load_batch(
+        retrieval_web_utils_module,
         [XML_BODY, HTML_BODY],
         ["https://example.com/feed.xml", "https://example.com/page.html"],
     )
@@ -451,11 +470,11 @@ def test_html_after_xml_is_not_parsed_as_xml(retrieval_web_utils_module) -> None
     assert soups[1].builder.is_xml is False
 
 
-def test_xml_after_html_is_still_parsed_as_xml(retrieval_web_utils_module) -> None:
+@pytest.mark.asyncio
+async def test_xml_after_html_is_still_parsed_as_xml(retrieval_web_utils_module) -> None:
     """Regression for PR #27367, the other batch order."""
-    loader = _web_base_loader(retrieval_web_utils_module)
-
-    soups = loader._unpack_fetch_results(
+    soups = await _load_batch(
+        retrieval_web_utils_module,
         [HTML_BODY, XML_BODY],
         ["https://example.com/page.html", "https://example.com/feed.xml"],
     )
@@ -464,17 +483,22 @@ def test_xml_after_html_is_still_parsed_as_xml(retrieval_web_utils_module) -> No
     assert soups[1].builder.is_xml is True
 
 
-def test_explicit_parser_applies_to_whole_batch(retrieval_web_utils_module) -> None:
-    """Nearby: an explicitly passed parser still overrides the per-URL guess."""
-    loader = _web_base_loader(retrieval_web_utils_module)
-
-    soups = loader._unpack_fetch_results(
-        [XML_BODY, HTML_BODY],
-        ["https://example.com/feed.xml", "https://example.com/page.html"],
-        parser="html.parser",
+@pytest.mark.asyncio
+async def test_configured_html_parser_applies_to_whole_batch(retrieval_web_utils_module) -> None:
+    """Nearby: HTML pages use the configured parser; XML keeps its format-specific parser."""
+    soups = await _load_batch(
+        retrieval_web_utils_module,
+        [HTML_BODY, HTML_BODY, XML_BODY],
+        [
+            "https://example.com/a.html",
+            "https://example.com/b.html",
+            "https://example.com/feed.xml",
+        ],
+        default_parser="html.parser",
     )
 
-    assert [soup.builder.NAME for soup in soups] == ["html.parser", "html.parser"]
+    assert [soup.builder.NAME for soup in soups[:2]] == ["html.parser", "html.parser"]
+    assert soups[2].builder.is_xml is True
 
 
 # =============================================================================
@@ -516,6 +540,9 @@ class _FakeSyncPage:
 
     def goto(self, url, timeout=None):
         return self.browser.goto(url)
+
+    def content(self):
+        return "<html><body><p>page text</p></body></html>"
 
 
 class _FakeSyncBrowser:
@@ -583,6 +610,9 @@ class _FakeAsyncPage:
 
     async def goto(self, url, timeout=None):
         return self.browser.goto(url)
+
+    async def content(self):
+        return "<html><body><p>page text</p></body></html>"
 
 
 class _FakeAsyncBrowser:
