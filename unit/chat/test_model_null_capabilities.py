@@ -9,8 +9,9 @@ attribute 'get'`, breaking chat for models with unset capabilities whenever the
 memory feature or automations were involved. Fix: `meta.get('capabilities') or {}`.
 
 0.11.1 (`2649e3305`) merged `_resolve_model_features` and its three siblings into
-`_resolve_model_defaults`, which returns (tool_ids, features, filter_ids, terminal_id).
-The `or {}` guard moved with it, so the tests now unpack the features slot.
+`_resolve_model_defaults`, which returned (tool_ids, features, filter_ids, terminal_id).
+The `or {}` guard moved with it.
+Commit `c78ad8993` changed that tuple to a dictionary with an optional features key.
 
 `Config.get` (async, DB-backed) is patched so this is offline/deterministic.
 
@@ -31,12 +32,14 @@ def _app_with_model_meta(meta: dict) -> SimpleNamespace:
 
 
 async def _resolve_features(mod, app) -> dict:
-    """0.11.1 folded the resolver into `_resolve_model_defaults`, which returns a
-    four-tuple; earlier refs expose `_resolve_model_features`, returning the dict."""
+    """Read features from the resolver's current or historical return shape."""
     resolver = getattr(mod, "_resolve_model_defaults", None)
     with patch.object(mod.Config, "get", AsyncMock(return_value=True)):
         if resolver is not None:
-            _, features, _, _ = await resolver(app, "m")
+            defaults = await resolver(app, "m")
+            if isinstance(defaults, dict):
+                return defaults.get("features", {})
+            _, features, _, _ = defaults
             return features
         return await mod._resolve_model_features(app, "m")
 
