@@ -10,6 +10,10 @@ times the chunks may cost at most twelve times the wall time. The instance is sh
 memory test, which runs first and leaves its retained plugin sources behind; that is heap,
 not per-chunk work, so it does not move the ratio.
 
+The short reply is timed several times and the fastest run counts: one slow short run on a
+loaded runner inflates the divisor and the ratio slips under the bound with the copying still
+in place, which turned a strict `xfail` into a red release gate on 2026-09-14.
+
 Unpinned: read on upstream dev at 4948842be (2026-09-09), where every flushed delta copies the
 whole reply text twice in `utils/middleware.py`: the delta is appended onto the output item's
 text string, and the content parts are re-joined for the resume store in
@@ -30,6 +34,7 @@ from integration.conftest import MOCK_MODEL_ID
 pytestmark = [pytest.mark.slow, pytest.mark.api, pytest.mark.requires_source]
 
 SHORT, LONG = 4000, 24000
+SHORT_RUNS = 3
 CHUNK_TEXT = "lorem-ipsum-dolor-sit-amet-" * 4  # no trailing space: the saved reply is stripped
 ALLOWED_RATIO = 2 * LONG / SHORT
 
@@ -79,7 +84,7 @@ def _wait_until_done(client: httpx.Client, chat_id: str, deadline_seconds: float
 @pytest.mark.xfail(raises=AssertionError, strict=True, reason="every delta copies the reply")
 def test_six_times_the_chunks_cost_at_most_twelve_times_the_time(launched_instance):
     _stream_a_reply(launched_instance, SHORT, 60)  # warm caches, first chat, first model load
-    short = _stream_a_reply(launched_instance, SHORT, 60)
+    short = min(_stream_a_reply(launched_instance, SHORT, 60) for _ in range(SHORT_RUNS))
     long = _stream_a_reply(launched_instance, LONG, 20 * ALLOWED_RATIO * short + 30)
 
     assert long / short < ALLOWED_RATIO, f"{SHORT} chunks: {short:.2f}s, {LONG} chunks: {long:.2f}s"
