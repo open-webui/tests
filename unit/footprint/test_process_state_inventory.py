@@ -32,7 +32,6 @@ EMPTY_CALLS = {"dict", "list", "set"}
 
 # path::name -> what bounds it
 KNOWN = {
-    "utils/rate_limit.py::RateLimiter._memory_store": "unbounded: one dict per login email/IP",
     "utils/subagents.py::_parent_locks": "unbounded: one Lock per chat id that ran a subagent",
     "utils/timers.py::_timer_locks": "unbounded: one Lock per timer id ever executed",
     "tasks.py::item_tasks": "unbounded for a falsy id; otherwise in-flight tasks",

@@ -1087,7 +1087,9 @@ async def _stream_deltas(middleware_module, middleware_source, chunks: list[dict
     return output, events
 
 
-def _finish_tool_round(middleware_module, middleware_source, output, call_id, name="search_web"):
+async def _finish_tool_round(
+    middleware_module, middleware_source, output, call_id, name="search_web"
+):
     """Run the shipped end-of-tool-round bookkeeping against one in-progress call."""
     output.append(
         {
@@ -1107,7 +1109,7 @@ def _finish_tool_round(middleware_module, middleware_source, output, call_id, na
         results=[{"tool_call_id": call_id, "content": "tool said hello"}],
         response_tool_calls=[{"id": call_id, "function": {"name": name, "arguments": "{}"}}],
     )
-    _exec(statements, namespace)
+    await _exec_async_loop_body(statements, namespace)
     return output
 
 
@@ -1198,7 +1200,7 @@ async def test_reasoning_without_details_is_emitted(middleware_module, middlewar
 async def test_post_tool_call_reasoning_opens_a_live_thoughts_block(
     middleware_module, middleware_source
 ):
-    output = _finish_tool_round(middleware_module, middleware_source, [], "call_1")
+    output = await _finish_tool_round(middleware_module, middleware_source, [], "call_1")
     await _stream_deltas(
         middleware_module, middleware_source, [{"reasoning": "now I know"}], output
     )
@@ -1226,7 +1228,7 @@ async def test_post_tool_call_reasoning_is_not_merged_into_the_earlier_thoughts(
     output, _ = await _stream_deltas(
         middleware_module, middleware_source, [{"reasoning": "I should search"}]
     )
-    _finish_tool_round(middleware_module, middleware_source, output, "call_1")
+    await _finish_tool_round(middleware_module, middleware_source, output, "call_1")
     await _stream_deltas(
         middleware_module, middleware_source, [{"reasoning": "the result says 42"}], output
     )
@@ -1253,9 +1255,9 @@ async def test_reasoning_routes_to_a_live_block_before_after_and_without_tools(
 ):
     before: list = []
     await _stream_deltas(middleware_module, middleware_source, [{"reasoning": "why"}], before)
-    _finish_tool_round(middleware_module, middleware_source, before, "call_1")
+    await _finish_tool_round(middleware_module, middleware_source, before, "call_1")
 
-    after = _finish_tool_round(middleware_module, middleware_source, [], "call_1")
+    after = await _finish_tool_round(middleware_module, middleware_source, [], "call_1")
     await _stream_deltas(middleware_module, middleware_source, [{"reasoning": "why"}], after)
 
     without: list = []
@@ -1279,7 +1281,7 @@ async def test_consecutive_tool_calls_keep_routing_reasoning_correctly(
         await _stream_deltas(
             middleware_module, middleware_source, [{"reasoning": f"step {round_index}"}], output
         )
-        _finish_tool_round(middleware_module, middleware_source, output, call_id)
+        await _finish_tool_round(middleware_module, middleware_source, output, call_id)
 
     await _stream_deltas(
         middleware_module, middleware_source, [{"reasoning": "done"}, {"content": "42"}], output

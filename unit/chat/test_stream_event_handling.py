@@ -460,7 +460,8 @@ def test_successful_tool_results_are_not_flagged(is_tool_result_error, value):
     assert is_tool_result_error(value) is False
 
 
-def test_failed_tool_result_is_stamped_failed_at_the_call_site(
+@pytest.mark.asyncio
+async def test_failed_tool_result_is_stamped_failed_at_the_call_site(
     middleware_source, middleware_module
 ):
     """Drive the shipped loop that turns tool results into `function_call_output` items."""
@@ -471,7 +472,7 @@ def test_failed_tool_result_is_stamped_failed_at_the_call_site(
         "result_status_by_call_id": {},
         "_is_tool_result_error": getattr(middleware_module, "_is_tool_result_error", None),
     }
-    _run(_tool_result_output_loop(middleware_source), namespace)
+    await _run_async_loop_body(_tool_result_output_loop(middleware_source), namespace)
 
     assert namespace["output"][0]["status"] == "failed", (
         "a tool call that raised was written to the stored output as completed (#28016), so the "
@@ -479,7 +480,8 @@ def test_failed_tool_result_is_stamped_failed_at_the_call_site(
     )
 
 
-def test_successful_tool_result_is_still_stamped_completed_at_the_call_site(
+@pytest.mark.asyncio
+async def test_successful_tool_result_is_still_stamped_completed_at_the_call_site(
     middleware_source, middleware_module
 ):
     namespace = {
@@ -489,7 +491,7 @@ def test_successful_tool_result_is_still_stamped_completed_at_the_call_site(
         "result_status_by_call_id": {},
         "_is_tool_result_error": getattr(middleware_module, "_is_tool_result_error", None),
     }
-    _run(_tool_result_output_loop(middleware_source), namespace)
+    await _run_async_loop_body(_tool_result_output_loop(middleware_source), namespace)
 
     item = namespace["output"][0]
     assert item["status"] == "completed"

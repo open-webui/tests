@@ -1,22 +1,24 @@
 """Guard: a slow Redis on the sign-in path slows sign-in only.
 
-`signin_rate_limiter` holds a synchronous redis-py client and `signin` calls `is_limited` inline,
-so every sign-in attempt does two or three blocking round trips on the event-loop thread. With
-the default `REDIS_SOCKET_TIMEOUT` of None a slow Redis holds the loop for as long as it takes,
-and nothing else on the worker (health checks, chats, sockets) is served meanwhile. A brief
-latency spike on a shared cache must cost the caller alone.
+`signin` calls `is_limited` inline, so every sign-in attempt does two or three Redis round trips
+before it answers. Held on a synchronous client those trips run on the event-loop thread, and
+with the default `REDIS_SOCKET_TIMEOUT` of None a slow Redis holds the loop for as long as it
+takes, so nothing else on the worker (health checks, chats, sockets) is served meanwhile. A
+brief latency spike on a shared cache must cost the caller alone.
 
-The test replaces the limiter's client with one whose `incr` blocks for a second and watches a
-ticking coroutine while `signin` runs: if the loop was free, no tick is late.
+The test hands sign-in a Redis whose `incr` answers a second late and watches a ticking
+coroutine while `signin` runs: if the loop was free, no tick is late. The fake only answers to
+`await`, so a limiter that went back to a synchronous client fails on the unawaited call.
 
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where the tick is a second late; strict
-`xfail`. Unmarked: no issue filed yet.
+Read on upstream dev at 4948842be (2026-09-09), where the tick is a second late; #29977 moved
+the limiter to the async client and takes it from `request.app.state.redis`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException, Request, Response
@@ -33,11 +35,15 @@ def auths_module(owui_module):
 class SlowRedis:
     """Every attempt reads as over the limit, so sign-in stops right after the stall."""
 
-    def incr(self, key):
-        time.sleep(REDIS_STALL)
+    def __init__(self):
+        self.reached = False
+
+    async def incr(self, key):
+        self.reached = True
+        await asyncio.sleep(REDIS_STALL)
         return 100
 
-    def mget(self, keys):
+    async def mget(self, keys):
         return ["100"] * len(keys)
 
 
@@ -50,11 +56,11 @@ async def _widest_tick_gap(stop: asyncio.Event) -> float:
     return widest
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="sync redis client on the loop")
 @pytest.mark.asyncio
-async def test_signin_waiting_on_redis_leaves_the_loop_free(auths_module, monkeypatch):
-    monkeypatch.setattr(auths_module.signin_rate_limiter, "r", SlowRedis())
-    request = Request({"type": "http", "method": "POST", "path": "/", "headers": []})
+async def test_signin_waiting_on_redis_leaves_the_loop_free(auths_module):
+    slow_redis = SlowRedis()
+    app = SimpleNamespace(state=SimpleNamespace(redis=slow_redis))
+    request = Request({"type": "http", "method": "POST", "path": "/", "headers": [], "app": app})
     form = auths_module.SigninForm(email="someone@example.com", password="x")
     stop = asyncio.Event()
     ticker = asyncio.create_task(_widest_tick_gap(stop))
@@ -67,6 +73,6 @@ async def test_signin_waiting_on_redis_leaves_the_loop_free(auths_module, monkey
         stop.set()
         widest_gap = await ticker
 
-    if refused.value.status_code != 429:
+    if refused.value.status_code != 429 or not slow_redis.reached:
         pytest.fail("sign-in never reached the rate limiter")
     assert widest_gap < TOLERATED_GAP, "the event loop stalled while sign-in waited on Redis"

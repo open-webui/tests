@@ -1,15 +1,15 @@
 """Guard: the instance keeps answering while one request waits on a slow Redis.
 
-The sign-in rate limiter talks to Redis through a synchronous client on the event-loop
-thread, so while one sign-in waits on a slow `INCRBY` nothing else on the worker is served.
+The sign-in rate limiter used to talk to Redis through a synchronous client on the event-loop
+thread, so while one sign-in waited on a slow `INCRBY` nothing else on the worker was served.
 Here the fake Redis answers that one command two seconds late; a health check sent once the
 sign-in has reached that command has to come back inside a second. The control is the same
 health check with nothing slow, which shows the bound itself is easy to meet.
 
 Unit form: `unit/resilience/test_slow_redis_does_not_stall_the_event_loop.py`.
 
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where the health check waits out the
-stall; strict `xfail`. Unmarked: no issue filed yet.
+Read on upstream dev at 4948842be (2026-09-09), where the health check waits out the stall;
+#29977 moved the limiter to the async client, so the stalled round now asserts the bound too.
 """
 
 from __future__ import annotations
@@ -55,7 +55,6 @@ def test_health_answers_while_a_signin_waits_on_a_fast_redis(degraded_instance, 
     assert elapsed < HEALTH_TIMEOUT, f"health took {elapsed:.2f}s with nothing slow"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="sync redis client on the loop")
 def test_health_answers_while_a_signin_waits_on_a_slow_redis(degraded_instance, fake_redis):
     fake_redis.delays["INCRBY"] = REDIS_STALL
     try:

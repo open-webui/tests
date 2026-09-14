@@ -2,14 +2,13 @@
 
 `periodic_session_pool_cleanup` and `periodic_usage_pool_cleanup` are started once per process
 and own the reaping of orphaned socket sessions and stale usage entries. The usage task wraps
-its whole loop in `except Exception` and sleeps before retrying. The session task does not: its
-lock acquire sits outside the `try`, and every Redis call inside it is unguarded, so the first
-timeout or connection reset during a Redis blip ends the coroutine. From then on the pool only
-grows, and the only trace is one "Task exception was never retrieved" at shutdown.
+its whole loop in `except Exception` and sleeps before retrying. The session task used to leave
+its lock acquire outside the `try` with every Redis call inside it unguarded, so the first
+timeout or connection reset during a Redis blip ended the coroutine. From then on the pool only
+grew, and the only trace was one "Task exception was never retrieved" at shutdown.
 
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where the session task dies on the first
-error; strict `xfail`. The usage task survives and is the control. Unmarked: no issue filed
-yet.
+Read on upstream dev at 4948842be (2026-09-09), where the session task dies on the first error;
+#29976 made it survive, so both cases now assert it stays alive. The usage task is the control.
 """
 
 from __future__ import annotations
@@ -39,7 +38,6 @@ async def _finish(task: asyncio.Task) -> None:
     await asyncio.gather(task, return_exceptions=True)
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="the acquire is outside the try")
 @pytest.mark.asyncio
 async def test_session_cleanup_survives_a_redis_error_on_acquire(socket_main_module, monkeypatch):
     monkeypatch.setattr(socket_main_module, "session_aquire_func", _redis_blip)
@@ -51,7 +49,6 @@ async def test_session_cleanup_survives_a_redis_error_on_acquire(socket_main_mod
         await _finish(task)
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="no except around the sweep")
 @pytest.mark.asyncio
 async def test_session_cleanup_survives_a_redis_error_while_holding_the_lock(
     socket_main_module, monkeypatch

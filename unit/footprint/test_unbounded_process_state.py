@@ -6,8 +6,9 @@ keys, finished tasks, warned-about values, deleted plugins. A failure here is me
 restart reclaims.
 
 Unpinned: read on upstream dev at v0.11.3 (a253bf0c3). The cases upstream has since fixed
-(#29971, #29983) now assert the fixed behaviour; the rest stay a strict `xfail` until upstream
-fixes them, and fail as XPASS when it does. Unmarked because no issue is filed yet.
+(#29971, #29977, #29980, #29983) now assert the fixed behaviour; the rest stay a strict `xfail`
+until upstream fixes them, and fail as XPASS when it does. Unmarked because no issue is filed
+yet.
 """
 
 from __future__ import annotations
@@ -64,30 +65,26 @@ def _module_container_sizes(module):
     }
 
 
-@pytest.mark.xfail(
-    raises=AssertionError, strict=True, reason="expired outer entries are never dropped"
-)
-def test_rate_limiter_forgets_keys_once_their_window_has_passed(rate_limit_module, monkeypatch):
-    """`RateLimiter._memory_store` is the fallback without Redis, keyed by the login email the
-    signin request supplies. A key's expired buckets are pruned only when that key is checked
-    again and its outer entry is never removed, so an abandoned email keeps both forever."""
-    limiter_class = rate_limit_module.RateLimiter
-    monkeypatch.setattr(limiter_class, "_memory_store", type(limiter_class._memory_store)())
-    limiter = limiter_class(redis_client=None, limit=5, window=60)
+@pytest.mark.asyncio
+async def test_rate_limiter_forgets_keys_once_their_window_has_passed(
+    rate_limit_module, monkeypatch
+):
+    """`RateLimiter._memory_store` is the fallback without Redis, fed the login email the signin
+    request supplies. #29977 keyed it by bucket, so rolling past a window drops every key that
+    window held instead of keeping an entry per abandoned email forever."""
+    limiter = rate_limit_module.RateLimiter(limit=5, window=60)
     bucket = 1_000
     monkeypatch.setattr(limiter, "_current_bucket", lambda: bucket)
 
     for window in range(5):
         for i in range(KEYS_PER_WINDOW):
-            limiter.is_limited(f"user{window}-{i}@example.com")
+            await limiter.is_limited(None, f"user{window}-{i}@example.com")
         bucket += 10
 
-    assert len(limiter._memory_store) <= KEYS_PER_WINDOW, (
-        "keys from expired windows are still in the store"
-    )
+    retained = sum(len(keys) for keys in limiter._memory_store.values())
+    assert retained <= KEYS_PER_WINDOW, "keys from expired windows are still in the store"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="cleanup_task skips a falsy item id")
 @pytest.mark.asyncio
 async def test_finished_task_with_an_empty_item_id_is_dropped_from_item_tasks(tasks_module):
     """`create_task` files every task under `item_tasks[id]`, but `cleanup_task` only removes
