@@ -36,7 +36,6 @@ KNOWN = {
     "utils/subagents.py::_parent_locks": "unbounded: one Lock per chat id that ran a subagent",
     "utils/timers.py::_timer_locks": "unbounded: one Lock per timer id ever executed",
     "tasks.py::item_tasks": "unbounded for a falsy id; otherwise in-flight tasks",
-    "models/models.py::_warned_profile_urls": "unbounded: one entry per invalid URL value",
     "tasks.py::tasks": "in-flight tasks, popped by cleanup_task",
     "tasks.py::response_streams": "in-flight tasks, popped by cleanup_task",
     "socket/main.py::SESSION_POOL": "live sockets, reaped by periodic_session_pool_cleanup",

@@ -8,8 +8,8 @@ vanishes at compile time, so the only copy that can survive delete is the source
 megabytes of resident memory. The control runs the same rounds without the load, so nothing
 is cached and the same measurement stays flat.
 
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where both caches keep the source; the
-loaded rounds are strict `xfail`. Unmarked: no issue filed yet.
+Read on upstream dev at 4948842be (2026-09-09), where both caches kept the source; #29983 made
+delete pop it, so the loaded rounds now assert the memory comes back.
 """
 
 from __future__ import annotations
@@ -77,7 +77,6 @@ def test_deleting_unloaded_plugins_keeps_memory_flat(launched_instance, kind, so
     assert growth < ALLOWED_GROWTH, f"{growth / 2**20:.0f} MiB retained after {ROUNDS} rounds"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="source cache is never popped")
 @pytest.mark.parametrize("kind, source", [("tools", TOOL), ("functions", FILTER)])
 def test_deleting_loaded_plugins_releases_their_source(launched_instance, kind, source):
     growth = _growth_after(launched_instance, kind, source, load=True)

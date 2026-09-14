@@ -5,9 +5,9 @@ the thing an entry stands for, and asserts the registry lets go or never grew: e
 keys, finished tasks, warned-about values, deleted plugins. A failure here is memory only a
 restart reclaims.
 
-Unpinned: read on upstream dev at v0.11.3 (a253bf0c3), where every case except the control
-fails. Each is a strict `xfail` until upstream fixes it, and fails as XPASS when it does.
-Unmarked because no issue is filed yet.
+Unpinned: read on upstream dev at v0.11.3 (a253bf0c3). The cases upstream has since fixed
+(#29971, #29983) now assert the fixed behaviour; the rest stay a strict `xfail` until upstream
+fixes them, and fail as XPASS when it does. Unmarked because no issue is filed yet.
 """
 
 from __future__ import annotations
@@ -54,6 +54,14 @@ async def _noop(): ...
 
 def _request_with_caches(**caches):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(**caches)))
+
+
+def _module_container_sizes(module):
+    return {
+        name: len(value)
+        for name, value in vars(module).items()
+        if isinstance(value, (set, dict, list))
+    }
 
 
 @pytest.mark.xfail(
@@ -107,25 +115,25 @@ async def test_finished_task_with_an_item_is_dropped_from_item_tasks(tasks_modul
     assert "chat-1" not in tasks_module.item_tasks
 
 
-@pytest.mark.xfail(
-    raises=AssertionError, strict=True, reason="one set entry per distinct invalid value"
-)
-def test_invalid_profile_image_url_warnings_do_not_accumulate_per_value(models_module, monkeypatch):
-    """`_warned_profile_urls` deduplicates a warning per distinct URL value. `ModelForm.meta` is
-    validated before the workspace permission check, so any signed-in user grows the set by one
-    entry per request; the fix is to stop warning per value, a digest per value still grows."""
-    warned = set()
-    monkeypatch.setattr(models_module, "_warned_profile_urls", warned)
+def test_invalid_profile_image_url_warnings_do_not_accumulate_per_value(models_module):
+    """`ModelForm.meta` is validated before the workspace permission check, so any signed-in user
+    can feed the validator distinct invalid URLs. Clearing one must keep no per-value state:
+    #29971 removed the warn-once set that grew by one entry per distinct value."""
+    sizes_before = _module_container_sizes(models_module)
 
     for i in range(20):
         meta = models_module.ModelMeta(profile_image_url=f"data:image/svg+xml;base64,{i}")
         if meta.profile_image_url is not None:
             pytest.fail("the validator no longer clears an SVG data URI")
 
-    assert len(warned) <= 1, f"{len(warned)} invalid URL values retained for a log deduplication"
+    grown = [
+        name
+        for name, size in _module_container_sizes(models_module).items()
+        if size > sizes_before.get(name, 0)
+    ]
+    assert not grown, f"module state grew per rejected URL value: {grown}"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="TOOL_CONTENTS is never popped")
 @pytest.mark.asyncio
 async def test_deleting_a_tool_evicts_its_cached_source(tools_router_module, monkeypatch):
     """Delete pops the module from `TOOLS` and must pop its source from `TOOL_CONTENTS` too."""
@@ -149,7 +157,6 @@ async def test_deleting_a_tool_evicts_its_cached_source(tools_router_module, mon
     assert "t1" not in request.app.state.TOOL_CONTENTS, "source text kept after delete"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="FUNCTION_CONTENTS is never popped")
 @pytest.mark.asyncio
 async def test_deleting_a_function_evicts_its_cached_source(functions_router_module, monkeypatch):
     """Same contract for `FUNCTIONS` and `FUNCTION_CONTENTS`."""
