@@ -531,16 +531,25 @@ def test_service_workers_are_blocked_on_every_fetched_page(retrieval_web_utils_m
     )
 
 
-def test_websocket_connections_the_page_opens_are_closed(retrieval_web_utils_module, monkeypatch):
+def test_websocket_connections_the_page_opens_never_reach_the_server(
+    retrieval_web_utils_module, monkeypatch
+):
+    """Only connect_to_server dials out; the sync close() busy-spins the dispatcher (#30024)."""
     mod = retrieval_web_utils_module
     browser, _ = _run_playwright_loader(mod, monkeypatch)
 
     handlers = browser.pages[0].ws_handlers
     assert handlers, "no websocket route was registered, the page can dial any host"
 
-    closed = []
-    handlers[0](SimpleNamespace(close=lambda: closed.append(True)))
-    assert closed == [True], "the websocket route handler did not close the connection"
+    calls = []
+    handlers[0](
+        SimpleNamespace(
+            close=lambda: calls.append("close"),
+            connect_to_server=lambda: calls.append("connect_to_server"),
+        )
+    )
+    assert "connect_to_server" not in calls, "the websocket route handler let the page dial out"
+    assert "close" not in calls, "sync close() inside the route handler spins a CPU core forever"
 
 
 # --- narrow: the paced loaders must not drop the page they are pacing ---
