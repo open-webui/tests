@@ -13,6 +13,11 @@ under the bound twice on a ref whose backend was byte-identical to a run that re
 and the second of those took the 0.11.4 release gate red on 2026-09-14. Copying the reply per
 delta is CPU work, so CPU is both the thing the guard is about and the stable way to see it.
 
+Two further steps keep the divisor honest, because the short reply is small enough that its
+noise decides the verdict: the cost of answering at all is measured on a 100-chunk reply and
+taken off both sides, and each of those two is read twice with the cheaper reading kept. Left
+in, that fixed part alone moved the measured ratio between 11 and 19 on identical code.
+
 Unpinned: read on upstream dev at 4948842be (2026-09-09), where every flushed delta copies the
 whole reply text twice in `utils/middleware.py`: the delta is appended onto the output item's
 text string, and the content parts are re-joined for the resume store in
@@ -32,7 +37,7 @@ from integration.conftest import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.slow, pytest.mark.api, pytest.mark.requires_source]
 
-SHORT, LONG = 4000, 24000
+BASELINE, SHORT, LONG = 100, 4000, 24000
 CHUNK_TEXT = "lorem-ipsum-dolor-sit-amet-" * 4  # no trailing space: the saved reply is stripped
 ALLOWED_RATIO = 2 * LONG / SHORT
 
@@ -85,13 +90,28 @@ def _server_cpu_for_a_reply(instance, chunks: int, deadline_seconds: float) -> t
     return instance.cpu_seconds() - before, elapsed
 
 
+def _cheapest_reply_cpu(instance, chunks: int, deadline_seconds: float) -> tuple[float, float]:
+    """The lowest of two readings: the one least charged for whatever else ran alongside it."""
+    readings = [_server_cpu_for_a_reply(instance, chunks, deadline_seconds) for _ in range(2)]
+    return min(readings)
+
+
 @pytest.mark.xfail(raises=AssertionError, strict=True, reason="every delta copies the reply")
 def test_six_times_the_chunks_cost_at_most_twelve_times_the_work(launched_instance):
     _stream_a_reply(launched_instance, SHORT, 60)  # warm caches, first chat, first model load
-    short, short_wall = _server_cpu_for_a_reply(launched_instance, SHORT, 60)
+    per_request, _ = _cheapest_reply_cpu(launched_instance, BASELINE, 60)
+    short, short_wall = _cheapest_reply_cpu(launched_instance, SHORT, 60)
     long, _ = _server_cpu_for_a_reply(launched_instance, LONG, 20 * ALLOWED_RATIO * short_wall + 30)
 
-    measured = f"{SHORT} chunks: {short:.2f}s CPU, {LONG} chunks: {long:.2f}s CPU"
+    # Answering at all costs the same whatever the length, and that fixed part is the noisy
+    # one: at 4000 chunks it has read anywhere from a quarter to half of the total.
+    short -= per_request
+    long -= per_request
+
+    measured = (
+        f"{SHORT} chunks: {short:.2f}s CPU, {LONG} chunks: {long:.2f}s CPU, "
+        f"per request: {per_request:.2f}s"
+    )
     print(measured)  # the reading is the point; `-s` shows it whichever way the guard lands
 
     assert long / short < ALLOWED_RATIO, measured
