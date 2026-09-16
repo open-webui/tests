@@ -91,6 +91,7 @@ def test_six_times_the_chunks_cost_at_most_twelve_times_the_work(launched_instan
     short, short_wall = _server_cpu_for_a_reply(launched_instance, SHORT, 60)
     long, _ = _server_cpu_for_a_reply(launched_instance, LONG, 20 * ALLOWED_RATIO * short_wall + 30)
 
-    assert long / short < ALLOWED_RATIO, (
-        f"{SHORT} chunks: {short:.2f}s CPU, {LONG} chunks: {long:.2f}s CPU"
-    )
+    measured = f"{SHORT} chunks: {short:.2f}s CPU, {LONG} chunks: {long:.2f}s CPU"
+    print(measured)  # the reading is the point; `-s` shows it whichever way the guard lands
+
+    assert long / short < ALLOWED_RATIO, measured
