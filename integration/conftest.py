@@ -207,6 +207,21 @@ class LaunchedInstance:
         rss_line = next(line for line in status if line.startswith("VmRSS:"))
         return int(rss_line.split()[1]) * 1024
 
+    def cpu_seconds(self) -> float:
+        """User plus system time the server has burned, read the same way as `rss_bytes`."""
+        if sys.platform == "win32":
+            query = (
+                f"Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -eq {self.pid} "
+                f"-or $_.ParentProcessId -eq {self.pid} }} "
+                "| Measure-Object -Property UserModeTime, KernelModeTime -Sum "
+                "| Measure-Object -Property Sum -Sum | Select-Object -ExpandProperty Sum"
+            )
+            command = ["powershell", "-NoProfile", "-Command", query]
+            return int(subprocess.check_output(command, text=True).strip()) / 1e7
+        fields = Path(f"/proc/{self.pid}/stat").read_text().rsplit(") ", 1)[1].split()
+        utime, stime = int(fields[11]), int(fields[12])
+        return (utime + stime) / os.sysconf("SC_CLK_TCK")
+
 
 @pytest.fixture(scope="session")
 def launched_instance(mock_upstream: MockUpstream) -> Generator[LaunchedInstance, None, None]:
