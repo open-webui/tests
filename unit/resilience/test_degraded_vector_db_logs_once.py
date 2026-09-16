@@ -1,15 +1,14 @@
 """Guard: a vector DB that is down costs one log line per request.
 
 `query_collection` fans out `collections x queries` searches in threads and already degrades
-to an empty result when they all fail. On the way it renders a full traceback twice per failed
+to an empty result when they all fail. It used to render a full traceback twice per failed
 pair: once in `query_doc`, which re-raises, and again in the fan-out handler that catches it.
-A chat with twenty knowledge bases and five expanded queries turns one outage into two
-hundred identical stack traces per message, on every replica, at ERROR. The fix is one
-aggregated warning after the gather.
+A chat with twenty knowledge bases and five expanded queries turned one outage into two
+hundred identical stack traces per message, on every replica, at ERROR.
 
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where the fan-out logs 2 x N x M
-tracebacks; that case is a strict `xfail`. The degrade itself holds today and is the control.
-Unmarked: no issue filed yet.
+Read on upstream dev at 4948842be (2026-09-09), where the fan-out logs 2 x N x M tracebacks;
+#29981 replaced them with one aggregated line after the gather, so both cases now assert the
+fixed behaviour. The degrade itself is the control.
 """
 
 from __future__ import annotations
@@ -52,9 +51,6 @@ async def test_every_collection_failing_still_returns_an_empty_result(query_coll
     assert result == {"distances": [[]], "documents": [[]], "metadatas": [[]]}
 
 
-@pytest.mark.xfail(
-    raises=AssertionError, strict=True, reason="two tracebacks per collection x query pair"
-)
 @pytest.mark.asyncio
 async def test_every_collection_failing_logs_at_most_one_traceback(query_collection, caplog):
     await query_collection(None, COLLECTIONS, QUERIES, _embed, k=3)
