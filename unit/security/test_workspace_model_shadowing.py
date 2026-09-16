@@ -154,8 +154,17 @@ async def _create(models_router, model_schemas, caller, form, existing=None) -> 
 
 
 async def _import(models_router, model_schemas, caller, payloads, existing=()) -> Outcome:
-    insert = AsyncMock(return_value=None)
-    update = AsyncMock(return_value=None)
+    # The route raises 500 on a falsy save, so both stubs answer with the stored row.
+    insert = AsyncMock(
+        side_effect=lambda user_id, form_data, db=None: _stored(
+            model_schemas, form_data.id, user_id, form_data.base_model_id
+        )
+    )
+    update = AsyncMock(
+        side_effect=lambda model_id, form_data, db=None: _stored(
+            model_schemas, model_id, caller.id, form_data.base_model_id
+        )
+    )
     publish = AsyncMock()
     result, error = None, None
     form = models_router.ModelsImportForm(models=list(payloads))

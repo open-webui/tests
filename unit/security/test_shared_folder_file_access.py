@@ -114,7 +114,7 @@ def _backend_world(files: dict[str, SimpleNamespace], readable_collections=()):
             AsyncMock(return_value=[]),
         ),
         (chats_module.Chats, "get_shared_chat_ids_by_file_id", AsyncMock(return_value=[])),
-        (models_module.Models, "get_model_owners_attaching_file", AsyncMock(return_value={})),
+        (models_module.Models, "get_model_owner_ids_by_file_id", AsyncMock(return_value={})),
         (access_grants_module.AccessGrants, "has_access", AsyncMock(return_value=False)),
         (
             access_grants_module.AccessGrants,
