@@ -316,7 +316,9 @@ class _FakeOAuthManager:
     def get_client(self, provider):
         return self._client
 
-    async def update_user_role_from_oauth(self, request, user, user_data, provider, db=None):
+    async def update_user_role_from_oauth(
+        self, request, user, user_data, provider, *, access_token=None, db=None
+    ):
         self.role_calls.append(provider)
         return user
 
