@@ -202,7 +202,7 @@ def test_image_settings_routes_require_an_admin(owui_module):
     """The routes that read or write the instance-wide image settings must keep
     their admin dependency, so the config surface has one gate."""
     images = owui_module("open_webui.routers.images")
-    admin_only_paths = {"/config", "/config/update", "/config/url/verify"}
+    admin_only_paths = {"/config", "/config/update", "/verify"}
 
     assert admin_only_paths <= {route.path for route in images.router.routes}
     for route in images.router.routes:
