@@ -182,6 +182,7 @@ class _FakeConfig:
     @staticmethod
     async def get_many(*keys: str) -> dict:
         return {
+            "memories.enable": True,
             "memories.background_review.enable": True,
             "memories.review_interval_turns": 1,
         }
@@ -203,7 +204,7 @@ async def test_structured_reply_triggers_memory_review(
 
     await memory_module.review_memory_after_turn(
         request=SimpleNamespace(),
-        user=SimpleNamespace(id="u1"),
+        user=SimpleNamespace(id="u1", role="admin"),
         model={"id": "m"},
         metadata={"features": {"memory": True}},
         form_data={},
@@ -268,7 +269,7 @@ async def test_nearby_memory_review_skipped_when_feature_off(
 
     await memory_module.review_memory_after_turn(
         request=SimpleNamespace(),
-        user=SimpleNamespace(id="u1"),
+        user=SimpleNamespace(id="u1", role="admin"),
         model={"id": "m"},
         metadata={"features": {"memory": False}},
         form_data={},
