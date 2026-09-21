@@ -85,7 +85,7 @@ def _router_boundary_patched(mod, store: _FolderStore):
     chats = SimpleNamespace(
         count_chats_by_folder_ids_and_user_id=AsyncMock(return_value=0),
         delete_chats_by_user_id_and_folder_id=AsyncMock(),
-        move_chats_by_user_id_and_folder_id=AsyncMock(),
+        move_chats_by_folder_id=AsyncMock(),
     )
     config = SimpleNamespace(
         get_many=AsyncMock(return_value={"folders.enable": True, "user.permissions": {}}),
@@ -166,7 +166,7 @@ async def test_write_collaborator_delete_does_not_move_the_owners_chats(owui_mod
             )
 
     assert excinfo.value.status_code == 403
-    chats.move_chats_by_user_id_and_folder_id.assert_not_awaited()
+    chats.move_chats_by_folder_id.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -85,8 +85,11 @@ def floor_to(moment: datetime, step: timedelta) -> datetime:
 
 
 @pytest.fixture
-def frozen_now(automations_module, monkeypatch):
-    monkeypatch.setattr(automations_module, 'datetime', FrozenClock)
+def frozen_now(automations_module, owui_module, monkeypatch):
+    """dev moved the alignment code into utils/recurrence.py, so the clock has
+    to be frozen on the module that actually reads `datetime.now()`."""
+    recurrence = owui_module('open_webui.utils.recurrence')
+    monkeypatch.setattr(recurrence, 'datetime', FrozenClock)
     return NOW_NAIVE
 
 
@@ -389,7 +392,8 @@ def test_a_recent_start_is_preserved(automations_module, frozen_now):
 ####################
 
 
-def test_near_future_rule_validates_in_a_zone_behind_the_server(
+@pytest.mark.asyncio
+async def test_near_future_rule_validates_in_a_zone_behind_the_server(
     automations_module, frozen_now, count_needs_dtstart
 ):
     """Pre-fix the rule was anchored on the year-2000 epoch while `now` was local, so its
@@ -400,20 +404,25 @@ def test_near_future_rule_validates_in_a_zone_behind_the_server(
     before any clock is consulted.
     """
     try:
-        automations_module.validate_rrule(QUARTER_HOURLY, tz=BEHIND_ZONE)
+        await automations_module.validate_rrule(QUARTER_HOURLY, tz=BEHIND_ZONE)
     except ValueError as error:
         assert str(error) == count_needs_dtstart, (
             f'a rule with eight future quarter-hours was rejected: {error}'
         )
 
 
-def test_next_run_is_aligned_to_the_users_clock(automations_module, frozen_now):
-    run_ns = automations_module.next_run_ns(QUARTER_HOURLY, tz=BEHIND_ZONE)
+@pytest.mark.asyncio
+async def test_next_run_is_aligned_to_the_users_clock(automations_module):
+    """Real clock: the next run must sit on a quarter-hour boundary of the user's
+    zone, no more than one interval ahead of now. Pre-fix the year-2000 anchor put
+    the next run decades away, so the window assert is what discriminates."""
+    run_ns = await automations_module.next_run_ns(QUARTER_HOURLY, tz=BEHIND_ZONE)
 
     assert run_ns is not None, 'a rule with eight future quarter-hours reported no next run'
     local = datetime.fromtimestamp(run_ns / 1_000_000_000, ZoneInfo(BEHIND_ZONE))
     assert (local.minute % 15, local.second) == (0, 0), f'{local} is not on a quarter-hour'
-    assert timedelta(0) < local - NOW_UTC <= timedelta(minutes=15)
+    now_local = datetime.now(ZoneInfo(BEHIND_ZONE))
+    assert timedelta(0) < local - now_local <= timedelta(minutes=15)
 
 
 ####################
@@ -421,16 +430,18 @@ def test_next_run_is_aligned_to_the_users_clock(automations_module, frozen_now):
 ####################
 
 
-def test_next_n_runs_are_ascending_quarter_hours(automations_module, frozen_now):
-    runs = automations_module.next_n_runs_ns(QUARTER_HOURLY, n=3, tz=BEHIND_ZONE)
+@pytest.mark.asyncio
+async def test_next_n_runs_are_ascending_quarter_hours(automations_module):
+    runs = await automations_module.next_n_runs_ns(QUARTER_HOURLY, n=3, tz=BEHIND_ZONE)
 
     assert len(runs) == 3
     assert runs == sorted(runs)
     assert [b - a for a, b in zip(runs, runs[1:])] == [15 * 60 * 1_000_000_000] * 2
 
 
-def test_interval_seconds_reads_a_count_bounded_sub_daily_rule(automations_module, frozen_now):
-    assert automations_module.rrule_interval_seconds(QUARTER_HOURLY) == 900
+@pytest.mark.asyncio
+async def test_interval_seconds_reads_a_count_bounded_sub_daily_rule(automations_module):
+    assert await automations_module.rrule_interval_seconds(QUARTER_HOURLY) == 900
 
 
 ####################
@@ -438,11 +449,14 @@ def test_interval_seconds_reads_a_count_bounded_sub_daily_rule(automations_modul
 ####################
 
 
-def test_an_exhausted_rule_is_still_rejected(automations_module, frozen_now):
+@pytest.mark.asyncio
+async def test_an_exhausted_rule_is_still_rejected(automations_module, frozen_now):
     """UNTIL in the past means no future runs whichever clock is consulted."""
+    exhausted = 'RRULE:FREQ=DAILY;UNTIL=20200101T000000Z'
     with pytest.raises(ValueError, match='no future occurrences'):
-        automations_module.validate_rrule('RRULE:FREQ=DAILY;UNTIL=20200101T000000Z', tz=BEHIND_ZONE)
+        await automations_module.validate_rrule(exhausted, tz=BEHIND_ZONE)
 
 
-def test_a_daily_rule_reports_a_days_interval(automations_module, frozen_now):
-    assert automations_module.rrule_interval_seconds('RRULE:FREQ=DAILY') == 86400
+@pytest.mark.asyncio
+async def test_a_daily_rule_reports_a_days_interval(automations_module):
+    assert await automations_module.rrule_interval_seconds('RRULE:FREQ=DAILY') == 86400

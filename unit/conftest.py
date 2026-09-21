@@ -161,8 +161,33 @@ def web_search_main_module(owui_module):
 
 @pytest.fixture(scope="session")
 def automations_module(owui_module):
-    """`open_webui.utils.automations` (_resolve_model_features)."""
-    return owui_module("open_webui.utils.automations")
+    """`open_webui.utils.automations`, with the recurrence API it re-exports.
+
+    dev moved the RRULE helpers into `open_webui.utils.recurrence` and made the
+    public ones async (`_parse_rule` stayed sync). automations.py imports them
+    but no longer assigns the names, so tests that call
+    `automations.rrule_interval_seconds(...)` or patch `automations.datetime`
+    need the aliases to keep resolving.
+    """
+    automations = owui_module("open_webui.utils.automations")
+    recurrence = owui_module("open_webui.utils.recurrence")
+
+    for name in (
+        "_parse_rule",
+        "_resolve_tz",
+        "next_run_ns",
+        "next_n_runs_ns",
+        "rrule_interval_seconds",
+        "validate_rrule",
+    ):
+        if not hasattr(automations, name):
+            setattr(automations, name, getattr(recurrence, name))
+
+    # Tests that freeze the clock patch `automations.datetime`; the alignment
+    # code reads it in the module that now holds the parsing.
+    if not hasattr(automations, "datetime"):
+        automations.datetime = recurrence.datetime
+    return automations
 
 
 @pytest.fixture(scope="session")

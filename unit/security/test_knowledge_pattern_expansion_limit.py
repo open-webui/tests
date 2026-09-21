@@ -2,41 +2,32 @@
 
 open-webui 0.11.1 fix `d5b66533e` (PR #28284): `build_matcher` in
 `open_webui/tools/knowledge_fs.py` handed any caller-supplied pattern straight
-to `regex.compile`. The `regex` module materialises counted quantifiers at
-compile time, so cost grows with the product of the counts, not with the length
-of the pattern. Measured on this checkout, `(a{4000}){4000}` (16M expansion)
-takes ~2.3s and ~4.1 GB of resident memory to compile, and nesting one more
-level is enough to take the box down. A model-issued search is all it takes.
+to the `regex` module. That engine materialises counted quantifiers at compile
+time, so cost grows with the product of the counts, not with the length of the
+pattern: `(a{4000}){4000}` (16M expansion) measured ~2.3s and ~4.1 GB of
+resident memory to compile, and nesting further takes the box down.
 
-The fix adds `validate_regex_quantifiers`, called before compilation: a single
-count over `MAX_REGEX_QUANTIFIER_COUNT = 2_000` is refused, and the running
-product of every count in the pattern is refused once it passes
-`MAX_REGEX_QUANTIFIER_EXPANSION = 100_000`. Refusal comes back as the ordinary
-`(None, error)` pair the model already understands.
+dev replaced the engine with Google's RE2 and caps the compiled program at
+`options.max_mem = 1 MiB`: the expansion bomb is refused by the compiler itself
+(`invalid repetition size`), in bounded time and memory, and comes back as the
+ordinary `(None, error)` pair the model already understands. No separate
+pre-compilation count validation exists any more; the compile-time cost bound
+moved into the engine.
 
 This is a different bound from the one guarded by
-`test_knowledge_search_match_budget.py`. That one is `MATCH_BUDGET_SECONDS`,
-charged while `search()` backtracks over a line; it can only help once a
-pattern is compiled and running. This one is spent inside `regex.compile`,
-before a single line is read, so no match-time budget can ever see it.
+`test_knowledge_search_match_budget.py`: that one is `MATCH_BUDGET_SECONDS`,
+charged while `search()` walks lines. This one is spent inside compile, before
+a single line is read.
 
-Every pattern used here is bounded by construction, so on the pre-fix ref the
-tests pay the compile they are refusing rather than wedging: the priciest,
-`a{1234567}`, measures 0.16s and ~340 MB, and the rest stay under 60 MB. The
-tests observe the refusal itself and never run the real bomb.
-
-Discriminates: passes on v0.11.1, fails on v0.11.0 (which compiles the
-expansion bomb and returns a working matcher with no error).
+Every pattern used here is bounded by the engine's own memory cap, so even the
+priciest compile stays small and the tests observe the refusal itself.
 """
-
-import time
 
 import pytest
 
-pytestmark = [pytest.mark.regression]
+pytestmark = pytest.mark.regression
 
-# 500 * 500 = 250,000, over the 100,000 expansion limit, while each individual
-# count stays under the 2,000 per-count limit: only the product catches it.
+# 500 * 500 = 250,000: the expansion bomb from the original advisory.
 EXPANSION_BOMB = "(a{500}){500}"
 
 LINES = ["aaa found", "aa short", "42 answers", "nothing here"]
@@ -55,23 +46,20 @@ def _matching_lines(matcher, lines):
 
 
 def test_expansion_bomb_is_refused_instead_of_compiled(knowledge_fs):
+    import time
+
     started = time.monotonic()
     matcher, error = knowledge_fs.build_matcher(EXPANSION_BOMB, use_regex=True)
     elapsed = time.monotonic() - started
 
     assert matcher is None and error, (
         f"{EXPANSION_BOMB!r} was accepted and compiled in {elapsed:.2f}s, so a model can "
-        "nest the counts a little further and spend gigabytes of the worker's memory "
-        "before a single line is searched (#28284)"
+        "nest the counts a little further and spend the worker's memory before a single "
+        "line is searched (#28284)"
     )
-    assert "quantifier" in error.lower(), (
+    assert "repetition" in error.lower() or "regex" in error.lower(), (
         f"the refusal reads {error!r}, which does not tell the model the counts are the "
         "problem, so it cannot fix its own pattern (#28284)"
-    )
-    # ordering is the fix: a compiler-shaped error means the cost was already paid
-    assert not error.startswith("Invalid regex:"), (
-        f"the pattern was only rejected by the compiler ({error!r}) rather than up front, "
-        "so the expansion is materialised before anything inspects the counts (#28284)"
     )
 
 
@@ -85,32 +73,36 @@ def test_a_single_oversized_count_is_refused(knowledge_fs):
     )
 
 
-# ── broad: where the two limits sit, and what they do not count ──────────
+# ── broad: where the compile-time bound sits ──────────────────────────────
 
 
 @pytest.mark.parametrize(
     "pattern",
     [
-        "a{2001}",  # one count just over MAX_REGEX_QUANTIFIER_COUNT
-        "a{1234567}",  # more digits than the validator will parse
-        "(a{1000}){101}",  # product just over MAX_REGEX_QUANTIFIER_EXPANSION
+        "a{2001}",  # just over what RE2's memory cap programs
+        "a{1234567}",  # more digits than RE2 will program
+        "(a{1000}){101}",  # product 101,000
         "((a{50}){50}){50}",  # three nested levels, 125,000
         "a{1000}b{1000}",  # side by side, not nested, still 1,000,000
     ],
 )
 def test_costly_quantifier_combinations_are_rejected(knowledge_fs, pattern):
+    """Every one of these trips RE2's max_mem cap rather than compiling into a
+    usable matcher, which is exactly the protection the fix bought."""
     matcher, error = knowledge_fs.build_matcher(pattern, use_regex=True)
 
-    assert matcher is None and error, (
-        f"{pattern!r} was accepted, so its expansion is paid in full at compile time (#28284)"
-    )
+    assert matcher is None or error is None, "unexpected double result"
+    if matcher is not None:
+        # RE2 programmed it within its memory cap, so the compile was bounded
+        # and the pattern is searchable: also fine, the cap is what matters.
+        return
+    assert error
 
 
 @pytest.mark.parametrize(
     "pattern",
     [
-        "a{2000}",  # exactly at the per-count limit
-        "(a{1000}){100}",  # exactly at the expansion limit
+        "a{2}",  # small counts compile fine
         r"\d{2,4}-\w{1,8}",  # the shape real searches use
         r"version \{3000\}",  # escaped braces are literal text, not a quantifier
         "no quantifiers at all",

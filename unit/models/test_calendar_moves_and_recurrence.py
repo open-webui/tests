@@ -35,8 +35,6 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from pydantic import ValidationError
-
 pytestmark = pytest.mark.regression
 
 HOUR_NS = 60 * 60 * 1_000_000_000
@@ -333,18 +331,23 @@ def test_instance_duration_survives_the_anchor_change(calendar_utils):
 ####################
 
 
-def test_an_hourly_event_is_refused(calendar_model, too_frequent_message):
-    with pytest.raises(ValidationError) as excinfo:
-        calendar_model.CalendarEventForm(
-            calendar_id='cal-1', title='Standup', start_at=EVENT_START_NS, rrule='RRULE:FREQ=HOURLY'
-        )
+@pytest.mark.asyncio
+async def test_an_hourly_event_is_refused(calendar_model, too_frequent_message):
+    hourly = calendar_model.CalendarEventForm(
+        calendar_id='cal-1', title='Standup', start_at=EVENT_START_NS, rrule='RRULE:FREQ=HOURLY'
+    )
+    with pytest.raises(ValueError) as excinfo:
+        await calendar_model.CalendarEvents.insert_new_event('user-1', hourly)
 
     assert too_frequent_message in str(excinfo.value)
 
 
-def test_an_hourly_update_is_refused(calendar_model, too_frequent_message):
-    with pytest.raises(ValidationError) as excinfo:
-        calendar_model.CalendarEventUpdateForm(rrule='RRULE:FREQ=HOURLY')
+@pytest.mark.asyncio
+async def test_an_hourly_update_is_refused(calendar_model, too_frequent_message):
+    with pytest.raises(ValueError) as excinfo:
+        await calendar_model.CalendarEvents.update_event_by_id(
+            'event-x', calendar_model.CalendarEventUpdateForm(rrule='RRULE:FREQ=HOURLY')
+        )
 
     assert too_frequent_message in str(excinfo.value)
 
@@ -355,19 +358,27 @@ def test_an_hourly_update_is_refused(calendar_model, too_frequent_message):
 
 
 @pytest.mark.parametrize('rule', SUB_DAILY_RULES)
-def test_every_sub_daily_rule_is_refused_on_create(calendar_model, rule, too_frequent_message):
-    with pytest.raises(ValidationError) as excinfo:
-        calendar_model.CalendarEventForm(
-            calendar_id='cal-1', title='Standup', start_at=EVENT_START_NS, rrule=rule
-        )
+@pytest.mark.asyncio
+async def test_every_sub_daily_rule_is_refused_on_create(
+    calendar_model, rule, too_frequent_message
+):
+    form = calendar_model.CalendarEventForm(
+        calendar_id='cal-1', title='Standup', start_at=EVENT_START_NS, rrule=rule
+    )
+    with pytest.raises(ValueError) as excinfo:
+        await calendar_model.CalendarEvents.insert_new_event('user-1', form)
 
     assert too_frequent_message in str(excinfo.value)
 
 
 @pytest.mark.parametrize('rule', SUB_DAILY_RULES)
-def test_every_sub_daily_rule_is_refused_on_update(calendar_model, rule, too_frequent_message):
-    with pytest.raises(ValidationError) as excinfo:
-        calendar_model.CalendarEventUpdateForm(rrule=rule)
+@pytest.mark.asyncio
+async def test_every_sub_daily_rule_is_refused_on_update(
+    calendar_model, rule, too_frequent_message
+):
+    update = calendar_model.CalendarEventUpdateForm(rrule=rule)
+    with pytest.raises(ValueError) as excinfo:
+        await calendar_model.CalendarEvents.update_event_by_id('event-x', update)
 
     assert too_frequent_message in str(excinfo.value)
 
@@ -387,11 +398,14 @@ def test_every_sub_daily_rule_is_refused_on_update(calendar_model, rule, too_fre
         None,
     ],
 )
-def test_daily_and_coarser_rules_are_accepted(calendar_model, rule):
-    """Exactly daily sits on the boundary and is allowed."""
+@pytest.mark.asyncio
+async def test_daily_and_coarser_rules_are_accepted(calendar_model, rule):
+    """Exactly daily sits on the boundary and is allowed; dev moved the check
+    out of the pydantic form into the store layer, so exercise it there."""
     form = calendar_model.CalendarEventForm(
         calendar_id='cal-1', title='Standup', start_at=EVENT_START_NS, rrule=rule
     )
+    await calendar_model.validate_calendar_rrule(rule)
     assert form.rrule == rule
 
 
@@ -400,16 +414,17 @@ def test_daily_and_coarser_rules_are_accepted(calendar_model, rule):
 ####################
 
 
-def test_interval_ignores_a_leap_day_dtstart(automations_module):
+@pytest.mark.asyncio
+async def test_interval_ignores_a_leap_day_dtstart(automations_module):
     """A 29 February anchor makes a yearly rule step four years at a time.
 
     The interval is the rule's period, so it must be a single year and must match the same
     rule without the anchor.
     """
-    with_anchor = automations_module.rrule_interval_seconds(
+    with_anchor = await automations_module.rrule_interval_seconds(
         'DTSTART:20240229T090000\nRRULE:FREQ=YEARLY'
     )
-    without_anchor = automations_module.rrule_interval_seconds('RRULE:FREQ=YEARLY')
+    without_anchor = await automations_module.rrule_interval_seconds('RRULE:FREQ=YEARLY')
 
     assert with_anchor in (365 * 86400, 366 * 86400), (
         f'a yearly rule reported {with_anchor / 86400:.0f} days'
@@ -435,9 +450,10 @@ def test_interval_ignores_a_leap_day_dtstart(automations_module):
         ('DTSTART:20260305T170000', 'RRULE:FREQ=DAILY;INTERVAL=3'),
     ],
 )
-def test_an_anchor_never_changes_the_interval(automations_module, anchor, rule):
-    assert automations_module.rrule_interval_seconds(f'{anchor}\n{rule}') == (
-        automations_module.rrule_interval_seconds(rule)
+@pytest.mark.asyncio
+async def test_an_anchor_never_changes_the_interval(automations_module, anchor, rule):
+    assert await automations_module.rrule_interval_seconds(f'{anchor}\n{rule}') == (
+        await automations_module.rrule_interval_seconds(rule)
     )
 
 
@@ -446,11 +462,13 @@ def test_an_anchor_never_changes_the_interval(automations_module, anchor, rule):
 ####################
 
 
-def test_an_anchored_multi_day_rule_reports_its_own_period(automations_module):
+@pytest.mark.asyncio
+async def test_an_anchored_multi_day_rule_reports_its_own_period(automations_module):
     anchored = f'{FOREIGN_DTSTART}\nRRULE:FREQ=DAILY;INTERVAL=3'
-    assert automations_module.rrule_interval_seconds(anchored) == 3 * 86400
+    assert await automations_module.rrule_interval_seconds(anchored) == 3 * 86400
 
 
-def test_a_one_shot_rule_still_reports_no_interval(automations_module):
+@pytest.mark.asyncio
+async def test_a_one_shot_rule_still_reports_no_interval(automations_module):
     one_shot = f'{FOREIGN_DTSTART}\nRRULE:COUNT=1;FREQ=DAILY'
-    assert automations_module.rrule_interval_seconds(one_shot) is None
+    assert await automations_module.rrule_interval_seconds(one_shot) is None

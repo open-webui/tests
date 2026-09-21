@@ -47,6 +47,19 @@ class FakeContent:
             yield chunk
 
 
+class FakeHeaders:
+    """Stands in for aiohttp's CIMultiDict: supports .get and .getall."""
+
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self._mapping = mapping
+
+    def get(self, name: str, default=None):
+        return self._mapping.get(name, default)
+
+    def getall(self, name: str, default=()):
+        return (self._mapping[name],) if name in self._mapping else default
+
+
 class FakeResponse:
     """Fake aiohttp response, streamable via `content.iter_chunked` or buffered via `read`.
 
@@ -55,7 +68,7 @@ class FakeResponse:
 
     def __init__(self, chunks: list[bytes], content_type: str = "image/png") -> None:
         self.chunks = chunks
-        self.headers = {"Content-Type": content_type}
+        self.headers = FakeHeaders({"Content-Type": content_type})
         self.content = FakeContent(self)
         self.chunks_yielded = 0
         self.read_called = False

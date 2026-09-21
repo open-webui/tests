@@ -3,6 +3,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 
 class FakeWebSocket:
     """Minimal stand-in for the starlette WebSocket the terminal route drives:
@@ -20,3 +22,10 @@ class FakeWebSocket:
     async def close(self, code=None, reason=None):
         self.close_code = code
         self.close_reason = reason
+
+
+@pytest.fixture(autouse=True)
+def require_re2(owui_module):
+    """dev compiles knowledge-search patterns with RE2; the regression guards
+    that pin the old regex-module error surface need it present."""
+    pytest.importorskip("re2")

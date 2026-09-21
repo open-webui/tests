@@ -872,6 +872,7 @@ async def test_update_drops_a_self_referential_base_model_id(models_router, mode
         user_id="root",
         base_model_id="gpt-4o",
         meta=models_schema.ModelMeta(),
+        access_grants=[],
     )
     update = AsyncMock(
         side_effect=lambda model_id, form, db=None: SimpleNamespace(id=model_id, name=form.name)
@@ -882,6 +883,9 @@ async def test_update_drops_a_self_referential_base_model_id(models_router, mode
         patch.object(models_router.Models, "update_model_by_id", update),
         patch.object(models_router, "_verify_knowledge_file_access", AsyncMock(return_value=None)),
         patch.object(models_router, "filter_allowed_access_grants", AsyncMock(return_value=[])),
+        patch.object(
+            models_router.AccessGrants, "has_access", AsyncMock(return_value=False)
+        ),
         patch.object(models_router.Config, "get", _config_get({"user.permissions": {}})),
         patch.object(models_router, "publish_event", AsyncMock(return_value=None)),
     ):

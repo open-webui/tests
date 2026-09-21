@@ -104,7 +104,8 @@ def test_crafted_rule_cannot_keep_a_far_past_start(automations_module):
     assert occurrences == [now + timedelta(seconds=n) for n in (1, 2, 3)]
 
 
-def test_start_carrying_a_timezone_still_schedules(automations_module):
+@pytest.mark.asyncio
+async def test_start_carrying_a_timezone_still_schedules(automations_module):
     """A DTSTART with a TZID must produce a next run, not an error.
 
     dateutil keeps the tzinfo on DTSTART even under ignoretz, so the pre-fix code
@@ -113,11 +114,11 @@ def test_start_carrying_a_timezone_still_schedules(automations_module):
     """
     rule_text = "DTSTART;TZID=America/New_York:20200101T090000\nRRULE:FREQ=DAILY"
 
-    assert automations_module.next_run_ns(rule_text) is not None
-    automations_module.validate_rrule(rule_text)
+    assert await automations_module.next_run_ns(rule_text) is not None
+    await automations_module.validate_rrule(rule_text)
 
-
-def test_sub_daily_start_carrying_a_timezone_still_schedules(automations_module):
+@pytest.mark.asyncio
+async def test_sub_daily_start_carrying_a_timezone_still_schedules(automations_module):
     """Same for a sub-daily rule recent enough to keep its own DTSTART."""
     recent = datetime.now() - timedelta(minutes=30)
     rule_text = (
@@ -125,7 +126,7 @@ def test_sub_daily_start_carrying_a_timezone_still_schedules(automations_module)
         "RRULE:FREQ=MINUTELY;INTERVAL=5"
     )
 
-    interval = automations_module.rrule_interval_seconds(rule_text)
+    interval = await automations_module.rrule_interval_seconds(rule_text)
     assert interval == 300
 
 
@@ -188,21 +189,24 @@ def test_unsupported_rules_are_refused(automations_module, rule_text):
         automations_module._parse_rule(rule_text, datetime(2026, 8, 25, 14, 37, 21))
 
 
-def test_exhausted_rule_is_refused(automations_module):
+@pytest.mark.asyncio
+async def test_exhausted_rule_is_refused(automations_module):
     with pytest.raises(ValueError):
-        automations_module.validate_rrule("DTSTART:20200101T090000\nRRULE:FREQ=DAILY;COUNT=3")
+        await automations_module.validate_rrule("DTSTART:20200101T090000\nRRULE:FREQ=DAILY;COUNT=3")
 
 
-def test_daily_interval_and_preview(automations_module):
+@pytest.mark.asyncio
+async def test_daily_interval_and_preview(automations_module):
     rule_text = "RRULE:FREQ=DAILY"
-    assert automations_module.rrule_interval_seconds(rule_text) == 86400
+    assert await automations_module.rrule_interval_seconds(rule_text) == 86400
 
-    preview = automations_module.next_n_runs_ns(rule_text, n=4)
+    preview = await automations_module.next_n_runs_ns(rule_text, n=4)
     assert len(preview) == 4
     assert preview == sorted(preview)
 
 
-def test_one_shot_rule_has_no_interval(automations_module):
+@pytest.mark.asyncio
+async def test_one_shot_rule_has_no_interval(automations_module):
     start = (datetime.now() + timedelta(days=1)).strftime("%Y%m%dT%H%M%S")
     rule_text = f"DTSTART:{start}\nRRULE:FREQ=DAILY;COUNT=1"
-    assert automations_module.rrule_interval_seconds(rule_text) is None
+    assert await automations_module.rrule_interval_seconds(rule_text) is None

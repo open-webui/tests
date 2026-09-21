@@ -41,6 +41,7 @@ KNOWN = {
     "socket/main.py::USAGE_POOL": "models x live sockets, reaped on disconnect",
     "utils/subagents.py::_background_active": "discarded when done; capped unless max_async is -1",
     "socket/main.py::MODELS": "never written after import; app.state.MODELS is rebound elsewhere",
+    "socket/main.py::EVENT_QUEUES": "one queue per active stream channel, popped on channel end",
     "utils/redis.py::_CONNECTION_POOL": "one entry per distinct connection parameter tuple",
     "utils/plugin.py::_installed_requirements": "distinct requirement strings, never removed",
     "models/config.py::Config.DEFAULTS": "one entry per config key, replaced at boot",

@@ -42,9 +42,14 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 # Tests opt in with an explicit @pytest.mark.asyncio (strict mode).
 asyncio_mode = "strict"
-# One loop for the whole session: pooled aiosqlite connections outlive a
-# per-test loop and their worker threads then fail against a closed one.
-asyncio_default_test_loop_scope = "session"
+# anyio's to_process worker pool is keyed per event loop and its idle-worker
+# entries do not survive pytest-asyncio's session loop teardown between
+# modules, so a second to_process.run_sync raises BrokenWorkerProcess. dev's
+# recurrence helpers now evaluate RRULEs in such workers, so a fresh loop per
+# test is required for every async test that reaches one.
+# (The pooled aiosqlite rationale for "session" no longer applies since the
+# async db tests moved to their own fixtures.)
+asyncio_default_test_loop_scope = "function"
 markers = [
     # ── purpose ────────────────────────────────────────────────────────────
     "regression: pinned to a specific upstream issue/PR; fails only if that bug returns",

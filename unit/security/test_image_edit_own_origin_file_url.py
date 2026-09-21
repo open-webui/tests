@@ -31,6 +31,10 @@ pytestmark = pytest.mark.regression
 BASE_URL = "http://localhost:8080/"
 FILE_ID = "file-abc"
 OWN_ORIGIN_URL = f"http://localhost:8080/api/v1/files/{FILE_ID}/content"
+# Any host with the file-content path resolves locally (PR #29691): a network
+# fetch of that endpoint can never authenticate, so the host only decided how
+# the request failed. Access control stays with get_file_content_by_id.
+FOREIGN_HOST_URL = f"https://evil.example.com/api/v1/files/{FILE_ID}/content"
 FILE_BYTES = b"\x89PNG\r\n\x1a\n local image bytes"
 REMOTE_BYTES = b"bytes fetched over the network"
 
@@ -168,12 +172,14 @@ async def test_own_origin_url_in_a_list_stays_local(edit):
 
 
 @pytest.mark.asyncio
-async def test_foreign_host_with_the_same_path_is_not_treated_as_own_origin(edit):
-    foreign = f"https://evil.example.com/api/v1/files/{FILE_ID}/content"
-    outcome = await edit(foreign)
+async def test_foreign_host_with_the_same_path_is_served_through_the_file_store(edit):
+    """PR #29691: the file-content path resolves through the ownership-checked
+    file store regardless of host. The store still enforces owner, admin or
+    shared access, so a foreign host cannot read a file the user cannot."""
+    outcome = await edit(FOREIGN_HOST_URL)
 
-    assert outcome.session.requested_urls == [foreign]
-    assert outcome.served_file_ids == []
+    assert outcome.session.requested_urls == []
+    assert outcome.served_file_ids == [FILE_ID]
 
 
 # ---------------------------------------------------------------------------

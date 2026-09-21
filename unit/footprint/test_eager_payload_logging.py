@@ -70,7 +70,6 @@ KNOWN = {
     ("retrieval/web/firecrawl.py", "default-level", "search_results"): (1, "leak: search results"),
     ("retrieval/web/kagi.py", "print", "results"): (1, "leak: search results"),
     ("retrieval/web/mojeek.py", "print", "results"): (1, "leak: search results"),
-    ("retrieval/web/searchapi.py", "default-level", "json_response"): (1, "leak: search results"),
     ("retrieval/web/serpapi.py", "default-level", "json_response"): (1, "leak: search results"),
     ("retrieval/web/serply.py", "default-level", "json_response"): (1, "leak: search results"),
     ("retrieval/web/utils.py", "eager", "urls"): (1, "leak: every URL at WARNING"),

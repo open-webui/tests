@@ -245,10 +245,11 @@ def test_max_instances_caps_the_expansion(calendar_utils):
 ####################
 
 
-def test_count_rule_without_dtstart_is_rejected(automations_module):
+@pytest.mark.asyncio
+async def test_count_rule_without_dtstart_is_rejected(automations_module):
     """The rule has a limit but no anchor, so the limit can never be reached."""
     with pytest.raises(ValueError) as excinfo:
-        automations_module.validate_rrule('RRULE:FREQ=DAILY;COUNT=5')
+        await automations_module.validate_rrule('RRULE:FREQ=DAILY;COUNT=5')
 
     assert 'DTSTART' in str(excinfo.value)
 
@@ -264,10 +265,11 @@ def test_count_rule_without_dtstart_is_rejected(automations_module):
         'RRULE:FREQ=DAILY;INTERVAL=2;COUNT=3;WKST=MO',
     ],
 )
-def test_every_count_rule_needs_an_anchor(automations_module, rule):
+@pytest.mark.asyncio
+async def test_every_count_rule_needs_an_anchor(automations_module, rule):
     """Broad: the check is on COUNT itself, in any casing and at any frequency."""
     with pytest.raises(ValueError, match='DTSTART'):
-        automations_module.validate_rrule(rule)
+        await automations_module.validate_rrule(rule)
 
 
 @pytest.mark.parametrize(
@@ -280,15 +282,18 @@ def test_every_count_rule_needs_an_anchor(automations_module, rule):
         f'RRULE:FREQ=DAILY;UNTIL={(dt.datetime.now() + dt.timedelta(days=30)):%Y%m%dT%H%M%S}',
     ],
 )
-def test_anchored_and_unlimited_rules_still_validate(automations_module, rule):
+@pytest.mark.asyncio
+async def test_anchored_and_unlimited_rules_still_validate(automations_module, rule):
     """Nearby: a COUNT rule that carries a DTSTART, and rules with no COUNT at all."""
-    automations_module.validate_rrule(rule)
+    await automations_module.validate_rrule(rule)
 
 
-def test_exhausted_rule_is_still_rejected_for_having_no_future_runs(automations_module):
+@pytest.mark.asyncio
+async def test_exhausted_rule_is_still_rejected_for_having_no_future_runs(automations_module):
     """Nearby: the new check must not shadow the existing exhaustion check."""
+    exhausted = 'DTSTART:20200101T090000\nRRULE:FREQ=DAILY;UNTIL=20200201T090000'
     with pytest.raises(ValueError, match='future'):
-        automations_module.validate_rrule('DTSTART:20200101T090000\nRRULE:FREQ=DAILY;UNTIL=20200201T090000')
+        await automations_module.validate_rrule(exhausted)
 
 
 ####################
