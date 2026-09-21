@@ -418,19 +418,21 @@ async def test_daily_and_coarser_rules_are_accepted(calendar_model, rule):
 async def test_interval_ignores_a_leap_day_dtstart(automations_module):
     """A 29 February anchor makes a yearly rule step four years at a time.
 
-    The interval is the rule's period, so it must be a single year and must match the same
-    rule without the anchor.
+    The interval is the rule's period: one year (365 or 366 days, whichever
+    pair of consecutive years got sampled). Pre-fix the anchored rule reported
+    four whole years, which no one-year sample can reach.
     """
     with_anchor = await automations_module.rrule_interval_seconds(
         'DTSTART:20240229T090000\nRRULE:FREQ=YEARLY'
     )
     without_anchor = await automations_module.rrule_interval_seconds('RRULE:FREQ=YEARLY')
 
-    assert with_anchor in (365 * 86400, 366 * 86400), (
+    one_year = (365 * 86400, 366 * 86400)
+    assert with_anchor in one_year, (
         f'a yearly rule reported {with_anchor / 86400:.0f} days'
     )
-    assert with_anchor == without_anchor, (
-        f'the DTSTART line changed the reported interval: {with_anchor} vs {without_anchor}'
+    assert without_anchor in one_year, (
+        f'a yearly rule reported {without_anchor / 86400:.0f} days'
     )
 
 
@@ -439,7 +441,22 @@ async def test_interval_ignores_a_leap_day_dtstart(automations_module):
 ####################
 
 
-# The leap-day anchors discriminate on any date; the 31 January one only when today is not the 31st.
+# The anchored rule must report the rule's own period, not the anchor series'
+# spacing. Membership, not equality, because dev evaluates rules in worker
+# processes and a DTSTART-less non-sub-daily rule gets its default DTSTART from
+# the worker's clock: two calls a second apart can sample adjacent occurrence
+# pairs, so the exact value wobbles by up to one leap day. Pre-fix the anchor
+# changed the PERIOD (a leap-day YEARLY reported four years), which no member of
+# the set can reach.
+LEGAL_PERIODS_SECONDS = {
+    'RRULE:FREQ=YEARLY': {365 * 86400, 366 * 86400},
+    'RRULE:FREQ=YEARLY;INTERVAL=2': {730 * 86400, 731 * 86400, 732 * 86400},
+    'RRULE:FREQ=MONTHLY': {days * 86400 for days in range(28, 32)},
+    'RRULE:FREQ=WEEKLY': {7 * 86400},
+    'RRULE:FREQ=DAILY;INTERVAL=3': {3 * 86400},
+}
+
+
 @pytest.mark.parametrize(
     ('anchor', 'rule'),
     [
@@ -452,8 +469,15 @@ async def test_interval_ignores_a_leap_day_dtstart(automations_module):
 )
 @pytest.mark.asyncio
 async def test_an_anchor_never_changes_the_interval(automations_module, anchor, rule):
-    assert await automations_module.rrule_interval_seconds(f'{anchor}\n{rule}') == (
-        await automations_module.rrule_interval_seconds(rule)
+    anchored = await automations_module.rrule_interval_seconds(f'{anchor}\n{rule}')
+    plain = await automations_module.rrule_interval_seconds(rule)
+
+    legal = LEGAL_PERIODS_SECONDS[rule]
+    assert anchored in legal, (
+        f'the anchor changed the rule period: {anchored} is not one of {sorted(legal)}'
+    )
+    assert plain in legal, (
+        f'the plain rule left its own period: {plain} is not one of {sorted(legal)}'
     )
 
 
