@@ -9,9 +9,16 @@ on a shared folder could permanently destroy chats belonging to someone else.
 The fix removes the root/subfolder split and requires owner-or-admin at every
 depth.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (the collaborator's delete
-of a shared subfolder returns True and wipes the owner's chats instead of
-raising HTTPException 403).
+open-webui 0.11.4 fix `b64cb0604` (#30163), covered in the second half of this
+file: the chat-delete permission gate ran even with `delete_contents=False`,
+where nothing was being deleted, so an account without the chat delete
+permission could not remove a folder while keeping its chats. The count and
+the permission check are now both conditioned on `delete_contents`.
+
+Discriminates: passes on v0.11.4, fails on v0.11.3 (the collaborator's delete
+of a shared subfolder returns True and wipes the owner's chats, and a user
+without the chat delete permission is refused a keep-chats folder delete).
+On v0.10.2 the 0.11.0 half fails instead (see tests above).
 """
 
 from contextlib import ExitStack, contextmanager
@@ -80,7 +87,7 @@ class _FolderStore:
 
 
 @contextmanager
-def _router_boundary_patched(mod, store: _FolderStore):
+def _router_boundary_patched(mod, store: _FolderStore, chat_delete_allowed: bool = True):
     """Replace only the I/O boundary the delete handler touches."""
     chats = SimpleNamespace(
         count_chats_by_folder_ids_and_user_id=AsyncMock(return_value=0),
@@ -97,8 +104,9 @@ def _router_boundary_patched(mod, store: _FolderStore):
         patch.object(mod, "Config", config),
         patch.object(mod, "AccessGrants", SimpleNamespace(revoke_all_access=AsyncMock())),
         patch.object(mod, "Automations", SimpleNamespace(clear_folder_ids=AsyncMock())),
-        patch.object(mod, "has_permission", AsyncMock(return_value=True)),
+        patch.object(mod, "has_permission", AsyncMock(return_value=chat_delete_allowed)),
         patch.object(mod, "publish_event", AsyncMock()),
+        patch.object(mod, "check_folders_permission", AsyncMock()),
     ]
     with ExitStack() as stack:
         for item in patches:
@@ -253,3 +261,104 @@ async def test_unknown_folder_is_reported_as_missing_for_admins(owui_module):
         await _delete(mod, _shared_tree(), _user(ADMIN, role="admin"), "no-such-folder")
 
     assert excinfo.value.status_code == 404
+
+
+# ── 0.11.4 (#30163): a keep-chats delete needs no chat-delete permission ────
+#
+# The chat-delete gate existed to stop a folder delete from destroying the
+# chats inside it. With delete_contents=False nothing is destroyed, yet the
+# gate still ran and refused users without the chat.delete permission.
+
+
+@pytest.mark.asyncio
+async def test_user_without_chat_delete_permission_can_delete_folder_keeping_chats(
+    owui_module,
+):
+    """The exact bug: the account may remove the folder because its chats move
+    out, not out of existence."""
+    mod = owui_module("open_webui.routers.folders")
+    store = _shared_tree()
+
+    with _router_boundary_patched(mod, store, chat_delete_allowed=False) as chats:
+        chats.count_chats_by_folder_ids_and_user_id.return_value = 5
+        result = await mod.delete_folder_by_id(
+            SimpleNamespace(app=SimpleNamespace()),
+            "root",
+            delete_contents=False,
+            user=_user(OWNER),
+            db=None,
+        )
+
+    assert result is True, (
+        "a user without the chat delete permission was refused a folder delete "
+        "that deletes no chats, so the folder could never be tidied away (#30163)"
+    )
+    assert "root" in store.deleted_ids
+    chats.delete_chats_by_user_id_and_folder_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_user_without_chat_delete_permission_is_still_refused_when_contents_die(
+    owui_module,
+):
+    """The invariant the bug was an instance of: destroying the owner's chats
+    is what needs the chat delete permission."""
+    from fastapi import HTTPException
+
+    mod = owui_module("open_webui.routers.folders")
+    store = _shared_tree()
+
+    with _router_boundary_patched(mod, store, chat_delete_allowed=False) as chats:
+        chats.count_chats_by_folder_ids_and_user_id.return_value = 5
+        with pytest.raises(HTTPException) as excinfo:
+            await mod.delete_folder_by_id(
+                SimpleNamespace(app=SimpleNamespace()),
+                "root",
+                delete_contents=True,
+                user=_user(OWNER),
+                db=None,
+            )
+
+    assert excinfo.value.status_code == 403, (
+        "an account without the chat delete permission must still be refused a "
+        "delete that destroys the chats inside the folder (#30163)"
+    )
+    assert store.deleted_ids == []
+
+
+@pytest.mark.asyncio
+async def test_empty_folder_delete_is_unchanged_for_user_without_permission(owui_module):
+    """Nearby: an empty folder was never gated, and stays ungated."""
+    mod = owui_module("open_webui.routers.folders")
+    store = _shared_tree()
+
+    with _router_boundary_patched(mod, store, chat_delete_allowed=False) as chats:
+        chats.count_chats_by_folder_ids_and_user_id.return_value = 0
+        result = await mod.delete_folder_by_id(
+            SimpleNamespace(app=SimpleNamespace()),
+            "root",
+            delete_contents=True,
+            user=_user(OWNER),
+            db=None,
+        )
+
+    assert result is True, "an empty folder's delete must not need the chat permission"
+
+
+@pytest.mark.asyncio
+async def test_admin_delete_of_contents_still_ignores_the_permission(owui_module):
+    """Nearby: admins were never subject to the chat-delete gate."""
+    mod = owui_module("open_webui.routers.folders")
+    store = _shared_tree()
+
+    with _router_boundary_patched(mod, store, chat_delete_allowed=False) as chats:
+        chats.count_chats_by_folder_ids_and_user_id.return_value = 5
+        result = await mod.delete_folder_by_id(
+            SimpleNamespace(app=SimpleNamespace()),
+            "root",
+            delete_contents=True,
+            user=_user(ADMIN, role="admin"),
+            db=None,
+        )
+
+    assert result is True
