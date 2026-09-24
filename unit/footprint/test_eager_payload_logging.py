@@ -6,18 +6,21 @@ logging off, and a `%s` argument at INFO or above is rendered by every default d
 Either one on a chat payload is a whole message history, or a whole embedding batch, turned
 into a string on the event loop, per request.
 
-The audit counts, per file, every `log` / `logger` / `logging` level call or print that
-renders a value under a payload-shaped name or wraps anything in a serialiser, frozen to the
-sites present on upstream dev at v0.11.3 (a253bf0c3), so any new one fails. It goes by name
-(the underscore tail of the identifier), so a scalar or an exception logged as `result` or
-`data` is counted too and has to be recorded, and a payload under an unlisted name is not
-seen; each entry says what it renders, so the real leaks are the ones marked as such. Calls
-under an `isEnabledFor` check, under `if __name__ == "__main__"`, generic `.log(level, ...)`
-calls (`utils/audit.py`, `events.py`) and the one-shot scripts under `migrations/` are out of
-scope. The behavioural half, a poisoned body through the filter error path, lives in
-`test_filter_error_path_ignores_body.py`.
+The audit counts every `log` / `logger` / `logging` level call or print that renders a value
+under a payload-shaped name or wraps anything in a serialiser, per rule and rendered name,
+frozen to the sites present on upstream dev at v0.11.3 (a253bf0c3). The ratchet is
+one-directional: a count above the recorded one fails, a site upstream removes or moves to
+another file passes. It goes by name (the underscore tail of the identifier), so a scalar or an
+exception logged as `result` or `data` is counted too and has to be recorded, and a payload under
+an unlisted name is not seen; each entry says where it is and what it renders, so the real leaks
+are the ones marked as such. Calls under an `isEnabledFor` check, under
+`if __name__ == "__main__"`, generic `.log(level, ...)` calls (`utils/audit.py`, `events.py`) and
+the one-shot scripts under `migrations/` are out of scope. The behavioural half, a poisoned body
+through the filter error path, lives in `test_filter_error_path_ignores_body.py`.
 
 Unpinned and unmarked: the recorded leaks have no fix ref, and the ratchet is what pins them.
+Discriminates: a new `log.info("%s", payload)` or f-string of `messages` in a copy of dev
+bbfa876af fails; deleting a recorded site from the copy passes.
 """
 
 from __future__ import annotations
@@ -51,34 +54,37 @@ PAYLOAD_NAMES = {
 PAYLOAD_ATTRS = PAYLOAD_NAMES | {"text"}
 SKIP_DIRS = {"migrations"}
 
-# (path, rule, rendered expression) -> (sites on the pinned ref, what is rendered)
+# (rule, rendered expression) -> (sites on the pinned ref, where and what is rendered)
 KNOWN = {
-    ("models/chats.py", "default-level", "folder_ids"): (1, "benign: a few ids"),
-    ("retrieval/loaders/datalab_marker.py", "default-level", "form_data"): (1, "benign: options"),
-    ("retrieval/loaders/datalab_marker.py", "eager", "dumps()"): (2, "benign: summary; leak: poll"),
-    ("retrieval/loaders/datalab_marker.py", "eager", "raw_body"): (1, "leak: HTTP body at ERROR"),
-    ("retrieval/loaders/external_web.py", "eager", "urls"): (1, "leak: every URL at ERROR"),
-    ("retrieval/loaders/mistral.py", "default-level", "delete_response"): (1, "benign: a status"),
-    ("retrieval/loaders/mistral.py", "eager", "response.text"): (2, "leak: HTTP body at ERROR"),
-    ("retrieval/loaders/tavily.py", "eager", "batch_urls"): (1, "leak: every URL at ERROR"),
-    ("retrieval/utils.py", "default-level", "result.ids"): (2, "leak: every chunk id"),
-    ("retrieval/utils.py", "default-level", "result.metadatas"): (2, "leak: chunk metadata"),
-    ("retrieval/utils.py", "default-level", "result['metadatas']"): (1, "leak: chunk metadata"),
-    ("retrieval/vector/dbs/milvus.py", "default-level", "ids"): (1, "leak: every deleted id"),
-    ("retrieval/vector/dbs/pinecone.py", "eager", "result"): (2, "benign: an exception"),
-    ("retrieval/web/external.py", "default-level", "results"): (1, "leak: search results"),
-    ("retrieval/web/firecrawl.py", "default-level", "search_results"): (1, "leak: search results"),
-    ("retrieval/web/kagi.py", "print", "results"): (1, "leak: search results"),
-    ("retrieval/web/mojeek.py", "print", "results"): (1, "leak: search results"),
-    ("retrieval/web/serpapi.py", "default-level", "json_response"): (1, "leak: search results"),
-    ("retrieval/web/serply.py", "default-level", "json_response"): (1, "leak: search results"),
-    ("retrieval/web/utils.py", "eager", "urls"): (1, "leak: every URL at WARNING"),
-    ("retrieval/web/yandex.py", "default-level", "results"): (1, "leak: search results"),
-    ("routers/audio.py", "default-level", "metadata"): (1, "benign: a small params dict"),
-    ("routers/ollama.py", "default-level", "create_payload"): (1, "benign: name and digest"),
-    ("routers/ollama.py", "default-level", "form_data"): (2, "leak: embedding batch at INFO"),
-    ("utils/chat.py", "default-level", "res"): (1, "benign: a socket ack"),
-    ("utils/oauth.py", "eager", "user_data"): (3, "leak: userinfo claims at WARNING"),
+    ("default-level", "create_payload"): (1, "routers/ollama.py, benign: name and digest"),
+    ("default-level", "delete_response"): (1, "retrieval/loaders/mistral.py, benign: a status"),
+    ("default-level", "folder_ids"): (1, "models/chats.py, benign: a few ids"),
+    ("default-level", "form_data"): (
+        3,
+        "retrieval/loaders/datalab_marker.py, benign: options; "
+        "routers/ollama.py x2, leak: embedding batch at INFO",
+    ),
+    ("default-level", "ids"): (1, "retrieval/vector/dbs/milvus.py, leak: every deleted id"),
+    ("default-level", "json_response"): (2, "retrieval/web/serpapi.py, serply.py, leak: results"),
+    ("default-level", "metadata"): (1, "routers/audio.py, benign: a small params dict"),
+    ("default-level", "res"): (1, "utils/chat.py, benign: a socket ack"),
+    ("default-level", "result.ids"): (2, "retrieval/utils.py, leak: every chunk id"),
+    ("default-level", "result.metadatas"): (2, "retrieval/utils.py, leak: chunk metadata"),
+    ("default-level", "result['metadatas']"): (1, "retrieval/utils.py, leak: chunk metadata"),
+    ("default-level", "results"): (2, "retrieval/web/external.py, yandex.py, leak: results"),
+    ("default-level", "search_results"): (1, "retrieval/web/firecrawl.py, leak: results"),
+    ("eager", "batch_urls"): (1, "retrieval/loaders/tavily.py, leak: every URL at ERROR"),
+    ("eager", "dumps()"): (2, "retrieval/loaders/datalab_marker.py, benign: summary; leak: poll"),
+    ("eager", "raw_body"): (1, "retrieval/loaders/datalab_marker.py, leak: HTTP body at ERROR"),
+    ("eager", "response.text"): (2, "retrieval/loaders/mistral.py, leak: HTTP body at ERROR"),
+    ("eager", "result"): (2, "retrieval/vector/dbs/pinecone.py, benign: an exception"),
+    ("eager", "urls"): (
+        2,
+        "retrieval/loaders/external_web.py, leak: every URL at ERROR; "
+        "retrieval/web/utils.py, leak: every URL at WARNING",
+    ),
+    ("eager", "user_data"): (3, "utils/oauth.py, leak: userinfo claims at WARNING"),
+    ("print", "results"): (2, "retrieval/web/kagi.py, mojeek.py, leak: search results"),
 }
 
 
@@ -150,13 +156,27 @@ def _log_level(call: ast.Call) -> str | None:
     return None
 
 
+def _is_main_guard(test) -> bool:
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id == "__name__"
+        and any(isinstance(c, ast.Constant) and c.value == "__main__" for c in test.comparators)
+    )
+
+
+def _is_level_check(test) -> bool:
+    return any(
+        isinstance(node, ast.Call) and _call_name(node) == "isEnabledFor" for node in ast.walk(test)
+    )
+
+
 def _out_of_scope(call: ast.Call, parents: dict) -> bool:
     node = call
     while node in parents:
         child, node = node, parents[node]
         if isinstance(node, ast.If) and child not in node.orelse:
-            test = ast.unparse(node.test)
-            if "isEnabledFor" in test or "__name__ == '__main__'" in test:
+            if _is_level_check(node.test) or _is_main_guard(node.test):
                 return True
     return False
 
@@ -195,30 +215,23 @@ def _rendered_payloads(tree) -> list[tuple[str, str]]:
 def _find_rendered_payloads(package_root: Path) -> Counter:
     found: Counter = Counter()
     for path in sorted(package_root.rglob("*.py")):
-        rel = path.relative_to(package_root).as_posix()
-        if SKIP_DIRS & set(rel.split("/")):
+        if SKIP_DIRS & set(path.relative_to(package_root).parts):
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for rule, ref in _rendered_payloads(tree):
-            found[(rel, rule, ref)] += 1
+        found.update(_rendered_payloads(ast.parse(path.read_text(encoding="utf-8"))))
     return found
 
 
 def test_no_new_log_or_print_call_renders_a_payload(open_webui_backend: Path):
     found = _find_rendered_payloads(open_webui_backend / "open_webui")
+    assert found.keys() & KNOWN.keys(), "the audit no longer finds any recorded site"
+
     recorded = {site: count for site, (count, _) in KNOWN.items()}
-    new = sorted(
-        (site, count - recorded.get(site, 0))
+    added = {
+        site: count - recorded.get(site, 0)
         for site, count in found.items()
         if count > recorded.get(site, 0)
+    }
+    assert not added, (
+        "log or print calls render a payload; log a size or an id instead, or record them:\n  "
+        + "\n  ".join(f"{rule} {ref} +{count}" for (rule, ref), count in sorted(added.items()))
     )
-    gone = sorted(site for site, count in recorded.items() if found[site] < count)
-    problems = []
-    if new:
-        problems.append(
-            "log or print calls render a payload; log a size or an id instead, or record them:\n  "
-            + "\n  ".join(f"{path}: {rule} {ref} +{added}" for (path, rule, ref), added in new)
-        )
-    if gone:
-        problems.append(f"fewer sites than recorded, lower the count or remove the entry: {gone}")
-    assert not problems, "\n".join(problems)

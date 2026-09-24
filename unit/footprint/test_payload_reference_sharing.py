@@ -11,8 +11,13 @@ references, so a deepcopy or a structural rebuild creeping in fails immediately:
   item, its content list and the touched part are new objects, the rest is the same objects
   (that the input is left unchanged is pinned in `unit/chat/test_stream_event_handling.py`).
 
+Stays a unit test: `integration/footprint/test_streaming_cost_stays_linear.py` sees the same
+contract from outside, but only as a cost ratio that another copy on the path already breaks.
+
 Unpinned: read on upstream dev at v0.11.3 (a253bf0c3), where both hold. Unmarked: nothing
 to pin.
+Discriminates: passes on dev bbfa876af, fails once a copy of it deep-copies `form_data` in
+`get_filter_params` or rebuilds every output item per delta.
 """
 
 from __future__ import annotations
@@ -47,7 +52,11 @@ def test_filter_params_hand_over_the_payload_by_reference(filter_utils, filter_t
     extra = {"__body__": {"messages": []}, "__metadata__": {"chat_id": "c1"}}
 
     params = filter_utils.get_filter_params(
-        inspect.signature(handler), "f1", filter_type, payload, extra
+        sig=inspect.signature(handler),
+        filter_id="f1",
+        filter_type=filter_type,
+        form_data=payload,
+        extra_params=extra,
     )
 
     assert params[key] is payload
@@ -65,9 +74,9 @@ def test_text_delta_leaves_untouched_output_items_and_parts_shared(middleware_mo
     }
     output = [reasoning, message]
 
+    delta = {"type": "response.output_text.delta", "output_index": 1, "content_index": 0}
     new_output, _ = middleware_module.handle_responses_streaming_event(
-        {"type": "response.output_text.delta", "output_index": 1, "content_index": 0, "delta": "!"},
-        output,
+        data={**delta, "delta": "!"}, current_output=output
     )
 
     assert new_output[0] is reasoning

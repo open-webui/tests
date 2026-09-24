@@ -1,14 +1,16 @@
-"""Guard: a chat over knowledge bases whose vector DB is down costs one log line.
+"""Guard: a chat over knowledge bases whose vector DB is down costs one log entry per base.
 
 The instance's vector DB refuses every connection. A chat that references several knowledge
-bases still answers (the retrieval step degrades to no sources) but the fan-out renders a
-full traceback twice per knowledge base and query. The assertion is on the server log written
-during the request: at most one traceback. The answer arriving at all is the control.
+bases still answers (the retrieval step degrades to no sources), but the search fan-out used to
+render a full traceback twice per knowledge base and query: once in `query_doc`, which
+re-raised, and again in the handler that caught it. #29981 (ff7f35a30) logs one aggregated entry
+per search instead. The chat still searches each base on its own, so the whole chat logs one
+entry per base; that it should log one in total is the open half, a strict `xfail`. Entries are
+counted as top-level tracebacks in the server log, chained exceptions not counted again.
 
-Unit form: `unit/resilience/test_degraded_vector_db_logs_once.py`.
-
-Unpinned: read on upstream dev at 4948842be (2026-09-09), where five knowledge bases log two
-tracebacks each per query; strict `xfail`. Unmarked: no issue filed yet.
+Twin of unit/resilience/test_degraded_vector_db_logs_once.py.
+Discriminates: passes on dev bbfa876af, fails with ff7f35a30 reverted in a copy of it (ten
+entries for five bases, two per base).
 """
 
 from __future__ import annotations
@@ -20,7 +22,12 @@ import pytest
 
 from harness.upstream import MOCK_MODEL_ID
 
-pytestmark = [pytest.mark.slow, pytest.mark.api, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.regression,
+    pytest.mark.slow,
+    pytest.mark.api,
+    pytest.mark.requires_source,
+]
 
 KNOWLEDGE_BASES = 5
 
@@ -51,6 +58,22 @@ def _chat_over(client: httpx.Client, knowledge_ids: list[str]) -> httpx.Response
     )
 
 
+def _logged_failures(log: str) -> int:
+    """Tracebacks in the log, not counting the causes chained onto one."""
+    chained = log.count("During handling of the above exception") + log.count(
+        "The above exception was the direct cause"
+    )
+    return log.count("Traceback (most recent call last)") - chained
+
+
+def _failures_during_a_chat(instance, knowledge_ids: list[str]) -> int:
+    instance.upstream.reset(mode="ok", text="answer")
+    offset = instance.log_size()
+    with instance.client() as client:
+        _chat_over(client, knowledge_ids).raise_for_status()
+    return _logged_failures(instance.log_since(offset))
+
+
 def test_chat_still_answers_with_the_vector_db_down(degraded_instance, knowledge_ids):
     degraded_instance.upstream.reset(mode="ok", text="answer")
 
@@ -61,13 +84,18 @@ def test_chat_still_answers_with_the_vector_db_down(degraded_instance, knowledge
     assert response.json()["choices"][0]["message"]["content"] == "answer"
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="two tracebacks per knowledge base")
+def test_each_knowledge_base_logs_its_failed_search_once(degraded_instance, knowledge_ids):
+    failures = _failures_during_a_chat(degraded_instance, knowledge_ids)
+
+    assert failures, "the failed searches were not logged at all; the count below means nothing"
+    assert failures <= KNOWLEDGE_BASES, (
+        f"{failures} tracebacks for one chat over {KNOWLEDGE_BASES} bases; each failed search "
+        "is logged once per knowledge base (#29981)"
+    )
+
+
+@pytest.mark.xfail(raises=AssertionError, strict=True, reason="one entry per knowledge base")
 def test_chat_with_the_vector_db_down_logs_at_most_one_traceback(degraded_instance, knowledge_ids):
-    degraded_instance.upstream.reset(mode="ok", text="answer")
-    offset = degraded_instance.log_size()
+    failures = _failures_during_a_chat(degraded_instance, knowledge_ids)
 
-    with degraded_instance.client() as client:
-        _chat_over(client, knowledge_ids).raise_for_status()
-
-    tracebacks = degraded_instance.log_since(offset).count("Traceback (most recent call last)")
-    assert tracebacks <= 1, f"{tracebacks} tracebacks for one chat over {KNOWLEDGE_BASES} bases"
+    assert failures <= 1, f"{failures} tracebacks for one chat over {KNOWLEDGE_BASES} bases"

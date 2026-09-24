@@ -6,10 +6,12 @@ Here the fake Redis answers that one command two seconds late; a health check se
 sign-in has reached that command has to come back inside a second. The control is the same
 health check with nothing slow, which shows the bound itself is easy to meet.
 
-Unit form: `unit/resilience/test_slow_redis_does_not_stall_the_event_loop.py`.
+Twin of unit/resilience/test_slow_redis_does_not_stall_the_event_loop.py.
 
 Read on upstream dev at 4948842be (2026-09-09), where the health check waits out the stall;
 #29977 moved the limiter to the async client, so the stalled round now asserts the bound too.
+Discriminates: passes on dev bbfa876af, fails with d2e62db69 (#29977) reverted in a copy of it
+(health waits out the two-second stall).
 """
 
 from __future__ import annotations
@@ -20,7 +22,12 @@ import time
 import httpx
 import pytest
 
-pytestmark = [pytest.mark.slow, pytest.mark.api, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.regression,
+    pytest.mark.slow,
+    pytest.mark.api,
+    pytest.mark.requires_source,
+]
 
 REDIS_STALL = 2.0
 HEALTH_TIMEOUT = 1.0

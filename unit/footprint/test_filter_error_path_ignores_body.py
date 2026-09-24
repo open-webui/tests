@@ -6,8 +6,14 @@ event loop. A poisoned body raises on any such attempt, at any log level: unlike
 in `test_eager_payload_logging.py`, this path is held to the stricter rule that even a lazy
 DEBUG argument must not name the body.
 
+Stays a unit test: the inlet failure is logged at DEBUG, which a running instance at its
+default level never writes, so only a poisoned body can show that nothing reads it. The plugin
+loader is the one boundary stubbed; the rest is the pipeline the chat middleware calls.
+
 Unpinned: read on upstream dev at v0.11.3 (a253bf0c3), where the path logs only the filter
 type and id. Unmarked: nothing to pin.
+Discriminates: passes on dev bbfa876af, fails for every filter type once the failure log line
+in a copy of it also renders `form_data`.
 """
 
 from __future__ import annotations
@@ -55,15 +61,13 @@ async def test_failing_filter_does_not_reference_the_body(
     caplog.set_level(logging.DEBUG, logger="open_webui")
 
     with pytest.raises(ValueError):
-        await filter_utils.process_filter_function(
+        await filter_utils.process_filter_functions(
             request=None,
-            function=SimpleNamespace(id="broken"),
+            filter_context=None,
+            filter_functions=[SimpleNamespace(id="broken")],
             filter_type=filter_type,
             form_data=body,
             extra_params={},
-            filter_context=None,
-            valves_by_id={},
-            filter_ids=["broken"],
         )
     assert any(r.name == "open_webui.utils.filter" for r in caplog.records), (
         "the failure was not logged, so the poison never had a chance to fire"

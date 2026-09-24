@@ -1,21 +1,22 @@
 """Guard: in-process registries must shrink again once their entries are dead.
 
-Each test feeds one of the backend's in-memory registries many distinct keys, or removes
-the thing an entry stands for, and asserts the registry lets go or never grew: expired login
-keys, finished tasks, warned-about values, deleted plugins. A failure here is memory only a
-restart reclaims.
+Each test feeds one of the backend's in-memory registries many distinct keys and asserts the
+registry lets go or never grew: expired login keys, finished tasks, warned-about values. A
+failure here is memory only a restart reclaims. Deleted plugins giving their source back is
+measured on the server process in `integration/footprint/test_process_memory_stays_bounded.py`;
+these registries grow by a few bytes per key, far below what the process size can show.
 
-Unpinned: read on upstream dev at v0.11.3 (a253bf0c3). The cases upstream has since fixed
-(#29971, #29977, #29980, #29983) now assert the fixed behaviour; the rest stay a strict `xfail`
-until upstream fixes them, and fail as XPASS when it does. Unmarked because no issue is filed
-yet.
+Unpinned: read on upstream dev at v0.11.3 (a253bf0c3); upstream has since fixed the three cases
+(#29971, #29977, #29980), so they assert the fixed behaviour. Unmarked because no issue is filed.
+Discriminates: in a copy of dev bbfa876af, keying the limiter's store per login key again
+(#29977) fails the first test, filing tasks under a falsy item id again (#29980) fails the
+second, and a module-level set of rejected URLs (#29971) fails the fourth.
 """
 
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
+import time
 
 import pytest
 
@@ -35,26 +36,25 @@ def models_module(owui_module):
     return owui_module("open_webui.models.models")
 
 
-@pytest.fixture(scope="session")
-def tools_router_module(owui_module):
-    return owui_module("open_webui.routers.tools")
-
-
-@pytest.fixture(scope="session")
-def functions_router_module(owui_module):
-    return owui_module("open_webui.routers.functions")
-
-
-OWNER = SimpleNamespace(id="u1")
-ADMIN = SimpleNamespace(id="a1")
 KEYS_PER_WINDOW = 100
+EMAIL_DOMAIN = "@example.com"
 
 
 async def _noop(): ...
 
 
-def _request_with_caches(**caches):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(**caches)))
+def _retained_emails(obj) -> int:
+    """Login keys reachable from the limiter's own and its class's attributes."""
+    pending, count = [vars(obj), dict(vars(type(obj)))], 0
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            count += value.endswith(EMAIL_DOMAIN)
+        elif isinstance(value, dict):
+            pending.extend([*value.keys(), *value.values()])
+        elif isinstance(value, (list, set, tuple)):
+            pending.extend(value)
+    return count
 
 
 def _module_container_sizes(module):
@@ -69,53 +69,49 @@ def _module_container_sizes(module):
 async def test_rate_limiter_forgets_keys_once_their_window_has_passed(
     rate_limit_module, monkeypatch
 ):
-    """`RateLimiter._memory_store` is the fallback without Redis, fed the login email the signin
-    request supplies. #29977 keyed it by bucket, so rolling past a window drops every key that
-    window held instead of keeping an entry per abandoned email forever."""
+    """Without Redis the limiter keeps its counts in memory, fed the login email the sign-in
+    request supplies. Rolling past a window has to drop every key that window held."""
     limiter = rate_limit_module.RateLimiter(limit=5, window=60)
-    bucket = 1_000
-    monkeypatch.setattr(limiter, "_current_bucket", lambda: bucket)
+    now = time.time()
 
     for window in range(5):
+        monkeypatch.setattr(time, "time", lambda moment=now + window * 600: moment)
         for i in range(KEYS_PER_WINDOW):
-            await limiter.is_limited(None, f"user{window}-{i}@example.com")
-        bucket += 10
+            await limiter.is_limited(redis=None, key=f"user{window}-{i}{EMAIL_DOMAIN}")
 
-    retained = sum(len(keys) for keys in limiter._memory_store.values())
-    assert retained <= KEYS_PER_WINDOW, "keys from expired windows are still in the store"
-
-
-@pytest.mark.asyncio
-async def test_finished_task_with_an_empty_item_id_is_dropped_from_item_tasks(tasks_module):
-    """`create_task` files every task under `item_tasks[id]`, but `cleanup_task` only removes
-    it when `id` is truthy. In `socket/main.py`, `ydoc_document_join` accepts an empty document
-    id (no `note:` prefix, so no access check) and `yjs_document_update` hands it to
-    `create_task` as the item id."""
-
-    task_id, task = await tasks_module.create_task(None, _noop(), id="")
-    await task
-    await asyncio.sleep(0)
-    leftover = tasks_module.item_tasks.pop("", [])
-
-    assert task_id not in leftover
+    retained = _retained_emails(limiter)
+    assert 0 < retained <= KEYS_PER_WINDOW, (
+        f"{retained} login keys retained; keys from expired windows must be dropped"
+    )
 
 
 @pytest.mark.asyncio
-async def test_finished_task_with_an_item_is_dropped_from_item_tasks(tasks_module):
-    """Control: the keyed path is cleaned up today."""
-
-    task_id, task = await tasks_module.create_task(None, _noop(), id="chat-1")
+@pytest.mark.parametrize("item_id", ["", None])
+async def test_a_finished_task_without_an_item_id_is_not_tracked(tasks_module, item_id):
+    """`ydoc_document_join` accepts an empty document id and `yjs_document_update` hands it to
+    `create_task` as the item id; cleanup only ever removes tasks filed under a truthy id."""
+    task_id, task = await tasks_module.create_task(redis=None, coroutine=_noop(), id=item_id)
     await task
-    await asyncio.sleep(0)
 
-    assert task_id not in tasks_module.tasks
-    assert "chat-1" not in tasks_module.item_tasks
+    assert task_id not in await tasks_module.list_task_ids_by_item_id(redis=None, id=item_id)
+
+
+@pytest.mark.asyncio
+async def test_a_finished_task_with_an_item_is_dropped_from_its_item(tasks_module):
+    """Control: the keyed path is cleaned up."""
+    task_id, task = await tasks_module.create_task(redis=None, coroutine=_noop(), id="chat-1")
+    assert task_id in await tasks_module.list_task_ids_by_item_id(redis=None, id="chat-1")
+    await task
+    for _ in range(3):  # the done callback schedules the cleanup as a task of its own
+        await asyncio.sleep(0)
+
+    assert task_id not in await tasks_module.list_tasks(redis=None)
+    assert task_id not in await tasks_module.list_task_ids_by_item_id(redis=None, id="chat-1")
 
 
 def test_invalid_profile_image_url_warnings_do_not_accumulate_per_value(models_module):
     """`ModelForm.meta` is validated before the workspace permission check, so any signed-in user
-    can feed the validator distinct invalid URLs. Clearing one must keep no per-value state:
-    #29971 removed the warn-once set that grew by one entry per distinct value."""
+    can feed the validator distinct invalid URLs. Clearing one must keep no per-value state."""
     sizes_before = _module_container_sizes(models_module)
 
     for i in range(20):
@@ -129,45 +125,3 @@ def test_invalid_profile_image_url_warnings_do_not_accumulate_per_value(models_m
         if size > sizes_before.get(name, 0)
     ]
     assert not grown, f"module state grew per rejected URL value: {grown}"
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_tool_evicts_its_cached_source(tools_router_module, monkeypatch):
-    """Delete pops the module from `TOOLS` and must pop its source from `TOOL_CONTENTS` too."""
-    tool = SimpleNamespace(id="t1", user_id=OWNER.id, name="t1")
-    monkeypatch.setattr(
-        tools_router_module,
-        "Tools",
-        SimpleNamespace(
-            get_tool_by_id=AsyncMock(return_value=tool),
-            delete_tool_by_id=AsyncMock(return_value=True),
-        ),
-    )
-    monkeypatch.setattr(tools_router_module, "publish_event", AsyncMock())
-    request = _request_with_caches(TOOLS={"t1": object()}, TOOL_CONTENTS={"t1": "source"})
-
-    if not await tools_router_module.delete_tools_by_id(request, "t1", user=OWNER, db=None):
-        pytest.fail("delete reported failure")
-    if "t1" in request.app.state.TOOLS:
-        pytest.fail("delete did not pop the module cache")
-
-    assert "t1" not in request.app.state.TOOL_CONTENTS, "source text kept after delete"
-
-
-@pytest.mark.asyncio
-async def test_deleting_a_function_evicts_its_cached_source(functions_router_module, monkeypatch):
-    """Same contract for `FUNCTIONS` and `FUNCTION_CONTENTS`."""
-    monkeypatch.setattr(
-        functions_router_module,
-        "Functions",
-        SimpleNamespace(delete_function_by_id=AsyncMock(return_value=True)),
-    )
-    monkeypatch.setattr(functions_router_module, "publish_event", AsyncMock())
-    request = _request_with_caches(FUNCTIONS={"f1": object()}, FUNCTION_CONTENTS={"f1": "source"})
-
-    if not await functions_router_module.delete_function_by_id(request, "f1", user=ADMIN, db=None):
-        pytest.fail("delete reported failure")
-    if "f1" in request.app.state.FUNCTIONS:
-        pytest.fail("delete did not pop the module cache")
-
-    assert "f1" not in request.app.state.FUNCTION_CONTENTS, "source text kept after delete"

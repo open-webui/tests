@@ -1,15 +1,17 @@
 """Guard: deleting a plugin gives its memory back to the process.
 
-Same contract as `unit/footprint/test_unbounded_process_state.py`, measured on the server
-process: install a tool or function whose source is a few megabytes of comment, load it once
-so the module cache and the source cache both hold it, delete it, and repeat. The comment
-vanishes at compile time, so the only copy that can survive delete is the source text kept in
-`TOOL_CONTENTS` / `FUNCTION_CONTENTS`, and forty rounds of it show up as well over a hundred
-megabytes of resident memory. The control runs the same rounds without the load, so nothing
-is cached and the same measurement stays flat.
+Measured on the server process: install a tool or function whose source is a few megabytes
+of comment, load it once so the module cache and the source cache both hold it, delete it, and
+repeat. The comment vanishes at compile time, so the only copy that can survive delete is the
+source text kept in `TOOL_CONTENTS` / `FUNCTION_CONTENTS`, and forty rounds of it show up as
+well over a hundred megabytes of resident memory. The control runs the same rounds without the
+load, so nothing is cached and the same measurement stays flat.
 
+Twin of unit/footprint/test_unbounded_process_state.py (its deleted-plugin cases).
 Read on upstream dev at 4948842be (2026-09-09), where both caches kept the source; #29983 made
 delete pop it, so the loaded rounds now assert the memory comes back.
+Discriminates: passes on dev bbfa876af, fails with 22d522c55 (#29983) reverted in a copy of it
+(over 160 MiB retained after forty loaded rounds).
 """
 
 from __future__ import annotations

@@ -1,21 +1,25 @@
 """Guard: process-lifetime containers in the backend are on record with their bound.
 
-The first test makes two passes over the backend source. One lists state that starts empty
-and lives for the life of the process: module-level `{}` / `[]` / `dict()` / `list()` /
-`set()` (top level, or inside a top-level `if`/`try` including its handlers), the same on
-plain classes, and functions memoised with `cache` or `lru_cache(maxsize=None)`. The other
-lists the same shapes assigned to `app.state.X` anywhere, since those are process-wide
-wherever they are written. A second test covers the caches `utils/plugin.py` creates lazily
-on `app.state`. Something that starts empty is an accumulator, so anyone adding one has to
-say here what empties it; the recorded bounds are documentation, the test compares names
-only. Out of scope: `config.py` and `env.py` (static tables populated once at import), the
-one-shot scripts under `migrations/`, containers built by a constructor call such as
-`RedisDict(...)`, non-ClassVar attributes of pydantic models, memoised methods, and TTL
+One pass over the backend source lists state that starts empty and lives for the life of the
+process: module-level `{}` / `[]` / `dict()` / `list()` / `set()` (top level, or inside a
+top-level `if`/`try` including its handlers), the same on plain classes, functions memoised with
+`cache` or `lru_cache(maxsize=None)`, and every cache created on `app.state`, either assigned
+(`app.state.X = {}`) or created on first use by a helper that does `setattr(<...>.state, name,
+{})` and is called with a literal name. Something that starts empty is an accumulator, so anyone
+adding one has to say here what empties it; the recorded bounds are documentation, the test
+compares names only. Out of scope: `config.py` and `env.py` (static tables populated once at
+import), the one-shot scripts under `migrations/`, containers built by a constructor call such
+as `RedisDict(...)`, non-ClassVar attributes of pydantic models, memoised methods, and TTL
 caches such as aiocache's `@cached`.
 
-Unpinned: bounds as read on upstream dev at v0.11.3 (a253bf0c3). The rate limiter, the task
+The ratchet is one-directional: a new name fails, a name upstream removes passes. Names are
+recorded without their file, so moving a container to another module is not a new one.
+
+Unpinned: bounds as read on upstream dev at v0.11.3 (a253bf0c3), updated for #29983. The task
 registry, the warned-URL set and the plugin source caches have behavioural tests in
-`test_unbounded_process_state.py`; the two lock maps do not. Unmarked: nothing to pin.
+`test_unbounded_process_state.py` and `integration/footprint/`; the two lock maps do not.
+Discriminates: a module-level `{}` or a new lazily created `app.state` cache added to a copy of
+dev bbfa876af fails; deleting a recorded container from the copy passes.
 """
 
 from __future__ import annotations
@@ -23,50 +27,38 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 STATIC_MODULES = {"config.py", "env.py"}
 SKIP_DIRS = {"migrations"}
 DATA_CLASS_BASES = {"BaseModel"}
 EMPTY_CALLS = {"dict", "list", "set"}
 
-# path::name -> what bounds it
+# name -> where it lives and what bounds it
 KNOWN = {
-    "utils/subagents.py::_parent_locks": "unbounded: one Lock per chat id that ran a subagent",
-    "utils/timers.py::_timer_locks": "unbounded: one Lock per timer id ever executed",
-    "tasks.py::item_tasks": "unbounded for a falsy id; otherwise in-flight tasks",
-    "tasks.py::tasks": "in-flight tasks, popped by cleanup_task",
-    "tasks.py::response_streams": "in-flight tasks, popped by cleanup_task",
-    "socket/main.py::SESSION_POOL": "live sockets, reaped by periodic_session_pool_cleanup",
-    "socket/main.py::USAGE_POOL": "models x live sockets, reaped on disconnect",
-    "utils/subagents.py::_background_active": "discarded when done; capped unless max_async is -1",
-    "socket/main.py::MODELS": "never written after import; app.state.MODELS is rebound elsewhere",
-    "socket/main.py::EVENT_QUEUES": "one queue per active stream channel, popped on channel end",
-    "utils/redis.py::_CONNECTION_POOL": "one entry per distinct connection parameter tuple",
-    "utils/plugin.py::_installed_requirements": "distinct requirement strings, never removed",
-    "models/config.py::Config.DEFAULTS": "one entry per config key, replaced at boot",
-    "main.py::app.state.OLLAMA_MODELS": "replaced wholesale with the upstream model list",
-    "main.py::app.state.OPENAI_MODELS": "replaced wholesale with the upstream model list",
-    "main.py::app.state.BASE_MODELS": "replaced wholesale with the model list",
-    "main.py::app.state.TOOL_SERVERS": "replaced wholesale with configured connections",
-    "main.py::app.state.TERMINAL_SERVERS": "replaced wholesale with configured connections",
-    "utils/models.py::app.state.BASE_MODELS": "reset before rebuild",
-    "routers/openai.py::app.state.OPENAI_MODELS": "reset before rebuild",
-    "routers/openai.py::app.state.BASE_MODELS": "reset before rebuild",
-    "routers/openai.py::app.state.MODELS": "reset before rebuild",
-    "routers/ollama.py::app.state.OLLAMA_MODELS": "reset before rebuild",
-    "routers/ollama.py::app.state.BASE_MODELS": "reset before rebuild",
-    "routers/ollama.py::app.state.MODELS": "reset before rebuild",
-    "utils/tools.py::get_builtin_function_introspection()": "one entry per builtin tool",
-    "utils/tools.py::build_builtin_tool_spec_json()": "one entry per builtin tool",
-}
-
-# created on first use by `_state_cache(request, name)` -> what empties it
-LAZY_CACHES = {
-    "TOOLS": "installed tools, popped on delete",
-    "FUNCTIONS": "installed functions, popped on delete",
-    "TOOL_CONTENTS": "unbounded: source kept after delete",
-    "FUNCTION_CONTENTS": "unbounded: source kept after delete",
+    "_parent_locks": "utils/subagents.py, unbounded: one Lock per chat id that ran a subagent",
+    "_timer_locks": "utils/timers.py, unbounded: one Lock per timer id ever executed",
+    "item_tasks": "tasks.py, in-flight tasks per item (#29980 dropped the empty id)",
+    "tasks": "tasks.py, in-flight tasks, popped by cleanup_task",
+    "response_streams": "tasks.py, in-flight tasks, popped by cleanup_task",
+    "SESSION_POOL": "socket/main.py, live sockets, reaped by periodic_session_pool_cleanup",
+    "USAGE_POOL": "socket/main.py, models x live sockets, reaped on disconnect",
+    "_background_active": "utils/subagents.py, discarded when done; capped unless max_async -1",
+    "MODELS": "socket/main.py, never written after import; app.state.MODELS is rebound",
+    "EVENT_QUEUES": "socket/main.py, one queue per active stream channel, popped on its end",
+    "_CONNECTION_POOL": "utils/redis.py, one entry per distinct connection parameter tuple",
+    "_installed_requirements": "utils/plugin.py, distinct requirement strings, never removed",
+    "Config.DEFAULTS": "models/config.py, one entry per config key, replaced at boot",
+    "get_builtin_function_introspection()": "utils/tools.py, one entry per builtin tool",
+    "build_builtin_tool_spec_json()": "utils/tools.py, one entry per builtin tool",
+    "app.state.OLLAMA_MODELS": "replaced wholesale with the upstream model list",
+    "app.state.OPENAI_MODELS": "replaced wholesale with the upstream model list",
+    "app.state.BASE_MODELS": "replaced wholesale with the model list",
+    "app.state.MODELS": "reset before every rebuild",
+    "app.state.TOOL_SERVERS": "replaced wholesale with configured connections",
+    "app.state.TERMINAL_SERVERS": "replaced wholesale with configured connections",
+    "app.state.TOOLS": "utils/plugin.py, installed tools, popped on delete",
+    "app.state.FUNCTIONS": "utils/plugin.py, installed functions, popped on delete",
+    "app.state.TOOL_CONTENTS": "utils/plugin.py, installed tool sources, popped on delete",
+    "app.state.FUNCTION_CONTENTS": "utils/plugin.py, installed function sources, popped on delete",
 }
 
 
@@ -122,14 +114,60 @@ def _is_class_var(stmt) -> bool:
     return isinstance(stmt, ast.AnnAssign) and "ClassVar" in ast.unparse(stmt.annotation)
 
 
-def _app_state_target(node: ast.Assign) -> str | None:
-    """`app.state.X` or `request.app.state.X`; `request.state.X` is per request."""
-    target = node.targets[0] if len(node.targets) == 1 else None
-    if not (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Attribute)):
-        return None
-    state, owner = target.value, target.value.value
-    owner_name = owner.id if isinstance(owner, ast.Name) else getattr(owner, "attr", "")
-    return target.attr if state.attr == "state" and owner_name == "app" else None
+def _is_app_state(node) -> bool:
+    """`app.state` or `request.app.state`; `request.state` is per request."""
+    if not (isinstance(node, ast.Attribute) and node.attr == "state"):
+        return False
+    owner = node.value
+    return (owner.id if isinstance(owner, ast.Name) else getattr(owner, "attr", "")) == "app"
+
+
+def _call_name(call: ast.Call) -> str:
+    return call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", "")
+
+
+def _state_setattr(node) -> ast.Call | None:
+    """`setattr(<...>.app.state, name, <empty container>)`."""
+    if isinstance(node, ast.Call) and _call_name(node) == "setattr" and len(node.args) == 3:
+        target, _, value = node.args
+        if _is_app_state(target) and _empty_container_kind(value):
+            return node
+    return None
+
+
+def _lazy_cache_factories(trees) -> dict[str, int]:
+    """Functions that create an `app.state` cache named by one of their parameters, with the
+    position of that parameter."""
+    factories = {}
+    for function in (n for tree in trees for n in ast.walk(tree)):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        parameters = [argument.arg for argument in function.args.args]
+        for node in ast.walk(function):
+            call = _state_setattr(node)
+            name = call.args[1] if call else None
+            if isinstance(name, ast.Name) and name.id in parameters:
+                factories[function.name] = parameters.index(name.id)
+    return factories
+
+
+def _app_state_caches(tree, factories: dict[str, int]) -> set[str]:
+    caches = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _empty_container_kind(node.value):
+            caches |= {
+                target.attr
+                for target in node.targets
+                if isinstance(target, ast.Attribute) and _is_app_state(target.value)
+            }
+        if not isinstance(node, ast.Call):
+            continue
+        direct = _state_setattr(node)
+        position = 1 if direct else factories.get(_call_name(node))
+        name = node.args[position] if position is not None and len(node.args) > position else None
+        if isinstance(name, ast.Constant) and isinstance(name.value, str):
+            caches.add(name.value)
+    return {f"app.state.{name}" for name in caches}
 
 
 def _unbounded_memoiser(func) -> bool:
@@ -148,74 +186,50 @@ def _unbounded_memoiser(func) -> bool:
     return False
 
 
-def _find_process_state(package_root: Path) -> dict[str, str]:
-    trees = {
-        path.relative_to(package_root).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
-        for path in sorted(package_root.rglob("*.py"))
-    }
-    data_classes = _data_classes(trees.values())
-
-    found: dict[str, str] = {}
-    for rel, tree in trees.items():
-        if rel in STATIC_MODULES or SKIP_DIRS & set(rel.split("/")):
-            continue
-        for stmt in _flattened_statements(tree.body):
-            names, value = _assigned_names(stmt)
-            kind = _empty_container_kind(value)
-            if kind:
-                for name in names:
-                    found[f"{rel}::{name}"] = kind
-            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and _unbounded_memoiser(
-                stmt
-            ):
-                found[f"{rel}::{stmt.name}()"] = "cache"
-            if isinstance(stmt, ast.ClassDef):
-                is_data_class = stmt.name in data_classes
-                for attr in _flattened_statements(stmt.body):
-                    if is_data_class and not _is_class_var(attr):
-                        continue
-                    attr_names, attr_value = _assigned_names(attr)
-                    attr_kind = _empty_container_kind(attr_value)
-                    if attr_kind:
-                        for name in attr_names:
-                            found[f"{rel}::{stmt.name}.{name}"] = attr_kind
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                attr = _app_state_target(node)
-                kind = _empty_container_kind(node.value)
-                if attr and kind:
-                    found[f"{rel}::app.state.{attr}"] = kind
+def _module_state(tree, data_classes: set[str]) -> set[str]:
+    found = set()
+    for stmt in _flattened_statements(tree.body):
+        names, value = _assigned_names(stmt)
+        if _empty_container_kind(value):
+            found.update(names)
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and _unbounded_memoiser(stmt):
+            found.add(f"{stmt.name}()")
+        if isinstance(stmt, ast.ClassDef):
+            for attr in _flattened_statements(stmt.body):
+                if stmt.name in data_classes and not _is_class_var(attr):
+                    continue
+                attr_names, attr_value = _assigned_names(attr)
+                if _empty_container_kind(attr_value):
+                    found.update(f"{stmt.name}.{name}" for name in attr_names)
     return found
 
 
-def test_every_scanned_container_has_a_recorded_bound(open_webui_backend: Path):
+def _find_process_state(package_root: Path) -> dict[str, str]:
+    """Every process-lifetime container, by name, with the first file it was seen in."""
+    trees = {
+        path.relative_to(package_root).as_posix(): ast.parse(path.read_text(encoding="utf-8"))
+        for path in sorted(package_root.rglob("*.py"))
+        if not SKIP_DIRS & set(path.relative_to(package_root).parts)
+    }
+    data_classes = _data_classes(trees.values())
+    factories = _lazy_cache_factories(trees.values())
+
+    found: dict[str, str] = {}
+    for rel, tree in trees.items():
+        names = _app_state_caches(tree, factories)
+        if rel not in STATIC_MODULES:
+            names |= _module_state(tree, data_classes)
+        for name in names:
+            found.setdefault(name, rel)
+    return found
+
+
+def test_every_process_lifetime_container_has_a_recorded_bound(open_webui_backend: Path):
     found = _find_process_state(open_webui_backend / "open_webui")
+    assert found.keys() & KNOWN.keys(), "the scan no longer finds any recorded container"
+
     unknown = sorted(set(found) - set(KNOWN))
-    stale = sorted(set(KNOWN) - set(found))
-    problems = []
-    if unknown:
-        problems.append(
-            "new process-lifetime containers; record what empties each in KNOWN:\n  "
-            + "\n  ".join(f"{key} ({found[key]})" for key in unknown)
-        )
-    if stale:
-        problems.append(f"no longer in the backend, remove from KNOWN: {stale}")
-    assert not problems, "\n".join(problems)
-
-
-def test_lazily_created_app_state_caches_are_recorded(open_webui_backend: Path):
-    source = (open_webui_backend / "open_webui" / "utils" / "plugin.py").read_text(encoding="utf-8")
-    calls = [
-        node
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_state_cache"
-    ]
-    if not calls or any(
-        len(call.args) != 2 or not isinstance(call.args[1], ast.Constant) for call in calls
-    ):
-        pytest.fail("_state_cache is gone or no longer names its cache with a literal")
-    names = {call.args[1].value for call in calls}
-    assert names == set(LAZY_CACHES), "record what empties each lazily created cache in LAZY_CACHES"
+    assert not unknown, (
+        "new process-lifetime containers; record what empties each in KNOWN:\n  "
+        + "\n  ".join(f"{name} ({found[name]})" for name in unknown)
+    )
