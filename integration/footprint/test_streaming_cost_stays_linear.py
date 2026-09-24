@@ -33,7 +33,7 @@ import uuid
 import httpx
 import pytest
 
-from integration.conftest import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.slow, pytest.mark.api, pytest.mark.requires_source]
 

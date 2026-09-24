@@ -23,6 +23,8 @@ from playwright.sync_api import Browser, BrowserContext, Page, Playwright, sync_
 # Load environment variables
 load_dotenv()
 
+pytest_plugins = ["harness.fixtures"]
+
 # The venv ships a .pth that puts a fixed open-webui checkout on sys.path at
 # interpreter startup. It otherwise wins over OPEN_WEBUI_SOURCE_DIR, and once
 # anything imports open_webui the package __path__ is pinned, so submodule
@@ -336,47 +338,6 @@ DYNAMIC_ROUTES = [
     ("/s/{id}", "Shared Content"),
     ("/watch", "Watch Page"),  # May require specific setup
 ]
-
-
-# ============================================================================
-# API client fixtures (httpx, no browser)
-# ============================================================================
-
-
-@pytest.fixture(scope="session")
-def api_jwt(config: AppConfig) -> str:
-    """JWT for the test user.
-
-    Prefers the API_JWT env var (CI, OAuth-only users); otherwise signs in
-    via /api/v1/auths/signin with TEST_USER_EMAIL/PASSWORD.
-    """
-    token = os.getenv("API_JWT")
-    if token:
-        return token
-
-    try:
-        resp = httpx.post(
-            f"{config.base_url}/api/v1/auths/signin",
-            json={"email": config.test_user_email, "password": config.test_user_password},
-            timeout=30.0,
-        )
-    except httpx.HTTPError as e:
-        pytest.skip(f"Could not reach Open WebUI for signin: {e}")
-
-    if resp.status_code != 200:
-        pytest.skip(f"Signin failed: HTTP {resp.status_code} {resp.text}")
-    return resp.json()["token"]
-
-
-@pytest.fixture(scope="function")
-def api_client(config: AppConfig, api_jwt: str) -> Generator[httpx.Client, None, None]:
-    """httpx Client authenticated against Open WebUI, base_url prefilled."""
-    with httpx.Client(
-        base_url=config.base_url,
-        headers={"Authorization": f"Bearer {api_jwt}"},
-        timeout=60.0,
-    ) as client:
-        yield client
 
 
 @pytest.fixture(scope="session")
