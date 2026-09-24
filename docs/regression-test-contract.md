@@ -4,28 +4,27 @@ Read this before adding or repairing a test here.
 
 ## What this suite is
 
-Source-level tests that import the Open WebUI backend directly from a local checkout. They do not talk to a running instance. `unit/` is the substantial part and is expected to be green. `integration/` and `e2e/` need a live Open WebUI with seeded accounts.
+Regression tests for Open WebUI at three distances from the product. `integration/` drives the HTTP API of a scratch instance the suite boots itself, `e2e/` drives the built frontend of that same instance in a browser, and `unit/` imports backend modules from the checkout. Upstream refactors internals daily; the API and the UI change rarely. So a bug is pinned as far out as it can be seen.
 
-## Running the browser tests
+## Choosing where a test lives
 
-`scripts/e2e_instance.py` starts an isolated instance and creates the two accounts the suite expects. It uses its own port and a scratch data directory, so an instance you are already running is left alone, and it never writes to the checkout.
+1. If the symptom shows over HTTP (a status code, a response body, what a later GET returns, what the model provider or an outside service was sent, a server log line), write an integration test.
+2. If it also shows in the UI, or only there, add a browser test as well. Duplication across the two is fine.
+3. Only when neither can see it (a pure function with no route to it, event-loop timing, a static guard over the source or packaging) does it stay a unit test, written by the rules below.
+
+A unit test whose integration twin covers its narrow layer is deleted, not kept alongside.
+
+## The harness
+
+`harness/` boots a scratch backend per session from `OPEN_WEBUI_SOURCE_DIR`, serving the checkout's built frontend when there is one, with a scripted OpenAI-shaped model provider as its only connection. The fixtures in `harness/fixtures.py` are available everywhere: `instance`, `upstream` (script replies with `upstream.queue(...)`, read what was sent with `upstream.chat_requests()`), `admin`, `user`, `make_user`, `preserve` (restores global settings a test changes), `instance_with` (a further instance for env-only settings) and `listener` (a local service for the instance to call). `harness.chat` sends messages the way the web client does. The browser suite adds `page_for(actor)`, one signed-in browser per account.
 
 ```
-python scripts/e2e_instance.py --clone /path/to/open-webui
+OPEN_WEBUI_SOURCE_DIR=/path/to/checkout/backend python -m pytest integration e2e -q
 ```
 
-It prints the environment to use and serves until interrupted. From another shell:
+The browser tests skip unless the checkout has a built frontend (`npm run build`, or point `OPEN_WEBUI_BUILD_DIR` at one). Title, tag, follow-up and query generation are off on the shared instance because they would take a scripted reply meant for the chat.
 
-```
-OPEN_WEBUI_URL=http://localhost:8081 \
-TEST_USER_EMAIL=test@example.com TEST_USER_PASSWORD=testpassword123 \
-ADMIN_USER_EMAIL=admin@example.com ADMIN_USER_PASSWORD=adminpassword123 \
-  python -m pytest e2e -q
-```
-
-Two things that are easy to get wrong here. The backend must be started the way `open-webui serve` starts it: a bare uvicorn run on Windows leaves the websocket transport unwired, which shows up as chats that never stream rather than as an error. And the suite authenticates once per session over the API and injects the token through a Playwright init script, because the sign-in route clears `localStorage.token` as it loads, so a token written after visiting `/auth` is gone before the app reads it.
-
-Point the suite at a checkout with `OPEN_WEBUI_SOURCE_DIR`. Always set `DATA_DIR` and `STATIC_DIR` to scratch paths as well: importing `open_webui.config` creates `DATA_DIR` and deletes tracked files under `STATIC_DIR`, so an unset pair mutates the tree under test.
+The unit tests import the checkout directly. Always set `DATA_DIR` and `STATIC_DIR` to scratch paths as well: importing `open_webui.config` creates `DATA_DIR` and deletes tracked files under `STATIC_DIR`, so an unset pair mutates the tree under test.
 
 ```
 OPEN_WEBUI_SOURCE_DIR=/path/to/checkout/backend DATA_DIR=/tmp/scratch/data STATIC_DIR=/tmp/scratch/static WEBUI_SECRET_KEY=test   python -m pytest unit -q
@@ -54,6 +53,17 @@ Layer 3 passing on the old ref is correct and expected. Only layer 1 discriminat
 - **Skip narrowly or not at all.** A blanket `except Exception: pytest.skip(...)` turns real breakage into a green run. Skip only for a genuinely absent target, and name the reason.
 - **A known-unfixed upstream bug is an `xfail`, not an allowlist.** An `xfail` flips to XPASS on its own when upstream fixes it. An allowlist sits there forever until someone remembers.
 - **When a test is claimed to guard nothing, prove the fix by mutation.** Copy the backend file to a scratch dir, break the fix, point `OPEN_WEBUI_SOURCE_DIR` at the copy, and confirm the test goes red. Never mutate a shared worktree.
+
+## Unit tests that survive refactors
+
+Most repairs this suite ever needed came from a unit test knowing more about the code than the bug required. A unit test that stays:
+
+- **Calls the most public function that shows the bug.** Not a route handler called as a Python function, not a private helper when a public caller exists.
+- **Mocks what the code talks to, not what it is made of.** Patch the HTTP client, the clock, the filesystem; use a real in-memory SQLite with the real tables for the database. Never patch a model method by name to steer the code under test.
+- **Uses real or specced stand-ins.** A hand-built fake of a Playwright page, an aiohttp response or `request.app.state` breaks the day upstream calls one more method on it. `create_autospec(RealClass)` or the real object does not.
+- **Passes arguments by keyword** and awaits through a helper when upstream may flip a function between sync and async.
+- **Audits source by meaning.** Parse with `ast` and assert the property; never match whitespace, formatting or variable names. An inventory ratchet fails when a new entry appears and passes when upstream removes one.
+- **Fails loudly when its target is gone**, naming what to retarget. Never skip on a missing attribute.
 
 ## Style
 

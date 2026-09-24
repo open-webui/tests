@@ -397,11 +397,48 @@ Report ONLY the 'real' survivors as bugs; annotate the rest with their evidence.
 If you cannot reproduce a failure through the real production path, it is NOT real."""
 
 
+# A test that can no longer reach its target fails with one of these before it gets to assert
+# anything: upstream renamed, moved or re-signed something, which is drift, not a regression.
+DRIFT_SIGNATURES = (
+    (ImportError, ""),
+    (AttributeError, "has no attribute"),
+    (TypeError, "unexpected keyword argument"),
+    (TypeError, "positional argument"),
+    (TypeError, "missing"),
+    (TypeError, "coroutine"),
+)
+
+
+def _is_drift(excinfo) -> bool:
+    return any(
+        excinfo.errisinstance(kind) and marker in str(excinfo.value)
+        for kind, marker in DRIFT_SIGNATURES
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if report.failed and call.excinfo is not None and _is_drift(call.excinfo):
+        report.user_properties.append(("drift", call.excinfo.exconly()))
+
+
+def _drift_reports(reports) -> list:
+    return [report for report in reports if dict(report.user_properties).get("drift")]
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     """Append the skeptic-verification instruction whenever tests fail."""
     tr = terminalreporter
     failed = tr.stats.get("failed", [])
     errored = tr.stats.get("error", [])
+
+    drifted = _drift_reports(failed + errored)
+    if drifted:
+        tr.write_sep("=", "LIKELY UPSTREAM DRIFT (still failures, retarget these)", yellow=True)
+        for report in drifted:
+            tr.write_line(f"  {report.nodeid}: {dict(report.user_properties)['drift']}")
 
     if not failed:
         if errored:
