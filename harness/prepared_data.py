@@ -34,6 +34,7 @@ from harness.instance import (
     free_port,
     isolated_env,
     resolve_backend,
+    without_colour,
 )
 from harness.upstream import MOCK_MODEL_ID
 
@@ -121,7 +122,7 @@ def boot_until_settled(data_dir: Path, timeout: float = 180.0) -> BootOutcome:
             exit_code = process.poll()
             healthy = exit_code is None and _answers_health(f"http://127.0.0.1:{port}")
             if exit_code is not None or healthy:
-                log = log_path.read_text(encoding="utf-8", errors="replace")
+                log = without_colour(log_path.read_text(encoding="utf-8", errors="replace"))
                 return BootOutcome(healthy=healthy, exit_code=exit_code, log=log)
             time.sleep(0.5)
         pytest.fail(f"the backend neither exited nor answered /health within {timeout:.0f}s")

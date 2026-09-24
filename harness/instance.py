@@ -9,6 +9,7 @@ what the browser suite drives.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -75,6 +76,11 @@ def isolated_env(settings: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def without_colour(log: str) -> str:
+    """The log as plain text: loguru colours it when it sees a CI provider's environment."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", log)
+
+
 def resolve_backend() -> Path | None:
     env = os.getenv("OPEN_WEBUI_SOURCE_DIR")
     if env:
@@ -123,7 +129,7 @@ class LaunchedInstance:
     def log_since(self, offset: int) -> str:
         with open(self.log_path, "rb") as handle:
             handle.seek(offset)
-            return handle.read().decode("utf-8", errors="replace")
+            return without_colour(handle.read().decode("utf-8", errors="replace"))
 
     def rss_bytes(self) -> int:
         """Resident set size of the server, without a third-party dependency.
