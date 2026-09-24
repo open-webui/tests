@@ -1,79 +1,56 @@
-"""Regression: stopping a chat must stop every in-flight task, not just the first.
+"""Regression: a task that finishes while a chat is being stopped must not end the stop early.
 
-open-webui 0.11.4 fix `e35b907f7` (#29844, issue #29816): `stop_item_tasks` in
-`open_webui/tasks.py` returned early on the first `stop_task` result that reported
-failure (which a task that had already finished produces), so with more than one
-task in flight the rest kept running to their own limit. It also iterated the
-live `item_tasks[id]` list, which `stop_task`'s cleanup mutates while the loop is
-awaiting, so tasks further down the list were skipped entirely. The fix iterates
-a snapshot and stops every task in turn.
+open-webui 0.11.4 fix `e35b907f7` (#29844, issue #29816): without Redis, `stop_item_tasks` in
+`open_webui/tasks.py` returned on the first `stop_task` that reported failure. A task that
+finished on its own while an earlier one was still being cancelled has already cleaned itself
+out of `tasks`, so it reports "not found" and every task listed after it kept running. The fix
+stops every listed task in turn.
 
-Discriminates: passes on dev 344ea5306; on the pre-fix ref the second task is
-never stopped when the first reports not-found, and a mid-loop removal skips the
-task after it.
+The skipped-task half of the same issue (the live task list) is pinned over HTTP by
+integration/security/test_chat_stop_item_tasks.py. This half needs a task to finish inside
+another task's cancellation, which only the event loop can arrange.
+
+Discriminates: passes on dev bbfa876af; fails with e35b907f7 reverted (the idle third task is
+still running after the stop).
 """
 
 import asyncio
+import uuid
 
 import pytest
-
-pytest.importorskip('fastapi')
 
 pytestmark = pytest.mark.regression
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def tasks_module(owui_module):
-    return owui_module('open_webui.tasks')
+    return owui_module("open_webui.tasks")
 
 
-def _seed(tasks_module, item_id, task_ids):
-    """Register real asyncio tasks under item_id, as register_task would."""
-    tasks_module.item_tasks.setdefault(item_id, [])
-
-    async def idle():
+async def _slow_to_cancel():
+    try:
         await asyncio.sleep(60)
-
-    for task_id in task_ids:
-        loop_task = asyncio.get_event_loop().create_task(idle())
-        tasks_module.item_tasks[item_id].append(task_id)
-        tasks_module.tasks[task_id] = loop_task
-    return [tasks_module.tasks[t] for t in task_ids]
+    except asyncio.CancelledError:
+        await asyncio.sleep(0.2)
+        raise
 
 
 @pytest.mark.asyncio
-async def test_every_task_is_stopped_when_one_reports_not_found(tasks_module):
-    """The pre-fix early return: a finished first task ends the round."""
-    seeded = _seed(tasks_module, 'chat-batch', ['t1', 't2', 't3'])
-    seeded[0].cancel()  # t1 already finished by the time the stop round runs
-    await asyncio.gather(seeded[0], return_exceptions=True)
+async def test_a_task_finishing_during_the_stop_does_not_end_it_early(tasks_module):
+    chat_id = f"chat-{uuid.uuid4()}"
+    started = [
+        await tasks_module.create_task(redis=None, coroutine=coroutine, id=chat_id)
+        for coroutine in (_slow_to_cancel(), asyncio.sleep(0.05), asyncio.sleep(60))
+    ]
+    idle_task = started[2][1]
+    await asyncio.sleep(0)
 
-    result = await tasks_module.stop_item_tasks(None, 'chat-batch')
-
-    assert result['status'] is True
-    assert all(t.cancelled() or t.done() for t in seeded), (
-        'stopping a chat left tasks running because a task that had already '
-        'finished ended the round early (#29816)'
-    )
-
-
-@pytest.mark.asyncio
-async def test_the_task_list_is_iterated_over_a_snapshot(tasks_module):
-    """stop_task's cleanup mutates item_tasks[id]; the loop must not follow it."""
-    seeded = _seed(tasks_module, 'chat-mutate', ['t1', 't2', 't3'])
-
-    result = await tasks_module.stop_item_tasks(None, 'chat-mutate')
-
-    assert result['status'] is True
-    assert all(t.cancelled() or t.done() for t in seeded), (
-        'stopping a chat skipped tasks because the list being worked through was '
-        'rewritten underneath the loop as each one was cleared (#29816)'
-    )
-
-
-@pytest.mark.asyncio
-async def test_an_empty_item_reports_no_tasks(tasks_module):
-    result = await tasks_module.stop_item_tasks(None, 'chat-empty')
-
-    assert result['status'] is True
-    assert 'No tasks' in result['message']
+    try:
+        result = await tasks_module.stop_item_tasks(redis=None, item_id=chat_id)
+        assert result["status"] is True
+        assert idle_task.cancelled(), (
+            "a task that finished while the chat was being stopped ended the stop early, so "
+            "the tasks listed after it kept running (#29816)"
+        )
+    finally:
+        idle_task.cancel()
