@@ -112,7 +112,7 @@ Layer 3 passing on the old ref is correct and expected. Only layer 1 discriminat
 - **A unit test does not write to a real config store or database.** Patch what the code reads instead. Rows written to the shared store survive the session and poison later runs. (Integration tests write through the API to their scratch instance, inside `preserve`.)
 - **Never evict a module from `sys.modules`.** Re-executing a backend module hands the test a second module object while the routers still hold the first, so patches silently miss, and re-executing one that declares ORM tables raises "Table is already defined". Use the `owui_module` fixture.
 - **Skip narrowly or not at all.** A blanket `except Exception: pytest.skip(...)` turns real breakage into a green run. Skip only for a genuinely absent target, and name the reason.
-- **A known-unfixed upstream bug is an `xfail`, not an allowlist.** An `xfail` flips to XPASS on its own when upstream fixes it. An allowlist sits there forever until someone remembers.
+- **A regression stays red until its fix merges.** Write it as a plain failing test that names the issue and the fix PR, so every run shows it. A strict `xfail` is only for a known bug nobody is fixing yet: it flips to XPASS on its own once upstream fixes it. Never an allowlist, which sits there until someone remembers.
 - **When a test is claimed to guard nothing, prove the fix by mutation.** Copy the backend file to a scratch dir, break the fix, point `OPEN_WEBUI_SOURCE_DIR` at the copy, and confirm the test goes red. Never mutate a shared worktree.
 
 ## Unit tests that survive refactors
