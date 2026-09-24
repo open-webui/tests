@@ -31,7 +31,8 @@ from harness import raw_provider
 from harness import upstream as reply
 from harness.chat import ask
 from harness.instance import resolve_backend
-from harness.raw_provider import OPENAI_CONNECTIONS, RAW_MODEL_ID, chunk, sse
+from harness.raw_provider import RAW_MODEL_ID, chunk, sse
+from harness.second_provider import OPENAI_CONFIG
 from harness.socket_client import SocketSession, connected
 
 pytestmark = [pytest.mark.depcheck, pytest.mark.api, pytest.mark.requires_source]
@@ -87,19 +88,19 @@ def test_the_changelog_is_read_from_the_markdown(instance):
 
 @pytest.fixture
 def raw(admin, preserve, listener) -> raw_provider.RawProvider:
-    preserve(OPENAI_CONNECTIONS)
+    preserve(OPENAI_CONFIG)
     return raw_provider.connect(admin, listener)
 
 
 def test_a_brotli_encoded_provider_reply_is_decoded(admin, raw, listener):
     body = sse(chunk({"role": "assistant", "content": ""}), chunk({"content": "decoded"}))
     headers = {"Content-Type": "text/event-stream", "Content-Encoding": "br"}
-    listener.route("POST", "/chat/completions", (200, headers, brotli.compress(body)))
+    listener.route("POST", "/v1/chat/completions", (200, headers, brotli.compress(body)))
 
     with admin.client() as client:
         _, message = ask(client, "hello?", model=RAW_MODEL_ID)
 
-    sent = listener.requests_to("/chat/completions")[-1]
+    sent = listener.requests_to("/v1/chat/completions")[-1]
     assert "br" in sent.headers.get("Accept-Encoding", ""), "the provider was not offered Brotli"
     assert message["content"] == "decoded"
 

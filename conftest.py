@@ -425,7 +425,10 @@ def pytest_runtest_makereport(item, call):
 
 
 def _drift_reports(reports) -> list:
-    return [report for report in reports if dict(report.user_properties).get("drift")]
+    # collection errors carry no user_properties
+    return [
+        report for report in reports if dict(getattr(report, "user_properties", [])).get("drift")
+    ]
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
