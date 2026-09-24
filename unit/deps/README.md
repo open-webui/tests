@@ -53,19 +53,33 @@ pytest -m depcheck                   # the whole class, anywhere
 
 ## Feature smoke tests (`integration/deps/`)
 
-The files here pin each library in isolation. `integration/deps/` pins the same
-libraries through the Open WebUI feature that uses them, over HTTP on the
-scratch instance: one upload per document format (pypdf, docx2txt,
-unstructured with python-pptx, pandas, openpyxl, xlrd, msoffcrypto and
-pypandoc, BeautifulSoup, chardet, ftfy, and rapidocr with onnxruntime, OpenCV
-and Pillow for PDF images), the three text splitters and BM25 hybrid search,
-and Pillow's check of a model background image. They carry the `depcheck`
-marker too, so a bump is checked with both:
+The contracts here pin a library's API. `integration/deps/` drives the same
+libraries through the Open WebUI feature that uses them, over HTTP on a
+scratch instance, so a bump that keeps the API but changes the behaviour still
+fails. Both carry the `depcheck` marker; run both after a bump:
 
 ```bash
 OPEN_WEBUI_SOURCE_DIR=../open-webui/backend pytest -m depcheck unit/deps integration/deps
 ```
 
-The .rst, .epub and .odt uploads skip without a `pandoc` binary, and the token
-splitter skips when its tiktoken BPE file is not cached, since neither may be
-downloaded during a run.
+| Library | Feature smoke test |
+|---|---|
+| pypdf, docx2txt, unstructured with python-pptx, pandas, openpyxl, xlrd and msoffcrypto, pypandoc, beautifulsoup4, chardet, ftfy | `integration/deps/test_document_extraction.py` (one upload per format) |
+| rapidocr with onnxruntime, OpenCV and Pillow | `integration/deps/test_document_extraction.py` (PDF image OCR) |
+| langchain text splitters, tiktoken, rank-bm25 | `integration/deps/test_chunking_and_search.py` |
+| Pillow | `integration/deps/test_image_validation.py` |
+| bcrypt, argon2-cffi, PyJWT, pytz, authlib, itsdangerous, cryptography | `integration/deps/test_auth_stack.py` |
+| starlette-compress, Brotli, zstandard, Markdown, beautifulsoup4, brotlicffi, python-socketio, pycrdt | `integration/deps/test_transport_stack.py` |
+| python-mimeparse, aiofiles, pydub | `integration/deps/test_audio_stack.py` |
+| mcp, validators, black, opentelemetry, requests | `integration/deps/test_outbound_stack.py` |
+| redis | `integration/security/test_signin_session_expiry_and_revocation_fallback.py` (a signed-out token is refused) |
+| aiocache | `integration/security/test_cache_key_builder.py` (a repeat model listing never reaches the provider) |
+| requests (Tika) | `integration/retrieval/test_v0114_source_text_and_docling.py` (a binary upload is extracted by Tika) |
+| sqlalchemy, aiosqlite, alembic, fastapi, uvicorn, httpx, aiohttp | every instance boot and request |
+
+The .rst, .epub and .odt uploads skip without a `pandoc` binary, pydub skips
+without ffmpeg, and the token splitter skips when its tiktoken BPE file is not
+cached, since none of them may be downloaded during a run. Libraries for
+services the integration suite has no local stand-in for (Postgres, Qdrant,
+Milvus, Weaviate, Elasticsearch, OpenSearch, S3, Azure, Google Cloud, Oracle,
+Pinecone, LDAP) keep their unit contracts only.
