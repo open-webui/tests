@@ -10,10 +10,11 @@ authentication. The backend uses it to:
     (``utils/headers.py``: ``jwt.encode(..., algorithm="HS256")``);
   - validate OIDC back-channel logout tokens (``utils/oauth.py``):
     peek at unverified claims with ``options={"verify_signature": False}``,
-    fetch the signing key via ``jwt.PyJWKClient(...)`` /
-    ``get_signing_key_from_jwt(...)``, then ``jwt.decode`` with
-    ``algorithms=[RS*/ES*]``, ``audience=``, ``issuer=`` and
-    ``options={"require": [...]}``, catching ``jwt.InvalidTokenError``.
+    read the ``kid`` with ``jwt.get_unverified_header(...)``, pick the signing
+    key out of ``jwt.PyJWKSet.from_dict(jwks).keys`` by ``key_id`` and
+    ``public_key_use``, then ``jwt.decode`` with ``algorithms=[RS*/ES*]``,
+    ``audience=``, ``issuer=`` and ``options={"require": [...]}``, catching
+    ``jwt.InvalidTokenError``.
 
 This is security-critical code: a PyJWT bump that renames a symbol,
 changes a keyword argument, or alters which exception a bad/expired token
@@ -24,16 +25,28 @@ bad-signature, claim validation), all offline. If any contract breaks,
 these tests fail loudly instead of letting an AttributeError or a
 swallowed exception surface at a login endpoint.
 
-Exemplar for the unit/deps/ pattern: symbol-existence checks (API
-surface) + offline behavioural contracts (no network). Uses the
-``depcheck`` fixture from unit/deps/conftest.py.
+Which ``jwt.*`` names the backend uses, and the arguments it passes them,
+are read from the backend with ``ast``, so the checks follow upstream: a
+hand-kept list here still pinned ``PyJWKClient`` after the logout path moved
+to ``PyJWKSet``, and a default the backend never relies on once had to be
+repaired. Offline, no network. Uses the ``depcheck`` fixture from
+unit/deps/conftest.py.
+
+Discriminates: in a backend copy, a ``jwt`` name PyJWT lacks fails the
+inventory and a keyword ``jwt.encode`` does not take fails the call check; a
+PyJWT without ``get_unverified_header`` or whose ``PyJWKSet.from_dict``
+refuses a JWKS (patched in process) fails the inventory and the logout-token
+test.
 """
 
 from __future__ import annotations
 
+import ast
 import datetime
 import inspect
 import warnings
+from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -51,41 +64,7 @@ OTHER_SECRET = "y" * 64
 
 # Asymmetric algorithms the OIDC back-channel-logout path passes to decode().
 OIDC_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
-
-# Top-level symbols the backend references directly on the `jwt` module.
-USED_TOP_LEVEL_SYMBOLS = [
-    "encode",
-    "decode",
-    "PyJWKClient",
-    # Exception classes the code catches at the top level (e.g.
-    # `except pyjwt.InvalidTokenError`).
-    "InvalidTokenError",
-    "ExpiredSignatureError",
-    "InvalidSignatureError",
-    "DecodeError",
-    "PyJWTError",
-    # Exceptions raised by the claim-validation options the code uses
-    # (audience=/issuer=/options={"require": [...]}).
-    "InvalidAudienceError",
-    "InvalidIssuerError",
-    "MissingRequiredClaimError",
-    "ImmatureSignatureError",
-    # Submodule the exceptions also live under.
-    "exceptions",
-]
-
-# The same exception classes must also be reachable under jwt.exceptions.*.
-USED_EXCEPTION_SYMBOLS = [
-    "exceptions.PyJWTError",
-    "exceptions.InvalidTokenError",
-    "exceptions.ExpiredSignatureError",
-    "exceptions.InvalidSignatureError",
-    "exceptions.DecodeError",
-    "exceptions.InvalidAudienceError",
-    "exceptions.InvalidIssuerError",
-    "exceptions.MissingRequiredClaimError",
-    "exceptions.ImmatureSignatureError",
-]
+LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
 
 
 def _now() -> datetime.datetime:
@@ -126,104 +105,73 @@ def test_version_reported(depcheck):
 # --------------------------------------------------------------------------- #
 
 
-def test_used_top_level_symbols_exist(depcheck):
-    """Every `jwt.<symbol>` the codebase references must still exist."""
+class JwtUse(NamedTuple):
+    where: str
+    name: str  # "PyJWKSet.from_dict" for `jwt.PyJWKSet.from_dict`
+    call: ast.Call | None  # the call, when the name is called right there
+
+
+def _dotted(node: ast.AST) -> list[str]:
+    """`jwt.PyJWKSet.from_dict` as ["jwt", "PyJWKSet", "from_dict"]; [] for anything else."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.insert(0, node.attr)
+        node = node.value
+    return [node.id, *parts] if isinstance(node, ast.Name) and parts else []
+
+
+def _backend_jwt_uses(backend: Path) -> list[JwtUse]:
+    """Every `jwt.<...>` the backend writes, where `jwt` is PyJWT."""
+    uses = []
+    for path in sorted((backend / "open_webui").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "import jwt" not in source:
+            continue
+        tree = ast.parse(source)
+        aliases = {
+            alias.asname or alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+            if alias.name == IMPORT_NAME
+        }
+        calls = {id(node.func): node for node in ast.walk(tree) if isinstance(node, ast.Call)}
+        for node in ast.walk(tree):
+            chain = _dotted(node)
+            if chain and chain[0] in aliases:
+                where = f"{path.relative_to(backend)}:{node.lineno}"
+                uses.append(JwtUse(where, ".".join(chain[1:]), calls.get(id(node))))
+    assert uses, f"nothing under {backend} uses `import jwt`; retarget this contract"
+    return uses
+
+
+def test_every_jwt_name_the_backend_uses_exists(depcheck, open_webui_backend):
     mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, USED_TOP_LEVEL_SYMBOLS)
-
-
-def test_exception_module_symbols_exist(depcheck):
-    """The exception classes the code catches must also resolve under
-    jwt.exceptions.* (the canonical location they're defined in)."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, USED_EXCEPTION_SYMBOLS)
-
-
-def test_encode_decode_callable(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_callable(mod, "encode")
-    depcheck.assert_callable(mod, "decode")
-
-
-def test_pyjwkclient_is_class(depcheck):
-    """oauth.py does `pyjwt.PyJWKClient(jwks_uri)` then calls
-    `.get_signing_key_from_jwt(token)` on the instance."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_callable(mod, "PyJWKClient")
-    assert inspect.isclass(mod.PyJWKClient)
-    names = set(dir(mod.PyJWKClient))
-    for meth in ("get_signing_key_from_jwt", "get_signing_key"):
-        assert meth in names, f"PyJWKClient.{meth} missing"
-        assert callable(getattr(mod.PyJWKClient, meth))
-
-
-def test_top_level_and_module_exceptions_are_same_object(depcheck):
-    """jwt.InvalidTokenError and jwt.exceptions.InvalidTokenError must be the
-    identical class, so `except jwt.X` catches what jwt.exceptions.X raises."""
-    mod = depcheck.load(IMPORT_NAME)
-    for name in (
-        "PyJWTError",
-        "InvalidTokenError",
-        "ExpiredSignatureError",
-        "InvalidSignatureError",
-        "DecodeError",
-        "InvalidAudienceError",
-        "InvalidIssuerError",
-        "MissingRequiredClaimError",
-    ):
-        assert getattr(mod, name) is getattr(mod.exceptions, name), (
-            f"jwt.{name} is not jwt.exceptions.{name}"
-        )
-
-
-# --------------------------------------------------------------------------- #
-# Signatures (the kwargs the backend passes)
-# --------------------------------------------------------------------------- #
-
-
-def test_encode_signature_supports_our_kwargs(depcheck):
-    """auth.py/headers.py call jwt.encode(payload, key, algorithm=...).
-    Pin that `payload`, `key` and `algorithm` remain accepted."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(mod.encode, ["payload", "key", "algorithm"])
-
-
-def test_decode_signature_supports_our_kwargs(depcheck):
-    """The backend calls jwt.decode with key, algorithms=, options=,
-    audience=, issuer= and (in tests of the leeway contract) leeway=.
-    All of those parameter names must remain on the signature."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(
-        mod.decode,
-        ["key", "algorithms", "options", "audience", "issuer", "leeway"],
+    missing = sorted(
+        f"{use.where} jwt.{use.name}"
+        for use in _backend_jwt_uses(open_webui_backend)
+        if not depcheck.has(mod, use.name)
     )
+    assert not missing, f"PyJWT lacks names the backend uses: {missing}"
 
 
-def test_decode_first_positional_is_the_token(depcheck):
-    """The code passes the token positionally as the first argument. Pin that
-    the first parameter still exists and isn't keyword-only."""
+def test_every_jwt_call_the_backend_makes_binds(depcheck, open_webui_backend):
+    """`jwt.encode(payload, key, algorithm=...)`, `jwt.decode(token, key, ...)` and the rest,
+    bound the way the backend passes them, so what it passes by position is not pinned by name."""
     mod = depcheck.load(IMPORT_NAME)
-    sig = inspect.signature(mod.decode)
-    params = list(sig.parameters.values())
-    assert params, "jwt.decode has no parameters"
-    first = params[0]
-    assert first.kind in (
-        inspect.Parameter.POSITIONAL_ONLY,
-        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    ), f"jwt.decode first parameter {first.name!r} is no longer positional"
-
-
-def test_encode_accepts_algorithm_param(depcheck):
-    """auth.py and headers.py pass algorithm='HS256' explicitly to jwt.encode,
-    so the contract is that encode accepts an `algorithm` parameter. (PyJWT 2.13
-    changed the *default* from 'HS256' to an internal sentinel; that's irrelevant
-    here since the backend never relies on the default. HS256 is exercised
-    behaviourally by the roundtrip tests.)"""
-    mod = depcheck.load(IMPORT_NAME)
-    sig = inspect.signature(mod.encode)
-    assert "algorithm" in sig.parameters, (
-        f"jwt.encode no longer accepts an 'algorithm' parameter: {sig}"
-    )
+    problems = []
+    for use in _backend_jwt_uses(open_webui_backend):
+        if use.call is None or not depcheck.has(mod, use.name):
+            continue
+        positional = [None for argument in use.call.args if not isinstance(argument, ast.Starred)]
+        keywords = {keyword.arg: None for keyword in use.call.keywords if keyword.arg}
+        try:
+            inspect.signature(depcheck.resolve(mod, use.name)).bind_partial(*positional, **keywords)
+        except TypeError as error:
+            problems.append(f"{use.where} jwt.{use.name}(...): {error}")
+        except ValueError:
+            continue  # no introspectable signature (a builtin exception class)
+    assert not problems, f"backend calls PyJWT no longer accepts: {problems}"
 
 
 # --------------------------------------------------------------------------- #
@@ -472,21 +420,61 @@ def test_issuer_validation_rejects_wrong_iss(depcheck):
         _hs_decode(mod, token, issuer="https://issuer.example")
 
 
-# --------------------------------------------------------------------------- #
-# Behavioural: leeway and algorithm pinning
-# --------------------------------------------------------------------------- #
+def _rsa_key():
+    rsa = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.rsa")
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def test_leeway_tolerates_small_clock_skew(depcheck):
-    """decode accepts leeway= (timedelta or seconds). A token that expired a
-    few seconds ago must still validate within a generous leeway window."""
+def _logout_token(mod, signing_key, kid: str) -> str:
+    claims = {
+        "iss": "https://issuer.example",
+        "aud": "client-123",
+        "iat": _now(),
+        "events": {LOGOUT_EVENT: {}},
+    }
+    return mod.encode(claims, signing_key, algorithm="RS256", headers={"kid": kid})
+
+
+def _decode_logout_token(mod, token: str, jwks: dict) -> dict:
+    """oauth.py's back-channel logout check, step by step."""
+    kid = mod.get_unverified_header(token).get("kid")
+    signing_key = next(
+        key
+        for key in mod.PyJWKSet.from_dict(jwks).keys
+        if key.key_id == kid and key.public_key_use in ["sig", None]
+    )
+    return mod.decode(
+        token,
+        signing_key.key,
+        algorithms=OIDC_ALGORITHMS,
+        audience="client-123",
+        issuer="https://issuer.example",
+        options={"require": ["iss", "aud", "iat", "events"]},
+    )
+
+
+def test_a_logout_token_is_checked_against_the_jwks_key_its_kid_names(depcheck):
     mod = depcheck.load(IMPORT_NAME)
-    token = _hs_token(mod, {"exp": _now() - datetime.timedelta(seconds=5)})
-    decoded = _hs_decode(mod, token, leeway=datetime.timedelta(seconds=60))
-    assert isinstance(decoded, dict)
-    # And the same expired token must still be rejected with no leeway.
-    with pytest.raises(mod.ExpiredSignatureError):
-        _hs_decode(mod, token)
+    provider_key = _rsa_key()
+    public = mod.algorithms.RSAAlgorithm.to_jwk(provider_key.public_key(), as_dict=True)
+    jwks = {
+        "keys": [
+            {**public, "kid": "encryption", "use": "enc"},
+            {**public, "kid": "signing", "use": "sig"},
+        ]
+    }
+
+    decoded = _decode_logout_token(mod, _logout_token(mod, provider_key, "signing"), jwks)
+    assert decoded["events"] == {LOGOUT_EVENT: {}}
+
+    forged = _logout_token(mod, _rsa_key(), "signing")
+    with pytest.raises(mod.InvalidTokenError):
+        _decode_logout_token(mod, forged, jwks)
+
+
+# --------------------------------------------------------------------------- #
+# Behavioural: algorithm pinning
+# --------------------------------------------------------------------------- #
 
 
 def test_algorithm_allowlist_rejects_other_alg(depcheck):

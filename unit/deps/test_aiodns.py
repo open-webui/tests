@@ -20,20 +20,25 @@ accepted as `TCPConnector(resolver=...)`. That construction test is what a
 future aiohttp or aiodns bump would break (aiohttp probes
 `aiodns.DNSResolver.getaddrinfo` at import and falls back when absent).
 
-Discriminates: aiodns missing or its aiohttp-facing API drifting, which
-makes `AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER=true` blow up at connector setup;
-plus the env.py opt-in gate itself, whose absence would put every install
-back on c-ares by default.
+The opt-in gate is checked by what it does: env.py is imported in a fresh
+interpreter with and without the flag and the resolver aliases it leaves behind
+are read back, however env.py happens to spell the gate.
 
 All checks are OFFLINE: resolvers and connectors are constructed and closed,
 never used to look anything up. Uses the `depcheck` fixture from
 unit/deps/conftest.py.
+
+Discriminates: aiodns missing or its aiohttp-facing API drifting fails the
+construction tests; in a backend copy, a gate defaulting to on, a gate removed
+and one alias no longer rewritten each fail the opt-in test.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -41,6 +46,7 @@ pytestmark = pytest.mark.depcheck
 
 IMPORT_NAME = "aiodns"
 DIST_NAME = "aiodns"
+OPT_IN = "AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER"
 
 # aiodns symbols aiohttp reaches for in `aiohttp/resolver.py`.
 USED_SYMBOLS = [
@@ -114,32 +120,41 @@ def test_aiohttp_detects_aiodns(depcheck):
     assert aiohttp_resolver.aiodns_default is True
 
 
-def test_async_dns_is_opt_in_and_off_by_default(open_webui_backend):
-    """0.11.1 (c5ec01b1f) demoted c-ares to opt-in. env.py must keep the gate
-    defaulting to False and must rewrite all three DefaultResolver aliases:
-    connectors read `aiohttp.connector.DefaultResolver`, plugin code reads the
-    top-level one, so missing any alias leaves that path on c-ares."""
-    env_source = (open_webui_backend / "open_webui" / "env.py").read_text(encoding="utf-8")
+# The three aliases env.py rewrites: connectors read `aiohttp.connector.DefaultResolver`,
+# plugin code the top-level one, so an alias left out keeps that path on c-ares.
+RESOLVER_PROBE = """
+import sys
+sys.path.insert(0, sys.argv[1])
+import aiohttp
+import open_webui.env  # noqa: F401
+modules = (aiohttp, aiohttp.resolver, aiohttp.connector)
+print("RESOLVERS", " ".join(module.DefaultResolver.__name__ for module in modules))
+"""
 
-    gate = re.search(
-        r"AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER\s*=\s*os\.getenv\(\s*['\"]AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER['\"]\s*,\s*['\"](\w+)['\"]",
-        env_source,
+
+def _resolvers_once_env_ran(backend, opt_in: str | None) -> list[str]:
+    """aiohttp's DefaultResolver aliases after importing env.py in a fresh interpreter."""
+    env = {name: value for name, value in os.environ.items() if name != OPT_IN}
+    if opt_in is not None:
+        env[OPT_IN] = opt_in
+    probe = [sys.executable, "-c", RESOLVER_PROBE, str(backend)]
+    probed = subprocess.run(probe, capture_output=True, text=True, timeout=120, env=env)
+    assert probed.returncode == 0, f"importing env.py failed\n{probed.stderr[-3000:]}"
+    printed = [line for line in probed.stdout.splitlines() if line.startswith("RESOLVERS ")]
+    assert printed, f"the probe printed no resolvers\n{probed.stdout[-3000:]}"
+    return printed[-1].split()[1:]
+
+
+def test_async_dns_is_opt_in_and_off_by_default(depcheck, open_webui_backend):
+    """0.11.1 (c5ec01b1f) demoted c-ares to opt-in: importing env.py leaves every
+    DefaultResolver alias on the threaded resolver unless the flag is set, and the
+    flag hands them back to aiohttp's own aiodns default."""
+    depcheck.load(IMPORT_NAME)
+
+    assert _resolvers_once_env_ran(open_webui_backend, None) == ["ThreadedResolver"] * 3, (
+        "c-ares resolution is back on by default (#28013, #28215)"
     )
-    assert gate, "env.py no longer reads AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER"
-    assert gate.group(1).lower() == "false", (
-        f"async DNS default flipped to {gate.group(1)!r}; c-ares resolution is back on "
-        "for every install (#28013, #28215)."
-    )
-
-    assert re.search(
-        r"if\s+not\s+AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER\s*:", env_source
-    ), "the ThreadedResolver override is no longer gated on the opt-in flag"
-
-    for alias in ("aiohttp", "aiohttp.resolver", "aiohttp.connector"):
-        assert re.search(
-            rf"{re.escape(alias)}\.DefaultResolver\s*=\s*aiohttp\.resolver\.ThreadedResolver",
-            env_source,
-        ), f"env.py no longer pins {alias}.DefaultResolver to ThreadedResolver"
+    assert _resolvers_once_env_ran(open_webui_backend, "true") == ["AsyncResolver"] * 3
 
 
 def test_threaded_resolver_override_target_exists(depcheck):

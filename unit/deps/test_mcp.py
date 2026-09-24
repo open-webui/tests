@@ -1,33 +1,31 @@
 """Dependency contract: mcp (Model Context Protocol SDK).
 
-Open WebUI talks to external MCP "tool servers" through this SDK. The
-backend opens a Streamable-HTTP transport, wraps it in a `ClientSession`,
-and drives `initialize()` / `list_tools()` / `call_tool()` /
-`list_resources()` / `read_resource()` to expose remote MCP tools to the
-LLM (see `open_webui/utils/mcp/client.py`). It also reuses the SDK's
-OAuth model classes (`mcp.shared.auth.*`) for the dynamic-client and
-static-credential OAuth flows in `utils/oauth.py` and `routers/configs.py`,
-subclassing `OAuthClientMetadata`/`OAuthClientInformationFull` and calling
-`OAuthMetadata.model_validate(...)`.
+Open WebUI talks to external MCP tool servers through this SDK: `utils/mcp/client.py` opens the
+Streamable-HTTP transport, wraps it in a `ClientSession` and drives `initialize()`,
+`list_tools()`, `call_tool()`, `list_resources()` and `read_resource()`, while `utils/oauth.py`
+and `routers/configs.py` reuse its OAuth models.
 
-This module pins the slice of the mcp API the backend actually relies on.
-The import paths in particular MOVE between SDK versions
-(`mcp.client.session`, `mcp.client.streamable_http`,
-`mcp.client.stdio`, `mcp.client.sse`, `mcp.client.auth`,
-`mcp.shared.auth`, `mcp.types`), so a bump that relocated or renamed any
-of them fails loudly here instead of as an ImportError deep in a
-tool-call path. Everything is offline: no MCP server is spawned and no
-network transport is opened — we only construct objects and introspect
-signatures.
+What the backend imports from the SDK, and the arguments it passes when it calls those names, are
+read from the backend with `ast`: an import or keyword upstream adds is checked the day it lands,
+and one it drops stops being pinned, so no hand-kept list goes stale (a list here once tracked a
+rename the backend never made). The session methods and the result fields the client reads are
+pinned by hand, since `ast` cannot tell what `self.session` holds. The SDK connecting to a real
+server end to end is integration/deps/test_outbound_stack.py.
 
-Exemplar for the unit/deps/ pattern: symbol-existence checks (API
-surface) + offline behavioural contracts. Uses the `depcheck` fixture
-from unit/deps/conftest.py. Skips cleanly when mcp is not importable.
+Everything is offline: no server is spawned and no transport is opened. Uses the `depcheck`
+fixture from unit/deps/conftest.py; skips when mcp is not importable.
+
+Discriminates: in a backend copy importing a name the installed SDK lacks, the import inventory
+fails; calling `streamablehttp_client` with a keyword it does not take fails the call check; an SDK
+whose `call_tool` stops taking the arguments positionally fails the session check.
 """
 
 from __future__ import annotations
 
+import ast
+import importlib
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -36,38 +34,42 @@ pytestmark = pytest.mark.depcheck
 IMPORT_NAME = "mcp"
 DIST_NAME = "mcp"
 
-# Top-level re-exports the backend imports as `from mcp import ...`.
-TOP_LEVEL_SYMBOLS = [
-    "ClientSession",
-    "StdioServerParameters",
+# How client.py calls the live session: (method, positional arguments, keyword arguments).
+SESSION_CALLS = [
+    ("initialize", (), {}),
+    ("list_tools", (), {"cursor": None}),
+    ("call_tool", ("echo", {"text": "hi"}), {}),
+    ("list_resources", (), {"cursor": None}),
+    ("read_resource", ("file:///notes.txt",), {}),
 ]
 
-# Submodule + dotted symbols the backend references via explicit import
-# paths. These relocate between SDK versions — the highest-value checks.
-USED_SYMBOLS = [
-    # client session (top-level re-export lives here)
-    "client.session.ClientSession",
-    # transports
-    "client.streamable_http.streamablehttp_client",
-    "client.stdio.stdio_client",
-    "client.sse.sse_client",
-    # client-side OAuth provider + storage protocol
-    "client.auth.OAuthClientProvider",
-    "client.auth.TokenStorage",
-    # OAuth data models reused by open_webui's oauth/configs
-    "shared.auth.OAuthClientInformationFull",
-    "shared.auth.OAuthClientMetadata",
-    "shared.auth.OAuthToken",
-    "shared.auth.OAuthMetadata",
-    # protocol types the client surfaces
-    "types.Tool",
-    "types.CallToolResult",
-    "types.TextContent",
-    "types.ImageContent",
-    "types.ListToolsResult",
-    "types.ListResourcesResult",
-    "types.ReadResourceResult",
-]
+
+def _is_mcp(module: str | None) -> bool:
+    return module == IMPORT_NAME or (module or "").startswith(f"{IMPORT_NAME}.")
+
+
+def _mcp_imports(backend: Path) -> dict[Path, tuple[ast.Module, dict[str, tuple[str, str]]]]:
+    """Per backend file that imports from mcp: its tree and each bound name's (module, name)."""
+    found = {}
+    for path in sorted((backend / "open_webui").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if IMPORT_NAME not in source:
+            continue
+        tree = ast.parse(source)
+        bound = {
+            alias.asname or alias.name: (node.module, alias.name)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and _is_mcp(node.module)
+            for alias in node.names
+        }
+        if bound:
+            found[path] = (tree, bound)
+    assert found, f"no module under {backend} imports from mcp; retarget this contract"
+    return found
+
+
+def _resolve(module: str, name: str):
+    return getattr(importlib.import_module(module), name)
 
 
 def test_import(depcheck):
@@ -76,314 +78,141 @@ def test_import(depcheck):
 
 
 def test_version_reported(depcheck):
-    """Sanity: the installed distribution version is resolvable (so bump
-    tooling and this suite agree on what's under test)."""
     depcheck.load(IMPORT_NAME)
     assert depcheck.dist_version(DIST_NAME) is not None
 
 
-def test_top_level_symbols_exist(depcheck):
-    """`from mcp import ClientSession, StdioServerParameters` must resolve."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, TOP_LEVEL_SYMBOLS)
+def test_every_name_the_backend_imports_resolves(depcheck, open_webui_backend):
+    depcheck.load(IMPORT_NAME)
+    missing = [
+        f"{path.relative_to(open_webui_backend)}: from {module} import {name}"
+        for path, (_, bound) in _mcp_imports(open_webui_backend).items()
+        for module, name in bound.values()
+        if not depcheck.has(importlib.import_module(module), name)
+    ]
+    assert not missing, f"the installed mcp lacks names the backend imports: {missing}"
 
 
-def test_used_symbols_exist(depcheck):
-    """Every dotted mcp symbol the codebase imports must still resolve at
-    its current import path. A bump that moved/renamed any of them breaks
-    open_webui's MCP tool-server and OAuth integration at import time."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, USED_SYMBOLS)
+def _call_problem(target, call: ast.Call) -> str | None:
+    """Why the call's arguments would not bind to `target`, or None when they do."""
+    positional = [None for argument in call.args if not isinstance(argument, ast.Starred)]
+    keywords = {keyword.arg: None for keyword in call.keywords if keyword.arg}
+    try:
+        inspect.signature(target).bind_partial(*positional, **keywords)
+    except TypeError as error:
+        return str(error)
+    return None
 
 
-def test_top_level_clientsession_is_session_module_class(depcheck):
-    """`from mcp import ClientSession` must be the same class as
-    `mcp.client.session.ClientSession` — the backend imports the former
-    but the SDK defines it in the latter."""
-    mod = depcheck.load(IMPORT_NAME)
-    session_cls = depcheck.resolve(mod, "client.session.ClientSession")
-    assert mod.ClientSession is session_cls
-
-
-# --- ClientSession contract -------------------------------------------------
-
-
-def test_clientsession_constructor_params(depcheck):
-    """client.py constructs `ClientSession(read_stream, write_stream)`
-    positionally from the transport's (read, write, _) tuple. Those two
-    leading parameters must remain accepted."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(
-        mod.ClientSession.__init__,
-        ["read_stream", "write_stream"],
-    )
-
-
-def test_clientsession_is_async_context_manager(depcheck):
-    """client.py does
-    `await exit_stack.enter_async_context(ClientSession(...))`,
-    so ClientSession must implement the async context-manager protocol."""
-    mod = depcheck.load(IMPORT_NAME)
-    names = set(dir(mod.ClientSession))
-    for dunder in ("__aenter__", "__aexit__"):
-        assert dunder in names, f"ClientSession.{dunder} missing"
-        assert callable(getattr(mod.ClientSession, dunder))
-
-
-def test_clientsession_methods_exist_and_callable(depcheck):
-    """The driver calls these five coroutine methods on the live session."""
-    mod = depcheck.load(IMPORT_NAME)
-    for m in (
-        "initialize",
-        "list_tools",
-        "call_tool",
-        "list_resources",
-        "read_resource",
-    ):
-        meth = getattr(mod.ClientSession, m, None)
-        assert callable(meth), f"ClientSession.{m} missing/not callable"
-        assert inspect.iscoroutinefunction(meth), (
-            f"ClientSession.{m} is no longer a coroutine function"
-        )
-
-
-def test_clientsession_call_tool_signature(depcheck):
-    """client.py: `await self.session.call_tool(function_name, function_args)`
-    — the (name, arguments) positional pair must remain accepted."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(mod.ClientSession.call_tool, ["name", "arguments"])
-
-
-def test_clientsession_list_resources_accepts_cursor(depcheck):
-    """client.py: `await self.session.list_resources(cursor=cursor)`."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(mod.ClientSession.list_resources, ["cursor"])
-
-
-def test_clientsession_read_resource_accepts_uri(depcheck):
-    """client.py: `await self.session.read_resource(uri)`."""
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_params(mod.ClientSession.read_resource, ["uri"])
-
-
-# --- Transport context managers ---------------------------------------------
-
-
-def test_streamablehttp_client_signature(depcheck):
-    """client.py opens the Streamable-HTTP transport with
-    `streamablehttp_client(url, headers=..., httpx_client_factory=...)`.
-    All three of those parameters must remain accepted.
-
-    NOTE: mcp also ships a *different* function `streamable_http_client`
-    (singular-spaced) with a DIFFERENT signature — it takes a prebuilt
-    `http_client=` instead of `headers=`/`httpx_client_factory=`. It is NOT
-    a drop-in rename; the backend correctly uses `streamablehttp_client`."""
-    mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.streamable_http.streamablehttp_client")
-    assert callable(fn)
-    depcheck.assert_params(fn, ["url", "headers", "httpx_client_factory"])
+def test_every_call_into_an_imported_name_binds(depcheck, open_webui_backend):
+    """`streamablehttp_client(url, headers=..., httpx_client_factory=...)`, `ClientSession(read,
+    write)`, `OAuthMetadata.model_validate(...)` and every other call the backend makes into a
+    name it imported from mcp still accepts the arguments as passed."""
+    depcheck.load(IMPORT_NAME)
+    problems = []
+    for path, (tree, bound) in _mcp_imports(open_webui_backend).items():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            if isinstance(function, ast.Name) and function.id in bound:
+                target = _resolve(*bound[function.id])
+            elif (
+                isinstance(function, ast.Attribute)
+                and isinstance(function.value, ast.Name)
+                and function.value.id in bound
+            ):
+                target = getattr(_resolve(*bound[function.value.id]), function.attr)
+            else:
+                continue
+            problem = _call_problem(target, node)
+            if problem:
+                where = f"{path.relative_to(open_webui_backend)}:{node.lineno}"
+                problems.append(f"{where} {ast.unparse(node.func)}(...): {problem}")
+    assert not problems, f"backend calls the installed mcp no longer accepts: {problems}"
 
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_streamablehttp_client_is_context_manager_factory(depcheck):
-    """`async with streamablehttp_client(...)` is used via enter_async_context;
-    calling it (without awaiting/connecting) must yield an async context
-    manager object. This does NOT open any network connection.
+def test_the_imported_transports_open_as_async_context_managers(depcheck, open_webui_backend):
+    """client.py enters the transport with `exit_stack.enter_async_context(...)`. Calling it
+    only builds the context manager; nothing connects until it is entered."""
+    depcheck.load(IMPORT_NAME)
+    transports = {
+        (module, name)
+        for _, bound in _mcp_imports(open_webui_backend).values()
+        for module, name in bound.values()
+        if module == "mcp.client.streamable_http"
+    }
+    assert transports, "the backend no longer imports a Streamable-HTTP transport; retarget"
+    for module, name in sorted(transports):
+        opened = _resolve(module, name)("http://127.0.0.1:0/never-connected")
+        assert hasattr(opened, "__aenter__") and hasattr(opened, "__aexit__"), name
+        close = getattr(getattr(opened, "aclose", lambda: None)(), "close", None)
+        if callable(close):
+            close()
 
-    Note: 1.27.x marks `streamablehttp_client` deprecated, but its
-    replacement `streamable_http_client` has a different signature (takes a
-    prebuilt http_client), so migrating is a refactor, not a rename. The
-    backend keeps using `streamablehttp_client` (functional); we pin it and
-    silence the bump-time warning."""
+
+def test_clientsession_is_async_context_manager(depcheck):
     mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.streamable_http.streamablehttp_client")
-    cm = fn("http://localhost:0/never-connected")
+    for dunder in ("__aenter__", "__aexit__"):
+        assert callable(getattr(mod.ClientSession, dunder, None)), f"ClientSession.{dunder}"
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "kwargs"), SESSION_CALLS, ids=[call[0] for call in SESSION_CALLS]
+)
+def test_the_session_calls_client_py_makes_still_bind(depcheck, method, args, kwargs):
+    mod = depcheck.load(IMPORT_NAME)
+    session_method = getattr(mod.ClientSession, method, None)
+    assert inspect.iscoroutinefunction(session_method), f"ClientSession.{method} is not async"
     try:
-        assert hasattr(cm, "__aenter__") and hasattr(cm, "__aexit__"), (
-            "streamablehttp_client() no longer returns an async context manager"
-        )
-    finally:
-        aclose = getattr(cm, "aclose", None)
-        if callable(aclose):
-            gen = aclose()
-            close = getattr(gen, "close", None)
-            if callable(close):
-                close()
-
-
-def test_stdio_client_signature(depcheck):
-    """The stdio transport is invoked as `stdio_client(server_params)`; the
-    leading `server` parameter must remain (kept as a contract even though
-    the HTTP transport is the primary path)."""
-    mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.stdio.stdio_client")
-    assert callable(fn)
-    depcheck.assert_params(fn, ["server"])
-
-
-def test_sse_client_signature(depcheck):
-    """The SSE transport is invoked as `sse_client(url, headers=...)`."""
-    mod = depcheck.load(IMPORT_NAME)
-    fn = depcheck.resolve(mod, "client.sse.sse_client")
-    assert callable(fn)
-    depcheck.assert_params(fn, ["url", "headers"])
-
-
-# --- StdioServerParameters --------------------------------------------------
-
-
-def test_stdio_server_parameters_fields(depcheck):
-    """StdioServerParameters is the stdio-transport config model; the
-    command/args/env trio must remain modellable."""
-    mod = depcheck.load(IMPORT_NAME)
-    fields = set(mod.StdioServerParameters.model_fields)
-    for f in ("command", "args", "env"):
-        assert f in fields, f"StdioServerParameters lost field {f!r}"
-
-
-def test_stdio_server_parameters_constructible(depcheck):
-    """Constructing it with the kwargs a launcher would pass must succeed
-    and round-trip the values."""
-    mod = depcheck.load(IMPORT_NAME)
-    params = mod.StdioServerParameters(
-        command="python",
-        args=["-m", "server"],
-        env={"FOO": "bar"},
-    )
-    assert params.command == "python"
-    assert params.args == ["-m", "server"]
-    assert params.env == {"FOO": "bar"}
-
-
-# --- mcp.types: object field shapes the client reads ------------------------
-
-
-def test_tool_field_shape(depcheck):
-    """list_tool_specs() reads tool.name, tool.description, tool.inputSchema
-    and getattr(tool, 'outputSchema', None) off each Tool. Pin that shape
-    by constructing a Tool and reading those attributes."""
-    mod = depcheck.load(IMPORT_NAME)
-    types_mod = depcheck.resolve(mod, "types")
-    fields = set(types_mod.Tool.model_fields)
-    for f in ("name", "description", "inputSchema", "outputSchema"):
-        assert f in fields, f"Tool lost field {f!r}"
-
-    tool = types_mod.Tool(
-        name="echo",
-        description="Echo a message",
-        inputSchema={"type": "object", "properties": {}},
-    )
-    assert tool.name == "echo"
-    assert tool.description == "Echo a message"
-    assert tool.inputSchema == {"type": "object", "properties": {}}
-    # outputSchema is optional; client.py reads it defensively via getattr.
-    assert getattr(tool, "outputSchema", None) is None
+        inspect.signature(session_method).bind(None, *args, **kwargs)
+    except TypeError as error:
+        pytest.fail(f"client.py's ClientSession.{method}(...) call no longer binds: {error}")
 
 
 def test_list_tools_result_shape(depcheck):
-    """list_tool_specs() does `result = await session.list_tools()` then
-    `result.tools`. ListToolsResult must expose `.tools` as a list of
-    Tool, and survive model construction offline."""
+    """list_tool_specs() pages with `result.tools` and `result.nextCursor`, then reads each
+    tool's name, description and inputSchema."""
     mod = depcheck.load(IMPORT_NAME)
     types_mod = depcheck.resolve(mod, "types")
-    assert "tools" in types_mod.ListToolsResult.model_fields
-    tool = types_mod.Tool(name="t", inputSchema={"type": "object"})
+    tool = types_mod.Tool(name="t", description="d", inputSchema={"type": "object"})
     result = types_mod.ListToolsResult(tools=[tool])
-    assert isinstance(result.tools, list)
     assert result.tools[0].name == "t"
+    assert result.tools[0].description == "d"
+    assert result.tools[0].inputSchema == {"type": "object"}
+    assert result.nextCursor is None
 
 
 def test_call_tool_result_shape(depcheck):
-    """call_tool() reads result.isError and result.model_dump(mode='json')
-    then `result_dict['content']`. CallToolResult must expose `content`
-    and `isError`, dump to a dict with a 'content' key, and default
-    isError to a falsy value."""
+    """call_tool() reads result.isError and result.model_dump(mode='json')['content']."""
     mod = depcheck.load(IMPORT_NAME)
     types_mod = depcheck.resolve(mod, "types")
-    fields = set(types_mod.CallToolResult.model_fields)
-    for f in ("content", "isError"):
-        assert f in fields, f"CallToolResult lost field {f!r}"
-
     text = types_mod.TextContent(type="text", text="hello")
     result = types_mod.CallToolResult(content=[text])
-    # isError defaults falsy (client.py: `if result.isError: raise`).
     assert not result.isError
-    dumped = result.model_dump(mode="json")
-    assert isinstance(dumped, dict)
-    assert "content" in dumped
-    assert dumped["content"][0]["text"] == "hello"
+    assert result.model_dump(mode="json")["content"][0]["text"] == "hello"
 
 
 def test_call_tool_result_iserror_true_path(depcheck):
-    """The error branch is driven by isError being truthy when set."""
     mod = depcheck.load(IMPORT_NAME)
     types_mod = depcheck.resolve(mod, "types")
     text = types_mod.TextContent(type="text", text="boom")
-    result = types_mod.CallToolResult(content=[text], isError=True)
-    assert result.isError is True
-
-
-def test_text_content_shape(depcheck):
-    """TextContent carries type=='text' and a `text` string; it appears in
-    CallToolResult.content for textual tool output."""
-    mod = depcheck.load(IMPORT_NAME)
-    types_mod = depcheck.resolve(mod, "types")
-    fields = set(types_mod.TextContent.model_fields)
-    for f in ("type", "text"):
-        assert f in fields, f"TextContent lost field {f!r}"
-    tc = types_mod.TextContent(type="text", text="x")
-    assert tc.type == "text"
-    assert tc.text == "x"
-
-
-def test_image_content_shape(depcheck):
-    """ImageContent carries type=='image', base64 `data`, and `mimeType`;
-    it appears in tool output content alongside TextContent."""
-    mod = depcheck.load(IMPORT_NAME)
-    types_mod = depcheck.resolve(mod, "types")
-    fields = set(types_mod.ImageContent.model_fields)
-    for f in ("type", "data", "mimeType"):
-        assert f in fields, f"ImageContent lost field {f!r}"
-    ic = types_mod.ImageContent(type="image", data="aGk=", mimeType="image/png")
-    assert ic.type == "image"
-    assert ic.data == "aGk="
-    assert ic.mimeType == "image/png"
+    assert types_mod.CallToolResult(content=[text], isError=True).isError is True
 
 
 def test_list_resources_result_shape(depcheck):
-    """list_resources() does result.model_dump() then `['resources']`;
-    ListResourcesResult must expose a `resources` field that dumps to a
-    list."""
+    """list_resources() does result.model_dump() then `['resources']`."""
     mod = depcheck.load(IMPORT_NAME)
     types_mod = depcheck.resolve(mod, "types")
-    assert "resources" in types_mod.ListResourcesResult.model_fields
-    result = types_mod.ListResourcesResult(resources=[])
-    dumped = result.model_dump()
-    assert isinstance(dumped, dict)
-    assert dumped.get("resources") == []
-
-
-# --- OAuth models reused by oauth.py / configs.py ---------------------------
+    assert types_mod.ListResourcesResult(resources=[]).model_dump().get("resources") == []
 
 
 def test_oauth_client_metadata_subclassable_with_kwargs(depcheck):
-    """oauth.py subclasses OAuthClientMetadata and constructs it with
-    client_name/redirect_uris/grant_types/response_types and mutates
-    token_endpoint_auth_method/scope afterwards. Pin those fields and
-    that the model accepts those kwargs."""
+    """oauth.py subclasses OAuthClientMetadata, constructs it with client_name/redirect_uris/
+    grant_types/response_types and sets token_endpoint_auth_method/scope afterwards."""
     mod = depcheck.load(IMPORT_NAME)
     cls = depcheck.resolve(mod, "shared.auth.OAuthClientMetadata")
-    fields = set(cls.model_fields)
-    for f in (
-        "redirect_uris",
-        "grant_types",
-        "response_types",
-        "scope",
-        "client_name",
-        "token_endpoint_auth_method",
-    ):
-        assert f in fields, f"OAuthClientMetadata lost field {f!r}"
-
     meta = cls(
         client_name="Open WebUI",
         redirect_uris=["https://example.test/callback"],
@@ -391,7 +220,6 @@ def test_oauth_client_metadata_subclassable_with_kwargs(depcheck):
         response_types=["code"],
     )
     assert str(meta.redirect_uris[0]).startswith("https://example.test/callback")
-    # Fields the code reassigns post-construction must be settable.
     meta.scope = "a b"
     assert meta.scope == "a b"
     meta.token_endpoint_auth_method = "client_secret_post"
@@ -399,25 +227,8 @@ def test_oauth_client_metadata_subclassable_with_kwargs(depcheck):
 
 
 def test_oauth_client_information_full_fields(depcheck):
-    """oauth.py subclasses OAuthClientInformationFull and constructs it
-    with client_id/client_secret/redirect_uris/grant_types/response_types/
-    scope/token_endpoint_auth_method, and the codebase also instantiates it
-    via `OAuthClientInformationFull(**dict)` and `.model_validate(...)`.
-    Pin the credential fields and that it inherits the metadata fields."""
     mod = depcheck.load(IMPORT_NAME)
     cls = depcheck.resolve(mod, "shared.auth.OAuthClientInformationFull")
-    fields = set(cls.model_fields)
-    for f in (
-        "client_id",
-        "client_secret",
-        "redirect_uris",
-        "grant_types",
-        "response_types",
-        "scope",
-        "token_endpoint_auth_method",
-    ):
-        assert f in fields, f"OAuthClientInformationFull lost field {f!r}"
-
     info = cls(
         client_id="abc",
         client_secret="shh",
@@ -430,37 +241,19 @@ def test_oauth_client_information_full_fields(depcheck):
 
 
 def test_oauth_client_information_full_model_validate(depcheck):
-    """configs.py / oauth.py call OAuthClientInformationFull.model_validate(...)
-    on dynamic-registration responses and construct it via **dict; verify
-    both round-trip the client_id."""
+    """configs.py and oauth.py validate dynamic-registration answers and build it from a dict."""
     mod = depcheck.load(IMPORT_NAME)
     cls = depcheck.resolve(mod, "shared.auth.OAuthClientInformationFull")
-    assert callable(cls.model_validate)
-    payload = {
-        "client_id": "xyz",
-        "redirect_uris": ["https://example.test/cb"],
-    }
-    validated = cls.model_validate(payload)
-    assert validated.client_id == "xyz"
-    via_kwargs = cls(**payload)
-    assert via_kwargs.client_id == "xyz"
+    payload = {"client_id": "xyz", "redirect_uris": ["https://example.test/cb"]}
+    assert cls.model_validate(payload).client_id == "xyz"
+    assert cls(**payload).client_id == "xyz"
 
 
 def test_oauth_metadata_fields_and_validate(depcheck):
-    """oauth.py / configs.py call OAuthMetadata.model_validate(server_json)
-    and then read .scopes_supported and .token_endpoint_auth_methods_supported.
-    Pin those two fields (plus the required `issuer`) and model_validate."""
+    """OAuthMetadata.model_validate(server_json), then .scopes_supported and
+    .token_endpoint_auth_methods_supported are read."""
     mod = depcheck.load(IMPORT_NAME)
     cls = depcheck.resolve(mod, "shared.auth.OAuthMetadata")
-    fields = set(cls.model_fields)
-    for f in (
-        "issuer",
-        "scopes_supported",
-        "token_endpoint_auth_methods_supported",
-    ):
-        assert f in fields, f"OAuthMetadata lost field {f!r}"
-
-    assert callable(cls.model_validate)
     meta = cls.model_validate(
         {
             "issuer": "https://issuer.test",
@@ -475,31 +268,6 @@ def test_oauth_metadata_fields_and_validate(depcheck):
 
 
 def test_oauth_token_fields(depcheck):
-    """OAuthToken is imported by client.py for the token-storage flow; pin
-    the standard token fields it carries."""
     mod = depcheck.load(IMPORT_NAME)
     cls = depcheck.resolve(mod, "shared.auth.OAuthToken")
-    fields = set(cls.model_fields)
-    for f in ("access_token", "token_type"):
-        assert f in fields, f"OAuthToken lost field {f!r}"
-    tok = cls(access_token="tok", token_type="Bearer")
-    assert tok.access_token == "tok"
-
-
-def test_token_storage_protocol_methods(depcheck):
-    """client.py imports TokenStorage as the auth provider's persistence
-    contract. Whether ABC or Protocol, it must expose the four async
-    accessors the SDK's OAuth provider drives."""
-    mod = depcheck.load(IMPORT_NAME)
-    cls = depcheck.resolve(mod, "client.auth.TokenStorage")
-    names = set(dir(cls))
-    for m in ("get_tokens", "set_tokens", "get_client_info", "set_client_info"):
-        assert m in names, f"TokenStorage lost method {m!r}"
-
-
-def test_oauth_client_provider_exists(depcheck):
-    """OAuthClientProvider is imported by client.py as the httpx auth flow
-    for authenticated MCP servers; it must remain a class at this path."""
-    mod = depcheck.load(IMPORT_NAME)
-    cls = depcheck.resolve(mod, "client.auth.OAuthClientProvider")
-    assert inspect.isclass(cls)
+    assert cls(access_token="tok", token_type="Bearer").access_token == "tok"
