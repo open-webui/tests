@@ -39,7 +39,8 @@ from harness import upstream as reply
 from harness.chat import ask
 from harness.instance import LaunchedInstance
 from harness.plugins import installed_function
-from harness.raw_provider import OPENAI_CONNECTIONS, RAW_MODEL_ID, chunk, sse
+from harness.raw_provider import RAW_MODEL_ID, chunk, sse
+from harness.second_provider import OPENAI_CONFIG
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -199,7 +200,7 @@ def test_a_non_string_content_delta_keeps_the_whole_reply(user, upstream, pieces
 
 @pytest.fixture
 def raw(admin, preserve, listener) -> raw_provider.RawProvider:
-    preserve(OPENAI_CONNECTIONS)
+    preserve(OPENAI_CONFIG)
     return raw_provider.connect(admin, listener)
 
 

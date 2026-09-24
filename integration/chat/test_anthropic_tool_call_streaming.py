@@ -23,7 +23,8 @@ import httpx
 import pytest
 
 from harness import raw_provider
-from harness.raw_provider import OPENAI_CONNECTIONS, RAW_MODEL_ID, chunk, sse
+from harness.raw_provider import RAW_MODEL_ID, chunk, sse
+from harness.second_provider import OPENAI_CONFIG
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -32,7 +33,7 @@ FLAT_ARGUMENTS = '{"query": "quarterly revenue", "limit": 25, "verbose": true}'
 
 @pytest.fixture
 def raw(admin, preserve, listener) -> raw_provider.RawProvider:
-    preserve(OPENAI_CONNECTIONS)
+    preserve(OPENAI_CONFIG)
     return raw_provider.connect(admin, listener)
 
 
