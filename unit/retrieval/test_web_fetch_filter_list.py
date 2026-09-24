@@ -1,17 +1,17 @@
-"""Regression: a malformed WEB_FETCH_FILTER_LIST entry must not block every fetch.
+"""Regression: malformed `WEB_FETCH_FILTER_LIST` entries must not turn into rules.
 
-open-webui 0.11.0 fix `18719fef9` (#26910, issue #26908): `get_allow_block_lists`
-appended each entry verbatim. Docker Compose list syntax passes surrounding
-quotes through literally, so `- '"example.com"'` produced the allow entry
-`"example.com"` (quotes included). An allow list is all-or-nothing: once it is
-non-empty every host that doesn't match is refused, so one stray quote silently
-blocked every web address. An empty or whitespace-only entry did the same thing
-by producing an allow entry of `''`.
+open-webui 0.11.0 fix `18719fef9` (#26910, issue #26908): `get_allow_block_lists` appended each
+entry verbatim. Docker Compose list syntax passes surrounding quotes through, so a quoted entry
+matched no host, and an empty or whitespace-only entry became the allow entry `''`. A non-empty
+allow list refuses every host it does not match, so either one blocked every web address. The
+fix strips quotes and whitespace, strips again after a leading `!` and drops empty entries.
 
-The fix strips surrounding quotes and whitespace, strips again after removing a
-leading `!`, and drops entries that end up empty.
+The reported case, a quoted allow entry, is driven through a booted instance in
+integration/retrieval/test_web_fetch_filter_list.py. The parsing cases below would each need a
+boot of their own there, so they call the parser the fetch guard uses.
 
-Discriminates: passes on v0.11.0, fails on v0.10.2 (entries kept verbatim).
+Discriminates: passes on dev bbfa876af; the pre-fix parser (entries only stripped of whitespace,
+empty ones kept) fails the quoted and empty-entry cases, the other two pass on both.
 """
 
 import pytest
@@ -19,44 +19,30 @@ import pytest
 pytestmark = pytest.mark.regression
 
 
-def test_quoted_allow_entry_is_unquoted(misc_module):
-    """The reported case: Compose hands the entry over with its quotes."""
-    allow, block = misc_module.get_allow_block_lists(['"example.com"'])
-    assert allow == ["example.com"], (
-        "a quoted entry stayed quoted, so it matches no host, and with a non-empty "
-        "allow list that blocks every web address (#26908)"
-    )
-    assert block == []
-
-
-def test_quoted_block_entry_is_unquoted(misc_module):
+def test_a_quoted_block_entry_is_unquoted(misc_module):
     """`!` marks a block entry; the quotes sit outside it."""
-    allow, block = misc_module.get_allow_block_lists(["'!evil.com'"])
-    assert block == ["evil.com"]
-    assert allow == []
+    assert misc_module.get_allow_block_lists(filter_list=["'!evil.com'"]) == ([], ["evil.com"])
 
 
 def test_quotes_inside_the_bang_are_stripped_too(misc_module):
-    """`!"evil.com"`: quoting applied after the marker must strip as well."""
-    _, block = misc_module.get_allow_block_lists(['!"evil.com"'])
-    assert block == ["evil.com"]
+    assert misc_module.get_allow_block_lists(filter_list=['!"evil.com"']) == ([], ["evil.com"])
 
 
 def test_empty_entries_are_dropped_not_turned_into_an_allow_rule(misc_module):
-    """A blank entry must not create an allow list out of nothing; that is the
-    same total-blackout failure as the quoting bug."""
-    allow, block = misc_module.get_allow_block_lists(["", "   ", '""', "!", '!""'])
-    assert allow == []
-    assert block == []
+    """A blank entry would make an allow list out of nothing: the same total blackout."""
+    entries = ["", "   ", '""', "!", '!""']
+
+    assert misc_module.get_allow_block_lists(filter_list=entries) == ([], [])
 
 
 def test_wellformed_entries_are_unchanged(misc_module):
-    """Sanity: the ordinary configuration still parses the same way."""
-    allow, block = misc_module.get_allow_block_lists(["example.com", "!evil.com", " spaced.com "])
-    assert allow == ["example.com", "spaced.com"]
-    assert block == ["evil.com"]
+    entries = ["example.com", "!evil.com", " spaced.com "]
+
+    allow, block = misc_module.get_allow_block_lists(filter_list=entries)
+
+    assert (allow, block) == (["example.com", "spaced.com"], ["evil.com"])
 
 
-def test_none_and_empty_list_yield_no_rules(misc_module):
-    assert misc_module.get_allow_block_lists(None) == ([], [])
-    assert misc_module.get_allow_block_lists([]) == ([], [])
+@pytest.mark.parametrize("entries", [None, []])
+def test_no_entries_yield_no_rules(misc_module, entries):
+    assert misc_module.get_allow_block_lists(filter_list=entries) == ([], [])

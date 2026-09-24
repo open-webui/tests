@@ -1,13 +1,17 @@
 """Guard: the declared route table must not contain shadowed or malformed paths.
 
-FastAPI matches routes in declaration order and accepts a second registration
-of a path it already has, so a copy-pasted decorator makes the later endpoint
-unreachable without a warning at startup or an error in the logs. The same
-goes for a path that forgets its leading slash: it still registers, it just
-glues onto the router prefix as a different URL than the one written.
+FastAPI matches routes in declaration order and accepts a second registration of a method and
+path it already has, so a copy-pasted decorator makes the later endpoint unreachable without a
+warning at startup. A path without its leading slash still registers, glued onto the router
+prefix as a URL nobody wrote, and a path naming one parameter twice binds only one of them.
 
-Read with ast, so this runs over all 31 routers in well under a second and
-needs none of the backend's dependencies.
+The live OpenAPI schema cannot see the main case: `get_openapi` merges a repeated method and
+path into one operation. So this reads every router and `main.py` with `ast`, which also needs
+none of the backend's dependencies.
+
+Discriminates: passes on dev bbfa876af; a second `@router.get` for a path its module already
+declares, a path without a leading slash or a path repeating a parameter name each fail their
+test.
 """
 
 from __future__ import annotations
@@ -19,67 +23,59 @@ from pathlib import Path
 
 import pytest
 
-ROUTERS_DIR = Path("open_webui") / "routers"
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 PATH_PARAMETER = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
 
 
-def _routes(source: str) -> list[tuple[str, str, str]]:
-    """Every (method, path, handler) a module declares with @router.<method>."""
-    declared = []
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        for decorator in node.decorator_list:
-            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
-                continue
-            if decorator.func.attr not in HTTP_METHODS:
-                continue
-            if not decorator.args or not isinstance(decorator.args[0], ast.Constant):
-                continue
-            declared.append((decorator.func.attr, decorator.args[0].value, node.name))
-    return declared
+def declared_path(decorator: ast.expr) -> str | None:
+    """The path of `@<router>.<method>(path, ...)` or `(path=...)`, else None."""
+    if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+        return None
+    if decorator.func.attr not in HTTP_METHODS:
+        return None
+    arguments = [*decorator.args[:1], *(k.value for k in decorator.keywords if k.arg == "path")]
+    constants = [argument.value for argument in arguments if isinstance(argument, ast.Constant)]
+    return constants[0] if constants else None
+
+
+def routes_of(source: str) -> list[tuple[str, str, str]]:
+    """Every (method, path, handler) a module declares."""
+    return [
+        (decorator.func.attr, path, node.name)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for decorator in node.decorator_list
+        if (path := declared_path(decorator)) is not None
+    ]
 
 
 @pytest.fixture(scope="module")
 def route_table(open_webui_backend: Path) -> dict[str, list[tuple[str, str, str]]]:
-    directory = open_webui_backend / ROUTERS_DIR
-    if not directory.is_dir():
-        pytest.skip(f"no routers directory at {directory}")
-    table = {
-        path.name: _routes(path.read_text(encoding="utf-8"))
-        for path in sorted(directory.glob("*.py"))
-        if path.stem != "__init__"
-    }
-    assert any(routes for routes in table.values()), f"no routes found under {directory}"
-    return table
+    package = open_webui_backend / "open_webui"
+    modules = [*sorted((package / "routers").glob("*.py")), package / "main.py"]
+    missing = [module for module in modules if not module.is_file()]
+    assert len(modules) > 2 and not missing, f"retarget this guard: no routers under {package}"
+    return {module.name: routes_of(module.read_text(encoding="utf-8")) for module in modules}
 
 
-def test_the_route_table_is_not_empty(route_table: dict) -> None:
-    """A guard on the guard: a decorator style this parser cannot read would
-    silently empty the table and pass everything below."""
+def test_the_route_table_is_not_empty(route_table):
+    """A decorator style this parser cannot read would empty the table and pass everything."""
     total = sum(len(routes) for routes in route_table.values())
-    assert total > 100, f"only {total} routes parsed across {len(route_table)} routers"
+    assert total > 300, f"only {total} routes parsed across {len(route_table)} modules"
+    assert route_table["main.py"], "no routes parsed from main.py"
 
 
-def test_no_route_is_declared_twice_in_one_router(route_table: dict) -> None:
-    """The second registration of a method and path never runs."""
+def test_no_route_is_declared_twice_in_one_module(route_table):
     shadowed = {}
     for module, routes in route_table.items():
         counts = Counter((method, path) for method, path, _ in routes)
-        collisions = {key for key, count in counts.items() if count > 1}
-        if collisions:
-            shadowed[module] = sorted(
-                (method, path, handler)
-                for method, path, handler in routes
-                if (method, path) in collisions
-            )
+        repeated = sorted(route for route in routes if counts[route[:2]] > 1)
+        if repeated:
+            shadowed[module] = repeated
     assert not shadowed, f"routes registered more than once: {shadowed}"
 
 
-def test_every_route_path_starts_with_a_slash(route_table: dict) -> None:
-    """Without it the path is concatenated straight onto the router prefix and
-    the endpoint answers on a URL nobody meant to publish."""
+def test_every_route_path_starts_with_a_slash(route_table):
     malformed = [
         (module, method, path)
         for module, routes in route_table.items()
@@ -89,13 +85,11 @@ def test_every_route_path_starts_with_a_slash(route_table: dict) -> None:
     assert not malformed, f"route paths with no leading slash: {malformed}"
 
 
-def test_no_path_repeats_a_parameter_name(route_table: dict) -> None:
-    """FastAPI cannot bind two path segments to one argument; the second value
-    silently wins."""
-    repeated = []
-    for module, routes in route_table.items():
-        for method, path, handler in routes:
-            names = [name.strip() for name in PATH_PARAMETER.findall(path)]
-            if len(names) != len(set(names)):
-                repeated.append((module, method, path, handler))
+def test_no_path_repeats_a_parameter_name(route_table):
+    repeated = [
+        (module, method, path)
+        for module, routes in route_table.items()
+        for method, path, _ in routes
+        if len(names := PATH_PARAMETER.findall(path)) != len(set(names))
+    ]
     assert not repeated, f"route paths using one parameter name twice: {repeated}"
