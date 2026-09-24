@@ -1,280 +1,178 @@
-"""Regression: the web fetch address checks must run on every outgoing request.
+"""Regression: the web fetch filter list judges every address a fetched host resolves to.
 
-open-webui 0.11.1 fix `e3e4bd87d` (#27823) closes three gaps in the server-side
-fetch guards.
+open-webui 0.11.1 fix `e3e4bd87d` (#27823). The addresses a host resolved to were never judged
+against the filter list at the connection layer, so a DNS answer pointing at a listed range was
+dialled; `_SSRFSafeConnector._resolve_host` now checks every answer, including the IPv4 address an
+IPv6 answer carries. The same fix made entries naming an address or a range match by containment.
 
-1. A filter entry written as an address RANGE matched nothing at all, silently.
-   `_host_matches_pattern` compared DNS labels, so `10.0.0.0/8` could never equal
-   or suffix-match `10.1.2.3`. An operator who blocked their internal range got no
-   blocking, and an operator who allow-listed one got every fetch rejected. Entries
-   that parse as an address or a CIDR range are now matched by containment, which
-   also makes an address entry match any spelling of itself (`fd00:ec2::254`
-   matches `fd00:ec2:0:0:0:0:0:254`).
+The range entries and the per-request hooks are pinned over HTTP in
+integration/security/test_fetch_address_checks_every_request.py. What stays here cannot be reached
+there: no local name resolves to a listed address, so the DNS answers come from a scripted
+resolver, and the matching rules of `is_host_allowed` are a pure function.
 
-2. The filter list was consulted once, in `validate_url`, on the originally
-   submitted URL. A proxied request presents the proxy's host at the connection
-   layer and a pooled connection skips resolution entirely, so redirect hops were
-   fetched without the list ever being applied. It now runs as a per-request hook
-   on both transports: `_SSRFSafeConnector.connect` for aiohttp and
-   `_SSRFSafeAdapter.send` for requests.
-
-3. The addresses a host resolved to were never judged at the connection layer at
-   all. `_SSRFSafeConnector._resolve_host` now runs `_assert_addresses_allowed`
-   on every resolution result, and `_embedded_ipv4` unwraps the IPv4 address an
-   IPv6 answer can carry (mapped, v4-compatible, 6to4, teredo, NAT64), so a
-   blocked IPv4 range cannot be reached by spelling the address in IPv6.
-
-Discriminates: passes on v0.11.1, fails on v0.11.0.
-
-No network is touched: the transport tests replace the base-class `send`/`connect`
-with a recorder, so a checkout without the hook records the call instead of
-dialling out.
+Discriminates: passes on dev `bbfa876af`; with `_SSRFSafeConnector._resolve_host` removed the
+listed answers are dialled, and with the containment match removed from `_host_matches_pattern`
+the range and spelling rows fail.
 """
 
 from __future__ import annotations
 
-import asyncio
-from types import SimpleNamespace
+import socket
 
 import pytest
-import requests
-import requests.adapters
 
-pytest.importorskip("aiohttp")
+from harness.listener import listening
 
-import aiohttp
+aiohttp = pytest.importorskip("aiohttp")
+
+from aiohttp.abc import AbstractResolver  # noqa: E402
 
 pytestmark = pytest.mark.regression
 
-
-# --- narrow: a filter entry naming a range or an address matches by containment ---
-
-
-@pytest.mark.parametrize(
-    "host, entry",
-    [
-        ("10.1.2.3", "!10.0.0.0/8"),
-        ("192.168.7.9", "!192.168.0.0/16"),
-        ("169.254.169.254", "!169.254.0.0/16"),
-        ("fd00:ec2::254", "!fd00::/8"),
-    ],
-)
-def test_block_entry_written_as_a_range_matches_addresses_inside_it(misc_module, host, entry):
-    assert misc_module.is_host_allowed(host, [entry]) is False, (
-        f"{host!r} was allowed through the block entry {entry!r}; a range entry matched "
-        "nothing at all, so the operator's block silently did nothing (#27823)"
-    )
+LISTED_ADDRESS = "127.0.0.2"
 
 
-@pytest.mark.parametrize(
-    "host, entry",
-    [
-        ("10.1.2.3", "10.0.0.0/8"),
-        ("203.0.113.7", "203.0.113.0/24"),
-    ],
-)
-def test_allow_entry_written_as_a_range_admits_addresses_inside_it(misc_module, host, entry):
-    """The same bug's other face: a range allowlist rejected every fetch."""
-    assert misc_module.is_host_allowed(host, [entry]) is True, (
-        f"{host!r} was rejected by the allow entry {entry!r}; a range entry matched nothing, "
-        "so a range allowlist blocked everything (#27823)"
-    )
+class ScriptedResolver(AbstractResolver):
+    """Answers every lookup with one address, the way a rebinding DNS server would."""
+
+    answer = ""
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def resolve(self, host, port=0, family=socket.AF_INET):
+        answer_family = socket.AF_INET6 if ":" in self.answer else socket.AF_INET
+        return [
+            {
+                "hostname": host,
+                "host": self.answer,
+                "port": port,
+                "family": answer_family,
+                "proto": 0,
+                "flags": socket.AI_NUMERICHOST,
+            }
+        ]
+
+    async def close(self) -> None:
+        pass
 
 
-@pytest.mark.parametrize(
-    "host",
-    [
-        "fd00:ec2:0:0:0:0:0:254",
-        "FD00:EC2::254",
-        "fd00:0ec2::0254",
-    ],
-)
-def test_address_entry_matches_any_spelling_of_that_address(misc_module, host):
-    """`!fd00:ec2::254` is one address, however the request happens to spell it."""
-    assert misc_module.is_host_allowed(host, ["!fd00:ec2::254"]) is False, (
-        f"{host!r} was allowed; an address entry was compared as text, so a different "
-        "spelling of the same address walked past it (#27823)"
-    )
-
-
-def test_search_results_are_filtered_against_a_range_entry(web_search_main_module, monkeypatch):
-    """End to end through `get_filtered_results`: a range entry has to trigger the
-    address lookup *and* then match, and before the fix it did neither."""
+@pytest.fixture
+def dns_answers(retrieval_web_utils_module, monkeypatch):
+    """Point every lookup the fetch session makes at the scripted resolver."""
     monkeypatch.setattr(
-        web_search_main_module, "resolve_hostname", lambda host: (["10.1.2.3"], [])
+        retrieval_web_utils_module, "WEB_FETCH_FILTER_LIST", [f"!{LISTED_ADDRESS}/32"]
     )
-
-    results = web_search_main_module.get_filtered_results(
-        [{"link": "https://intranet.example.com/report"}], ["!10.0.0.0/8"]
-    )
-
-    assert results == [], (
-        "a result resolving to 10.1.2.3 survived the block entry !10.0.0.0/8 (#27823)"
-    )
+    # Loopback must pass the non-global rule, so only the filter list can refuse it.
+    monkeypatch.setattr(retrieval_web_utils_module, "ENABLE_LOCAL_WEB_FETCH", True)
+    monkeypatch.setattr(aiohttp.connector, "DefaultResolver", ScriptedResolver)
+    monkeypatch.setattr(ScriptedResolver, "answer", "")
+    return ScriptedResolver
 
 
-# --- narrow: the filter list runs per request on both transports ---
+async def _fetch_status(utils, url: str) -> int:
+    async with utils.get_ssrf_safe_session() as session:
+        async with session.get(url) as response:
+            return response.status
 
 
-def _prepared(url: str) -> requests.PreparedRequest:
-    return requests.Request("GET", url).prepare()
-
-
-def test_requests_adapter_applies_the_filter_list_to_every_request(
-    retrieval_web_utils_module, monkeypatch
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [LISTED_ADDRESS, f"::ffff:{LISTED_ADDRESS}"])
+async def test_a_dns_answer_inside_a_listed_range_is_never_dialled(
+    retrieval_web_utils_module, dns_answers, answer
 ):
-    """The requests transport must judge the request destination itself. Before the
-    fix nothing was checked here, so a redirect hop reached a filter-listed host."""
-    utils = retrieval_web_utils_module
-    monkeypatch.setattr(utils, "WEB_FETCH_FILTER_LIST", ["!blocked.example"])
-
-    sent = []
-
-    def _recording_send(self, request, *args, **kwargs):
-        sent.append(request.url)
-        return "response-sentinel"
-
-    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", _recording_send)
-    adapter = utils._SSRFSafeAdapter()
-
-    with pytest.raises(ValueError):
-        adapter.send(_prepared("http://blocked.example/page"))
-    assert sent == [], (
-        "the request to blocked.example was handed to the transport; the filter list "
-        "only ran on the originally submitted URL (#27823)"
-    )
-
-    # Control: an unlisted destination still goes out, so the hook is not blanket-refusing.
-    assert adapter.send(_prepared("http://allowed.example/page")) == "response-sentinel"
-    assert sent == ["http://allowed.example/page"]
-
-
-def test_aiohttp_connector_applies_the_filter_list_to_every_request(
-    retrieval_web_utils_module, monkeypatch
-):
-    """Same check on the aiohttp side, driven through the connector the SSRF-safe
-    session actually installs."""
-    utils = retrieval_web_utils_module
-    monkeypatch.setattr(utils, "WEB_FETCH_FILTER_LIST", ["!blocked.example"])
-
-    connected = []
-
-    async def _recording_connect(self, req, traces, timeout):
-        connected.append(req.url.host)
-        return "connection-sentinel"
-
-    monkeypatch.setattr(aiohttp.TCPConnector, "connect", _recording_connect)
-
-    def _request_to(host: str):
-        return SimpleNamespace(url=SimpleNamespace(host=host))
-
-    async def _drive():
-        async with utils.get_ssrf_safe_session() as session:
-            connector = session.connector
-
-            with pytest.raises(ValueError):
-                await connector.connect(_request_to("blocked.example"), [], None)
-            assert connected == [], (
-                "the connection to blocked.example was opened; the filter list never "
-                "reached the connection layer, so redirects and pooled connections "
-                "bypassed it (#27823)"
+    dns_answers.answer = answer
+    with listening(host=LISTED_ADDRESS) as listed_service:
+        with pytest.raises(ValueError):
+            await _fetch_status(
+                retrieval_web_utils_module, f"http://rebind.example:{listed_service.port}/"
             )
+        reached = list(listed_service.received)
 
-            # Control: an unlisted destination still connects.
-            result = await connector.connect(_request_to("allowed.example"), [], None)
-            assert result == "connection-sentinel"
-            assert connected == ["allowed.example"]
-
-    asyncio.run(_drive())
+    assert reached == [], (
+        f"rebind.example answered {answer} and the fetch dialled it although "
+        f"`!{LISTED_ADDRESS}/32` lists it; resolved addresses were never judged (#27823)"
+    )
 
 
-@pytest.mark.parametrize(
-    "resolved",
-    ["::ffff:10.1.2.3", "64:ff9b::10.1.2.3"],
-)
-def test_aiohttp_connector_judges_the_addresses_a_host_resolved_to(
-    retrieval_web_utils_module, monkeypatch, resolved
+@pytest.mark.asyncio
+async def test_a_dns_answer_outside_the_listed_range_still_connects(
+    retrieval_web_utils_module, dns_answers
 ):
-    """An IPv6 answer can carry a blocked IPv4 address inside it. Before the fix the
-    connector never looked at resolution results, so the blocked range was reachable."""
-    utils = retrieval_web_utils_module
-    monkeypatch.setattr(utils, "WEB_FETCH_FILTER_LIST", ["!10.0.0.0/8"])
-    # Isolate the filter list from the non-global check, which would fire on its own.
-    monkeypatch.setattr(utils, "ENABLE_LOCAL_WEB_FETCH", True)
+    dns_answers.answer = "127.0.0.1"
+    with listening() as service:
+        status = await _fetch_status(
+            retrieval_web_utils_module, f"http://cdn.example:{service.port}/"
+        )
+        reached = list(service.received)
 
-    answer = []
-
-    async def _recording_resolve(self, host, port, traces=None):
-        return [{"host": address, "port": port} for address in answer]
-
-    monkeypatch.setattr(aiohttp.TCPConnector, "_resolve_host", _recording_resolve)
-
-    async def _drive():
-        async with utils.get_ssrf_safe_session() as session:
-            connector = session.connector
-
-            answer[:] = [resolved]
-            with pytest.raises(ValueError):
-                await connector._resolve_host("rebind.example", 443)
-
-            # Control: an address outside the blocked range still resolves.
-            answer[:] = ["2606:4700:4700::1111"]
-            results = await connector._resolve_host("cdn.example", 443)
-            assert [entry["host"] for entry in results] == ["2606:4700:4700::1111"]
-
-    asyncio.run(_drive())
-
-
-# --- broad: the surrounding filter-list semantics ---
+    assert status == 404
+    assert len(reached) == 1
 
 
 @pytest.mark.parametrize(
-    "host, filter_list, expected",
+    "host, filter_list, allowed",
     [
+        # An allow entry written as a range admits the addresses inside it.
+        ("10.1.2.3", ["10.0.0.0/8"], True),
+        ("203.0.113.7", ["203.0.113.0/24"], True),
+        # An address entry matches any spelling of that address.
+        ("fd00:ec2:0:0:0:0:0:254", ["!fd00:ec2::254"], False),
+        ("FD00:EC2::254", ["!fd00:ec2::254"], False),
+        ("fd00:0ec2::0254", ["!fd00:ec2::254"], False),
+        ("fd00:ec2::254", ["!fd00::/8"], False),
+        # A hostname is never inside an address range.
+        ("corp.com", ["!10.0.0.0/8"], True),
         # Hostname entries keep matching on DNS label boundaries.
         ("api.corp.com", ["!corp.com"], False),
         ("corp.com", ["!corp.com"], False),
         ("evilcorp.com", ["!corp.com"], True),
         ("api.corp.com", ["corp.com"], True),
         ("other.example", ["corp.com"], False),
-        # An address entry still matches itself spelled the same way.
+        # An address entry still matches itself spelled the same way, and nothing else.
         ("169.254.169.254", ["!169.254.169.254"], False),
         ("169.254.169.253", ["!169.254.169.254"], True),
         # A block entry beats an allow entry for the same host.
         ("api.corp.com", ["corp.com", "!api.corp.com"], False),
+        # Any of the supplied hosts, a name with its addresses, can trigger a block.
+        (["corp.com", "10.1.2.3"], ["!corp.com"], False),
         # No filter list configured means no filtering.
         ("anything.example", [], True),
         ("anything.example", None, True),
     ],
 )
-def test_filter_list_semantics(misc_module, host, filter_list, expected):
-    assert misc_module.is_host_allowed(host, filter_list) is expected
+def test_filter_list_matching_rules(misc_module, host, filter_list, allowed):
+    assert misc_module.is_host_allowed(host, filter_list) is allowed, (
+        f"is_host_allowed({host!r}, {filter_list!r}) should be {allowed} (#27823)"
+    )
 
 
-def test_a_hostname_is_never_inside_an_address_range(misc_module):
-    """A range entry must not swallow hosts that merely fail to parse as addresses."""
-    assert misc_module.is_host_allowed("corp.com", ["!10.0.0.0/8"]) is True
+def test_search_results_are_filtered_against_a_range_entry(web_search_main_module, monkeypatch):
+    """A range entry has to trigger the address lookup and then match the answer."""
 
+    def resolve_to_internal(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 0))]
 
-def test_any_of_the_supplied_hosts_can_trigger_a_block(misc_module):
-    """Callers pass a hostname together with the addresses it resolved to."""
-    assert misc_module.is_host_allowed(["corp.com", "10.1.2.3"], ["!corp.com"]) is False
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_to_internal)
+
+    results = web_search_main_module.get_filtered_results(
+        [{"link": "https://intranet.example.com/report"}], ["!10.0.0.0/8"]
+    )
+
+    assert results == [], "a result resolving to 10.1.2.3 survived `!10.0.0.0/8` (#27823)"
 
 
 def test_search_results_pass_through_an_unrelated_filter_list(web_search_main_module):
     kept = {"link": "https://good.example/a"}
     dropped = {"link": "https://blocked.example/b"}
-    assert web_search_main_module.get_filtered_results(
-        [kept, dropped], ["!blocked.example"]
-    ) == [kept]
+    assert web_search_main_module.get_filtered_results([kept, dropped], ["!blocked.example"]) == [
+        kept
+    ]
 
 
 def test_search_results_are_untouched_without_a_filter_list(web_search_main_module):
     results = [{"link": "https://good.example/a"}]
     assert web_search_main_module.get_filtered_results(results, []) is results
-
-
-# --- nearby: validate_url's other guards ---
 
 
 @pytest.mark.parametrize("url", ["ftp://example.com/x", "file:///etc/passwd", "not a url", ""])
