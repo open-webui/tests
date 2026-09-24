@@ -444,9 +444,9 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
         if errored:
             tr.write_sep("-", "skeptic note", yellow=True)
             tr.write_line(
-                f"{len(errored)} setup error(s) and no failures — usually a missing "
-                "service/instance (e.g. e2e needs a running Open WebUI), not a code bug. "
-                "Verify the environment before treating these as real."
+                f"{len(errored)} setup error(s) and no failures. A scratch instance that did not "
+                "boot shows its log above: an import error or a failed migration there is a real "
+                "regression; a missing checkout, build or browser is the environment."
             )
         return
 
@@ -459,6 +459,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
         tr.write_line(f"  [ ] {rep.nodeid}")
     if errored:
         tr.write_line(
-            f"  (+ {len(errored)} setup error(s) — usually a missing service/instance, not bugs.)"
+            f"  (+ {len(errored)} setup error(s): read the boot log before blaming the setup.)"
         )
     tr.write_sep("=", "trace the real path; default to doubt", red=True, bold=True)
