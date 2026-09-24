@@ -75,8 +75,9 @@ def wait_for_reply(client: httpx.Client, turn: ChatTurn, timeout: float = 60.0) 
     deadline = time.monotonic() + timeout
     message: dict = {}
     while time.monotonic() < deadline:
-        chat = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
-        message = chat["history"]["messages"].get(turn.assistant_message_id, {})
+        stored = client.get(f"/api/v1/chats/{turn.chat_id}")
+        stored.raise_for_status()
+        message = stored.json()["chat"]["history"]["messages"].get(turn.assistant_message_id, {})
         if message.get("done"):
             return message
         time.sleep(0.1)

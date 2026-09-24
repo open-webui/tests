@@ -14,8 +14,6 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterator
 
-from harness.instance import free_port
-
 
 @dataclass
 class ReceivedRequest:
@@ -43,7 +41,6 @@ def text_answer(text: str, content_type: str = "text/html", status: int = 200) -
 @dataclass
 class Listener:
     base_url: str
-    host: str
     port: int
     routes: dict[tuple[str, str], Handler] = field(default_factory=dict)
     received: list[ReceivedRequest] = field(default_factory=list)
@@ -61,9 +58,6 @@ class Listener:
 
 @contextmanager
 def listening(host: str = "127.0.0.1") -> Iterator[Listener]:
-    port = free_port()
-    listener = Listener(base_url=f"http://{host}:{port}", host=host, port=port)
-
     class RequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -105,7 +99,9 @@ def listening(host: str = "127.0.0.1") -> Iterator[Listener]:
 
         do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = _serve
 
-    server = ThreadingHTTPServer((host, port), RequestHandler)
+    server = ThreadingHTTPServer((host, 0), RequestHandler)
+    port = server.server_port
+    listener = Listener(base_url=f"http://{host}:{port}", port=port)
     threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
     try:
         yield listener

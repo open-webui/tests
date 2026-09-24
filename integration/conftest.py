@@ -36,7 +36,7 @@ def fake_redis() -> Generator[FakeRedis, None, None]:
 def degraded_instance(
     mock_upstream: MockUpstream, fake_redis: FakeRedis
 ) -> Generator[LaunchedInstance, None, None]:
-    """Same, on the fake Redis and a vector DB that refuses every connection."""
+    """A scratch instance on the fake Redis and a vector DB that refuses every connection."""
     yield from launch(
         mock_upstream,
         {"REDIS_URL": fake_redis.url, "VECTOR_DB": "qdrant", "QDRANT_URI": "http://127.0.0.1:9"},

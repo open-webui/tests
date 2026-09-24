@@ -95,12 +95,11 @@ class MockUpstream:
         return None
 
 
-def serve(upstream_port: int) -> tuple[MockUpstream, Callable[[], None]]:
+def serve() -> tuple[MockUpstream, Callable[[], None]]:
     """Start the provider on a daemon thread; returns it with its shutdown function."""
-    upstream = MockUpstream(
-        base_url=f"http://127.0.0.1:{upstream_port}/v1", behaviour={"mode": "ok"}
-    )
-    server = ThreadingHTTPServer(("127.0.0.1", upstream_port), _handler(upstream))
+    upstream = MockUpstream(base_url="", behaviour={"mode": "ok"})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _handler(upstream))
+    upstream.base_url = f"http://127.0.0.1:{server.server_port}/v1"
     threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
 
     def shutdown() -> None:

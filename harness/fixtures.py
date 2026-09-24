@@ -16,15 +16,14 @@ import pytest
 
 from harness import upstream as upstream_module
 from harness.actors import Actor, admin_of, create_user
-from harness.instance import LaunchedInstance, free_port, launch
+from harness.instance import LaunchedInstance, launch
 from harness.listener import Listener, listening
 from harness.upstream import MOCK_MODEL_ID, MockUpstream
 
 TEST_USER_EMAIL = "test@example.com"
 TEST_USER_PASSWORD = "testpassword123"
 
-# Title, tag, follow-up and query tasks share the chat endpoint and would take a scripted reply
-# meant for the chat; a test that needs one turns it on through /api/v1/tasks/config/update.
+# these tasks share the chat endpoint and would take a reply scripted for the chat
 QUIET_TASKS = {
     "ENABLE_TITLE_GENERATION": "false",
     "ENABLE_TAGS_GENERATION": "false",
@@ -43,7 +42,7 @@ SETTINGS = {
 
 @contextlib.contextmanager
 def _serving_upstream() -> Iterator[MockUpstream]:
-    upstream, shutdown = upstream_module.serve(free_port())
+    upstream, shutdown = upstream_module.serve()
     try:
         yield upstream
     finally:
@@ -146,16 +145,25 @@ def preserve(request: pytest.FixtureRequest) -> Generator[Callable[..., None], N
             snapshots.append((client, write_path, current.json()))
 
     yield snapshot
-    for client, write_path, value in reversed(snapshots):
-        restored = client.post(write_path, json=value)
-        assert restored.status_code == 200, f"restoring {write_path} failed: {restored.text}"
-    for client in clients.values():
-        client.close()
+    failures = []
+    try:
+        for client, write_path, value in reversed(snapshots):
+            restored = client.post(write_path, json=value)
+            if restored.status_code != 200:
+                failures.append(f"restoring {write_path} failed: {restored.text}")
+    finally:
+        for client in clients.values():
+            client.close()
+    assert not failures, failures
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def instance_with() -> Generator[Callable[[dict[str, str]], LaunchedInstance], None, None]:
-    """`instance_with({"ENV": "value"})` boots (once per env set) an instance of its own."""
+    """`instance_with({"ENV": "value"})` boots an instance of its own, once per env set and module.
+
+    Every call resets that instance's provider, so call it before queueing replies. The
+    instances stop with the module, which keeps the suite's memory to a few instances at a time.
+    """
     stack = contextlib.ExitStack()
     booted: dict[frozenset, LaunchedInstance] = {}
 

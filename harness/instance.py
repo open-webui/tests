@@ -27,8 +27,7 @@ from harness.upstream import MockUpstream
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASSWORD = "adminpassword123"
 
-# `loop="none"` is what `open-webui serve` does, a bare uvicorn default loop on Windows
-# leaves the websocket transport unwired.
+# `loop="none"` as `open-webui serve` does: uvicorn's default loop leaves Windows sockets unwired
 LAUNCHER = """
 import os, sys
 sys.path.insert(0, sys.argv[1])
@@ -44,26 +43,6 @@ uvicorn.run(
     log_level="warning",
 )
 """
-
-# Inherited settings that would point the scratch instance at the caller's own services.
-INHERITED_ENV_TO_DROP = (
-    "DATABASE_URL",
-    "DATABASE_TYPE",
-    "OPENAI_API_BASE_URLS",
-    "OPENAI_API_KEYS",
-    "OPENAI_API_CONFIGS",
-    "ENABLE_LOGIN_FORM",
-    "GLOBAL_LOG_LEVEL",
-    "RAG_OPENAI_API_BASE_URL",
-    "RAG_OPENAI_API_KEY",
-    "STORAGE_PROVIDER",
-    "REDIS_URL",
-    "REDIS_SENTINEL_HOSTS",
-    "CHROMA_HTTP_HOST",
-    "WEBSOCKET_REDIS_URL",
-    "WEBSOCKET_MANAGER",
-    "VECTOR_DB",
-)
 
 
 def resolve_backend() -> Path | None:
@@ -150,9 +129,7 @@ class LaunchedInstance:
         return (utime + stime) / os.sysconf("SC_CLK_TCK")
 
 
-def launch(
-    upstream: MockUpstream, extra_env: dict[str, str] | None = None
-) -> Iterator[LaunchedInstance]:
+def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[LaunchedInstance]:
     """Boot, seed the admin, yield, tear down. Use it as the body of a generator fixture."""
     backend = resolve_backend()
     if backend is None:
@@ -164,9 +141,24 @@ def launch(
         (scratch / name).mkdir()
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
-    env = {name: value for name, value in os.environ.items() if name not in INHERITED_ENV_TO_DROP}
+    env = dict(os.environ)
     env.update(
         {
+            # set, not just unset: open_webui.env fills unset names from the checkout's .env
+            "DATABASE_TYPE": "",
+            "OPENAI_API_BASE_URLS": upstream.base_url,
+            "OPENAI_API_KEYS": "sk-mock",
+            "OPENAI_API_CONFIGS": "",
+            "ENABLE_LOGIN_FORM": "true",
+            "GLOBAL_LOG_LEVEL": "",
+            "STORAGE_PROVIDER": "local",
+            "VECTOR_DB": "chroma",
+            "CHROMA_HTTP_HOST": "",
+            "REDIS_URL": "",
+            "REDIS_SENTINEL_HOSTS": "",
+            "WEBSOCKET_MANAGER": "",
+            "WEBUI_ADMIN_EMAIL": "",
+            "WEBUI_ADMIN_PASSWORD": "",
             "PYTHONUNBUFFERED": "1",
             "WEBUI_SECRET_KEY": "integration-secret-key",
             "WEBUI_AUTH": "true",
@@ -187,7 +179,12 @@ def launch(
             "OPENAI_API_KEY": "sk-mock",
         }
     )
-    env.update(extra_env or {})
+    env.update(extra_env)
+    derived = {
+        "DATABASE_URL": f"sqlite:///{env['DATA_DIR']}/webui.db",
+        "WEBSOCKET_REDIS_URL": env["REDIS_URL"],
+    }
+    env.update({name: value for name, value in derived.items() if name not in extra_env})
     log_path = scratch / "server.log"
     # an undrained pipe wedges the child once startup output fills it
     with open(log_path, "w", encoding="utf-8") as log_file:

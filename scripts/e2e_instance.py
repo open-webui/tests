@@ -1,15 +1,12 @@
-"""Start an isolated Open WebUI for the e2e suite and seed the accounts it expects.
+"""Start an isolated Open WebUI with the suite's two accounts, for poking at by hand.
 
-The e2e tests need a running instance plus a regular user and an admin. This starts one
-on its own port against a scratch data directory, so an instance you are already running
-is left alone, and creates both accounts through the API.
+The browser suite boots its own instance (`pytest e2e`); this is for looking at the app the
+way the suite sees it. It starts one on its own port against a scratch data directory, so an
+instance you are already running is left alone, and creates both accounts through the API.
 
     python scripts/e2e_instance.py --clone /path/to/open-webui
 
-It prints the environment to export, then serves until interrupted. Run the suite from
-another shell:
-
-    OPEN_WEBUI_URL=http://localhost:8081 python -m pytest e2e -q
+It prints the URL and the credentials, then serves until interrupted.
 
 Nothing here writes to the checkout or to any data directory you already use. The scratch
 directory is recreated on every start, so each run begins from an empty database.
@@ -146,11 +143,9 @@ def main() -> None:
         print(f"starting Open WebUI on {base_url} (first boot loads the embedding model)")
         wait_for_health(base_url)
         seed_accounts(base_url)
-        print("\nready. Run the suite from another shell with:\n")
-        print(f"  OPEN_WEBUI_URL={base_url} \\")
-        print(f"  TEST_USER_EMAIL={USER_EMAIL} TEST_USER_PASSWORD={USER_PASSWORD} \\")
-        print(f"  ADMIN_USER_EMAIL={ADMIN_EMAIL} ADMIN_USER_PASSWORD={ADMIN_PASSWORD} \\")
-        print("  python -m pytest e2e -q\n")
+        print(f"\nready at {base_url}")
+        print(f"  admin: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+        print(f"  user:  {USER_EMAIL} / {USER_PASSWORD}\n")
         print("Ctrl-C to stop.")
         server.wait()
     except KeyboardInterrupt:
