@@ -91,7 +91,7 @@ Registered in `pyproject.toml` (`--strict-markers` is on). Combine with `-m "<ex
 | `requires_browser` | needs Playwright and a built frontend |
 | `requires_postgres` | needs `pgserver` |
 | `public` / `auth_required` / `admin_required` | page-access scope in the browser suite |
-| `depcheck` | dependency contract test under `unit/deps/` |
+| `depcheck` | dependency contract test under `unit/deps/`, or its feature smoke test under `integration/deps/` |
 
 Tests skip when what they need is absent, so the whole suite runs anywhere and only the runnable part executes.
 

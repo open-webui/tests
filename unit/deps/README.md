@@ -50,3 +50,22 @@ pytest unit/deps/                    # all dependency contracts
 pytest unit/deps/test_redis.py       # one dependency
 pytest -m depcheck                   # the whole class, anywhere
 ```
+
+## Feature smoke tests (`integration/deps/`)
+
+The files here pin each library in isolation. `integration/deps/` pins the same
+libraries through the Open WebUI feature that uses them, over HTTP on the
+scratch instance: one upload per document format (pypdf, docx2txt,
+unstructured with python-pptx, pandas, openpyxl, xlrd, msoffcrypto and
+pypandoc, BeautifulSoup, chardet, ftfy, and rapidocr with onnxruntime, OpenCV
+and Pillow for PDF images), the three text splitters and BM25 hybrid search,
+and Pillow's check of a model background image. They carry the `depcheck`
+marker too, so a bump is checked with both:
+
+```bash
+OPEN_WEBUI_SOURCE_DIR=../open-webui/backend pytest -m depcheck unit/deps integration/deps
+```
+
+The .rst, .epub and .odt uploads skip without a `pandoc` binary, and the token
+splitter skips when its tiktoken BPE file is not cached, since neither may be
+downloaded during a run.
