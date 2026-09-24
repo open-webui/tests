@@ -3,148 +3,59 @@
 `17cc56670` (open-webui 0.11.3). `get_user_by_oauth_sub` widened the SQLite query with
 `or_(sub_expr == sub, sub_expr == int(sub))` for any sub passing `str.isdecimal()`, so a sub
 whose integer form is not its own text ('007', or a non-ASCII decimal digit) resolved to a
-DIFFERENT person whose stored sub is that number, and a sub past the signed 64 bit range blew
-up in the SQLite driver. The fix only widens when `str(int(sub)) == sub` and the value fits in
-a signed 64 bit integer.
+DIFFERENT person whose stored sub is that number. The fix only widens when `str(int(sub)) == sub`
+and the value fits in a signed 64 bit integer. A stored JSON-number sub only exists in rows
+written by older releases, so these cases stay unit tests on the public model function; the
+beyond-64-bit sign-in is pinned over HTTP by integration/security/test_oauth_sub_precise_match.py.
 
-Discriminates: passes on v0.11.3, fails on v0.11.1 (the unconditional int() widening matches a
-foreign account for zero padded and non-ASCII decimal subs, and overflows on a huge sub).
+Discriminates: passes on dev bbfa876af; with 17cc56670 reverted in a copy the zero padded and
+non-ASCII decimal subs resolve to the account storing the number 7.
 """
 
 from __future__ import annotations
 
-import time
-import uuid
-from contextlib import asynccontextmanager
-from unittest.mock import patch
-
 import pytest
+
+from unit.security.memory_db import memory_database
 
 pytestmark = pytest.mark.regression
 
 INT64_MAX = 2**63 - 1
 
 
-@pytest.fixture(scope="module")
-def users_module(owui_module):
-    """`open_webui.models.users` (get_user_by_oauth_sub)."""
+@pytest.fixture
+def users(owui_module):
     return owui_module("open_webui.models.users")
 
 
-@pytest.fixture(scope="module")
-def db_module(owui_module):
-    """`open_webui.internal.db` (session sharing flag)."""
-    return owui_module("open_webui.internal.db")
-
-
-@asynccontextmanager
-async def _user_db(users_module, db_module, rows):
-    """A throwaway in-memory SQLite holding just the user table.
-
-    `rows` is an ordered mapping of user name to the raw `oauth` JSON to store. Insertion order
-    is the order SQLite scans in, so a test can pin which account an over-wide query would hit.
-    """
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-    user_table = users_module.User
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(user_table.__table__.create)
-        maker = async_sessionmaker(engine, expire_on_commit=False)
-        async with maker() as session:
-            now = int(time.time())
-            for name, oauth in rows.items():
-                session.add(
-                    user_table(
-                        id=str(uuid.uuid4()),
-                        name=name,
-                        email=f"{name}@example.com",
-                        role="user",
-                        profile_image_url="",
-                        oauth=oauth,
-                        created_at=now,
-                        updated_at=now,
-                        last_active_at=now,
-                    )
-                )
-            await session.commit()
-            # get_async_db_context only reuses the passed session when sharing is enabled.
-            with patch.object(db_module, "DATABASE_ENABLE_SESSION_SHARING", True):
-                yield session
-    finally:
-        await engine.dispose()
-
-
-async def _lookup(users_module, session, provider, sub):
-    return await users_module.Users.get_user_by_oauth_sub(provider, sub, db=session)
+async def lookup_among(owui_module, users, accounts: dict, provider: str, sub: str) -> str | None:
+    """Store `accounts` (name to oauth JSON, in scan order) and return the name `sub` finds."""
+    async with memory_database(owui_module, users.User):
+        for name, oauth in accounts.items():
+            await users.Users.insert_new_user(
+                id=name, name=name, email=f"{name}@example.com", oauth=oauth
+            )
+        found = await users.Users.get_user_by_oauth_sub(provider=provider, sub=sub)
+    return found.name if found else None
 
 
 # --------------------------------------------------------------------------- narrow
 
 
+@pytest.mark.parametrize("sub", ["007", "٧"], ids=["zero-padded", "arabic-indic"])
 @pytest.mark.asyncio
-async def test_zero_padded_sub_does_not_match_numeric_account(users_module, db_module):
-    """Narrow: '007' must not resolve to the account whose stored sub is the number 7."""
-    rows = {"seven": {"github": {"sub": 7}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "github", "007") is None
+async def test_a_sub_that_only_coerces_to_a_number_does_not_match_it(owui_module, users, sub):
+    """Narrow: '007' or '٧' must not resolve to the account whose stored sub is the number 7."""
+    accounts = {"seven": {"github": {"sub": 7}}}
+    assert await lookup_among(owui_module, users, accounts, "github", sub) is None
 
 
+@pytest.mark.parametrize("sub", ["007", "٧"], ids=["zero-padded", "arabic-indic"])
 @pytest.mark.asyncio
-async def test_zero_padded_sub_resolves_to_its_own_account(users_module, db_module):
-    """Narrow: with both accounts present, '007' gets the '007' account, never the numeric one.
-
-    The numeric account is inserted first so an over-wide query returns it.
-    """
-    rows = {
-        "seven": {"github": {"sub": 7}},
-        "double_oh_seven": {"github": {"sub": "007"}},
-    }
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "github", "007")
-        assert found is not None and found.name == "double_oh_seven"
-
-
-@pytest.mark.asyncio
-async def test_non_ascii_decimal_sub_does_not_match_numeric_account(users_module, db_module):
-    """Narrow: an Arabic-Indic digit is decimal to Python but is not the text of its int value."""
-    rows = {"seven": {"github": {"sub": 7}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "github", "٧") is None
-
-
-@pytest.mark.asyncio
-async def test_non_ascii_decimal_sub_resolves_to_its_own_account(users_module, db_module):
-    """Narrow: with both accounts present, '٧' gets the '٧' account, never the numeric one.
-
-    The numeric account is inserted first so an over-wide query returns it.
-    """
-    rows = {
-        "seven": {"github": {"sub": 7}},
-        "arabic_seven": {"github": {"sub": "٧"}},
-    }
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "github", "٧")
-        assert found is not None and found.name == "arabic_seven"
-
-
-@pytest.mark.asyncio
-async def test_sub_beyond_int64_still_matches_its_own_account(users_module, db_module):
-    """Narrow: a sub past the signed 64 bit range is compared as text, not handed to SQLite."""
-    huge = str(INT64_MAX + 1)
-    rows = {"huge": {"oidc": {"sub": huge}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "oidc", huge)
-        assert found is not None and found.name == "huge"
-
-
-@pytest.mark.asyncio
-async def test_sub_beyond_int64_misses_cleanly_when_absent(users_module, db_module):
-    """Narrow: an unknown out-of-range sub returns None instead of erroring."""
-    rows = {"seven": {"github": {"sub": 7}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "github", str(2**70)) is None
+async def test_a_sub_that_only_coerces_to_a_number_finds_its_own_account(owui_module, users, sub):
+    """Narrow: with both present, the sub gets its own account; the numeric one scans first."""
+    accounts = {"seven": {"github": {"sub": 7}}, "own": {"github": {"sub": sub}}}
+    assert await lookup_among(owui_module, users, accounts, "github", sub) == "own"
 
 
 # --------------------------------------------------------------------------- broad
@@ -152,68 +63,40 @@ async def test_sub_beyond_int64_misses_cleanly_when_absent(users_module, db_modu
 
 @pytest.mark.parametrize("sub", ["007", "0007", "00000007", "٧", "۷"])
 @pytest.mark.asyncio
-async def test_lookup_never_returns_account_that_merely_coerces_to_same_number(
-    users_module, db_module, sub
-):
-    """Broad: no textual variant of a number may reach the account storing that number."""
-    rows = {"seven": {"github": {"sub": 7}}, "seven_text": {"github": {"sub": "7"}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "github", sub) is None
+async def test_no_textual_variant_of_a_number_reaches_its_account(owui_module, users, sub):
+    """Broad: no other spelling of a number may reach the account storing that number."""
+    accounts = {"seven": {"github": {"sub": 7}}, "seven_text": {"github": {"sub": "7"}}}
+    assert await lookup_among(owui_module, users, accounts, "github", sub) is None
 
 
-@pytest.mark.parametrize("stored", [7, "7", 9223372036854775807, "9223372036854775807"])
+@pytest.mark.parametrize("stored", [7, "7", INT64_MAX, str(INT64_MAX)])
 @pytest.mark.asyncio
-async def test_plain_numeric_sub_round_trips(users_module, db_module, stored):
-    """Broad: a plain decimal sub still matches whether stored as a JSON number or a string."""
-    rows = {"target": {"github": {"sub": stored}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "github", str(stored))
-        assert found is not None and found.name == "target"
-
-
-@pytest.mark.asyncio
-async def test_int64_boundary_sub_is_still_widened(users_module, db_module):
-    """Broad: the boundary value itself stays inside the numeric widening."""
-    rows = {"boundary": {"github": {"sub": INT64_MAX}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "github", str(INT64_MAX))
-        assert found is not None and found.name == "boundary"
+async def test_a_plain_numeric_sub_matches_as_number_or_text(owui_module, users, stored):
+    """Broad: a plain decimal sub, up to the 64 bit boundary, matches either stored form."""
+    accounts = {"target": {"github": {"sub": stored}}}
+    assert await lookup_among(owui_module, users, accounts, "github", str(stored)) == "target"
 
 
 # --------------------------------------------------------------------------- nearby
 
 
+@pytest.mark.parametrize(
+    ("sub", "provider", "expected"),
+    [
+        ("abc12345", "oidc", "alice"),
+        ("", "oidc", None),
+        ("nope", "oidc", None),
+        ("abc12345", "github", None),
+        ("0", "github", None),
+    ],
+    ids=["exact", "empty", "unknown-sub", "other-provider", "local-account"],
+)
 @pytest.mark.asyncio
-async def test_non_numeric_sub_matches_exactly(users_module, db_module):
-    """Nearby: ordinary opaque subs are unaffected."""
-    rows = {"alice": {"oidc": {"sub": "abc12345"}}, "bob": {"oidc": {"sub": "abc12346"}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        found = await _lookup(users_module, session, "oidc", "abc12345")
-        assert found is not None and found.name == "alice"
-
-
-@pytest.mark.asyncio
-async def test_empty_sub_matches_nobody(users_module, db_module):
-    """Nearby: an empty sub is a miss, not a crash."""
-    rows = {"alice": {"oidc": {"sub": "abc12345"}}, "seven": {"github": {"sub": 7}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "oidc", "") is None
-
-
-@pytest.mark.asyncio
-async def test_unknown_sub_and_unknown_provider_match_nobody(users_module, db_module):
-    """Nearby: a sub that does not exist, and a known sub under another provider, both miss."""
-    rows = {"alice": {"oidc": {"sub": "abc12345"}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "oidc", "nope") is None
-        assert await _lookup(users_module, session, "github", "abc12345") is None
-
-
-@pytest.mark.asyncio
-async def test_account_without_oauth_is_never_matched(users_module, db_module):
-    """Nearby: a local account with no oauth entry stays invisible to the sub lookup."""
-    rows = {"local": None, "seven": {"github": {"sub": 7}}}
-    async with _user_db(users_module, db_module, rows) as session:
-        assert await _lookup(users_module, session, "github", "0") is None
-        found = await _lookup(users_module, session, "github", "7")
-        assert found is not None and found.name == "seven"
+async def test_ordinary_hits_and_misses_are_unchanged(owui_module, users, sub, provider, expected):
+    """Nearby: opaque subs match exactly; empty, unknown and local-only accounts miss."""
+    accounts = {
+        "alice": {"oidc": {"sub": "abc12345"}},
+        "bob": {"oidc": {"sub": "abc12346"}},
+        "local": None,
+    }
+    assert await lookup_among(owui_module, users, accounts, provider, sub) == expected
