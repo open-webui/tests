@@ -103,8 +103,7 @@ jobs:
           path: tests/report.html
           if-no-files-found: ignore
 
-  # The integration suite boots its own scratch instances from the checkout, each with a
-  # scripted model provider, so it needs the source and nothing already running.
+  # The suite boots its own instances from the checkout.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -144,28 +143,23 @@ jobs:
         working-directory: tests
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
-          OPEN_WEBUI_LOG_DIR: ${{ runner.temp }}/integration-artifacts/server-logs
-        run: >-
-          pytest integration -q --junitxml=integration-junit.xml
-          --html=integration-report.html --self-contained-html
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+        run: pytest integration -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
 
-      - name: Summarise
+      - name: Summarise the results
         if: always()
         working-directory: tests
-        run: python scripts/junit_summary.py integration-junit.xml "Integration suite" >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report and server logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-report-${{ inputs.open-webui-ref }}
-          path: |
-            tests/integration-report.html
-            ${{ runner.temp }}/integration-artifacts
+          path: tests/test-results
           if-no-files-found: ignore
 
-  # The browser suite drives the frontend built from the ref under test, served by a scratch
-  # instance the suite boots itself. It reports without gating a release until it has settled.
+  # Reports without gating a release until the browser suite has settled.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -179,24 +173,19 @@ jobs:
           path: tests
 
       - name: Check out Open WebUI
+        id: open-webui
         uses: actions/checkout@v5
         with:
           repository: open-webui/open-webui
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
-      # A branch name resolves to a different commit over time, so the build is cached by SHA.
-      - name: Resolve the commit under test
-        id: commit
-        working-directory: open-webui
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
       - name: Restore the frontend build
         id: build-cache
         uses: actions/cache/restore@v4
         with:
           path: open-webui/build
-          key: e2e-frontend-build-${{ steps.commit.outputs.sha }}
+          key: e2e-frontend-build-${{ steps.open-webui.outputs.commit }}
 
       - uses: actions/setup-node@v5
         if: steps.build-cache.outputs.cache-hit != 'true'
@@ -209,7 +198,7 @@ jobs:
         if: steps.build-cache.outputs.cache-hit != 'true'
         working-directory: open-webui
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=8192
         run: |
           npm ci --force
           npm run build
@@ -219,7 +208,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: open-webui/build
-          key: e2e-frontend-build-${{ steps.commit.outputs.sha }}
+          key: e2e-frontend-build-${{ steps.open-webui.outputs.commit }}
 
       - uses: actions/setup-python@v5
         with:
@@ -236,32 +225,27 @@ jobs:
         run: |
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
-          uv pip install --system -e "./tests[postgres]"
+          uv pip install --system -e ./tests
           python -m playwright install --with-deps chromium
 
       - name: Run the browser suite
         working-directory: tests
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
-          OPEN_WEBUI_BUILD_DIR: ${{ github.workspace }}/open-webui/build
-          OPEN_WEBUI_LOG_DIR: ${{ runner.temp }}/e2e-artifacts/server-logs
-          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts/traces
-        run: pytest e2e -q --junitxml=e2e-junit.xml --html=e2e-report.html --self-contained-html
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+        run: pytest e2e -q --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
 
-      - name: Summarise
+      - name: Summarise the results
         if: always()
         working-directory: tests
-        run: python scripts/junit_summary.py e2e-junit.xml "Browser suite" >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/junit_summary.py test-results/junit.xml "Browser suite" >> "$GITHUB_STEP_SUMMARY"
 
-      # Open a trace with `npx playwright show-trace <file>.zip` or at trace.playwright.dev.
       - name: Upload report, traces and server logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-report-${{ inputs.open-webui-ref }}
-          path: |
-            tests/e2e-report.html
-            ${{ runner.temp }}/e2e-artifacts
+          path: tests/test-results
           if-no-files-found: ignore
 
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
