@@ -4,15 +4,15 @@ Read this before adding or repairing a test here.
 
 ## What this suite is
 
-Regression tests for Open WebUI at three distances from the product. `integration/` drives the HTTP API of a scratch instance the suite boots itself, `e2e/` drives the built frontend of that same instance in a browser, and `unit/` imports backend modules from the checkout. Upstream refactors internals daily; the API and the UI change rarely. So a bug is pinned as far out as it can be seen.
+Regression tests for Open WebUI at three distances from the product. `integration/` drives the HTTP API of a scratch instance the suite boots itself, `e2e/` drives the built frontend of that same instance in a browser, and `unit/` imports backend modules from the checkout. Upstream refactors internals daily; the API and the UI change rarely. So a bug is pinned as far out as it can be seen, where the next refactor leaves the test alone.
 
 ## Choosing where a test lives
 
 1. If the symptom shows over HTTP (a status code, a response body, what a later GET returns, what the model provider or an outside service was sent, a server log line), write an integration test.
 2. If it also shows in the UI, or only there, add a browser test as well. Duplication across the two is fine.
-3. Only when neither can see it (a pure function with no route to it, event-loop timing, a static guard over the source or packaging) does it stay a unit test, written by the rules below.
+3. When neither can see it (a pure function with no route to it, event-loop timing, a static guard over the source or packaging), write a unit test by the rules in "Unit tests that survive refactors".
 
-A unit test whose integration twin covers its narrow layer is deleted, not kept alongside.
+Once an integration twin covers a unit test's narrow layer, delete the unit test: two copies of one guard double the repair work and add no coverage.
 
 ## The harness
 
@@ -57,9 +57,9 @@ def test_a_read_grant_does_not_expose_the_source(admin, make_user):
 
 `_create_tool` and `_grant` are a few lines each in the module, calling `/api/v1/tools/create` and `/api/v1/tools/id/{id}/access/update` as the admin panel does. See `integration/security/test_tool_source_exposure.py` for the full twin.
 
-- **Own your state.** Anything a test changes belongs to an account from `make_user()`, never to the shared `user`. Global settings are changed only after `preserve(...)`, which restores them; `preserve(..., on=extra)` does the same on an `instance_with` instance.
-- **Script the model, then read what it was sent.** `upstream.queue(reply.text(...), reply.tool_call(name, args), reply.error(500))` decides the replies; `upstream.chat_requests()` shows the payload Open WebUI built. Assert on that, on stored chats (`harness.chat.wait_for_reply`) and on `instance.log_since(offset)`, never on internals.
-- **Outside services are local.** Point the setting at a `listener` (or a fake in `harness/`) and assert on what it received. A test never makes the instance reach past localhost.
+- **Own your state.** Give anything a test changes to an account from `make_user()`, so the shared `user` stays as the next test expects it. Change a global setting only after `preserve(...)`, which restores it; `preserve(..., on=extra)` does the same on an `instance_with` instance.
+- **Script the model, then read what it was sent.** `upstream.queue(reply.text(...), reply.tool_call(name, args), reply.error(500))` decides the replies; `upstream.chat_requests()` shows the payload Open WebUI built. Assert on that, on stored chats (`harness.chat.wait_for_reply`) and on `instance.log_since(offset)`: all three outlive a refactor that renames every internal.
+- **Keep outside services local.** Point the setting at a `listener` (or a fake in `harness/`) and assert on what it received, so the instance only ever talks to localhost.
 - **Env-only settings get their own instance** through `instance_with({...})`. Reuse one env set across modules where you can; each boot costs about 13 seconds. Mark the tests that use one `slow`.
 
 ## Writing a browser test
@@ -76,59 +76,52 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(page_for, ma
     expect_reply(page, "back again")
 ```
 
-- **Locate the way a person does:** by role, label or visible text. A CSS class is the last resort, and a tooltip-only button is found through its tooltip text.
+- **Locate the way a person does:** by role, label or visible text. Use a CSS class only when nothing else identifies the element, and find a tooltip-only button through its tooltip text.
 - **Tie a scripted reply to its prompt** with `reply.text(..., match=reply.answering(prompt))` when a browser test counts or depends on provider requests: a request left over from an earlier test can otherwise take the reply.
-- **Wait on what appears, not on time.** Playwright's `expect` waits by itself. The only sleep allowed is a bounded check that nothing more happens (a stopped stream stays stopped).
-- **Wait for the page to be ready for what you do.** Keyboard shortcuts bind after the layout loads; wait for the chat input, not for the first link.
+- **Wait on what appears.** Playwright's `expect` waits by itself, so a sleep belongs only in a bounded check that nothing more happens (a stopped stream stays stopped).
+- **Wait for the page to be ready for what you do.** Keyboard shortcuts bind after the layout loads, so wait for the chat input before pressing them.
 - Every failing test leaves a trace per browser in `test-results/`; `playwright show-trace` replays it.
-
-## Proving a test discriminates
-
-Every narrow test is shown to fail with its fix undone, on a copy, never on a shared checkout.
-
-- **Backend fix:** copy `backend/` to a scratch dir, undo the fix there (the smallest edit that reverses the fix commit), and run with `OPEN_WEBUI_SOURCE_DIR` pointing at the copy. The narrow tests must go red; the same tests on the clean checkout must pass. For browser tests keep `OPEN_WEBUI_BUILD_DIR` on the clean build.
-- **Frontend fix:** copy `src/`, `static/` and the build config files to a scratch dir, symlink the checkout's `node_modules`, undo the fix in `src/`, and build with `npm_package_version=<version> NODE_OPTIONS=--max-old-space-size=6144 npx vite build`. Run the browser test with `OPEN_WEBUI_BUILD_DIR` on that build, plus one unrelated journey test as a control that the build itself works. Unrelated frontend mutations can share one build.
-- **Unit tests that stay:** the same, with the unit command above.
-- **Flakes:** run every new module three times on the clean checkout before committing. A test that fails once in three is a failing test.
 
 ## The three layers
 
-Every fix gets all three. One of them alone is not coverage.
+Every fix gets all three; one of them alone is not coverage.
 
-1. **Narrow.** Exactly this bug, exactly this fix. Must FAIL on the ref before the fix and PASS on the ref after it.
+1. **Narrow.** Exactly this bug, exactly this fix. It fails on the ref before the fix and passes on the ref after it, which makes it the only layer that discriminates.
 2. **Broad.** The invariant the bug was an instance of. If one endpoint gained an ownership check, assert the property across its siblings so the next instance is caught too.
-3. **Nearby.** Adjacent behaviour that is currently correct: the positive path, boundaries, empty and None inputs, the admin-versus-user split. These SHOULD pass on both refs. They prove the fix did not over-correct.
+3. **Nearby.** Adjacent behaviour that is currently correct: the positive path, boundaries, empty and None inputs, the admin-versus-user split. These pass on both refs, which shows the fix did not over-correct.
 
-Layer 3 passing on the old ref is correct and expected. Only layer 1 discriminates.
+## Proving a test discriminates
 
-## Rules that exist because they were violated
+An unproven regression test is decoration, so every narrow test is shown to fail with its fix undone. Undo the fix on a scratch copy: a shared checkout or worktree may be in use by someone else.
 
-- **Prove discrimination, do not assume it.** Run the narrow tests against the pre-fix ref and confirm they fail. An unproven regression test is decoration.
-- **Prefer a behavioural failure** (wrong value, missing exception, a call that should not have happened) over a `TypeError` from a changed signature. A signature-only failure is weak evidence dressed as a guard.
-- **Never write a test that hangs, crashes or exhausts memory on the pre-fix ref.** Denial-of-service fixes are guarded by tests whose pre-fix behaviour is, by definition, unbounded. Bound them by construction, or drive them out of process with a hard timeout, or guard them with a capability check that skips on a checkout lacking the fix. A test that wedges CI is worse than no test.
-- **Never loosen an assertion to make a test pass.** When a rename breaks a test, retarget it at the new shape and keep it pinning the original bug. Softening until green destroys the only thing the test was for.
-- **Mock only the I/O boundary.** Drive the real production function. Do not reimplement the logic in the test and then assert against your reimplementation.
-- **Do not assert on your own mock.** If the thing you patched is the thing that makes the decision, the test measures the mock and not the code.
-- **A unit test does not write to a real config store or database.** Patch what the code reads instead. Rows written to the shared store survive the session and poison later runs. (Integration tests write through the API to their scratch instance, inside `preserve`.)
-- **Never evict a module from `sys.modules`.** Re-executing a backend module hands the test a second module object while the routers still hold the first, so patches silently miss, and re-executing one that declares ORM tables raises "Table is already defined". Use the `owui_module` fixture.
-- **Skip narrowly or not at all.** A blanket `except Exception: pytest.skip(...)` turns real breakage into a green run. Skip only for a genuinely absent target, and name the reason.
-- **A regression stays red until its fix merges.** Write it as a plain failing test that names the issue and the fix PR, so every run shows it. A strict `xfail` is only for a known bug nobody is fixing yet: it flips to XPASS on its own once upstream fixes it. Never an allowlist, which sits there until someone remembers.
-- **When a test is claimed to guard nothing, prove the fix by mutation.** Copy the backend file to a scratch dir, break the fix, point `OPEN_WEBUI_SOURCE_DIR` at the copy, and confirm the test goes red. Never mutate a shared worktree.
+- **Backend fix:** copy `backend/` to a scratch dir, undo the fix there (the smallest edit that reverses the fix commit), and run with `OPEN_WEBUI_SOURCE_DIR` pointing at the copy. The narrow tests go red there and pass on the clean checkout. For browser tests keep `OPEN_WEBUI_BUILD_DIR` on the clean build.
+- **Frontend fix:** copy `src/`, `static/` and the build config files to a scratch dir, symlink the checkout's `node_modules`, undo the fix in `src/`, and build with `npm_package_version=<version> NODE_OPTIONS=--max-old-space-size=6144 npx vite build`. Run the browser test with `OPEN_WEBUI_BUILD_DIR` on that build, plus one unrelated journey test as a control that the build itself works. Unrelated frontend mutations can share one build.
+- **Unit tests that stay:** the same, with the unit command above.
+- **A test said to guard nothing** gets the same proof: if it stays green with the fix undone, fix the test or delete it.
+- **Flakes:** run every new module three times on the clean checkout before committing. A test that fails once in three is a failing test.
+
+## Rules for every test
+
+- **Fail on behaviour.** A wrong value, a missing exception or a call that should not have happened is evidence of the bug; a `TypeError` from a changed signature only shows that the code moved.
+- **Bound every test on the pre-fix ref.** A test for a denial-of-service fix meets unbounded behaviour on the ref before the fix, and a test that wedges CI is worse than no test. Bound it by construction, drive it out of process with a hard timeout, or guard it with a capability check that skips on a checkout lacking the fix.
+- **When a change breaks a test, retarget it.** Point it at the new shape and keep it pinning the original bug. Loosening an assertion until it passes destroys the only thing the test was for.
+- **Skip only for a genuinely absent dependency, and name it.** A blanket `except Exception: pytest.skip(...)` turns real breakage into a green run. When the code a test targets is gone, fail and name what to retarget.
+- **A regression stays red until its fix merges.** Write it as a plain failing test that names the issue and the fix PR, so every run shows it. A strict `xfail` is for a known bug nobody is fixing yet: it flips to XPASS on its own once upstream fixes it. Keep allowlists out of the suite, since an allowlist sits there until someone remembers it.
 
 ## Unit tests that survive refactors
 
-Most repairs this suite ever needed came from a unit test knowing more about the code than the bug required. A unit test that stays:
+A unit test breaks whenever upstream renames something the test knows about, so a unit test knows only what its bug requires. It:
 
-- **Calls the most public function that shows the bug.** Not a route handler called as a Python function, not a private helper when a public caller exists.
-- **Mocks what the code talks to, not what it is made of.** Patch the HTTP client, the clock, the filesystem; use a real in-memory SQLite with the real tables for the database. Never patch a model method by name to steer the code under test.
-- **Uses real or specced stand-ins.** A hand-built fake of a Playwright page, an aiohttp response or `request.app.state` breaks the day upstream calls one more method on it. `create_autospec(RealClass)` or the real object does not.
+- **Calls the most public function that shows the bug.** A route handler called as a Python function, or a private helper that has a public caller, breaks on every signature change.
+- **Drives the real code and patches only what it talks to:** the HTTP client, the clock, the filesystem. The database is a real in-memory SQLite with the real tables. When the thing you patched makes the decision, or the test reimplements the logic it checks, the test measures itself and the product goes unchecked.
+- **Uses real or specced stand-ins.** A hand-built fake of a Playwright page, an aiohttp response or `request.app.state` breaks the day upstream calls one more method on it; `create_autospec(RealClass)` and the real object keep up.
 - **Passes arguments by keyword** and awaits through a helper when upstream may flip a function between sync and async.
-- **Audits source by meaning.** Parse with `ast` and assert the property; never match whitespace, formatting or variable names. An inventory ratchet fails when a new entry appears and passes when upstream removes one.
-- **Fails loudly when its target is gone**, naming what to retarget. Never skip on a missing attribute.
+- **Audits source by meaning.** Parse with `ast` and assert the property, independent of whitespace, formatting and variable names. An inventory ratchet fails when a new entry appears and passes when upstream removes one.
+- **Leaves shared state alone.** It patches what the code reads from the config store or database, because rows written to the shared store survive the session and poison later runs. It reaches backend modules through the `owui_module` fixture: re-executing a module hands the test a second copy while the routers still hold the first, so patches silently miss, and a module that declares ORM tables raises "Table is already defined".
 
 ## Style
 
-Terse comments: at most one short line, and only where the WHY is non-obvious. Never narrate the mechanism. Descriptive names, flat control flow. No em-dashes. No Oxford comma.
+Comments: one short line at most, only where the why is non-obvious, and about the why. Descriptive names, flat control flow. No em-dashes. No Oxford comma.
 
 Module docstring states what regressed, the fix commit and PR or issue numbers, the mechanism in a sentence or two, `Twin of unit/<path>.` when it has one, and closes with a line reading `Discriminates: passes on <fixed ref>, fails on <buggy ref> (<why>).` (or the mutation that turned it red). Keep that line accurate when you change the test.
 
@@ -136,4 +129,4 @@ Module docstring states what regressed, the fix commit and PR or issue numbers, 
 
 ## Reporting
 
-Say what you did, the pass counts on both refs, and which tests discriminate and why. If something could not be tested, say so plainly rather than writing a test that only looks like coverage. A finding you cannot substantiate is worse than no finding, because it makes someone else disprove it.
+Say what you did, the pass counts on both refs, and which tests discriminate and why. If something could not be tested, say so plainly: a test that only looks like coverage hides the gap from the next reader. A finding you cannot substantiate is worse than no finding, because it makes someone else disprove it.
