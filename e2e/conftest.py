@@ -3,12 +3,17 @@
 The instance serves the checkout's built frontend (`npm run build`, or `OPEN_WEBUI_BUILD_DIR`)
 and answers every chat from the scripted provider, so a test controls what the model says.
 Each signed-in page lives in its own browser context: two accounts in one context would share
-one `localStorage` token and the second sign-in would silently replace the first.
+one `localStorage` token and the second sign-in would silently replace the first. Every context
+is traced; a failing test leaves its traces in `E2E_ARTIFACTS_DIR` (default `test-results/`),
+which `playwright show-trace` replays step by step.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
+from pathlib import Path
 from typing import Callable, Generator
 
 import pytest
@@ -18,6 +23,20 @@ from conftest import AppConfig
 from harness.actors import Actor
 from harness.fixtures import TEST_USER_EMAIL, TEST_USER_PASSWORD
 from harness.instance import ADMIN_EMAIL, ADMIN_PASSWORD, LaunchedInstance
+
+ARTIFACTS_DIR = Path(os.getenv("E2E_ARTIFACTS_DIR", "test-results"))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    setattr(item, f"report_{report.when}", report)
+
+
+def _test_failed(item: pytest.Item) -> bool:
+    reports = (getattr(item, f"report_{when}", None) for when in ("setup", "call"))
+    return any(report is not None and report.failed for report in reports)
 
 
 @pytest.fixture(scope="session")
@@ -64,7 +83,28 @@ def _new_context(browser: Browser, config: AppConfig) -> BrowserContext:
     )
     context.set_default_timeout(config.default_timeout)
     context.set_default_navigation_timeout(config.navigation_timeout)
+    context.tracing.start(screenshots=True, snapshots=True)
     return context
+
+
+def _close_context(context: BrowserContext, item: pytest.Item, label: str) -> None:
+    if _test_failed(item):
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        name = re.sub(r"[^\w.-]+", "_", item.nodeid)
+        context.tracing.stop(path=str(ARTIFACTS_DIR / f"{name}-{label}.zip"))
+    else:
+        context.tracing.stop()
+    context.close()
+
+
+@pytest.fixture
+def context(
+    browser: Browser, config: AppConfig, request: pytest.FixtureRequest
+) -> Generator[BrowserContext, None, None]:
+    """The signed-out browser behind `page`, traced like the signed-in ones."""
+    browser_context = _new_context(browser, config)
+    yield browser_context
+    _close_context(browser_context, request.node, "signed-out")
 
 
 def _signed_in_page(context: BrowserContext, token: str) -> Page:
@@ -82,19 +122,21 @@ def _signed_in_page(context: BrowserContext, token: str) -> Page:
 
 
 @pytest.fixture
-def page_for(browser: Browser, config: AppConfig) -> Generator[Callable[[Actor], Page], None, None]:
+def page_for(
+    browser: Browser, config: AppConfig, request: pytest.FixtureRequest
+) -> Generator[Callable[[Actor], Page], None, None]:
     """`page_for(actor)` opens a signed-in page for that account in a browser of its own."""
-    contexts: list[BrowserContext] = []
+    opened: list[tuple[BrowserContext, str]] = []
 
     def open_page(actor: Actor) -> Page:
         _dismiss_first_run_modals(actor)
-        context = _new_context(browser, config)
-        contexts.append(context)
-        return _signed_in_page(context, actor.token)
+        browser_context = _new_context(browser, config)
+        opened.append((browser_context, actor.email.split("@")[0]))
+        return _signed_in_page(browser_context, actor.token)
 
     yield open_page
-    for context in contexts:
-        context.close()
+    for browser_context, label in opened:
+        _close_context(browser_context, request.node, label)
 
 
 @pytest.fixture

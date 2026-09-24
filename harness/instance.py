@@ -218,6 +218,10 @@ def launch(
             proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             proc.kill()
+        keep_logs_in = os.getenv("OPEN_WEBUI_LOG_DIR")
+        if keep_logs_in:
+            Path(keep_logs_in).mkdir(parents=True, exist_ok=True)
+            shutil.copy(log_path, Path(keep_logs_in) / f"server-{port}.log")
         shutil.rmtree(scratch, ignore_errors=True)
 
 

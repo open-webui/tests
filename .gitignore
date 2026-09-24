@@ -10,3 +10,4 @@ reports/
 .mypy_cache/
 .ruff_cache/
 frontend/node_modules/
+test-results/
