@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 from typing import Callable, Generator, Iterator
 
+import httpx
 import pytest
 
 from harness import upstream as upstream_module
@@ -126,23 +127,29 @@ def make_user(instance: LaunchedInstance) -> Callable[..., Actor]:
 def preserve(admin: Actor) -> Generator[Callable[..., None], None, None]:
     """`preserve("permissions", ...)` snapshots those settings and restores them afterwards.
 
-    A setting is a name from `SETTINGS` or a `(read endpoint, write endpoint)` pair.
+    A setting is a name from `SETTINGS` or a `(read endpoint, write endpoint)` pair. Pass
+    `on=` an instance from `instance_with` to preserve its settings instead of the shared one's.
     """
-    snapshots: list[tuple[str, dict]] = []
-    client = admin.client()
+    snapshots: list[tuple[httpx.Client, str, dict]] = []
+    clients = {admin.base_url: admin.client()}
 
-    def snapshot(*settings: str | tuple[str, str]) -> None:
+    def snapshot(*settings: str | tuple[str, str], on: LaunchedInstance | None = None) -> None:
+        base_url = on.base_url if on else admin.base_url
+        if base_url not in clients:
+            clients[base_url] = on.client()
+        client = clients[base_url]
         for setting in settings:
             read_path, write_path = SETTINGS[setting] if isinstance(setting, str) else setting
             current = client.get(read_path)
             current.raise_for_status()
-            snapshots.append((write_path, current.json()))
+            snapshots.append((client, write_path, current.json()))
 
     yield snapshot
-    for write_path, value in reversed(snapshots):
+    for client, write_path, value in reversed(snapshots):
         restored = client.post(write_path, json=value)
         assert restored.status_code == 200, f"restoring {write_path} failed: {restored.text}"
-    client.close()
+    for client in clients.values():
+        client.close()
 
 
 @pytest.fixture(scope="session")

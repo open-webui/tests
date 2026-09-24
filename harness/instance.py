@@ -178,6 +178,9 @@ def launch(
             "FRONTEND_BUILD_DIR": str(build or scratch / "build"),
             "OFFLINE_MODE": "true",
             "RAG_EMBEDDING_ENGINE": "openai",  # served by the mock, so nothing is downloaded
+            # its default is the hardcoded api.openai.com, not OPENAI_API_BASE_URL
+            "RAG_OPENAI_API_BASE_URL": upstream.base_url,
+            "RAG_OPENAI_API_KEY": "sk-mock",
             "ENABLE_OLLAMA_API": "false",
             "ENABLE_OPENAI_API": "true",
             "OPENAI_API_BASE_URL": upstream.base_url,
