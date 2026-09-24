@@ -113,13 +113,16 @@ def make_user(instance: LaunchedInstance) -> Callable[..., Actor]:
 
 @pytest.fixture
 def preserve(admin: Actor) -> Generator[Callable[..., None], None, None]:
-    """`preserve("permissions", ...)` snapshots those settings and restores them afterwards."""
+    """`preserve("permissions", ...)` snapshots those settings and restores them afterwards.
+
+    A setting is a name from `SETTINGS` or a `(read endpoint, write endpoint)` pair.
+    """
     snapshots: list[tuple[str, dict]] = []
     client = admin.client()
 
-    def snapshot(*names: str) -> None:
-        for name in names:
-            read_path, write_path = SETTINGS[name]
+    def snapshot(*settings: str | tuple[str, str]) -> None:
+        for setting in settings:
+            read_path, write_path = SETTINGS[setting] if isinstance(setting, str) else setting
             current = client.get(read_path)
             current.raise_for_status()
             snapshots.append((write_path, current.json()))
