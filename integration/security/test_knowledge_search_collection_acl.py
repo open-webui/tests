@@ -25,7 +25,6 @@ import pytest
 from harness import upstream as reply
 from harness.actors import Actor
 from harness.chat import ask
-from harness.mock_embeddings import embed_through
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -47,12 +46,7 @@ def create_knowledge_base(client: httpx.Client, name: str, access_grants: list[d
 
 
 @pytest.fixture
-def mock_embeddings(upstream, admin: Actor, preserve) -> None:
-    embed_through(upstream, admin, preserve)
-
-
-@pytest.fixture
-def knowledge_bases(admin: Actor, make_user, mock_embeddings) -> KnowledgeBases:
+def knowledge_bases(admin: Actor, make_user) -> KnowledgeBases:
     """Two of the admin's knowledge bases, one shared with a reader and one private."""
     reader = make_user()
     read_grant = {"principal_type": "user", "principal_id": reader.id, "permission": "read"}

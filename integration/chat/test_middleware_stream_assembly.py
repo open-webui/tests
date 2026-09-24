@@ -36,7 +36,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask, send_message, wait_for_reply
-from harness.filters import global_filter
+from harness.plugins import installed_function
 from harness.second_provider import OPENAI_CONFIG, attach, sse, tool_call_delta
 from harness.socket_client import connected
 
@@ -106,8 +106,10 @@ class Filter:
 @pytest.fixture
 def outlet(admin):
     """`outlet(source)` installs a global filter for the rest of the test."""
-    with admin.client() as client, contextlib.ExitStack() as installed:
-        yield lambda source: installed.enter_context(global_filter(client, source))
+    with contextlib.ExitStack() as installed:
+        yield lambda source: installed.enter_context(
+            installed_function(admin, source, is_global=True)
+        )
 
 
 def _reply_after_the_outlet(actor, prompt: str) -> dict:

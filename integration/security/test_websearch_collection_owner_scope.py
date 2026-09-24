@@ -25,7 +25,6 @@ from harness.listener import json_answer
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 RETRIEVAL_CONFIG = ("/api/v1/retrieval/config", "/api/v1/retrieval/config/update")
-EMBEDDING_CONFIG = ("/api/v1/retrieval/embedding", "/api/v1/retrieval/embedding/update")
 PAGE_TEXT = "the page the owner's search fetched"
 SEARCH_HITS = {
     "results": [{"url": "https://example.com/page", "title": "Page", "content": PAGE_TEXT}]
@@ -33,17 +32,7 @@ SEARCH_HITS = {
 
 
 @pytest.fixture
-def mock_embeddings(admin, preserve, upstream):
-    """The instance's embedding URL defaults to api.openai.com; the mock serves /embeddings."""
-    preserve(EMBEDDING_CONFIG)
-    with admin.client() as client:
-        embedding = client.get(EMBEDDING_CONFIG[0]).json()
-        embedding["openai_config"] = {"url": upstream.base_url, "key": "sk-mock"}
-        client.post(EMBEDDING_CONFIG[1], json=embedding).raise_for_status()
-
-
-@pytest.fixture
-def mint(admin, listener, preserve, mock_embeddings):
+def mint(admin, listener, preserve):
     """`mint(actor, query)` runs a real web search and returns the collection it stored."""
     preserve(RETRIEVAL_CONFIG)
     listener.route("GET", "/search", json_answer(SEARCH_HITS))
@@ -127,7 +116,7 @@ def test_another_user_cannot_write_a_minted_collection(mint, make_user):
         "web-search-{other}x-abc123",
     ],
 )
-def test_no_foreign_web_search_name_is_admitted(mock_embeddings, make_user, access, foreign_name):
+def test_no_foreign_web_search_name_is_admitted(make_user, access, foreign_name):
     owner, other = make_user(), make_user()
     name = foreign_name.format(owner=owner.id, other=other.id)
 

@@ -41,7 +41,6 @@ from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask, send_message
 from harness.chat_history import seed_chat
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
-from harness.mock_embeddings import embed_through
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 
@@ -242,7 +241,6 @@ def test_the_author_and_an_admin_may_still_complete_into_the_message(
 
 @pytest.fixture
 def account_with_a_memory(admin, make_user, preserve, upstream):
-    embed_through(upstream, admin, preserve)
     account = make_user()
     with account.client() as client:
         added = client.post("/api/v1/memories/add", json={"content": STORED_MEMORY, "type": "user"})

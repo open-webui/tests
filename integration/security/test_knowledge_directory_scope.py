@@ -25,7 +25,6 @@ import httpx
 import pytest
 
 from harness.actors import Actor
-from harness.mock_embeddings import embed_through
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -83,12 +82,7 @@ def ids(entries: list[dict]) -> list[str]:
 
 
 @pytest.fixture
-def mock_embeddings(upstream, admin: Actor, preserve) -> None:
-    embed_through(upstream, admin, preserve)
-
-
-@pytest.fixture
-def knowledge_bases(admin: Actor, make_user, mock_embeddings) -> Iterator[TwoKnowledgeBases]:
+def knowledge_bases(admin: Actor, make_user) -> Iterator[TwoKnowledgeBases]:
     user = make_user()
     with admin.client() as admin_client, user.client() as user_client:
         own_knowledge = create_knowledge(admin_client, "Team notes", writer=user)

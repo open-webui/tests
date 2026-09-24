@@ -21,7 +21,6 @@ import httpx
 import pytest
 
 from harness.actors import admin_of
-from harness.mock_embeddings import EMBEDDING_SETTINGS
 
 pytestmark = [
     pytest.mark.regression,
@@ -31,6 +30,9 @@ pytestmark = [
 ]
 
 BLANK_LOCAL_EMBEDDING = {"RAG_EMBEDDING_ENGINE": "", "RAG_EMBEDDING_MODEL": ""}
+
+
+EMBEDDING_SETTINGS = ("/api/v1/retrieval/embedding", "/api/v1/retrieval/embedding/update")
 
 
 @pytest.fixture

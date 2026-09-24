@@ -26,7 +26,7 @@ import pytest
 from playwright.sync_api import expect
 
 from harness import upstream as reply
-from harness.filters import global_filter
+from harness.plugins import installed_function
 from harness.second_provider import OPENAI_CONFIG, attach, sse, tool_call_delta
 from harness.socket_client import connected
 from utils.chat_ui import conversation, expect_reply, last_reply, send
@@ -71,7 +71,7 @@ class Filter:
 """
     upstream.queue(reply.text("hello there"))
     person = make_user()
-    with admin.client() as client, global_filter(client, appends), connected(person) as socket:
+    with installed_function(admin, appends, is_global=True), connected(person) as socket:
         page = page_for(person)
         send(page, "hi")
         expect_reply(page, "hello there")

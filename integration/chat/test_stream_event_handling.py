@@ -35,8 +35,8 @@ import pytest
 from harness import second_provider
 from harness import upstream as reply
 from harness.chat import ask
-from harness.filters import global_filter
 from harness.listener import json_answer, text_answer
+from harness.plugins import installed_function
 from harness.python_tools import python_tool
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -129,7 +129,7 @@ class Filter:
 @pytest.fixture
 def outlet_filter(admin):
     """A global filter, which makes the server re-read every streamed event for its outlet."""
-    with admin.client() as client, global_filter(client, PASSTHROUGH_FILTER):
+    with installed_function(admin, PASSTHROUGH_FILTER, is_global=True):
         yield
 
 

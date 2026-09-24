@@ -21,7 +21,6 @@ import httpx
 import pytest
 
 from harness.actors import Actor
-from harness.mock_embeddings import embed_through
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -77,12 +76,7 @@ class ExternalKnowledge:
 
 
 @pytest.fixture
-def mock_embeddings(upstream, admin: Actor, preserve) -> None:
-    embed_through(upstream, admin, preserve)
-
-
-@pytest.fixture
-def external(admin: Actor, mock_embeddings) -> Iterator[ExternalKnowledge]:
+def external(admin: Actor) -> Iterator[ExternalKnowledge]:
     with admin.client() as client:
         created = ExternalKnowledge(client)
         yield created

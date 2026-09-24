@@ -21,7 +21,6 @@ import httpx
 import pytest
 
 from harness.actors import Actor
-from harness.mock_embeddings import embed_through
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -58,12 +57,7 @@ def grant(actor: Actor, *permissions: str) -> list[dict]:
 
 
 @pytest.fixture
-def mock_embeddings(upstream, admin: Actor, preserve) -> None:
-    embed_through(upstream, admin, preserve)
-
-
-@pytest.fixture
-def shared_file(admin: Actor, make_user, mock_embeddings) -> Iterator[SharedFile]:
+def shared_file(admin: Actor, make_user) -> Iterator[SharedFile]:
     """The admin's file in the admin's knowledge base, readable by one user, writable by another."""
     reader, writer = make_user(), make_user()
     with admin.client() as client:
