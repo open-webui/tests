@@ -68,6 +68,7 @@ class MockUpstream:
             self.behaviour = {"mode": mode, **options}
             self.replies.clear()
             self.requests.clear()
+            self.models = [MOCK_MODEL_ID]
 
     def queue(self, *replies: Reply) -> None:
         with self.lock:

@@ -83,6 +83,8 @@ def wait_for_reply(client: httpx.Client, turn: ChatTurn, timeout: float = 60.0) 
     raise AssertionError(f"the reply never finished; last stored state: {message}")
 
 
-def ask(client: httpx.Client, content: str, **options) -> tuple[ChatTurn, dict]:
+def ask(
+    client: httpx.Client, content: str, timeout: float = 60.0, **options
+) -> tuple[ChatTurn, dict]:
     turn = send_message(client, content, **options)
-    return turn, wait_for_reply(client, turn)
+    return turn, wait_for_reply(client, turn, timeout)
