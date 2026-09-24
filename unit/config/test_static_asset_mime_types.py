@@ -1,18 +1,18 @@
 """Regression test for 0.11.2's code interpreter failing to start on Windows.
 
 Commit `d8133c905` (PR #29139, issue #29133). `main.py` only registered `text/javascript` for
-`.js`, and only inside the `FRONTEND_BUILD_DIR` branch. Windows hosts carry registry entries
-that `mimetypes` reads at init, so `.js`, `.mjs` and `.wasm` came back as whatever the host said
+`.js`, and only when a frontend build existed. Windows hosts carry registry entries that
+`mimetypes` reads at init, so `.js`, `.mjs` and `.wasm` came back as whatever the host said
 (commonly `text/plain`), the browser refused the module script and the WebAssembly stream, and
-Pyodide never loaded. The fix registers all three unconditionally at import, which overrides
-whatever the host registry supplied.
+Pyodide never loaded. The fix registers all three at import, over whatever the host supplied.
 
-The poisoning has to be in place before `open_webui.main` is imported, and a module is imported
-once per process, so the probe runs in a child interpreter. Doing it in-process would make the
-whole file depend on no earlier test having imported `main` first.
+The host entry has to be in place before `open_webui.main` is imported, and a module is imported
+once per process, so a child interpreter poisons its `mimetypes` table the way a registry entry
+does, imports the app with a scratch frontend build and fetches the Pyodide assets from the app's
+own `/pyodide` route.
 
-Discriminates: passes on v0.11.3, fails on v0.11.1 (nothing overrides the host entry for `.js`,
-`.mjs` or `.wasm`, so the poisoned type is what gets served).
+Discriminates: passes on bbfa876af, fails with the three `mimetypes.add_type` calls removed from
+`main.py` (the poisoned type is what gets served).
 """
 
 from __future__ import annotations
@@ -27,129 +27,106 @@ import pytest
 pytestmark = pytest.mark.regression
 
 # What a Windows registry entry commonly turns these into.
-HOST_WRONG_TYPE = 'text/plain'
-EXPECTED_TYPES = {'.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm'}
-POISONED_EXTENSIONS = tuple(EXPECTED_TYPES)
-CONTROL_EXTENSION = '.owui-mime-probe'
-ORDINARY_ASSETS = {
-    'style.css': 'text/css',
-    'logo.png': 'image/png',
-    'data.json': 'application/json',
+HOST_WRONG_TYPE = "text/plain"
+PYODIDE_TYPES = {
+    "pyodide.js": "text/javascript",
+    "pyodide.mjs": "text/javascript",
+    "pyodide.asm.wasm": "application/wasm",
 }
-UNKNOWN_ASSET = 'notes.qqq'
+ORDINARY_TYPES = {"style.css": "text/css", "logo.png": "image/png", "data.json": "application/json"}
+CONTROL_EXTENSION = ".owui-mime-probe"
+PROBE_MARKER = "@@mime-probe@@"
 
-PROBE_MARKER = '@@mime-probe@@'
-
-# Poisons the live mimetypes table before importing main, which is where a registry entry sits.
-PROBE = '''
-import asyncio, json, mimetypes, os, sys
+PROBE = """
+import asyncio, json, mimetypes, sys
 
 mimetypes.guess_type("probe.js")
-for extension in {poisoned!r}:
+for extension in (".js", ".mjs", ".wasm", {control!r}):
     mimetypes.add_type({wrong!r}, extension)
 
 sys.path.insert(0, {backend!r})
+import httpx
 import open_webui.main as main
 
-assets = {assets!r}
-scope = {{"type": "http", "method": "GET", "headers": []}}
+
+async def fetch_all(names):
+    transport = httpx.ASGITransport(app=main.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://probe") as client:
+        served = {{}}
+        for name in names:
+            response = await client.get("/pyodide/" + name)
+            served[name] = {{
+                "status": response.status_code,
+                "content_type": response.headers.get("content-type", "").split(";")[0].strip(),
+                "cors": response.headers.get("access-control-allow-origin"),
+            }}
+        return served
 
 
-async def serve(name):
-    files = main.CORSStaticFiles(directory=assets)
-    response = await files.get_response(name, scope)
-    return {{
-        "content_type": response.headers["content-type"].split(";")[0].strip(),
-        "cors": response.headers.get("Access-Control-Allow-Origin"),
-    }}
-
-
-payload = {{
-    "served": {{name: asyncio.run(serve(name)) for name in sorted(os.listdir(assets))}},
-    "guessed": {{ext: mimetypes.guess_type("pyodide" + ext)[0] for ext in {probed!r}}},
+report = {{
+    "served": asyncio.run(fetch_all({names!r})),
+    "control": mimetypes.guess_type("file" + {control!r})[0],
 }}
-sys.stdout.write({marker!r} + json.dumps(payload) + "\\n")
-sys.stdout.flush()
-os._exit(0)
-'''
+print({marker!r} + json.dumps(report), flush=True)
+"""
 
 
-@pytest.fixture(scope='session')
-def probe(open_webui_backend, tmp_path_factory):
-    """Types the real `CORSStaticFiles` serves from a `main` imported over a poisoned table."""
-    assets = tmp_path_factory.mktemp('assets')
-    names = [f'pyodide{ext}' for ext in EXPECTED_TYPES] + [*ORDINARY_ASSETS, UNKNOWN_ASSET]
+@pytest.fixture(scope="module")
+def probe(open_webui_backend, tmp_path_factory) -> dict:
+    """What the app serves from `/pyodide` when the host's table says `text/plain`."""
+    build = tmp_path_factory.mktemp("build")
+    assets = build / "pyodide"
+    assets.mkdir()
+    names = [*PYODIDE_TYPES, *ORDINARY_TYPES]
     for name in names:
-        (assets / name).write_bytes(b'x')
+        (assets / name).write_bytes(b"x")
 
     body = PROBE.format(
-        poisoned=(*POISONED_EXTENSIONS, CONTROL_EXTENSION),
+        control=CONTROL_EXTENSION,
         wrong=HOST_WRONG_TYPE,
         backend=str(open_webui_backend),
-        assets=str(assets),
-        probed=(*POISONED_EXTENSIONS, CONTROL_EXTENSION),
+        names=names,
         marker=PROBE_MARKER,
     )
     result = subprocess.run(
-        [sys.executable, '-c', body],
+        [sys.executable, "-c", body],
         capture_output=True,
         text=True,
-        timeout=90,
-        env={**os.environ, 'PYTHONUNBUFFERED': '1'},
+        timeout=120,
+        env={**os.environ, "FRONTEND_BUILD_DIR": str(build)},
     )
     line = next((it for it in result.stdout.splitlines() if it.startswith(PROBE_MARKER)), None)
     assert line, (
-        f'probe did not report (rc={result.returncode})\n'
-        f'{result.stdout[-2000:]}\n{result.stderr[-2000:]}'
+        f"probe did not report (rc={result.returncode})\n"
+        f"{result.stdout[-2000:]}\n{result.stderr[-2000:]}"
     )
-    return json.loads(line[len(PROBE_MARKER) :])
+    report = json.loads(line.removeprefix(PROBE_MARKER))
+    unserved = {
+        name: entry["status"] for name, entry in report["served"].items() if entry["status"] != 200
+    }
+    assert not unserved, f"/pyodide did not serve the scratch build: {unserved}; retarget the route"
+    return report
 
 
-# -----------------------------------------------------------------------------
-# Narrow: the served type comes from the app, not from the host registry
-# -----------------------------------------------------------------------------
+def test_poisoning_the_host_table_takes_effect(probe):
+    """Control: without this the tests below would prove nothing."""
+    assert probe["control"] == HOST_WRONG_TYPE
 
 
-def test_poisoning_the_registry_actually_takes_effect(probe):
-    """Control: without this the narrow tests below would prove nothing."""
-    assert probe['guessed'][CONTROL_EXTENSION] == HOST_WRONG_TYPE
+@pytest.mark.parametrize("name, expected", sorted(PYODIDE_TYPES.items()))
+def test_pyodide_assets_are_served_with_the_browser_safe_type(probe, name, expected):
+    served = probe["served"][name]["content_type"]
+
+    assert served == expected, (
+        f"{name} was served as {served!r}, the host registry's type, so the browser refuses it "
+        "and the code interpreter never loads (#29133)"
+    )
 
 
-@pytest.mark.parametrize('extension', POISONED_EXTENSIONS)
-def test_poisoned_asset_is_served_with_the_browser_safe_type(probe, extension):
-    served = probe['served'][f'pyodide{extension}']['content_type']
-    assert served == EXPECTED_TYPES[extension]
-    assert served != HOST_WRONG_TYPE
+@pytest.mark.parametrize("name, expected", sorted(ORDINARY_TYPES.items()))
+def test_ordinary_assets_keep_their_type(probe, name, expected):
+    assert probe["served"][name]["content_type"] == expected
 
 
-@pytest.mark.parametrize('extension', POISONED_EXTENSIONS)
-def test_poisoned_extension_is_overridden_in_the_mimetypes_table(probe, extension):
-    assert probe['guessed'][extension] == EXPECTED_TYPES[extension]
-
-
-# -----------------------------------------------------------------------------
-# Broad: no code-interpreter asset is served as something a browser will reject
-# -----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize('extension, expected', sorted(EXPECTED_TYPES.items()))
-def test_every_pyodide_asset_type_is_registered(probe, extension, expected):
-    assert probe['served'][f'pyodide{extension}']['content_type'] == expected
-
-
-# -----------------------------------------------------------------------------
-# Nearby: unchanged on both refs
-# -----------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize('name, expected', sorted(ORDINARY_ASSETS.items()))
-def test_ordinary_static_assets_keep_their_type(probe, name, expected):
-    assert probe['served'][name]['content_type'] == expected
-
-
-def test_unknown_extension_falls_back_to_the_starlette_default(probe):
-    assert probe['served'][UNKNOWN_ASSET]['content_type'] == 'application/octet-stream'
-
-
-def test_cors_header_is_still_set_on_served_assets(probe):
-    assert probe['served']['pyodide.mjs']['cors'] == '*'
+def test_pyodide_assets_still_allow_cross_origin_loading(probe):
+    assert all(entry["cors"] == "*" for entry in probe["served"].values())

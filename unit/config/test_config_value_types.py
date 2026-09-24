@@ -1,49 +1,49 @@
-"""Regression: admin config values of any data type persist without crashing.
+"""Regression: a config value the JSON column cannot serialize made `Config.upsert` raise.
 
-open-webui 0.10.2 fix `ab22fe64b` (#26431): `Config.upsert` wrote values straight
-into the JSON column, so a value that isn't directly JSON-serializable — e.g.
-`WEBUI_BANNERS` as a list of Pydantic banner models — raised at commit and could
-fail startup ("Setting WEBUI_BANNERS causes a startup failure"). The fix passes
-every value through `fastapi.encoders.jsonable_encoder` before storing.
+open-webui 0.10.2 fix `ab22fe64b` (#26431): `Config.upsert` and `Config.seed_defaults` wrote
+values straight into the JSON column, so a list of Pydantic models (`WEBUI_BANNERS`) or any other
+non-JSON value raised at commit. The fix passes every value through `jsonable_encoder` first.
 
-Uses the real `Config.upsert` / `Config.get` against the test sqlite DB.
+The integration twin boots an instance with banners in the environment, which is the seeding half.
+Every route dumps its models before it calls `upsert`, so no request reaches that half with a raw
+value; it is driven here against the scratch database, under a key of its own that is deleted after.
 
-Discriminates: passes on v0.10.2 (encoded), raises on v0.10.1 (raw value → the
-JSON column's json.dumps rejects the Pydantic models).
+Discriminates: passes on bbfa876af, fails with the encoding dropped from `Config.upsert` (the JSON
+column's serializer rejects the model and the datetime).
 """
 
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
 import pytest
+from pydantic import BaseModel
 
 pytestmark = pytest.mark.regression
 
 
-@pytest.mark.asyncio
-async def test_upsert_encodes_pydantic_typed_values(config_model_module):
-    from pydantic import BaseModel
-
-    Config = config_model_module.Config
-
-    class Banner(BaseModel):
-        id: str
-        type: str
-        content: str
-
-    banners = [Banner(id="b1", type="info", content="hello")]
-    # A list of Pydantic models is not directly JSON-serializable; storing it
-    # must not raise (jsonable_encoder coerces it) and it round-trips as dicts.
-    await Config.upsert({"_regression.banners": banners})
-    stored = await Config.get("_regression.banners")
-    assert stored == [{"id": "b1", "type": "info", "content": "hello"}], stored
+class Banner(BaseModel):
+    id: str
+    content: str
 
 
 @pytest.mark.asyncio
-async def test_upsert_encodes_datetime_value(config_model_module):
-    """A non-JSON scalar (datetime) must also store rather than crash — the same
-    jsonable_encoder path. jsonable_encoder renders it as an ISO-8601 string."""
-    from datetime import datetime, timezone
-
-    Config = config_model_module.Config
-    dt = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
-    await Config.upsert({"_regression.ts": dt})
-    stored = await Config.get("_regression.ts")
-    assert isinstance(stored, str) and stored.startswith("2026-07-01"), stored
+@pytest.mark.parametrize(
+    "value, stored",
+    [
+        ([Banner(id="b1", content="hello")], [{"id": "b1", "content": "hello"}]),
+        (datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc), "2026-07-01T12:00:00+00:00"),
+    ],
+    ids=["pydantic-models", "datetime"],
+)
+async def test_a_value_the_json_column_cannot_take_is_stored_encoded(
+    config_model_module, value, stored
+):
+    config = config_model_module.Config
+    key = f"_regression.{uuid.uuid4().hex[:8]}"
+    try:
+        await config.upsert({key: value})
+        assert await config.get(key) == stored
+    finally:
+        await config.delete(key)

@@ -1,29 +1,39 @@
 """Guard: the shipped docker compose stack must come up on a clean machine.
 
-docker-compose.yaml is what the install docs tell people to run, and the
-overlays next to it are merged on top by docker-compose-launcher.sh. All of it
-is hand-maintained YAML that nothing validates: an overlay the launcher names
-but nobody added, a `${VAR}` with no default (compose substitutes an empty
-string and the container gets a broken port mapping or an empty image tag), or
-a volume used by a service but never declared, which compose rejects outright.
+docker-compose.yaml is what the install docs tell people to run, and the overlays next to it are
+merged on top by docker-compose-launcher.sh. All of it is hand-maintained YAML that nothing
+validates: an overlay the launcher names but nobody added, a variable with no default (compose
+substitutes an empty string, so the container gets a broken port mapping or an empty image tag),
+or a named volume nobody declared, which compose refuses outright.
 
-The one that costs users data rather than a startup is the open-webui service
-losing its volume: every chat, file and setting lives under /app/backend/data
-and goes away with the container.
+The one that costs users data rather than a startup is the open-webui service losing its data
+volume: every chat, file and setting lives under /app/backend/data and goes with the container.
 
-Reads the YAML, runs no docker.
+The YAML is parsed and walked, interpolations are read with compose's own grammar; no docker runs.
+
+Discriminates: passes on bbfa876af; a file without services, a named volume nobody declares, a
+bare `${VAR}`, a launcher `-f` for a missing file, the data mount moved and the container port
+changed each fail their test.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
+from unit.config.container_files import served_port
+
 yaml = pytest.importorskip("yaml", reason="PyYAML not installed")
 
+BASE_FILE = "docker-compose.yaml"
 DATA_PATH = "/app/backend/data"
+# `$$` is a literal dollar; `${NAME}` and `$NAME` substitute; `${NAME-x}`, `${NAME:?x}` and the
+# other modifiers carry a default or an explicit error.
+INTERPOLATION = re.compile(r"\$(?:(\$)|\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+BARE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 @pytest.fixture(scope="module")
@@ -32,108 +42,114 @@ def repo_root(open_webui_backend: Path) -> Path:
 
 
 @pytest.fixture(scope="module")
-def compose_files(repo_root: Path) -> list[Path]:
-    files = sorted(repo_root.glob("docker-compose*.yaml"))
-    if not files:
-        pytest.skip(f"no compose files under {repo_root}")
-    return files
+def compose_files(repo_root: Path) -> dict[str, dict]:
+    """Every compose file by name, parsed."""
+    paths = sorted(repo_root.glob("docker-compose*.yaml"))
+    assert any(path.name == BASE_FILE for path in paths), f"no {BASE_FILE} under {repo_root}"
+    return {path.name: yaml.safe_load(path.read_text(encoding="utf-8")) for path in paths}
 
 
 @pytest.fixture(scope="module")
-def base_compose(repo_root: Path) -> dict:
-    path = repo_root / "docker-compose.yaml"
-    if not path.is_file():
-        pytest.skip(f"no docker-compose.yaml at {path}")
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def open_webui_service(compose_files: dict[str, dict]) -> dict:
+    services = compose_files[BASE_FILE]["services"]
+    assert "open-webui" in services, f"{BASE_FILE} no longer defines open-webui: {sorted(services)}"
+    return services["open-webui"]
 
 
-def test_every_compose_file_is_valid_yaml(compose_files: list[Path]) -> None:
-    broken = []
-    for path in compose_files:
-        try:
-            parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as error:
-            broken.append((path.name, str(error).splitlines()[0]))
+def _strings(node) -> Iterator[str]:
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _strings(item)
+
+
+def _named_volumes(service: dict) -> Iterator[str]:
+    for mount in service.get("volumes") or []:
+        if isinstance(mount, dict):
+            if mount.get("type", "volume") == "volume" and mount.get("source"):
+                yield mount["source"]
             continue
-        if not isinstance(parsed, dict) or not parsed.get("services"):
-            broken.append((path.name, "no services mapping"))
-    assert not broken, f"unusable compose files: {broken}"
+        source, separator, _ = str(mount).partition(":")
+        if separator and not source.startswith((".", "/", "~", "$")):
+            yield source
 
 
-def test_every_named_volume_is_declared(compose_files: list[Path]) -> None:
-    """`docker compose up` refuses to start a service that mounts a named
-    volume the file never declares."""
-    undeclared = []
-    for path in compose_files:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        declared = set((document.get("volumes") or {}).keys())
-        for service, definition in document["services"].items():
-            for mount in definition.get("volumes") or []:
-                if not isinstance(mount, str):
-                    continue
-                source = mount.split(":")[0]
-                if source.startswith((".", "/", "~", "$")):
-                    continue  # a bind mount, not a named volume
-                if source not in declared:
-                    undeclared.append((path.name, service, source))
-    assert not undeclared, f"named volumes used but not declared: {undeclared}"
+def _mount_targets(service: dict) -> set[str]:
+    targets = set()
+    for mount in service.get("volumes") or []:
+        target = mount.get("target") if isinstance(mount, dict) else str(mount).split(":")[1:2]
+        targets.update([target] if isinstance(target, str) else target)
+    return {target.rstrip("/") for target in targets}
 
 
-def test_every_interpolation_has_a_default(compose_files: list[Path]) -> None:
-    """Compose substitutes an unset variable with an empty string and carries
-    on, so a missing default turns into an empty image tag or a broken port
-    mapping for anyone running without a .env file."""
-    bare = []
-    for path in compose_files:
-        text = "\n".join(
-            line
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if not line.lstrip().startswith("#")
-        )
-        # `$${VAR}` is an escaped literal that reaches the container's own shell.
-        for match in re.finditer(r"(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)\}", text):
-            bare.append((path.name, match.group(1)))
-    assert not bare, f"compose interpolations with no default value: {sorted(set(bare))}"
+def _container_ports(service: dict) -> set[str]:
+    ports = set()
+    for mapping in service.get("ports") or []:
+        container = mapping.get("target") if isinstance(mapping, dict) else mapping
+        ports.add(str(container).rsplit(":", 1)[-1].split("/")[0])
+    return ports
+
+
+def test_every_compose_file_defines_services(compose_files: dict[str, dict]) -> None:
+    broken = [
+        name for name, document in compose_files.items() if not (document or {}).get("services")
+    ]
+    assert not broken, f"compose files with no services mapping: {broken}"
+
+
+def test_every_named_volume_is_declared(compose_files: dict[str, dict]) -> None:
+    """compose refuses a service mounting a named volume its file (or the base) never declares."""
+    base_volumes = set(compose_files[BASE_FILE].get("volumes") or {})
+    undeclared = [
+        (name, service_name, volume)
+        for name, document in compose_files.items()
+        for service_name, service in (document.get("services") or {}).items()
+        for volume in _named_volumes(service or {})
+        if volume not in set(document.get("volumes") or {}) | base_volumes
+    ]
+    assert not undeclared, f"named volumes used but never declared: {undeclared}"
+
+
+def test_every_interpolation_has_a_default(compose_files: dict[str, dict]) -> None:
+    """An unset variable becomes an empty string for anyone running without a .env file."""
+    bare = sorted(
+        {
+            (name, match.group(2) or match.group(3))
+            for name, document in compose_files.items()
+            for text in _strings(document)
+            for match in INTERPOLATION.finditer(text)
+            if match.group(3) or (match.group(2) and BARE_NAME.fullmatch(match.group(2)))
+        }
+    )
+    assert not bare, f"compose interpolations with no default value: {bare}"
 
 
 def test_the_launcher_only_names_compose_files_that_exist(repo_root: Path) -> None:
     launcher = repo_root / "docker-compose-launcher.sh"
-    if not launcher.is_file():
-        pytest.skip("no docker-compose-launcher.sh in this checkout")
-    referenced = sorted(
-        set(
-            re.findall(r"docker-compose[A-Za-z0-9._-]*\.yaml", launcher.read_text(encoding="utf-8"))
-        )
-    )
-    assert referenced, "the launcher references no compose files"
-    missing = [name for name in referenced if not (repo_root / name).is_file()]
+    assert launcher.is_file(), f"no {launcher.name}; retarget this guard at the stack's launcher"
+    named = set(re.findall(r"docker-compose[\w.-]*\.yaml", launcher.read_text(encoding="utf-8")))
+
+    assert named, "the launcher names no compose files"
+    missing = sorted(name for name in named if not (repo_root / name).is_file())
     assert not missing, f"docker-compose-launcher.sh passes -f for missing files: {missing}"
 
 
-def test_the_default_stack_defines_the_open_webui_service(base_compose: dict) -> None:
-    assert "open-webui" in base_compose["services"], (
-        f"docker-compose.yaml no longer defines open-webui: {sorted(base_compose['services'])}"
-    )
-
-
-def test_the_data_directory_is_persisted(base_compose: dict) -> None:
+def test_the_data_directory_is_persisted(open_webui_service: dict) -> None:
     """Without this mount every chat, file and setting dies with the container."""
-    mounts = base_compose["services"]["open-webui"].get("volumes") or []
-    assert any(isinstance(m, str) and m.endswith(DATA_PATH) for m in mounts), (
-        f"the open-webui service does not mount {DATA_PATH}: {mounts}"
+    assert DATA_PATH in _mount_targets(open_webui_service), (
+        f"the open-webui service no longer mounts {DATA_PATH}: {open_webui_service.get('volumes')}"
     )
 
 
-def test_the_published_port_reaches_the_server(base_compose: dict, repo_root: Path) -> None:
-    """The container half of the mapping has to be the port the app listens
-    on, or the published port answers nothing."""
-    mappings = base_compose["services"]["open-webui"].get("ports") or []
-    container_ports = {str(m).rsplit(":", 1)[-1] for m in mappings}
+def test_the_published_port_reaches_the_server(open_webui_service: dict, repo_root: Path) -> None:
+    """The container half of the mapping must be the port the image serves on."""
+    published = _container_ports(open_webui_service)
 
-    start_sh = (repo_root / "backend" / "start.sh").read_text(encoding="utf-8")
-    default_port = re.search(r'PORT="\$\{PORT:-(\d+)\}"', start_sh)
-    assert default_port, "could not read the PORT default out of start.sh"
-    assert default_port.group(1) in container_ports, (
-        f"compose publishes to container port(s) {sorted(container_ports)} "
-        f"but start.sh serves on {default_port.group(1)}"
+    assert served_port(repo_root) in published, (
+        f"compose publishes container port(s) {sorted(published)} but the image serves on "
+        f"{served_port(repo_root)}"
     )
