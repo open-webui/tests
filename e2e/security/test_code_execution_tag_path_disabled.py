@@ -50,14 +50,16 @@ def chat_page(page_for, make_user):
 
 def test_a_tag_in_the_reply_stays_text_under_native_function_calling(chat_page, upstream):
     page = chat_page()
-    upstream.queue(reply.text(TAG_REPLY))
-    send(page, "what does the document say?")
+    prompt = "what does the document say?"
+    upstream.queue(reply.text(TAG_REPLY, match=reply.answering(prompt)))
+    send(page, prompt)
     expect_reply(page, "The document contains this snippet:")
     expect(stop_button(page)).to_be_hidden()
 
     expect(last_reply(page)).to_contain_text(QUOTED_TAG)
     expect(last_reply(page).get_by_text("Analyzed")).to_have_count(0)
-    assert len(upstream.chat_requests()) == 1, (
+    about_this_chat = [body for body in upstream.chat_requests() if prompt in str(body["messages"])]
+    assert len(about_this_chat) == 1, (
         "a <code_interpreter> block quoted in a native-mode reply was run in the browser and "
         "its output sent back to the model (#29024)"
     )

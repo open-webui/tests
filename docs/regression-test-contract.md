@@ -77,6 +77,7 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(page_for, ma
 ```
 
 - **Locate the way a person does:** by role, label or visible text. A CSS class is the last resort, and a tooltip-only button is found through its tooltip text.
+- **Tie a scripted reply to its prompt** with `reply.text(..., match=reply.answering(prompt))` when a browser test counts or depends on provider requests: a request left over from an earlier test can otherwise take the reply.
 - **Wait on what appears, not on time.** Playwright's `expect` waits by itself. The only sleep allowed is a bounded check that nothing more happens (a stopped stream stays stopped).
 - **Wait for the page to be ready for what you do.** Keyboard shortcuts bind after the layout loads; wait for the chat input, not for the first link.
 - Every failing test leaves a trace per browser in `test-results/`; `playwright show-trace` replays it.

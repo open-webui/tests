@@ -46,6 +46,16 @@ def error(status: int = 500, message: str = "upstream failed", **options) -> Rep
     return Reply(status=status, error_message=message, **options)
 
 
+def answering(prompt: str) -> Callable[[dict], bool]:
+    """A `match` for the requests whose latest user message contains `prompt`."""
+
+    def matches(body: dict) -> bool:
+        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
+        return bool(users) and prompt in str(users[-1].get("content"))
+
+    return matches
+
+
 @dataclass
 class UpstreamRequest:
     method: str
