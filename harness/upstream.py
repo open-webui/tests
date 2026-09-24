@@ -100,7 +100,7 @@ def serve(upstream_port: int) -> tuple[MockUpstream, Callable[[], None]]:
         base_url=f"http://127.0.0.1:{upstream_port}/v1", behaviour={"mode": "ok"}
     )
     server = ThreadingHTTPServer(("127.0.0.1", upstream_port), _handler(upstream))
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
 
     def shutdown() -> None:
         server.shutdown()

@@ -95,7 +95,7 @@ def listening(host: str = "127.0.0.1") -> Iterator[Listener]:
         do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = do_HEAD = _serve
 
     server = ThreadingHTTPServer((host, port), RequestHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
     try:
         yield listener
     finally:
