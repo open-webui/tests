@@ -172,13 +172,13 @@ def test_the_next_turn_replays_the_summary_and_the_kept_turns(user, upstream, co
 
 
 @pytest.fixture
-def compaction_model(instance, admin):
+def compaction_model(upstream, admin):
     """A second provider model the summary can be sent to."""
-    instance.upstream.models.append(COMPACTION_MODEL)
+    upstream.models.append(COMPACTION_MODEL)
     with admin.client() as client:
         client.get("/api/models").raise_for_status()
     yield COMPACTION_MODEL
-    instance.upstream.models.remove(COMPACTION_MODEL)
+    upstream.models.remove(COMPACTION_MODEL)
     with admin.client() as client:
         client.get("/api/models").raise_for_status()
 

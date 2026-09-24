@@ -33,13 +33,13 @@ def _refresh_models(admin) -> list[str]:
 
 
 @pytest.fixture
-def provider_model_id(instance, admin):
+def provider_model_id(upstream, admin):
     """A model the scripted provider serves that the user cannot see and no row claims."""
     model_id = f"provider-only-{uuid.uuid4().hex[:8]}"
-    instance.upstream.models.append(model_id)
+    upstream.models.append(model_id)
     assert model_id in _refresh_models(admin)
     yield model_id
-    instance.upstream.models.remove(model_id)
+    upstream.models.remove(model_id)
     with admin.client() as client:
         client.post("/api/v1/models/model/delete", json={"id": model_id})
     _refresh_models(admin)

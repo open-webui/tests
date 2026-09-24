@@ -83,13 +83,13 @@ def _delete(admin, *model_ids: str) -> None:
 
 
 @pytest.fixture
-def provider_model_id(instance, admin):
+def provider_model_id(upstream, admin):
     """A model the scripted provider serves and no workspace row claims."""
     model_id = _fresh_id("provider-only")
-    instance.upstream.models.append(model_id)
+    upstream.models.append(model_id)
     assert model_id in _refreshed_models(admin)
     yield model_id
-    instance.upstream.models.remove(model_id)
+    upstream.models.remove(model_id)
     _delete(admin, model_id)
     _refreshed_models(admin)
 
