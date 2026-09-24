@@ -1,401 +1,321 @@
 """Dependency contract: the langchain split distributions.
 
-langchain is the RAG framework Open WebUI builds retrieval on. Its surface is
-split across several PyPI distributions and Open WebUI pins and imports each of
-them directly; the umbrella ``langchain`` package is no longer a dependency
-(dropped in e07e8ed0d). Commit 05484aa05 also removed langchain-community;
-BM25 and document loaders now live in the backend.
+Open WebUI builds retrieval on three langchain distributions and imports each directly; the
+umbrella ``langchain`` package (e07e8ed0d) and langchain-community (05484aa05) are gone, BM25 and
+the document loaders now live in the backend.
 
-  - `langchain_core`       (dist ``langchain-core``)       — ``Document`` (the
-        unit of content threaded through every loader/splitter/retriever),
-        ``BaseRetriever`` / ``CallbackManagerForRetrieverRun`` / ``Callbacks``
-        (subclassed by ``VectorSearchRetriever``), ``BaseDocumentCompressor``
-        (subclassed by ``RerankCompressor``), ``BaseLoader``, and
-        ``convert_to_openai_function`` (tool-spec generation).
-  - `langchain_text_splitters` (dist ``langchain-text-splitters``) — the
-        chunkers (``RecursiveCharacterTextSplitter``,
-        ``MarkdownHeaderTextSplitter``, ``TokenTextSplitter``,
-        ``CharacterTextSplitter``) that turn ingested docs into RAG chunks.
-  - `langchain_classic`    (dist ``langchain-classic``)    — the composite
-        retrievers (``EnsembleRetriever``, ``ContextualCompressionRetriever``)
-        that wire BM25 + vector + rerank together.
+  - ``langchain_core``: ``Document``, the content unit of every loader, splitter and retriever;
+    ``BaseRetriever`` with ``CallbackManagerForRetrieverRun`` (the backend's
+    ``VectorSearchRetriever`` and ``BM25Retriever`` subclass it, the vector one async);
+    ``BaseDocumentCompressor`` with ``Callbacks`` (``RerankCompressor`` overrides
+    ``acompress_documents``); ``BaseLoader`` (the PDF, external and web loaders); and
+    ``convert_to_openai_function`` (tool specs in ``utils/tools.py``).
+  - ``langchain_text_splitters``: ``RecursiveCharacterTextSplitter`` (with a
+    ``length_function`` for the "token_transformers" splitter), ``TokenTextSplitter`` (with
+    ``disallowed_special``) and ``MarkdownHeaderTextSplitter``, as ``routers/retrieval.py``
+    builds them.
+  - ``langchain_classic``: ``EnsembleRetriever(retrievers=, weights=, id_key=)`` fusing BM25 and
+    vector search, inside ``ContextualCompressionRetriever(base_compressor=, base_retriever=)``
+    which the hybrid search awaits with ``ainvoke``.
 
-These distributions version *independently* and routinely relocate symbols
-between releases (the whole "core / community / classic" split is exactly that
-churn). This module pins the exact import paths and offline behaviours the
-backend relies on, so a bump that moved or renamed any of them fails loudly
-here instead of as a runtime ImportError/AttributeError deep in an ingest or
-query path. Everything below is fully offline: no URL fetches, no model
-downloads, no transcript APIs.
+These distributions version independently and move symbols between releases. This module pins
+the import paths and runs each call shape on stand-ins built here, never on open_webui modules,
+so a backend refactor cannot break it. Open WebUI's own chunking and hybrid search are covered
+over HTTP in integration/deps/test_chunking_and_search.py. Offline: a tiktoken encoding whose BPE
+file is not cached skips rather than downloads.
 
-Pattern: symbol-existence checks (per distribution) + offline behavioural
-contracts. Uses the `depcheck` fixture from unit/deps/conftest.py.
+Discriminates: with ``split_documents`` returning its input, the markdown splitter keeping only
+the first section, or the compression retriever skipping its compressor (a pytest plugin
+patching the installed libraries), the matching tests go red.
+
+Uses the ``depcheck`` fixture from unit/deps/conftest.py.
 """
 
 from __future__ import annotations
 
-import inspect
+import asyncio
+from typing import Any
 
 import pytest
 
 pytestmark = pytest.mark.depcheck
 
-
-# --------------------------------------------------------------------------- #
-# Import-name -> distribution-name map (these differ, and the dist names are
-# what the bump tooling pins in requirements.txt).
-# --------------------------------------------------------------------------- #
 CORE_IMPORT = "langchain_core"
 CORE_DIST = "langchain-core"
-
 SPLITTERS_IMPORT = "langchain_text_splitters"
 SPLITTERS_DIST = "langchain-text-splitters"
-
 CLASSIC_IMPORT = "langchain_classic"
 CLASSIC_DIST = "langchain-classic"
 
+DEAD_PROXY = "http://127.0.0.1:9"
 
-# Symbols the Open WebUI backend resolves from each distribution. Import paths
-# move between langchain versions, so each dotted path is a contract.
 CORE_SYMBOLS = [
-    # retrieval/utils.py, routers/retrieval.py, every loader: the content unit.
     "documents.Document",
-    # retrieval/utils.py RerankCompressor base class.
     "documents.BaseDocumentCompressor",
-    # retrieval/loaders/{external_web,external_document,tavily}.py base class.
     "document_loaders.BaseLoader",
-    # retrieval/utils.py VectorSearchRetriever base + run-manager type.
     "retrievers.BaseRetriever",
     "callbacks.CallbackManagerForRetrieverRun",
-    # retrieval/utils.py RerankCompressor.compress_documents callbacks arg type.
     "callbacks.Callbacks",
-    # utils/tools.py: pydantic model -> OpenAI function spec.
     "utils.function_calling.convert_to_openai_function",
 ]
 
 SPLITTERS_SYMBOLS = [
-    # routers/retrieval.py imports the first three at module top; CharacterText
-    # is the documented "character" fallback splitter family.
     "RecursiveCharacterTextSplitter",
     "MarkdownHeaderTextSplitter",
     "TokenTextSplitter",
-    "CharacterTextSplitter",
 ]
 
 CLASSIC_SYMBOLS = [
-    # retrieval/utils.py: composite retrievers for hybrid + rerank, imported
-    # from `langchain_classic.retrievers`.
     "retrievers.ContextualCompressionRetriever",
     "retrievers.EnsembleRetriever",
 ]
 
 
-# --------------------------------------------------------------------------- #
-# langchain_core — Document, base classes, function-calling
-# --------------------------------------------------------------------------- #
-def test_core_import(depcheck):
-    mod = depcheck.load(CORE_IMPORT)
-    assert mod.__name__ == "langchain_core"
+def _document_class(depcheck):
+    return depcheck.resolve(depcheck.load(CORE_IMPORT), "documents.Document")
 
 
+def _offline_encoding(depcheck, name: str = "cl100k_base") -> str:
+    """The tiktoken encoding name, once its BPE file loads without a download."""
+    tiktoken = depcheck.load("tiktoken")
+    with pytest.MonkeyPatch.context() as patch:
+        for variable in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+            patch.setenv(variable, DEAD_PROXY)
+        for variable in ("NO_PROXY", "no_proxy"):
+            patch.delenv(variable, raising=False)
+        try:
+            tiktoken.get_encoding(name)
+        except OSError:
+            pytest.skip(f"the {name} BPE file is not cached and may not be downloaded")
+    return name
+
+
+# --------------------------------------------------------------------------- #
+# langchain_core
+# --------------------------------------------------------------------------- #
 def test_core_symbols_exist(depcheck):
-    """Every langchain_core symbol the backend imports must still resolve at its
-    current dotted path."""
-    mod = depcheck.load(CORE_IMPORT)
-    depcheck.assert_symbols(mod, CORE_SYMBOLS)
+    depcheck.assert_symbols(depcheck.load(CORE_IMPORT), CORE_SYMBOLS)
 
 
 def test_core_version_reported(depcheck):
+    depcheck.load(CORE_IMPORT)
     assert depcheck.dist_version(CORE_DIST) is not None
 
 
-def test_document_construction_contract(depcheck):
-    """`Document(page_content=..., metadata=...)` is the constructor shape the
-    backend uses everywhere (loaders build them, splitters re-emit them,
-    retrievers return them). page_content/metadata must round-trip; metadata
-    must default to an empty dict so `doc.metadata.get(...)` is always safe."""
-    docs = depcheck.resolve(depcheck.load(CORE_IMPORT), "documents")
-    Document = docs.Document
+def test_document_carries_content_and_metadata(depcheck):
+    Document = _document_class(depcheck)
 
-    d = Document(page_content="hello world", metadata={"source": "x", "hash": "h"})
-    assert d.page_content == "hello world"
-    assert d.metadata == {"source": "x", "hash": "h"}
+    document = Document(page_content="hello world", metadata={"source": "x"})
+    bare = Document(page_content="no metadata")
 
-    # routers/retrieval.py and the loaders read .metadata.get(...) on docs that
-    # may have been built without explicit metadata.
-    d2 = Document(page_content="no meta")
-    assert d2.metadata == {}
-    assert d2.metadata.get("score") is None
+    assert document.page_content == "hello world"
+    assert document.metadata == {"source": "x"}
+    assert bare.metadata == {}
 
 
-def test_base_retriever_subclass_contract(depcheck):
-    """retrieval/utils.py's VectorSearchRetriever subclasses BaseRetriever and
-    implements `_get_relevant_documents(self, query, *, run_manager)`; calling
-    code invokes it via `.invoke(query)` / `.ainvoke(query)`. Pin that a minimal
-    subclass with exactly that hook is usable through the public invoke API."""
-    core = depcheck.load(CORE_IMPORT)
-    BaseRetriever = depcheck.resolve(core, "retrievers").BaseRetriever
-    Document = depcheck.resolve(core, "documents").Document
-
-    # The keyword-only run_manager hook must remain the override point.
-    sig = inspect.signature(BaseRetriever._get_relevant_documents)
-    assert "run_manager" in sig.parameters
-
-    class _Probe(BaseRetriever):
-        def _get_relevant_documents(self, query, *, run_manager):  # noqa: ANN001
-            return [Document(page_content=query, metadata={"score": 1.0})]
-
-    out = _Probe().invoke("ping")
-    assert isinstance(out, list) and len(out) == 1
-    assert out[0].page_content == "ping"
-    assert out[0].metadata.get("score") == 1.0
-
-
-def test_base_document_compressor_subclass_contract(depcheck):
-    """retrieval/utils.py's RerankCompressor subclasses BaseDocumentCompressor
-    and overrides (a)compress_documents(documents, query, callbacks=None).
-    Confirm it's subclassable with pydantic-style extra fields and that the
-    method signature still accepts those positional args."""
-    core = depcheck.load(CORE_IMPORT)
-    docs = depcheck.resolve(core, "documents")
-    BaseDocumentCompressor = docs.BaseDocumentCompressor
-    Document = docs.Document
-
-    assert isinstance(BaseDocumentCompressor, type)
-    params = inspect.signature(BaseDocumentCompressor.compress_documents).parameters
-    for name in ("documents", "query"):
-        assert name in params, f"compress_documents lost the {name!r} parameter"
-
-    class _Probe(BaseDocumentCompressor):
-        top_n: int = 1
-
-        def compress_documents(self, documents, query, callbacks=None):  # noqa: ANN001
-            return list(documents)[: self.top_n]
-
-    out = _Probe(top_n=1).compress_documents(
-        [Document(page_content="a"), Document(page_content="b")], "q"
+def test_convert_to_openai_function_describes_a_pydantic_model(depcheck):
+    convert = depcheck.resolve(
+        depcheck.load(CORE_IMPORT), "utils.function_calling.convert_to_openai_function"
     )
-    assert len(out) == 1 and out[0].page_content == "a"
+    pydantic = depcheck.load("pydantic")
 
-
-def test_convert_to_openai_function_contract(depcheck):
-    """utils/tools.py turns a pydantic args model into an OpenAI function spec
-    via convert_to_openai_function. The result must carry name/description/
-    parameters so it can be handed to a model's tool list."""
-    core = depcheck.load(CORE_IMPORT)
-    convert = depcheck.resolve(core, "utils.function_calling.convert_to_openai_function")
-    assert callable(convert)
-
-    pydantic = depcheck.try_load("pydantic")
-    if pydantic is None:
-        pytest.skip("pydantic not importable in this env")
-
-    class _Args(pydantic.BaseModel):
-        """Do a thing."""
+    class Lookup(pydantic.BaseModel):
+        """Look a thing up."""
 
         x: int = pydantic.Field(description="the x value")
 
-    spec = convert(_Args)
-    assert spec["name"] == "_Args"
-    assert "parameters" in spec
-    # the parameter schema must surface our field so the model can fill it.
-    assert "x" in spec["parameters"].get("properties", {})
+    spec = convert(Lookup)
+
+    assert spec["name"] == "Lookup"
+    assert "x" in spec["parameters"]["properties"]
 
 
 # --------------------------------------------------------------------------- #
-# langchain_text_splitters — chunkers
+# langchain_text_splitters
 # --------------------------------------------------------------------------- #
-def test_splitters_import(depcheck):
-    mod = depcheck.load(SPLITTERS_IMPORT)
-    assert mod.__name__ == "langchain_text_splitters"
-
-
 def test_splitters_symbols_exist(depcheck):
-    mod = depcheck.load(SPLITTERS_IMPORT)
-    depcheck.assert_symbols(mod, SPLITTERS_SYMBOLS)
+    depcheck.assert_symbols(depcheck.load(SPLITTERS_IMPORT), SPLITTERS_SYMBOLS)
 
 
 def test_splitters_version_reported(depcheck):
+    depcheck.load(SPLITTERS_IMPORT)
     assert depcheck.dist_version(SPLITTERS_DIST) is not None
 
 
-def test_recursive_character_splitter_contract(depcheck):
-    """routers/retrieval.py constructs RecursiveCharacterTextSplitter(
-    chunk_size=, chunk_overlap=, add_start_index=True) then calls
-    split_documents(docs). Contract: long input splits into >1 chunk, each
-    chunk is a Document, original metadata is preserved, and add_start_index
-    injects a `start_index` into chunk metadata."""
+def test_the_recursive_splitter_cuts_documents_by_length(depcheck):
     splitters = depcheck.load(SPLITTERS_IMPORT)
-    Document = depcheck.resolve(depcheck.load(CORE_IMPORT), "documents").Document
-    RCTS = splitters.RecursiveCharacterTextSplitter
+    Document = _document_class(depcheck)
+    splitter = splitters.RecursiveCharacterTextSplitter(
+        chunk_size=20, chunk_overlap=5, add_start_index=True
+    )
+    document = Document(page_content="abcdefghij " * 12, metadata={"a": 1})
 
-    sp = RCTS(chunk_size=20, chunk_overlap=5, add_start_index=True)
-    src = "abcdefghij " * 12  # 132 chars, far larger than chunk_size
-    chunks = sp.split_documents([Document(page_content=src, metadata={"source": "s"})])
+    chunks = splitter.split_documents([document])
 
-    assert len(chunks) > 1, "expected the oversized doc to split into chunks"
-    assert all(type(c).__name__ == "Document" for c in chunks)
-    # original metadata threaded through + start_index added.
-    assert chunks[0].metadata.get("source") == "s"
-    assert "start_index" in chunks[0].metadata
-    # split_text returns the raw string chunks the backend also relies on.
-    text_chunks = sp.split_text(src)
-    assert len(text_chunks) > 1 and all(isinstance(t, str) for t in text_chunks)
+    assert len(chunks) > 1
+    assert all(len(chunk.page_content) <= 20 for chunk in chunks)
+    assert all(chunk.metadata["a"] == 1 and "start_index" in chunk.metadata for chunk in chunks)
 
 
-def test_markdown_header_splitter_contract(depcheck):
-    """routers/retrieval.py uses MarkdownHeaderTextSplitter(headers_to_split_on=
-    [('#','Header 1'), ...], strip_headers=False).split_text(text). Contract:
-    splitting a multi-section markdown doc yields >1 Document, each carries the
-    matched header(s) in metadata, and strip_headers=False keeps the '#' marker
-    in page_content."""
+def test_the_recursive_splitter_measures_with_a_length_function(depcheck):
+    """The "token_transformers" splitter passes a tokenizer's count as `length_function`."""
     splitters = depcheck.load(SPLITTERS_IMPORT)
-    MHTS = splitters.MarkdownHeaderTextSplitter
+    Document = _document_class(depcheck)
+    splitter = splitters.RecursiveCharacterTextSplitter(
+        chunk_size=3,
+        chunk_overlap=0,
+        length_function=lambda text: len(text.split()),
+        add_start_index=True,
+    )
 
-    md = MHTS(
+    chunks = splitter.split_documents([Document(page_content="one two three four five six")])
+
+    assert [chunk.page_content for chunk in chunks] == ["one two three", "four five six"]
+
+
+def test_the_markdown_splitter_cuts_at_headers_and_keeps_them(depcheck):
+    splitters = depcheck.load(SPLITTERS_IMPORT)
+    splitter = splitters.MarkdownHeaderTextSplitter(
         headers_to_split_on=[("#", "Header 1"), ("##", "Header 2")],
         strip_headers=False,
     )
-    text = "# Title\nintro paragraph text\n## Section\nbody under the section"
-    out = md.split_text(text)
 
-    assert len(out) > 1, "expected the headed markdown to split per section"
-    assert all(type(c).__name__ == "Document" for c in out)
-    # the H1 must surface in the first chunk's metadata under our key.
-    assert out[0].metadata.get("Header 1") == "Title"
-    # strip_headers=False keeps the literal header line in the content.
-    assert "#" in out[0].page_content
+    sections = splitter.split_text("# Title\nintro text\n## Section\nbody text")
+
+    assert len(sections) == 2
+    assert sections[0].metadata.get("Header 1") == "Title"
+    assert sections[0].page_content.startswith("# Title")
 
 
-def test_token_text_splitter_contract(depcheck):
-    """routers/retrieval.py uses TokenTextSplitter(encoding_name=, chunk_size=,
-    chunk_overlap=, add_start_index=True).split_documents(docs) for the 'token'
-    splitter mode (tiktoken-backed). Contract: a doc longer than chunk_size in
-    tokens splits into >1 Document offline."""
-    tiktoken = depcheck.try_load("tiktoken")
-    if tiktoken is None:
-        pytest.skip("tiktoken not importable in this env")
-
+def test_the_token_splitter_cuts_by_tokens_and_allows_special_tokens(depcheck):
+    """`disallowed_special=()` lets a document holding `<|endoftext|>` be split (#27094)."""
     splitters = depcheck.load(SPLITTERS_IMPORT)
-    Document = depcheck.resolve(depcheck.load(CORE_IMPORT), "documents").Document
-    TTS = splitters.TokenTextSplitter
+    Document = _document_class(depcheck)
+    splitter = splitters.TokenTextSplitter(
+        encoding_name=_offline_encoding(depcheck),
+        chunk_size=5,
+        chunk_overlap=0,
+        add_start_index=True,
+        disallowed_special=(),
+    )
+    text = "one two three four five <|endoftext|> six seven eight nine ten"
 
-    ts = TTS(encoding_name="cl100k_base", chunk_size=5, chunk_overlap=0)
-    src = "one two three four five six seven eight nine ten eleven twelve"
-    chunks = ts.split_documents([Document(page_content=src, metadata={})])
+    chunks = splitter.split_documents([Document(page_content=text)])
+
     assert len(chunks) > 1
-    assert all(type(c).__name__ == "Document" for c in chunks)
-
-
-def test_character_text_splitter_contract(depcheck):
-    """CharacterTextSplitter is the base "character" splitter family; pin that it
-    constructs with chunk_size/chunk_overlap and splits on its separator."""
-    splitters = depcheck.load(SPLITTERS_IMPORT)
-    CTS = splitters.CharacterTextSplitter
-
-    cts = CTS(chunk_size=10, chunk_overlap=0)  # default separator "\n\n"
-    out = cts.split_text("para one body\n\npara two body\n\npara three body")
-    assert len(out) > 1 and all(isinstance(t, str) for t in out)
+    assert "<|endoftext|>" in "".join(chunk.page_content for chunk in chunks)
 
 
 # --------------------------------------------------------------------------- #
-# Backend BM25 retriever + loaders
+# langchain_core retrievers and compressors inside langchain_classic's composites
 # --------------------------------------------------------------------------- #
-def test_backend_loaders_use_core_base_class(depcheck, retrieval_web_utils_module):
-    base = depcheck.resolve(depcheck.load(CORE_IMPORT), "document_loaders.BaseLoader")
-    for name in ("SafeWebBaseLoader", "SafePlaywrightURLLoader"):
-        assert issubclass(getattr(retrieval_web_utils_module, name), base)
+def _keyword_retrievers(depcheck):
+    """Stand-ins shaped like the backend's: a sync BM25-style one and an async vector-style one."""
+    core = depcheck.load(CORE_IMPORT)
+    BaseRetriever = depcheck.resolve(core, "retrievers.BaseRetriever")
+    Document = _document_class(depcheck)
+    texts = ["alpha beta", "beta gamma", "gamma delta"]
+    docs = [Document(page_content=text, metadata={"hash": f"h{i}"}) for i, text in enumerate(texts)]
 
+    class KeywordRetriever(BaseRetriever):
+        docs: list
+        scorer: Any  # the backend keeps an untyped vectorizer or embedding function here
+        k: int
 
-def _bm25_retriever(depcheck, module, texts, metadatas):
-    from rank_bm25 import BM25Okapi
+        def _get_relevant_documents(self, query, *, run_manager):
+            ranked = sorted(self.docs, key=lambda doc: -self.scorer(query, doc.page_content))
+            return [doc for doc in ranked if self.scorer(query, doc.page_content)][: self.k]
 
-    Document = depcheck.resolve(depcheck.load(CORE_IMPORT), "documents.Document")
-    return module.BM25Retriever(
-        docs=[Document(page_content=text, metadata=meta) for text, meta in zip(texts, metadatas)],
-        vectorizer=BM25Okapi([text.split() for text in texts]),
-        k=2,
+    class AsyncKeywordRetriever(KeywordRetriever):
+        def _get_relevant_documents(self, query, *, run_manager):
+            return []
+
+        async def _aget_relevant_documents(self, query, *, run_manager):
+            return KeywordRetriever._get_relevant_documents(self, query, run_manager=run_manager)
+
+    def scorer(query: str, text: str) -> int:
+        return text.split().count(query)
+
+    return (
+        KeywordRetriever(docs=docs, scorer=scorer, k=2),
+        AsyncKeywordRetriever(docs=docs, scorer=scorer, k=2),
     )
 
 
-def test_bm25_retriever_contract(depcheck, retrieval_utils_module):
-    """The production BM25 retriever ranks Documents and preserves their metadata."""
-    texts = ["the cat sat on the mat", "dogs run fast", "a feline on a rug"]
-    metas = [{"i": 0}, {"i": 1}, {"i": 2}]
-    retriever = _bm25_retriever(depcheck, retrieval_utils_module, texts, metas)
+def _top_one_compressor(depcheck):
+    """Shaped like RerankCompressor: async-only, scores into metadata, keeps `top_n`."""
+    core = depcheck.load(CORE_IMPORT)
+    BaseDocumentCompressor = depcheck.resolve(core, "documents.BaseDocumentCompressor")
 
-    out = retriever.invoke("cat")
-    assert isinstance(out, list) and len(out) == 2
-    assert all(type(document).__name__ == "Document" for document in out)
-    # metadata threaded through from the per-text metadatas.
-    assert all("i" in document.metadata for document in out)
-    assert out[0].page_content == texts[0]
-    assert out[0].metadata == metas[0]
+    class TopOne(BaseDocumentCompressor):
+        top_n: int
+
+        def compress_documents(self, documents, query, callbacks=None):
+            return []
+
+        async def acompress_documents(self, documents, query, callbacks=None):
+            ranked = sorted(documents, key=lambda doc: doc.page_content)
+            for doc in ranked:
+                doc.metadata["score"] = 1.0
+            return ranked[: self.top_n]
+
+    return TopOne(top_n=1)
 
 
-# --------------------------------------------------------------------------- #
-# langchain_classic — composite retrievers
-# --------------------------------------------------------------------------- #
-def test_classic_import(depcheck):
-    mod = depcheck.load(CLASSIC_IMPORT)
-    assert mod.__name__ == "langchain_classic"
+def test_a_retriever_subclass_answers_invoke_and_ainvoke(depcheck):
+    sync_retriever, async_retriever = _keyword_retrievers(depcheck)
+
+    found = sync_retriever.invoke("beta")
+    found_async = asyncio.run(async_retriever.ainvoke("beta"))
+
+    assert [doc.page_content for doc in found] == ["alpha beta", "beta gamma"]
+    assert [doc.page_content for doc in found_async] == ["alpha beta", "beta gamma"]
 
 
 def test_classic_symbols_exist(depcheck):
-    """EnsembleRetriever / ContextualCompressionRetriever moved into the
-    `langchain-classic` distribution in the modern split; the backend imports
-    them from `langchain_classic.retrievers`."""
-    mod = depcheck.load(CLASSIC_IMPORT)
-    depcheck.assert_symbols(mod, CLASSIC_SYMBOLS)
+    depcheck.assert_symbols(depcheck.load(CLASSIC_IMPORT), CLASSIC_SYMBOLS)
 
 
 def test_classic_version_reported(depcheck):
+    depcheck.load(CLASSIC_IMPORT)
     assert depcheck.dist_version(CLASSIC_DIST) is not None
 
 
-def test_ensemble_retriever_contract(depcheck, retrieval_utils_module):
-    """retrieval/utils.py builds EnsembleRetriever(retrievers=[...], weights=[...],
-    id_key=CHUNK_HASH_KEY) and invokes it. Contract (offline, BM25-only member):
-    construction with an explicit id_key works, and invoke(query) returns
-    Documents (RRF-fused) from the wrapped retriever."""
-    classic = depcheck.load(CLASSIC_IMPORT)
-    EnsembleRetriever = depcheck.resolve(classic, "retrievers").EnsembleRetriever
-
-    if depcheck.try_load("rank_bm25") is None:
-        pytest.skip("rank_bm25 (BM25Retriever backend) not importable in this env")
-
-    # id_key is the dedup key the backend passes (CHUNK_HASH_KEY) so enriched
-    # BM25 texts don't defeat RRF. The RRF path reads doc.metadata[id_key], so
-    # every text must carry that key — mirror the backend, whose chunks do.
-    bm25 = _bm25_retriever(
-        depcheck,
-        retrieval_utils_module,
-        texts=["alpha beta", "beta gamma", "gamma delta"],
-        metadatas=[{"hash": "h0"}, {"hash": "h1"}, {"hash": "h2"}],
+def test_the_ensemble_fuses_retrievers_and_dedupes_on_the_id_key(depcheck):
+    retrievers = depcheck.resolve(depcheck.load(CLASSIC_IMPORT), "retrievers")
+    sync_retriever, async_retriever = _keyword_retrievers(depcheck)
+    ensemble = retrievers.EnsembleRetriever(
+        retrievers=[sync_retriever, async_retriever], weights=[0.5, 0.5], id_key="hash"
     )
-    bm25.k = 2
 
-    ens = EnsembleRetriever(retrievers=[bm25], weights=[1.0], id_key="hash")
-    assert ens.id_key == "hash"
+    fused = asyncio.run(ensemble.ainvoke("gamma"))
 
-    out = ens.invoke("beta")
-    assert isinstance(out, list) and len(out) >= 1
-    assert all(type(d).__name__ == "Document" for d in out)
+    assert sorted(doc.metadata["hash"] for doc in fused) == ["h1", "h2"]
 
 
-def test_contextual_compression_retriever_is_constructible(depcheck):
-    """retrieval/utils.py builds ContextualCompressionRetriever(base_compressor=,
-    base_retriever=) and awaits .ainvoke(query). Pin that the constructor still
-    takes those two keyword args (offline; we don't run the rerank/embedding)."""
-    classic = depcheck.load(CLASSIC_IMPORT)
-    CCR = depcheck.resolve(classic, "retrievers").ContextualCompressionRetriever
+def test_the_compression_retriever_awaits_the_async_compressor(depcheck):
+    """The hybrid search: `ContextualCompressionRetriever(...).ainvoke(query)`."""
+    retrievers = depcheck.resolve(depcheck.load(CLASSIC_IMPORT), "retrievers")
+    sync_retriever, async_retriever = _keyword_retrievers(depcheck)
+    ensemble = retrievers.EnsembleRetriever(
+        retrievers=[sync_retriever, async_retriever], weights=[0.5, 0.5], id_key="hash"
+    )
+    compression = retrievers.ContextualCompressionRetriever(
+        base_compressor=_top_one_compressor(depcheck), base_retriever=ensemble
+    )
 
-    params = inspect.signature(CCR.__init__).parameters
-    # pydantic-model retrievers accept **data; only assert names when no var-kw.
-    has_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
-    if not has_var_kw:
-        for name in ("base_compressor", "base_retriever"):
-            assert name in params, f"ContextualCompressionRetriever lost {name!r}"
-    # invoke/ainvoke are the public entry points the backend calls.
-    assert callable(getattr(CCR, "ainvoke", None))
-    assert callable(getattr(CCR, "invoke", None))
+    best = asyncio.run(compression.ainvoke("beta"))
+
+    assert [(doc.page_content, doc.metadata["score"]) for doc in best] == [("alpha beta", 1.0)]
+
+
+def test_the_base_loader_is_subclassed_through_lazy_load(depcheck):
+    """`PDFLoader` implements only `lazy_load`; the dispatcher calls `load()`."""
+    BaseLoader = depcheck.resolve(depcheck.load(CORE_IMPORT), "document_loaders.BaseLoader")
+    Document = _document_class(depcheck)
+
+    class OnePage(BaseLoader):
+        def lazy_load(self):
+            yield Document(page_content="page one")
+
+    assert [doc.page_content for doc in OnePage().load()] == ["page one"]

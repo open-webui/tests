@@ -1,10 +1,14 @@
 """Dependency contract: transformers (HuggingFace, import name ``transformers``).
 
-Open WebUI uses transformers narrowly and lazily: ``routers/audio.py``'s
-``load_speech_pipeline`` does ``from transformers import pipeline`` and then
+Open WebUI uses transformers narrowly and lazily, in two places:
+``routers/audio.py``'s ``load_speech_pipeline`` does
+``from transformers import pipeline`` and then
 ``pipeline("text-to-speech", "microsoft/speecht5_tts")`` to build a local
-TTS pipeline. That is the only *direct* transformers call in the backend
-(``sentence_transformers`` in ``retrieval.py`` is a different package).
+TTS pipeline, and ``routers/retrieval.py``'s ``get_transformers_tokenizer``
+does ``AutoTokenizer.from_pretrained(model, cache_dir=, trust_remote_code=,
+local_files_only=)`` for the "token_transformers" text splitter, which then
+measures chunks with ``len(tokenizer.encode(text))``
+(``sentence_transformers`` is a different package).
 
 transformers is enormous and pulls heavy ML backends; downloading a model
 is slow, networked, and non-deterministic. This contract therefore stays
@@ -41,9 +45,9 @@ pytestmark = pytest.mark.depcheck
 IMPORT_NAME = "transformers"
 DIST_NAME = "transformers"
 
-# The only symbol the backend imports directly, plus the stable core surface
+# The symbols the backend imports directly, plus the stable core surface
 # any transformers consumer expects to remain present.
-USED_SYMBOLS = ["pipeline"]
+USED_SYMBOLS = ["pipeline", "AutoTokenizer"]
 
 CORE_SURFACE = [
     "pipeline",

@@ -1,15 +1,25 @@
 """Dependency contract: Pillow (import name ``PIL``).
 
-Pillow is the image-decoding/transform engine in the Open WebUI backend's
-dependency tree. The backend does not ``from PIL import`` anything in its
-own first-party code, but Pillow is a pinned, non-optional dependency
-(``pyproject.toml`` / ``backend/requirements.txt``: ``pillow==12.2.0``)
-that the document-ingestion and image-handling stack pulls in: it is the
-image loader behind retrieval/document loaders (``unstructured`` and the
-OCR/RapidOCR pre-processing path), image-format detection, and any
-thumbnailing/conversion done on uploaded or fetched images. Every one of
-those paths feeds Pillow *attacker-influenced bytes* (an uploaded file, a
-fetched remote image, a document's embedded image), which is exactly why
+Pillow is a pinned, non-optional dependency of the Open WebUI backend
+(``pyproject.toml`` / ``backend/requirements.txt``: ``pillow==12.2.0``) and
+its own code imports it directly:
+
+  - ``utils/validate.py``: ``validate_background_image`` opens an uploaded
+    model background with ``Image.open``, maps ``image.format`` to a MIME
+    type, checks ``width * height``, ``verify()``s and ``load()``s it, and
+    catches ``OSError`` / ``SyntaxError`` / ``Image.DecompressionBombError``;
+  - ``routers/images.py``: ``Image.open``, ``ImageOps.exif_transpose``,
+    ``image.save(output, format='JPEG', quality=95)`` and ``Image.MIME``;
+  - ``routers/retrieval.py``: ``Image.open(...).verify()`` and ``Image.MIME``
+    to check a fetched image's type;
+  - ``retrieval/loaders/pdf.py``: ``Image.open`` on a PDF's embedded image,
+    ``UnidentifiedImageError`` as the fallback signal, ``convert('RGB')``
+    before OCR.
+
+Every one of those paths feeds Pillow *attacker-influenced bytes* (an
+uploaded file, a fetched remote image, a document's embedded image), and the
+background check is covered over HTTP in
+integration/deps/test_image_validation.py. That is exactly why
 image parsers are a recurring CVE area and why a Pillow bump
 (12.1.x -> 12.2.0 here) is worth a contract gate.
 
@@ -71,6 +81,7 @@ IMAGE_MODULE_SYMBOLS = [
     "DecompressionBombWarning",  # warned when an image exceeds the ceiling
     "UnidentifiedImageError",  # re-exported on the Image module too
     "registered_extensions",  # extension -> format map (format detection)
+    "MIME",  # format -> MIME type, read by routers/images.py and routers/retrieval.py
 ]
 
 # Methods invoked on a decoded/constructed image instance.
@@ -87,6 +98,7 @@ IMAGE_INSTANCE_METHODS = [
     "getexif",  # EXIF metadata read (orientation handling)
     "getdata",  # pixel access
     "load",  # force full decode (where lazy decode must be materialised)
+    "verify",  # integrity check before a full decode (validate.py, retrieval.py)
     "paste",  # compositing
 ]
 

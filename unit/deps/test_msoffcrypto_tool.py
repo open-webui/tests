@@ -4,10 +4,10 @@ msoffcrypto-tool decrypts password-protected Microsoft Office files (the
 OOXML / legacy OLE "encrypted document" container). Open WebUI pins it in
 ``backend/requirements.txt`` (``msoffcrypto-tool==6.0.0``) but does NOT import
 it directly in ``open_webui/*``: it is a *transitive* dependency of the
-document-ingestion stack (pandas / openpyxl / the unstructured + langchain
-loaders used by ``retrieval/loaders/main.py``), which reach for it when an
-uploaded Office file is encrypted so the spreadsheet/doc can be opened and
-indexed.
+document-ingestion stack. unstructured's ``partition_xlsx``, which
+``retrieval/loaders/main.py`` uses for every ``.xlsx`` and ``.xls`` upload,
+opens the file as ``OfficeFile(io.BytesIO(data))`` (``FileFormatError`` means
+"not a valid XLSX file") and refuses it when ``is_encrypted()`` is true.
 
 Because nothing in the backend calls msoffcrypto by name, this module pins its
 *core public surface* — the surface the loader stack depends on transitively —
@@ -165,3 +165,14 @@ def test_behaviour_office_file_rejects_empty_stream(depcheck):
     ex = depcheck.load("msoffcrypto.exceptions")
     with pytest.raises(ex.FileFormatError):
         mod.OfficeFile(io.BytesIO(b""))
+
+
+def test_behaviour_a_plain_xlsx_is_not_encrypted(depcheck):
+    """partition_xlsx's exact call on every spreadsheet upload: an ordinary
+    workbook must open and report `is_encrypted()` False, or every .xlsx is
+    refused as password protected."""
+    mod = depcheck.load(IMPORT_NAME)
+    openpyxl = depcheck.load("openpyxl")
+    buffer = io.BytesIO()
+    openpyxl.Workbook().save(buffer)
+    assert mod.OfficeFile(io.BytesIO(buffer.getvalue())).is_encrypted() is False

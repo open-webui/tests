@@ -1,14 +1,14 @@
 """Dependency contract: pypdf (import name ``pypdf``).
 
 pypdf is a pinned dependency (``pypdf==6.7.5`` in ``backend/requirements.txt``
-and ``pyproject.toml``). The Open WebUI backend does not import it directly;
-it reaches pypdf through LangChain's ``PyPDFLoader``, used in
-``retrieval/loaders/main.py`` to extract text from uploaded ``.pdf`` files.
-``PyPDFLoader`` internally constructs ``pypdf.PdfReader`` and iterates
-``reader.pages`` calling ``page.extract_text()``, surfacing pypdf's
-metadata and (for protected files) its encryption handling.
+and ``pyproject.toml``). The backend's own ``PDFLoader``
+(``retrieval/loaders/pdf.py``) imports it to read uploaded ``.pdf`` files:
+``PdfReader(file)``, ``reader.metadata``, ``reader.pages`` with
+``page.extract_text()`` per page, ``reader.page_labels`` (one per page, in
+page mode), and for image OCR ``page['/Resources']['/XObject']`` with
+``stream.get_data()`` / ``stream.decode_as_image()``.
 
-This module pins the slice of pypdf that ``PyPDFLoader`` (and therefore the
+This module pins the slice of pypdf that ``PDFLoader`` (and therefore the
 document-ingestion path) depends on, plus the behavioural guarantees that
 matter, all OFFLINE — every PDF used here is generated in-process with
 pypdf's own ``PdfWriter`` (no fixture files, no network):
@@ -17,8 +17,8 @@ pypdf's own ``PdfWriter`` (no fixture files, no network):
     ``pypdf.errors`` exception module;
   - ``PdfReader(stream)`` accepts a file-like / path / bytes stream and
     exposes ``.pages`` (len + indexable), ``.metadata``, ``.is_encrypted``;
-  - ``page.extract_text()`` returns a ``str`` (the value LangChain wraps in
-    a Document);
+  - ``page.extract_text()`` returns a ``str`` (the value the loader wraps in
+    a Document) and ``page_labels`` has one label per page;
   - a write→read round-trip preserves page count and metadata;
   - encryption: an encrypted PDF reports ``is_encrypted`` True, ``decrypt``
     with the right password succeeds and with the wrong one returns the
@@ -46,7 +46,7 @@ pytestmark = pytest.mark.depcheck
 IMPORT_NAME = "pypdf"
 DIST_NAME = "pypdf"
 
-# Core surface PyPDFLoader (and any pypdf consumer) relies on.
+# Core surface PDFLoader (and any pypdf consumer) relies on.
 USED_SYMBOLS = [
     "PdfReader",
     "PdfWriter",
@@ -127,7 +127,7 @@ def test_pdfreader_is_class(depcheck):
 
 
 def test_pdfreader_constructor_signature(depcheck):
-    """PyPDFLoader does PdfReader(stream, password=...). Pin that the first
+    """PDFLoader does PdfReader(file); `password` unlocks protected files. Pin the first
     positional is the stream and `password`/`strict` remain accepted."""
     mod = depcheck.load(IMPORT_NAME)
     sig = inspect.signature(mod.PdfReader.__init__)
@@ -147,7 +147,7 @@ def test_pdfreader_constructor_signature(depcheck):
 
 
 def test_read_pages_len_and_index(depcheck):
-    """reader.pages must support len() and indexing — exactly how PyPDFLoader
+    """reader.pages must support len() and indexing, exactly how PDFLoader
     iterates page by page."""
     mod = depcheck.load(IMPORT_NAME)
     reader = mod.PdfReader(_make_pdf(mod, pages=3))
@@ -157,8 +157,8 @@ def test_read_pages_len_and_index(depcheck):
 
 
 def test_pages_is_iterable(depcheck):
-    """PyPDFLoader does `for page in reader.pages`. Pin pages is iterable and
-    yields PageObjects."""
+    """PDFLoader does `for index, page in enumerate(reader.pages)`. Pin pages is
+    iterable and yields PageObjects."""
     mod = depcheck.load(IMPORT_NAME)
     reader = mod.PdfReader(_make_pdf(mod, pages=2))
     pages = list(reader.pages)
@@ -168,12 +168,19 @@ def test_pages_is_iterable(depcheck):
 
 
 def test_extract_text_returns_str(depcheck):
-    """page.extract_text() must return a str (LangChain wraps it directly in a
-    Document.page_content). A blank page yields an empty string, never None."""
+    """page.extract_text() must return a str (PDFLoader strips it and wraps it in
+    a Document.page_content). A blank page yields an empty string, never None."""
     mod = depcheck.load(IMPORT_NAME)
     reader = mod.PdfReader(_make_pdf(mod, pages=1))
     text = reader.pages[0].extract_text()
     assert isinstance(text, str)
+
+
+def test_page_labels_has_one_label_per_page(depcheck):
+    """PDFLoader indexes `reader.page_labels[index]` for every page in page mode."""
+    mod = depcheck.load(IMPORT_NAME)
+    reader = mod.PdfReader(_make_pdf(mod, pages=3))
+    assert list(reader.page_labels) == ["1", "2", "3"]
 
 
 def test_extract_text_is_callable_on_page(depcheck):

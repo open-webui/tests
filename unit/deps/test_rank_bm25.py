@@ -1,14 +1,13 @@
 """Dependency contract: rank-bm25 (import name ``rank_bm25``).
 
 ``rank-bm25`` provides the BM25 lexical-ranking implementation behind Open
-WebUI's hybrid retrieval. The backend does not import it directly; it
-reaches it through LangChain's ``BM25Retriever``
-(``from langchain_community.retrievers import BM25Retriever`` in
-``retrieval/utils.py``), constructed via ``BM25Retriever.from_texts(...)``
-and combined with vector search in an ``EnsembleRetriever`` weighted by
-``HYBRID_BM25_WEIGHT``. ``BM25Retriever`` instantiates ``rank_bm25.BM25Okapi``
-internally and uses ``get_scores`` / ``get_top_n`` to rank documents for a
-query.
+WebUI's hybrid retrieval. ``query_doc_with_hybrid_search`` in
+``retrieval/utils.py`` imports it directly
+(``from rank_bm25 import BM25Okapi``), builds
+``BM25Okapi([text.split() for text in texts])`` over a collection's chunks
+and hands it to the backend's own ``BM25Retriever``, which ranks with
+``get_top_n(query.split(), docs, n=k)``; an ``EnsembleRetriever`` weighted by
+``HYBRID_BM25_WEIGHT`` fuses that with vector search.
 
 So the contract the backend relies on is ``BM25Okapi``'s ranking
 behaviour. This module pins the API surface and exercises the *actual

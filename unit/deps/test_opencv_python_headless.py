@@ -1,30 +1,24 @@
 """Dependency contract: opencv-python-headless (import name ``cv2``).
 
-cv2 is not imported anywhere in the Open WebUI backend by name; it is a
-transitive dependency (pinned ``opencv-python-headless==4.13.0.92`` in
-requirements.txt, NOT in requirements-min.txt) pulled in by the ML / image
-stack. The *headless* build is deliberate: it carries no GUI (highgui)
-backend, which matters on a server. Image-bearing model code (and some
-document/image preprocessing) relies on cv2's encode/decode/colour-convert/
-resize primitives; a bump that broke them, or that swapped in the non-
-headless wheel (dragging in GUI libs that fail to load on a headless host),
-would break image handling.
+The backend never imports cv2 by name. Its consumer on Open WebUI's path is rapidocr, which
+``retrieval/loaders/pdf.py`` runs on a PDF's images when ``PDF_EXTRACT_IMAGES`` is on: its text
+detector finds boxes with ``findContours``, ``minAreaRect`` and ``boxPoints``, scores them with
+``fillPoly`` and ``mean``, and crops each box upright with ``getPerspectiveTransform`` and
+``warpPerspective`` before the recogniser resizes, pads (``copyMakeBorder``) and rotates it.
 
-Because nothing in the backend names a cv2 symbol of its own, this module
-pins cv2's *core image-processing surface* and exercises each operation
-OFFLINE against tiny in-memory NumPy arrays — no disk reads, no GUI, no
-network, no model download:
-  - ``imencode`` / ``imdecode`` round-trip a PNG through a byte buffer
-    (lossless), proving the in-memory codec path works;
-  - ``cvtColor`` performs the BGR<->RGB and BGR->GRAY conversions;
-  - ``resize`` changes spatial dimensions;
-  - the colour/flag constants the API uses are present and integer-valued.
+requirements.txt pins the headless wheel, while rapidocr requires ``opencv-python``; both install
+the same ``cv2`` module, so which wheel and which major version ends up providing it is not
+Open WebUI's contract and is not asserted here (two earlier version assertions broke on exactly
+that). What is asserted is the behaviour: the codec, colour and resize primitives, and the
+detection-and-crop pipeline rapidocr runs, on tiny in-memory arrays. OCR end to end is covered
+by unit/deps/test_rapidocr.py and over HTTP by integration/deps/test_document_extraction.py.
 
-cv2 is a C-extension module, so checks on it are behavioural (call the
-function and assert the result), never ``hasattr`` probing of executing
-properties.
+cv2 is a C extension, so every check calls the function and asserts its result.
 
-Pattern mirrors test_requests.py. Uses the ``depcheck`` fixture.
+Discriminates: with ``minAreaRect`` answering a zero-size box (a pytest plugin patching cv2),
+the pipeline test goes red.
+
+Uses the ``depcheck`` fixture.
 """
 
 from __future__ import annotations
@@ -34,7 +28,6 @@ import pytest
 pytestmark = pytest.mark.depcheck
 
 IMPORT_NAME = "cv2"
-DIST_NAME = "opencv-python-headless"
 
 # Core functions any image-processing consumer relies on.
 USED_FUNCTIONS = [
@@ -82,23 +75,6 @@ def _bgr_image(np, h=8, w=12):
 def test_import(depcheck):
     mod = depcheck.load(IMPORT_NAME)
     assert mod.__name__ == "cv2"
-
-
-def test_version_reported(depcheck):
-    """The *distribution* is opencv-python-headless even though the import is
-    cv2; the version must resolve under that dist name (so a swap to the GUI
-    wheel `opencv-python` is noticed)."""
-    assert depcheck.dist_version(DIST_NAME) is not None
-
-
-def test_cv2_version_attr(depcheck):
-    """cv2.__version__ must report a supported OpenCV line. Not pinned to the
-    4.x in requirements.txt: rapidocr pulls opencv-python 5.x, which installs
-    over the same cv2 module, so the import can resolve to either."""
-    mod = depcheck.load(IMPORT_NAME)
-    assert isinstance(mod.__version__, str)
-    major = int(mod.__version__.split(".")[0])
-    assert major >= 4, f"expected OpenCV 4 or later, got {mod.__version__}"
 
 
 def test_core_functions_callable(depcheck):
@@ -235,20 +211,49 @@ def test_resize_with_interpolation_flag(depcheck):
 
 
 # ---------------------------------------------------------------------------
-# Headless build sanity — the GUI surface must be absent/no-op so importing
-# cv2 on a server never pulls a display backend.
+# The detection-and-crop pipeline rapidocr runs on a page image.
 # ---------------------------------------------------------------------------
 
 
-def test_headless_distribution_is_installed(depcheck):
-    """The backend pins opencv-python-headless (no GUI / system libGL deps). Pin
-    that the headless distribution is installed so a regression dropping it is
-    caught. (Older headless builds made imshow raise; 4.x no longer guarantees
-    that, so we assert the distribution instead of imshow's behaviour, since the
-    backend never calls any highgui function. A transitive dep such as rapidocr
-    may ALSO pull the GUI `opencv-python` wheel; both can coexist and cv2 still
-    works, so absence of the GUI wheel is not asserted.)"""
-    depcheck.load(IMPORT_NAME)  # skip cleanly if cv2 is not importable
-    assert depcheck.dist_version("opencv-python-headless") is not None, (
-        "opencv-python-headless (the pinned OpenCV distribution) is not installed"
+def test_a_text_box_is_found_scored_and_cropped_upright(depcheck):
+    """rapidocr's detector and cropper, on a white box drawn into a black bitmap."""
+    mod = depcheck.load(IMPORT_NAME)
+    np = _np(depcheck)
+    bitmap = np.zeros((60, 100), dtype=np.uint8)
+    bitmap[20:40, 10:90] = 255
+
+    found = mod.findContours(bitmap, mod.RETR_LIST, mod.CHAIN_APPROX_SIMPLE)
+    contours = found[-2]  # (contours, hierarchy), or (image, contours, hierarchy) on OpenCV 3
+    assert len(contours) == 1
+
+    box = mod.boxPoints(mod.minAreaRect(contours[0]))
+    (left, top), (right, bottom) = box.min(axis=0), box.max(axis=0)
+    assert box.shape == (4, 2)
+    assert (round(right - left), round(bottom - top)) == (79, 19)
+
+    mask = np.zeros_like(bitmap)
+    mod.fillPoly(mask, box.reshape(1, -1, 2).astype(np.int32), 1)
+    assert mod.mean(bitmap, mask)[0] > 250  # the box scores as all text
+
+    source = np.float32([[left, top], [right, top], [right, bottom], [left, bottom]])
+    target = np.float32([[0, 0], [40, 0], [40, 10], [0, 10]])
+    transform = mod.getPerspectiveTransform(source, target)
+    crop = mod.warpPerspective(
+        bitmap, transform, (40, 10), borderMode=mod.BORDER_REPLICATE, flags=mod.INTER_CUBIC
     )
+    assert crop.shape == (10, 40)
+    assert crop.min() > 200  # only the white box, nothing of the black page
+
+
+def test_a_crop_is_padded_and_rotated(depcheck):
+    mod = depcheck.load(IMPORT_NAME)
+    np = _np(depcheck)
+    crop = np.full((10, 40, 3), 255, dtype=np.uint8)
+
+    padded = mod.copyMakeBorder(crop, 0, 0, 0, 8, mod.BORDER_CONSTANT, value=0)
+    turned = mod.rotate(crop, mod.ROTATE_180)
+    upright = mod.rotate(crop, mod.ROTATE_90_CLOCKWISE)
+
+    assert padded.shape == (10, 48, 3) and padded[:, 40:].max() == 0
+    assert turned.shape == crop.shape
+    assert upright.shape == (40, 10, 3)

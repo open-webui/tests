@@ -1,212 +1,131 @@
 """Dependency contract: unstructured (import name ``unstructured``).
 
-``unstructured`` is an optional-but-pinned dependency of the Open WebUI
-backend. The backend never imports it directly; instead
-``retrieval/loaders/main.py`` dispatches a family of LangChain loaders that
-wrap it — ``UnstructuredRSTLoader``, ``UnstructuredXMLLoader``,
-``UnstructuredEPubLoader``, ``UnstructuredWordDocumentLoader`` (.doc),
-``UnstructuredExcelLoader``, ``UnstructuredPowerPointLoader``,
-``UnstructuredODTLoader`` — each guarded by a ``try/except ImportError``
-that tells the operator to ``pip install unstructured``. Those loaders call
-``unstructured``'s ``partition`` functions internally and convert the
-returned ``Element`` objects into LangChain ``Document`` objects (one per
-element, using ``str(element)`` for the text and ``element.metadata`` for
-the metadata).
+``UnstructuredLoader`` in ``retrieval/loaders/local.py`` imports the partitioner for a format by
+name and calls it on the uploaded file::
 
-So the contract the backend depends on is: the ``unstructured.partition.*``
-partitioners exist and return a list of ``Element`` objects whose text is
-``str(element)`` and which carry an ``.metadata`` attribute. This module
-pins that surface and exercises it with the lightest partitioner
-(``partition_text``), the same machinery the heavier file loaders feed into.
-Recent ``unstructured`` releases fetch a spaCy model on first use, so the
-behavioural tests skip when the model cannot be downloaded.
+    module = import_module(f'unstructured.partition.{file_format}')
+    elements = getattr(module, f'partition_{file_format}')(filename=path, **kwargs)
+    Document(page_content=str(element),
+             metadata={**element.metadata.to_dict(), 'category': element.category,
+                       'element_id': element.id})
 
-NOTE (version drift): both ``backend/requirements.txt`` and
-``pyproject.toml`` pin ``unstructured==0.22.31``, but the test venv here has
-``0.18.31`` installed. These tests validate against whatever is actually
-importable; the pin mismatch is a packaging observation, not something this
-contract enforces.
+``retrieval/loaders/main.py`` sends .doc, .ppt, .pptx, .xls, .xlsx, .rst, .xml, .epub, .msg and
+.odt that way; .msg goes out with ``process_attachments=False`` and, when
+``unstructured.file_utils.filetype.detect_filetype`` says the file is a plain RFC 822 mail
+(``EML``), to ``partition_email`` instead. .doc/.ppt versus .docx/.pptx is also decided by
+``detect_filetype(path).name``.
 
-If ``unstructured`` is not importable, every test SKIPS cleanly (it is an
-optional feature: the backend degrades to fallback loaders without it).
+This module pins that surface: every partitioner the loader names exists and takes
+``filename``, the .msg pair takes ``process_attachments``, ``detect_filetype`` names what the
+loader branches on, and the elements an XML and an email partition return carry the text and
+data model the loader reads. The formats themselves are read end to end over HTTP in
+integration/deps/test_document_extraction.py.
+
+Discriminates: with ``detect_filetype`` answering ``UNK`` for every file, or ``partition_xml``
+returning no elements (a pytest plugin patching the installed library), the matching tests
+go red.
 
 Uses the ``depcheck`` fixture from unit/deps/conftest.py.
 """
 
 from __future__ import annotations
 
+import importlib
+import io
+
 import pytest
 
 pytestmark = pytest.mark.depcheck
 
-IMPORT_NAME = "unstructured"
-DIST_NAME = "unstructured"
+LOADER_FORMATS = ["doc", "ppt", "pptx", "xlsx", "rst", "xml", "epub", "msg", "email", "odt"]
 
-# Submodules the langchain Unstructured*Loader stack reaches into.
-USED_SUBMODULES = [
-    "partition",
-    "partition.text",
-    "documents.elements",
-]
+TEXT = "The harbour lighthouse budget was approved."
 
-# The element data-model classes langchain converts into Documents.
-ELEMENT_SYMBOLS = [
-    "documents.elements.Element",
-    "documents.elements.Text",
-    "documents.elements.Title",
-    "documents.elements.NarrativeText",
-    "documents.elements.ElementMetadata",
-]
-
-SAMPLE = "Hello world.\n\nThis is a second paragraph with some narrative text."
+MAIL = (
+    "From: Alice <alice@example.com>\n"
+    "To: Bob <bob@example.com>\n"
+    "Subject: Quarterly numbers\n"
+    "MIME-Version: 1.0\n"
+    'Content-Type: text/plain; charset="utf-8"\n'
+    "\n"
+    f"{TEXT}\n"
+)
 
 
-def _partition_text(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    return depcheck.resolve(mod, "partition.text.partition_text")
+def _partitioner(depcheck, file_format: str):
+    depcheck.load("unstructured")
+    # a partition module that no longer imports is breakage, not an absent package
+    module = importlib.import_module(f"unstructured.partition.{file_format}")
+    return getattr(module, f"partition_{file_format}")
 
 
-def _elements(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    return depcheck.resolve(mod, "documents.elements")
+def _detect_filetype(depcheck):
+    return depcheck.resolve(depcheck.load("unstructured"), "file_utils.filetype.detect_filetype")
 
 
-def _partition(depcheck, text=SAMPLE):
-    """partition_text downloads a spaCy model on first use, which a runner
-    without egress cannot do."""
-    try:
-        return _partition_text(depcheck)(text=text)
-    except RuntimeError as exc:
-        if "spaCy" not in str(exc):
-            raise
-        pytest.skip("partition_text needs a spaCy model download and the network is unavailable")
+@pytest.mark.parametrize("file_format", LOADER_FORMATS)
+def test_every_partitioner_the_loader_names_takes_a_filename(depcheck, file_format):
+    partition = _partitioner(depcheck, file_format)
+
+    assert callable(partition)
+    depcheck.assert_params(partition, ["filename"])
 
 
-# --------------------------------------------------------------------------- #
-# Import / version
-# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("file_format", ["msg", "email"])
+def test_the_mail_partitioners_take_process_attachments(depcheck, file_format):
+    depcheck.assert_params(_partitioner(depcheck, file_format), ["process_attachments"])
 
 
-def test_import(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    assert mod.__name__ == "unstructured"
+def test_detect_filetype_tells_a_mail_saved_as_msg_apart(depcheck, tmp_path):
+    mail = tmp_path / "mail.msg"
+    mail.write_text(MAIL)
+
+    assert _detect_filetype(depcheck)(str(mail)).name == "EML"
 
 
-def test_version_reported(depcheck):
-    """Sanity: a version is resolvable (so the operator knows what's installed,
-    even though the pin and the env may differ)."""
-    assert depcheck.dist_version(DIST_NAME) is not None
+def test_detect_filetype_names_a_pptx(depcheck, tmp_path):
+    pptx = depcheck.load("pptx")
+    presentation = pptx.Presentation()
+    presentation.slides.add_slide(presentation.slide_layouts[5]).shapes.title.text = TEXT
+    path = tmp_path / "slides.pptx"
+    presentation.save(str(path))
+
+    # the loader compares the lower-cased name against "ppt"
+    assert _detect_filetype(depcheck)(str(path)).name.lower() == "pptx"
 
 
-# --------------------------------------------------------------------------- #
-# Symbol existence (API surface)
-# --------------------------------------------------------------------------- #
+def test_partition_xml_returns_elements_the_loader_can_read(depcheck, tmp_path):
+    path = tmp_path / "notes.xml"
+    path.write_text(f"<?xml version='1.0'?><notes><note>{TEXT}</note></notes>")
+
+    elements = _partitioner(depcheck, "xml")(filename=str(path))
+
+    assert TEXT in "\n\n".join(map(str, elements))
+    for element in elements:
+        assert isinstance(element.metadata.to_dict(), dict)
+        assert isinstance(element.category, str)
+        assert isinstance(element.id, str)
 
 
-def test_submodules_importable(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, USED_SUBMODULES)
+def test_partition_email_reads_the_body_without_attachments(depcheck, tmp_path):
+    path = tmp_path / "mail.eml"
+    path.write_text(MAIL)
+
+    elements = _partitioner(depcheck, "email")(filename=str(path), process_attachments=False)
+
+    assert TEXT in "\n\n".join(map(str, elements))
 
 
-def test_element_classes_exist(depcheck):
-    mod = depcheck.load(IMPORT_NAME)
-    depcheck.assert_symbols(mod, ELEMENT_SYMBOLS)
+def test_partition_xlsx_reads_a_workbook(depcheck, tmp_path):
+    """The encryption check through msoffcrypto, then pandas on openpyxl."""
+    openpyxl = depcheck.load("openpyxl")
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["note", TEXT])
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    path = tmp_path / "budget.xlsx"
+    path.write_bytes(buffer.getvalue())
 
+    elements = _partitioner(depcheck, "xlsx")(filename=str(path))
 
-def test_partition_text_callable(depcheck):
-    fn = _partition_text(depcheck)
-    assert callable(fn)
-
-
-def test_partition_subpackage_exposes_common_partitioners(depcheck):
-    """The file loaders the backend dispatches map onto partition.* modules
-    (text/xml/...). Pin that the partition subpackage at least exposes the
-    text partitioner module the contract is exercised through; others are
-    optional (need extra system deps), so only assert the lightest exists."""
-    mod = depcheck.load(IMPORT_NAME)
-    assert depcheck.has(mod, "partition.text.partition_text")
-
-
-# --------------------------------------------------------------------------- #
-# Behavioural: partition_text -> Element list (offline)
-# --------------------------------------------------------------------------- #
-
-
-def test_partition_text_returns_list_of_elements(depcheck):
-    """The core contract LangChain relies on: a partitioner returns a list of
-    Element objects."""
-    el = _elements(depcheck)
-    result = _partition(depcheck)
-    assert isinstance(result, list)
-    assert result, "partition_text returned no elements for non-empty input"
-    for e in result:
-        assert isinstance(e, el.Element), f"{type(e)!r} is not an unstructured Element"
-
-
-def test_element_str_is_the_text(depcheck):
-    """LangChain builds Document.page_content from str(element). Pin that
-    str(element) yields the element's text content."""
-    result = _partition(depcheck)
-    joined = "\n".join(str(e) for e in result)
-    assert "Hello world." in joined
-    assert "second paragraph" in joined
-
-
-def test_element_has_text_attribute(depcheck):
-    """Element instances expose a .text attribute mirroring str(element)."""
-    result = _partition(depcheck)
-    first = result[0]
-    assert hasattr(first, "text")
-    assert first.text == str(first)
-
-
-def test_element_has_metadata(depcheck):
-    """LangChain reads element.metadata (an ElementMetadata) when building the
-    Document.metadata dict. Pin that attribute is present and convertible to a
-    dict."""
-    el = _elements(depcheck)
-    result = _partition(depcheck)
-    first = result[0]
-    assert hasattr(first, "metadata")
-    assert isinstance(first.metadata, el.ElementMetadata)
-    # ElementMetadata exposes to_dict() that LangChain merges into Document meta.
-    assert hasattr(first.metadata, "to_dict")
-    assert isinstance(first.metadata.to_dict(), dict)
-
-
-def test_element_has_category(depcheck):
-    """Elements classify content (Title / NarrativeText / ...); the category
-    attribute is part of the data model LangChain may surface."""
-    result = _partition(depcheck)
-    for e in result:
-        assert hasattr(e, "category")
-        assert isinstance(e.category, str)
-
-
-def test_partition_splits_paragraphs(depcheck):
-    """Two blank-line-separated paragraphs partition into at least two
-    elements — the chunking behaviour downstream retrieval depends on."""
-    result = _partition(depcheck)
-    assert len(result) >= 2
-
-
-def test_partition_empty_text(depcheck):
-    """Empty input must return a list (possibly empty), never raise — so an
-    empty uploaded file degrades to zero Documents rather than crashing."""
-    partition_text = _partition_text(depcheck)
-    result = partition_text(text="")
-    assert isinstance(result, list)
-
-
-# --------------------------------------------------------------------------- #
-# Element class hierarchy (the isinstance checks consumers rely on)
-# --------------------------------------------------------------------------- #
-
-
-def test_element_hierarchy(depcheck):
-    """Title and NarrativeText are Text are Element. Code that does
-    isinstance(e, Text) / isinstance(e, Element) relies on this layering."""
-    el = _elements(depcheck)
-    assert issubclass(el.Text, el.Element)
-    assert issubclass(el.Title, el.Text)
-    assert issubclass(el.NarrativeText, el.Text)
+    assert TEXT in "\n\n".join(map(str, elements))

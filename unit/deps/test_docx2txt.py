@@ -1,13 +1,10 @@
 """Dependency contract: docx2txt.
 
-``docx2txt`` is the plain-text extractor behind LangChain's
-``Docx2txtLoader``, which the Open WebUI backend uses to ingest ``.docx``
-uploads in the retrieval pipeline
-(``retrieval/loaders/main.py`` -> ``Docx2txtLoader(file_path)``). The
-backend never imports ``docx2txt`` directly — it reaches it transitively
-through ``langchain_community`` — so a breaking change to its single
-public entry point (``docx2txt.process``) would surface as empty/failed
-Word-document ingestion rather than at import time.
+``docx2txt`` is the plain-text extractor the Open WebUI backend uses to
+ingest ``.docx`` uploads: ``DocxLoader`` in ``retrieval/loaders/local.py``
+imports it lazily and calls ``docx2txt.process(Path(file_path))``. So a
+breaking change to that single public entry point would surface as
+empty/failed Word-document ingestion rather than at import time.
 
 This module pins that one load-bearing function and its signature, then
 exercises the real extraction path offline by building minimal but valid
@@ -96,7 +93,7 @@ def test_version_reported(depcheck):
 
 
 def test_process_exists_and_callable(depcheck):
-    """`docx2txt.process` is what LangChain's Docx2txtLoader calls; it must
+    """`docx2txt.process` is what the backend's DocxLoader calls; it must
     exist and be callable."""
     mod = depcheck.load(IMPORT_NAME)
     assert hasattr(mod, "process")
@@ -128,7 +125,7 @@ def test_process_signature(depcheck):
 
 def test_behaviour_extracts_single_paragraph(depcheck):
     """A one-paragraph .docx must extract exactly that text — the core contract
-    LangChain relies on for Word ingestion."""
+    DocxLoader relies on for Word ingestion."""
     mod = depcheck.load(IMPORT_NAME)
     docx = _make_docx(["Hello Open WebUI extraction test"])
     text = mod.process(docx)

@@ -3,8 +3,8 @@
 pypandoc is the Python wrapper around the ``pandoc`` document converter,
 pinned in ``backend/requirements.txt``. In Open WebUI it is reached
 *transitively*: the document RAG ingestion path (``retrieval/loaders``)
-uses langchain's Unstructured loaders, which shell out to pandoc via
-pypandoc to convert formats like ``.epub`` / ``.rtf`` / ``.odt``. The
+sends ``.rst``, ``.epub`` and ``.odt`` to unstructured's partitioners, which
+shell out to pandoc via pypandoc to convert them. The
 backend code only references it indirectly, and specifically handles its
 failure mode: ``routers/retrieval.py`` catches the conversion error and
 maps it to a user-facing message:

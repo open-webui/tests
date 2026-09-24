@@ -1,7 +1,10 @@
 """Dependency contract: pandas.
 
-pandas is Open WebUI's fallback tabular reader in the retrieval pipeline.
-When `unstructured` is not installed, `retrieval/loaders/main.py:ExcelLoader`
+pandas reads every spreadsheet Open WebUI ingests. The main path is
+unstructured's `partition_xlsx`, which `retrieval/loaders/main.py` uses for
+.xlsx and .xls uploads: it reads all sheets at once with
+`pd.read_excel(io.BytesIO(data), sheet_name=None, header=0)`. When
+`unstructured` is not installed, `retrieval/loaders/main.py:ExcelLoader`
 parses spreadsheets with pandas: it opens the workbook with
 `pd.ExcelFile(path)`, iterates `xls.sheet_names`, reads each sheet via
 `pd.read_excel(xls, sheet_name=...)`, and renders it to text with
@@ -405,6 +408,19 @@ def test_read_excel_from_bytesio_specific_sheet(depcheck):
         assert s2.iloc[0]["z"] == 9
     finally:
         xls.close()
+
+
+def test_read_excel_reads_every_sheet_at_once(depcheck):
+    """unstructured's partition_xlsx: `read_excel(buffer, sheet_name=None, header=0)`
+    returns every sheet as a DataFrame, keyed by sheet name in workbook order."""
+    mod = depcheck.load(IMPORT_NAME)
+    openpyxl_mod = depcheck.try_load("openpyxl")
+    if openpyxl_mod is None:
+        pytest.skip("openpyxl not installed; cannot build/read an xlsx")
+    sheets = mod.read_excel(_xlsx_bytes(mod, openpyxl_mod), sheet_name=None, header=0)
+    assert list(sheets) == ["S1", "S2"]
+    assert list(sheets["S1"].columns) == ["x", "y"]
+    assert sheets["S2"].iloc[0]["z"] == 9
 
 
 def test_excel_loader_end_to_end_text(depcheck):

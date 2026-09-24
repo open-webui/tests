@@ -29,8 +29,10 @@ consumers rely on:
    *module import* of open_webui.env, i.e. the whole backend won't start.
 
 2. ``backend/open_webui/retrieval/web/utils.py`` — ``SafeWebBaseLoader``
-   (a subclass of langchain's ``WebBaseLoader``) builds soups from fetched web
-   pages and extracts text + metadata::
+   (the backend's own ``langchain_core`` ``BaseLoader``) builds soups from
+   fetched web pages and extracts text + metadata (``HTMLLoader`` in
+   ``retrieval/loaders/local.py`` does the same for uploaded ``.html`` with
+   ``BeautifulSoup(file, 'lxml')``, ``get_text()`` and ``soup.title.string``)::
 
        final_results.append(BeautifulSoup(result, parser, **self.bs_kwargs))
        text = soup.get_text(**self.bs_get_text_kwargs)

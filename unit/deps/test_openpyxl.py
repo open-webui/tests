@@ -2,9 +2,10 @@
 
 ``openpyxl`` is the ``.xlsx`` engine the Open WebUI backend relies on for
 spreadsheet ingestion in the retrieval pipeline. It is a *declared*
-requirement (``openpyxl==3.1.5``) used transitively: pandas reads
-``.xlsx`` via ``engine="openpyxl"`` and LangChain's Excel loaders sit on
-top of that. A breaking bump (renamed ``load_workbook`` kwargs, changed
+requirement (``openpyxl==3.1.5``) used transitively: unstructured's
+``partition_xlsx`` (and the pandas ``ExcelLoader`` fallback in
+``retrieval/loaders/main.py``) read ``.xlsx`` with ``pandas.read_excel``,
+which uses ``engine="openpyxl"``. A breaking bump (renamed ``load_workbook`` kwargs, changed
 ``Workbook`` / worksheet cell API) would surface as failed Excel
 ingestion rather than at import time.
 

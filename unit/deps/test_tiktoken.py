@@ -10,14 +10,15 @@ The single direct consumer is ``backend/open_webui/routers/retrieval.py``:
 
     import tiktoken
     ...
-    # _merge_small_chunks(): measure chunk size in tokens
+    # get_splitter_length_function(), used by merge_docs_to_target_size():
+    # measure chunk size in tokens
     encoding = tiktoken.get_encoding(str(config.TIKTOKEN_ENCODING_NAME))
-    measure = lambda text: len(encoding.encode(text))
+    measure = lambda text: len(encoding.encode(text, disallowed_special=()))
     ...
     # save_docs_to_vector_db(): validate the configured encoding loads,
     # then hand its NAME to langchain's TokenTextSplitter
     tiktoken.get_encoding(str(config.TIKTOKEN_ENCODING_NAME))
-    text_splitter = TokenTextSplitter(encoding_name=..., ...)
+    text_splitter = TokenTextSplitter(encoding_name=..., disallowed_special=(), ...)
 
 so the contract the backend actually depends on is narrow but exact:
 
@@ -25,7 +26,9 @@ so the contract the backend actually depends on is narrow but exact:
   * ``Encoding.encode(text)`` returns a ``list[int]``,
   * ``len(encode(text))`` is a stable, positive token count for non-empty
     text (this *is* the chunk-size measurement),
-  * the configured encoding name resolves offline (it ships the BPE data).
+  * ``encode(text, disallowed_special=())`` accepts a document that holds a
+    special-token marker such as ``<|endoftext|>`` (the default raises, #27094),
+  * the configured encoding name resolves from the local cache.
 
 ``config.TIKTOKEN_ENCODING_NAME`` defaults to ``'cl100k_base'`` (env/PersistentConfig
 ``TIKTOKEN_ENCODING_NAME``), so that encoding is the load-bearing one; the
@@ -45,10 +48,15 @@ legitimately change).
 
 Exemplar for the unit/deps/ pattern: symbol-existence checks (API surface)
 + offline behavioural contracts. Uses the ``depcheck`` fixture from
-unit/deps/conftest.py. tiktoken ships its BPE rank files inside the wheel,
-so loading ``cl100k_base``/``o200k_base`` needs no network; on the rare
-chance an encoding genuinely requires a download in a given env, that one
-case is wrapped and skipped rather than failing the suite.
+unit/deps/conftest.py. tiktoken does not ship its BPE rank files: it downloads
+each encoding's file on first use and caches it (``TIKTOKEN_CACHE_DIR``, else
+the temp dir). An autouse fixture points every proxy at a dead port, so an
+encoding that is not cached fails to load and its tests skip instead of
+downloading.
+
+Discriminates: with ``Encoding.encode`` ignoring ``disallowed_special`` (a
+pytest plugin patching the installed library), the special-token test goes
+red.
 """
 
 from __future__ import annotations
@@ -61,6 +69,17 @@ pytestmark = pytest.mark.depcheck
 
 IMPORT_NAME = "tiktoken"
 DIST_NAME = "tiktoken"
+DEAD_PROXY = "http://127.0.0.1:9"
+
+
+@pytest.fixture(autouse=True)
+def _no_downloads(monkeypatch):
+    """An encoding that is not cached fails fast here instead of being downloaded."""
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.setenv(name, DEAD_PROXY)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+
 
 # Top-level symbols the Open WebUI backend relies on (directly or as the
 # stable public surface a bump must not drop). The loader only calls
@@ -75,8 +94,7 @@ USED_SYMBOLS = [
 ]
 
 # The encoding the backend defaults to (config.TIKTOKEN_ENCODING_NAME) plus the
-# other modern encoding an operator is likely to configure. Both ship their BPE
-# data in the wheel and must load offline.
+# other modern encoding an operator is likely to configure.
 DEFAULT_ENCODING = "cl100k_base"
 CONFIGURABLE_ENCODINGS = ["cl100k_base", "o200k_base"]
 
@@ -126,9 +144,8 @@ _TEXTS = {
 def _get_encoding(depcheck, name: str):
     """Load tiktoken (or skip) and return ``get_encoding(name)``.
 
-    If loading the encoding genuinely requires a network fetch that fails in
-    this env, skip *this* case cleanly rather than failing the suite — the
-    wheel ships the BPE data, so this should essentially never trigger.
+    If the encoding's BPE file is not cached, the refused download skips *this*
+    case rather than failing the suite.
     """
     mod = depcheck.load(IMPORT_NAME)
     try:
@@ -332,6 +349,17 @@ def test_encode_length_is_stable_positive_count(depcheck, name):
     # More text -> at least as many tokens (the splitter relies on this ordering).
     n2 = len(enc.encode(base + " " + base))
     assert n2 >= n1, f"{name}: doubling text reduced token count ({n2} < {n1})"
+
+
+@pytest.mark.parametrize("name", CONFIGURABLE_ENCODINGS)
+def test_a_special_token_marker_encodes_once_allowed(depcheck, name):
+    """The backend passes `disallowed_special=()`; without it the default raises (#27094)."""
+    _mod, enc = _get_encoding(depcheck, name)
+    text = "intro <|endoftext|> outro"
+
+    assert enc.decode(enc.encode(text, disallowed_special=())) == text
+    with pytest.raises(ValueError):
+        enc.encode(text)
 
 
 @pytest.mark.parametrize("name", CONFIGURABLE_ENCODINGS)

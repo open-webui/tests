@@ -1,11 +1,11 @@
 """Dependency contract: onnxruntime (import name ``onnxruntime``).
 
 onnxruntime is a **pinned direct requirement** of the Open WebUI backend
-(``onnxruntime==1.26.0``, and via ``rapidocr-onnxruntime``) but is *not*
-imported anywhere in the ``open_webui`` package source directly. It is the
-inference engine underneath several optional retrieval/OCR features: ChromaDB's
-default ONNX MiniLM embedding function, the fastembed path, and rapidocr's
-ONNX text recognition. Those consumers all reach onnxruntime the same way —
+(``onnxruntime==1.26.0``) but is *not* imported anywhere in the ``open_webui``
+package source directly. It is the inference engine underneath optional
+features: rapidocr's text detection and recognition when ``PDF_EXTRACT_IMAGES``
+is on, faster-whisper's Silero VAD when ``WHISPER_VAD_FILTER`` is on, and the
+sentence-transformers ``onnx`` backend. Those consumers all reach onnxruntime the same way:
 build a ``SessionOptions``, construct an ``InferenceSession(model, providers=
 ['CPUExecutionProvider', ...])``, then ``session.run(...)`` with numpy inputs.
 

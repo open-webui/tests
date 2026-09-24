@@ -3,8 +3,7 @@
 sentencepiece is Google's subword tokenizer (unigram / BPE). It is pinned
 in ``backend/requirements.txt`` and is the native tokenizer backend that
 ``transformers`` / ``sentence-transformers`` require for SentencePiece-based
-models (T5, LLaMA, mBART, XLM-R, many multilingual embedders), and that
-``google-genai`` uses for its local tokenizer. Open WebUI's local
+models (T5, LLaMA, mBART, XLM-R, many multilingual embedders). Open WebUI's local
 embedding / reranking models load through that HF stack when the local
 engines are selected.
 

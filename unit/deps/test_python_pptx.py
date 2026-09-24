@@ -1,8 +1,11 @@
 """Dependency contract: python-pptx (import name ``pptx``).
 
-Open WebUI's ``retrieval/loaders/main.py`` has a ``PptxLoader`` — the
-fallback PowerPoint loader used when ``unstructured`` is not installed. It
-uses a narrow but exact slice of python-pptx to extract slide text for RAG:
+Open WebUI reads ``.pptx`` uploads through unstructured's
+``partition_pptx``, which is built on python-pptx; that path is covered over
+HTTP in integration/deps/test_document_extraction.py.
+``retrieval/loaders/main.py`` also has a ``PptxLoader``, the fallback used
+when ``unstructured`` is not installed, which uses a narrow but exact slice
+of python-pptx to extract slide text for RAG:
 
     from pptx import Presentation
     prs = Presentation(self.file_path)

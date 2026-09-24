@@ -4,8 +4,8 @@ xlrd reads legacy ``.xls`` (BIFF / OLE2) spreadsheets. Open WebUI pins it in
 ``backend/requirements.txt`` (``xlrd==2.0.2``) but does NOT import it directly
 in ``open_webui/*``: it is a *transitive* dependency of the spreadsheet
 ingestion path — pandas' ``read_excel`` selects the ``xlrd`` engine for old
-``.xls`` files, and the unstructured/langchain Excel loaders used by
-``retrieval/loaders/main.py`` rely on that. When a user uploads a legacy
+``.xls`` files, and ``retrieval/loaders/main.py`` sends ``.xls`` uploads to
+unstructured's ``partition_xlsx``, which reads them that way. When a user uploads a legacy
 ``.xls`` for RAG, xlrd is what parses it.
 
 xlrd 2.0 deliberately reads ONLY ``.xls`` (support for ``.xlsx`` was removed —
