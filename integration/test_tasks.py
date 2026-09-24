@@ -8,10 +8,22 @@ import httpx
 import pytest
 
 
+@pytest.fixture
+def title_generation_on(admin, preserve) -> None:
+    """The shared instance keeps title generation off; this test needs the endpoint live."""
+    preserve("tasks")
+    with admin.client() as client:
+        current = client.get("/api/v1/tasks/config").json()
+        enabled = {**current, "ENABLE_TITLE_GENERATION": True}
+        client.post("/api/v1/tasks/config/update", json=enabled).raise_for_status()
+
+
 @pytest.mark.api
 @pytest.mark.auth_required
 @pytest.mark.regression
-def test_generate_title_does_not_404_on_empty_model(api_client: httpx.Client):
+def test_generate_title_does_not_404_on_empty_model(
+    api_client: httpx.Client, title_generation_on: None
+):
     """Regression for open-webui/open-webui#24604.
 
     In v0.9.4-v0.9.5 (before e5c8f8110), the Sidebar's title-regenerate

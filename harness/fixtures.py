@@ -36,6 +36,7 @@ QUIET_TASKS = {
 SETTINGS = {
     "permissions": ("/api/v1/users/default/permissions", "/api/v1/users/default/permissions"),
     "admin_config": ("/api/v1/auths/admin/config", "/api/v1/auths/admin/config"),
+    "tasks": ("/api/v1/tasks/config", "/api/v1/tasks/config/update"),
 }
 
 

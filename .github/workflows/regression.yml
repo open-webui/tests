@@ -103,17 +103,11 @@ jobs:
           path: tests/report.html
           if-no-files-found: ignore
 
-  # The integration suite talks to a running instance over HTTP, so it boots one
-  # from the same checkout rather than reading the source.
+  # The integration suite boots its own scratch instances from the checkout, each with a
+  # scripted model provider, so it needs the source and nothing already running.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      OPEN_WEBUI_URL: http://127.0.0.1:8080
-      ADMIN_USER_EMAIL: admin@example.com
-      ADMIN_USER_PASSWORD: adminpassword123
-      TEST_USER_EMAIL: test@example.com
-      TEST_USER_PASSWORD: testpassword123
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -146,56 +140,128 @@ jobs:
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
 
-      # Ollama probing and the local embedding model download are both startup
-      # costs this suite never uses.
-      - name: Start Open WebUI
-        working-directory: open-webui/backend
-        env:
-          DATA_DIR: ${{ runner.temp }}/owui-data
-          WEBUI_SECRET_KEY: ci-regression-key
-          ENABLE_OLLAMA_API: 'false'
-          RAG_EMBEDDING_ENGINE: openai
-        run: |
-          mkdir -p "$DATA_DIR"
-          nohup python -m uvicorn open_webui.main:app --host 127.0.0.1 --port 8080 > "$RUNNER_TEMP/open-webui.log" 2>&1 &
-          for _ in $(seq 1 120); do
-            if curl -fsS "$OPEN_WEBUI_URL/health" >/dev/null; then
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Open WebUI did not become healthy"
-          tail -100 "$RUNNER_TEMP/open-webui.log"
-          exit 1
-
-      # The first signup becomes the admin and turns signup off, so the second
-      # account has to come from the admin API.
-      - name: Create the accounts the suite signs in with
-        run: |
-          admin_token="$(curl -fsS "$OPEN_WEBUI_URL/api/v1/auths/signup" \
-            -H 'Content-Type: application/json' \
-            -d "{\"name\":\"Admin\",\"email\":\"$ADMIN_USER_EMAIL\",\"password\":\"$ADMIN_USER_PASSWORD\"}" \
-            | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
-          curl -fsS "$OPEN_WEBUI_URL/api/v1/auths/add" \
-            -H 'Content-Type: application/json' \
-            -H "Authorization: Bearer $admin_token" \
-            -d "{\"name\":\"Test\",\"email\":\"$TEST_USER_EMAIL\",\"password\":\"$TEST_USER_PASSWORD\",\"role\":\"user\"}" \
-            >/dev/null
-
       - name: Run the integration suite
         working-directory: tests
-        run: pytest integration -q --html=integration-report.html --self-contained-html
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: ${{ runner.temp }}/integration-artifacts/server-logs
+        run: >-
+          pytest integration -q --junitxml=integration-junit.xml
+          --html=integration-report.html --self-contained-html
 
-      - name: Show the backend log
-        if: failure()
-        run: tail -200 "$RUNNER_TEMP/open-webui.log"
+      - name: Summarise
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py integration-junit.xml "Integration suite" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload report
+      - name: Upload report and server logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-report-${{ inputs.open-webui-ref }}
-          path: tests/integration-report.html
+          path: |
+            tests/integration-report.html
+            ${{ runner.temp }}/integration-artifacts
+          if-no-files-found: ignore
+
+  # The browser suite drives the frontend built from the ref under test, served by a scratch
+  # instance the suite boots itself. It reports without gating a release until it has settled.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      # A branch name resolves to a different commit over time, so the build is cached by SHA.
+      - name: Resolve the commit under test
+        id: commit
+        working-directory: open-webui
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the frontend build
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: open-webui/build
+          key: e2e-frontend-build-${{ steps.commit.outputs.sha }}
+
+      - uses: actions/setup-node@v5
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: open-webui/package-lock.json
+
+      - name: Build the frontend
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        working-directory: open-webui
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          npm ci --force
+          npm run build
+
+      - name: Save the frontend build
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: open-webui/build
+          key: e2e-frontend-build-${{ steps.commit.outputs.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            open-webui/backend/requirements.txt
+            tests/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+          python -m playwright install --with-deps chromium
+
+      - name: Run the browser suite
+        working-directory: tests
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_BUILD_DIR: ${{ github.workspace }}/open-webui/build
+          OPEN_WEBUI_LOG_DIR: ${{ runner.temp }}/e2e-artifacts/server-logs
+          E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts/traces
+        run: pytest e2e -q --junitxml=e2e-junit.xml --html=e2e-report.html --self-contained-html
+
+      - name: Summarise
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py e2e-junit.xml "Browser suite" >> "$GITHUB_STEP_SUMMARY"
+
+      # Open a trace with `npx playwright show-trace <file>.zip` or at trace.playwright.dev.
+      - name: Upload report, traces and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-${{ inputs.open-webui-ref }}
+          path: |
+            tests/e2e-report.html
+            ${{ runner.temp }}/e2e-artifacts
           if-no-files-found: ignore
 
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
