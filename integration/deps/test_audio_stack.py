@@ -15,7 +15,6 @@ serves an empty file. The pydub test is unproven on a host without ffmpeg.
 from __future__ import annotations
 
 import io
-import json
 import shutil
 import uuid
 import wave
@@ -25,7 +24,7 @@ import pytest
 import soundfile
 
 from harness.actors import create_user
-from harness.listener import listening
+from harness.listener import json_answer, listening
 
 pytestmark = [
     pytest.mark.depcheck,
@@ -59,10 +58,7 @@ def _wav_speech() -> bytes:
 @pytest.fixture(scope="module")
 def engine():
     with listening() as service:
-        # the upload arrives chunked, which the listener leaves unread: close, do not reuse
-        transcribed = json.dumps({"text": TRANSCRIPT}).encode()
-        closing = {"Content-Type": "application/json", "Connection": "close"}
-        service.route("POST", "/audio/transcriptions", (200, closing, transcribed))
+        service.route("POST", "/audio/transcriptions", json_answer({"text": TRANSCRIPT}))
         service.route("POST", "/audio/speech", (200, {"Content-Type": "audio/mpeg"}, SPEECH))
         yield service
 
@@ -105,8 +101,8 @@ def test_an_ogg_recording_is_written_and_transcribed(speaker, engine):
     assert transcribed.status_code == 200, transcribed.text
     assert transcribed.json()["text"] == TRANSCRIPT
     sent = engine.requests_to("/audio/transcriptions")[before:]
-    # the listener does not record a chunked body, so only its framing is checked
     assert len(sent) == 1 and sent[0].headers["Content-Type"].startswith("multipart/form-data")
+    assert recording in sent[0].body
 
 
 def test_a_text_upload_is_not_taken_for_audio(speaker, engine):

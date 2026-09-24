@@ -70,13 +70,24 @@ def listening(host: str = "127.0.0.1") -> Iterator[Listener]:
         def log_message(self, *args) -> None:
             pass
 
+        def _read_body(self) -> bytes:
+            if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+                length = int(self.headers.get("Content-Length", 0))
+                return self.rfile.read(length) if length else b""
+            body = b""
+            while size := int(self.rfile.readline().split(b";")[0], 16):
+                body += self.rfile.read(size)
+                self.rfile.readline()
+            while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                pass  # trailers
+            return body
+
         def _serve(self) -> None:
-            length = int(self.headers.get("Content-Length", 0))
             request = ReceivedRequest(
                 method=self.command,
                 path=self.path,
                 headers=dict(self.headers.items()),
-                body=self.rfile.read(length) if length else b"",
+                body=self._read_body(),
             )
             with listener.lock:
                 listener.received.append(request)
