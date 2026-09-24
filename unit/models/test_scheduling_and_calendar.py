@@ -28,7 +28,7 @@ way to the present.
 
 v0.11.0 upper-cases the rule's KEYS only, so a lower-case FREQ VALUE still slips past the
 alignment branch. That successor defect belongs to 0.11.1 and is covered by
-unit/security/test_recurrence_rule_parsing.py, so nothing here asserts on it.
+integration/security/test_recurrence_rule_parsing.py, so nothing here asserts on it.
 
 v0.11.1 changed `validate_rrule` on purpose: a COUNT rule carrying no DTSTART is now refused
 up front (`ERROR_MESSAGES.AUTOMATION_COUNT_REQUIRES_DTSTART`), because the synthesised anchor
