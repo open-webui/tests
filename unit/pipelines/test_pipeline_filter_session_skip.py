@@ -1,22 +1,31 @@
-"""Regression test for the pipeline filter session setup skip (PR #29146, commit 88bbe4e1d).
+"""No HTTP session is opened for pipeline filters when there are none to call.
 
-`process_pipeline_inlet_filter` and `process_pipeline_outlet_filter` opened an
-`aiohttp.ClientSession` before checking whether any pipeline filter matched, so the default
-deployment (no pipelines configured at all) paid a session construct and teardown on every
-chat message and background task. Both now return the payload untouched when the sorted
-filter list is empty.
+PR #29146, commit `88bbe4e1d`: `process_pipeline_inlet_filter` and
+`process_pipeline_outlet_filter` opened an `aiohttp.ClientSession` before checking whether any
+pipeline filter matched, so the default deployment (no pipelines at all) built and tore down a
+session on every chat message and background task. Both now return the payload untouched when
+the sorted filter list is empty.
 
-Discriminates: passes on v0.11.3, fails on v0.11.1 (the session is constructed even with no
-pipeline filters to call).
+Stays a unit test: the saving is a session construction with no effect on any response.
+`aiohttp.ClientSession` is replaced by a `create_autospec` stand-in, the only I/O boundary.
+
+Discriminates: passes on bbfa876af; fails with the empty-filter early return removed (a session
+is constructed with no pipeline filter to call).
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-pytestmark = pytest.mark.regression
+pytestmark = [pytest.mark.regression, pytest.mark.asyncio]
+
+
+def _filter(filter_id: str, targets: list[str], kind: str = "filter", priority: int = 0) -> dict:
+    """A pipeline model with no `urlIdx`, so the request loop skips it before any HTTP."""
+    pipeline = {"type": kind, "priority": priority, "pipelines": targets}
+    return {"id": filter_id, "pipeline": pipeline}
 
 
 @pytest.fixture(scope="session")
@@ -24,157 +33,70 @@ def pipelines_router(owui_module):
     return owui_module("open_webui.routers.pipelines")
 
 
-class RecordingClientSession:
-    """Stand-in for aiohttp.ClientSession, the only I/O boundary these two functions have."""
-
-    constructed = 0
-
-    def __init__(self, *args, **kwargs):
-        type(self).constructed += 1
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc_info):
-        return False
+@pytest.fixture(scope="session")
+def user(owui_module):
+    return owui_module("open_webui.models.users").UserModel(
+        id="u1",
+        name="U1",
+        email="u1@example.com",
+        role="user",
+        profile_image_url="",
+        last_active_at=0,
+        updated_at=0,
+        created_at=0,
+    )
 
 
 @pytest.fixture
-def session_recorder(pipelines_router, monkeypatch):
-    RecordingClientSession.constructed = 0
-    monkeypatch.setattr(
-        pipelines_router.aiohttp, "ClientSession", RecordingClientSession, raising=True
-    )
-    return RecordingClientSession
+def client_session(pipelines_router):
+    with patch.object(pipelines_router.aiohttp, "ClientSession", autospec=True) as session_class:
+        yield session_class
 
 
-def _user():
-    return SimpleNamespace(id="u1", email="u1@example.com", name="U1", role="user")
-
-
-def _pipeline_filter(filter_id: str = "pf1", priority: int = 0) -> dict:
-    """A pipeline filter model with no urlIdx, so the request loop skips it before any HTTP."""
-    return {
-        "id": filter_id,
-        "pipeline": {"type": "filter", "priority": priority, "pipelines": ["*"]},
-    }
-
-
-PLAIN_MODELS = {"m": {"id": "m"}}
-PIPELINE_MODELS = {"m": {"id": "m"}, "pf1": _pipeline_filter()}
-
-
-# =============================================================================
-# Narrow -- no pipelines configured means no session
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_inlet_with_no_pipelines_opens_no_session(pipelines_router, session_recorder):
+async def _run(pipelines_router, stage: str, models: dict, user) -> dict:
+    handler = getattr(pipelines_router, f"process_pipeline_{stage}_filter")
     payload = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
-
-    result = await pipelines_router.process_pipeline_inlet_filter(
-        SimpleNamespace(), payload, _user(), PLAIN_MODELS
-    )
-
-    assert session_recorder.constructed == 0, (
-        "an aiohttp session was opened for a deployment with no pipeline filters (#29146)"
-    )
-    assert result is payload
+    result = await handler(request=None, payload=payload, user=user, models=models)
+    return {"payload": payload, "result": result}
 
 
-@pytest.mark.asyncio
-async def test_outlet_with_no_pipelines_opens_no_session(pipelines_router, session_recorder):
-    payload = {"model": "m", "messages": [{"role": "assistant", "content": "hi"}]}
-
-    result = await pipelines_router.process_pipeline_outlet_filter(
-        SimpleNamespace(), payload, _user(), PLAIN_MODELS
-    )
-
-    assert session_recorder.constructed == 0, (
-        "an aiohttp session was opened for a deployment with no pipeline filters (#29146)"
-    )
-    assert result is payload
-
-
-# =============================================================================
-# Broad -- the skip holds for every shape that resolves to no filters
-# =============================================================================
-
-
-@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["inlet", "outlet"])
 @pytest.mark.parametrize(
     "models",
     [
-        PLAIN_MODELS,
-        # A pipeline filter that targets some other model.
-        {
-            "m": {"id": "m"},
-            "pf1": {
-                "id": "pf1",
-                "pipeline": {"type": "filter", "priority": 0, "pipelines": ["other"]},
-            },
-        },
-        # A pipeline that is not of type 'filter'.
-        {
-            "m": {"id": "m"},
-            "pf1": {
-                "id": "pf1",
-                "pipeline": {"type": "manifold", "priority": 0, "pipelines": ["*"]},
-            },
-        },
+        {"m": {"id": "m"}},
+        {"m": {"id": "m"}, "pf": _filter("pf", ["other-model"])},
+        {"m": {"id": "m"}, "pf": _filter("pf", ["*"], kind="manifold")},
     ],
+    ids=["no-pipelines", "filter-for-another-model", "not-a-filter"],
 )
-@pytest.mark.parametrize("stage", ["inlet", "outlet"])
 async def test_no_matching_filter_opens_no_session(
-    pipelines_router, session_recorder, models, stage
+    pipelines_router, client_session, user, stage, models
 ):
-    handler = getattr(pipelines_router, f"process_pipeline_{stage}_filter")
-    payload = {"model": "m", "messages": []}
+    ran = await _run(pipelines_router, stage, models, user)
 
-    await handler(SimpleNamespace(), payload, _user(), models)
-
-    assert session_recorder.constructed == 0
+    client_session.assert_not_called()
+    assert ran["result"] is ran["payload"]
 
 
-# =============================================================================
-# Nearby -- unchanged behaviour when pipelines really are configured
-# =============================================================================
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["inlet", "outlet"])
-async def test_matching_pipeline_filter_still_opens_a_session(
-    pipelines_router, session_recorder, stage
+@pytest.mark.parametrize(
+    "models",
+    [{"m": {"id": "m"}, "pf": _filter("pf", ["*"])}, {"m": _filter("m", ["*"])}],
+    ids=["global-filter", "pipeline-model-itself"],
+)
+async def test_a_matching_filter_still_opens_one_session(
+    pipelines_router, client_session, user, stage, models
 ):
-    handler = getattr(pipelines_router, f"process_pipeline_{stage}_filter")
-    payload = {"model": "m", "messages": []}
+    await _run(pipelines_router, stage, models, user)
 
-    result = await handler(SimpleNamespace(), payload, _user(), PIPELINE_MODELS)
-
-    assert session_recorder.constructed == 1
-    assert result == payload
+    client_session.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_pipeline_model_itself_still_opens_a_session(pipelines_router, session_recorder):
-    """The requested model carrying its own 'pipeline' key counts as a filter on both stages."""
-    models = {"m": _pipeline_filter("m")}
-    payload = {"model": "m", "messages": []}
+async def test_filters_run_in_priority_order(pipelines_router):
+    models = {"m": {"id": "m"}, "late": _filter("late", ["*"], priority=9)}
+    models["early"] = _filter("early", ["*"], priority=1)
 
-    await pipelines_router.process_pipeline_inlet_filter(
-        SimpleNamespace(), payload, _user(), models
-    )
+    ordered = pipelines_router.get_sorted_filters(model_id="m", models=models)
 
-    assert session_recorder.constructed == 1
-
-
-@pytest.mark.asyncio
-async def test_sorted_filters_ordering_is_unchanged(pipelines_router):
-    models = {
-        "m": {"id": "m"},
-        "late": _pipeline_filter("late", priority=9),
-        "early": _pipeline_filter("early", priority=1),
-    }
-
-    assert [f["id"] for f in pipelines_router.get_sorted_filters("m", models)] == ["early", "late"]
+    assert [entry["id"] for entry in ordered] == ["early", "late"]

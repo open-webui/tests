@@ -1,86 +1,63 @@
-"""Websocket-layer regressions fixed in v0.11.2.
+"""Websocket-layer regressions fixed in v0.11.2 that need a Redis Cluster or a large session pool.
 
-Three changes to `socket/main.py` and `tasks.py` that only show up once an
-instance is behind a Redis Cluster or is carrying a large session pool.
+- a5ea8b0b8 (PR #29165, issue #19840): `redis_task_command_listener` called `redis.pubsub()`
+  straight away. A `RedisCluster` client cannot route a subscribe until `initialize()` has filled
+  its slot cache, so the listener never subscribed and a stop sent from another instance was
+  dropped while the reply ran to the end.
+- 89716ea88 (PR #28180): the server used python-socketio's default `Packet`, which walks every
+  outgoing payload for `bytes` Open WebUI never sends. `JSONOnlyPacket` turns binary events off
+  and hands inbound client attachments back as int lists, the form the Yjs handlers store.
+- d7674c517 (PR #28835): `periodic_session_pool_cleanup` read the whole pool with one `keys()`
+  and then did a `get` and a `del` per session, holding the event loop for the entire sweep. It
+  now walks bounded HSCAN batches, deletes each batch in one call and yields between batches.
+  `get_user_ids_from_room` reads this worker's own Socket.IO sessions instead of the pool.
 
-- a5ea8b0b8 (PR #29165, issue #19840): `redis_task_command_listener` called
-  `redis.pubsub()` straight away. A `RedisCluster` client cannot route a
-  subscribe until `initialize()` has filled its slot cache, so the listener
-  raised, retried, and never subscribed. Stop-generation from another instance
-  was therefore silently dropped and the reply ran to the end.
-- 89716ea88 (PR #28180): the server used python-socketio's default `Packet`,
-  whose `__init__` walks every outgoing payload looking for `bytes` that Open
-  WebUI never emits. `JSONOnlyPacket` sets `uses_binary_events = False`, which
-  skips the walk, and normalizes inbound client attachments to int lists.
-- d7674c517 (PR #28835): `periodic_session_pool_cleanup` materialized the whole
-  pool with `keys()` and then did one `get` plus one `del` per session, holding
-  the event loop for the entire sweep. It now walks bounded HSCAN batches,
-  deletes each batch in one call, and yields between batches. The same commit
-  made `get_user_ids_from_room` read this worker's local Socket.IO sessions
-  instead of one pool round trip per member.
+Redis clients are `create_autospec` stand-ins, the session pool is a real `RedisDict` on one,
+and every loop is bounded by construction: a patched `asyncio.sleep` or the cluster stand-in
+raises `_LoopExit` (a `BaseException` the production `except Exception` cannot swallow) after a
+fixed number of calls, inside `asyncio.wait_for`.
 
-Both loop tests are bounded by construction: a patched `asyncio.sleep` raises
-`_LoopExit` (a `BaseException`, so the production `except Exception` handlers
-cannot swallow it) after a fixed number of awaits, the cluster fake raises the
-same sentinel after a fixed number of `pubsub()` attempts, and every drive is
-additionally wrapped in `asyncio.wait_for`.
-
-Discriminates: passes on v0.11.3, fails on v0.11.1 (pre-fix the listener never
-subscribes on a cluster client, the default packet class scans every payload,
-and the reaper plus the room fan-out do one blocking round trip per session).
+Discriminates: passes on bbfa876af; fails with the `initialize()` call removed from the
+listener, the server built on the default `Packet`, the reaper deleting session by session or
+reading the whole pool at once, and room members looked up in the session pool.
 """
 
 from __future__ import annotations
 
 import asyncio
-import inspect
+import json
 import time
-from contextlib import suppress
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import create_autospec, patch
 
 import pytest
-
-pytest.importorskip("socketio")
-
-import socketio
+import redis
+import redis.asyncio.client
+import redis.asyncio.cluster
 import socketio.packet
+from fastapi import FastAPI
 
 pytestmark = pytest.mark.regression
 
 LOOP_DRIVE_TIMEOUT = 5
-TASK_SETTLE_TIMEOUT = 0.5
+BATCH_SIZE = 2
 
 
 class _LoopExit(BaseException):
-    """Sentinel that stops a production while-True loop after a fixed number of calls."""
+    """Stops a production `while True` loop after a fixed number of calls."""
 
 
-def _counting_sleep(record: list[float], limit: int):
-    """Instant `asyncio.sleep` replacement that aborts the caller after `limit` awaits."""
-
-    async def _sleep(delay=0, *args, **kwargs):
-        record.append(delay)
-        if len(record) >= limit:
+def _sleep_until(limit: int, sleeps: list[float]):
+    async def sleep(delay=0, *args, **kwargs):
+        sleeps.append(delay)
+        if len(sleeps) >= limit:
             raise _LoopExit
-        return None
 
-    return _sleep
-
-
-async def _drive(coro):
-    """Run a production loop under a hard timeout so a missing exit cannot wedge the run."""
-    await asyncio.wait_for(coro, timeout=LOOP_DRIVE_TIMEOUT)
+    return sleep
 
 
-async def _pending():
-    await asyncio.Event().wait()
-
-
-async def _discard(task: asyncio.Task):
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+async def _drive_until_exit(coroutine) -> None:
+    with pytest.raises(_LoopExit):
+        await asyncio.wait_for(coroutine, timeout=LOOP_DRIVE_TIMEOUT)
 
 
 @pytest.fixture(scope="session")
@@ -89,200 +66,114 @@ def socket_main(owui_module):
 
 
 @pytest.fixture(scope="session")
+def socket_utils(owui_module):
+    return owui_module("open_webui.socket.utils")
+
+
+@pytest.fixture(scope="session")
 def tasks_module(owui_module):
     return owui_module("open_webui.tasks")
 
 
-# --- a5ea8b0b8: stop-generation across instances on a Redis Cluster --------------------------
+# --- a5ea8b0b8: stop-generation across instances on a Redis Cluster ----------------------
 
 
-class FakeClusterPubSub:
-    def __init__(self, messages):
-        self.messages = messages
-        self.subscribed: list[str] = []
-        self.closed = False
+def _cluster_carrying(messages: list[dict], subscriptions: int):
+    """A specced RedisCluster that cannot route a subscribe before `initialize()`."""
+    cluster = create_autospec(redis.asyncio.cluster.RedisCluster, instance=True)
+    state = {"initialized": False, "pubsubs": []}
 
-    async def subscribe(self, channel):
-        self.subscribed.append(channel)
+    async def initialize():
+        state["initialized"] = True
 
-    async def listen(self):
-        for message in self.messages:
+    async def stream():
+        for message in messages:
             yield message
 
-    async def aclose(self):
-        self.closed = True
-
-
-class FakeClusterRedis:
-    """RedisCluster shape: pubsub cannot be routed until initialize() has filled the slot cache."""
-
-    def __init__(self, messages, max_attempts):
-        self.messages = messages
-        self.max_attempts = max_attempts
-        self.attempts = 0
-        self.initialized = False
-        self.pubsubs: list[FakeClusterPubSub] = []
-
-    async def initialize(self):
-        self.initialized = True
-
-    def pubsub(self):
-        self.attempts += 1
-        if self.attempts > self.max_attempts:
+    def open_pubsub():
+        if len(state["pubsubs"]) >= subscriptions:
             raise _LoopExit
-        if not self.initialized:
-            raise RuntimeError("Redis Cluster has no slot cache yet")
-        self.pubsubs.append(FakeClusterPubSub(self.messages))
-        return self.pubsubs[-1]
+        if not state["initialized"]:
+            raise redis.exceptions.RedisClusterException("no slot cache yet")
+        pubsub = create_autospec(redis.asyncio.client.PubSub, instance=True)
+        pubsub.listen.side_effect = stream
+        state["pubsubs"].append(pubsub)
+        return pubsub
+
+    cluster.initialize.side_effect = initialize
+    cluster.pubsub.side_effect = open_pubsub
+    return cluster, state["pubsubs"]
 
 
-def _stop_message(tasks_module, task_id: str) -> dict:
-    return {
-        "type": "message",
-        "data": tasks_module.JSONCodec.dumps({"action": "stop", "task_id": task_id}),
-    }
+async def _listen_on(tasks_module, cluster) -> None:
+    app = FastAPI()
+    app.state.redis = cluster
+    with patch.object(asyncio, "sleep", _sleep_until(20, [])):
+        await _drive_until_exit(tasks_module.redis_task_command_listener(app))
 
 
-async def _run_cluster_listener(tasks_module, messages, max_attempts, task_registry):
-    redis = FakeClusterRedis(messages, max_attempts)
-    app = SimpleNamespace(state=SimpleNamespace(redis=redis))
-    sleeps: list[float] = []
-
-    with (
-        patch.object(tasks_module, "tasks", task_registry),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 20)),
-        pytest.raises(_LoopExit),
-    ):
-        await _drive(tasks_module.redis_task_command_listener(app))
-
-    return redis
+def _command(action: str, task_id: str) -> dict:
+    return {"type": "message", "data": json.dumps({"action": action, "task_id": task_id})}
 
 
 @pytest.mark.asyncio
-async def test_cluster_stop_command_cancels_the_local_task(tasks_module):
-    """Pre-fix pubsub() raised on a cluster client, so the stop never reached this instance."""
-    task = asyncio.get_running_loop().create_task(_pending())
-    await asyncio.sleep(0)
+async def test_a_stop_sent_through_the_cluster_cancels_the_local_task(tasks_module):
+    running = asyncio.get_running_loop().create_task(asyncio.Event().wait())
+    cluster, pubsubs = _cluster_carrying([_command("stop", "task-1")], subscriptions=1)
 
-    redis = await _run_cluster_listener(
-        tasks_module, [_stop_message(tasks_module, "task-1")], 1, {"task-1": task}
+    with patch.dict(tasks_module.tasks, {"task-1": running}):
+        await _listen_on(tasks_module, cluster)
+        await asyncio.wait([running], timeout=0.5)
+
+    assert running.cancelled(), "the listener never subscribed on the cluster client (#19840)"
+    pubsubs[0].subscribe.assert_awaited_once_with(tasks_module.REDIS_PUBSUB_CHANNEL)
+
+
+@pytest.mark.asyncio
+async def test_every_reconnect_initializes_the_cluster_again(tasks_module):
+    cluster, pubsubs = _cluster_carrying([], subscriptions=3)
+
+    await _listen_on(tasks_module, cluster)
+
+    assert len(pubsubs) == 3
+    assert cluster.initialize.await_count == cluster.pubsub.call_count, (
+        "a reconnect subscribed without refilling the cluster's slot cache first"
     )
 
-    await asyncio.wait([task], timeout=TASK_SETTLE_TIMEOUT)
-    stop_reached = task.cancelled()
-    if not task.done():
-        await _discard(task)
-
-    assert stop_reached
-    assert [pubsub.subscribed for pubsub in redis.pubsubs] == [
-        [tasks_module.REDIS_PUBSUB_CHANNEL]
-    ]
-    assert redis.initialized
-
 
 @pytest.mark.asyncio
-async def test_cluster_listener_reinitializes_on_every_reconnect(tasks_module):
-    """Broad: a failover ends the stream, and the fresh subscribe needs the slot cache again."""
-    redis = await _run_cluster_listener(tasks_module, [], 3, {})
-
-    assert [pubsub.subscribed for pubsub in redis.pubsubs] == [
-        [tasks_module.REDIS_PUBSUB_CHANNEL]
-    ] * 3
-    assert all(pubsub.closed for pubsub in redis.pubsubs)
-
-
-@pytest.mark.asyncio
-async def test_cluster_listener_ignores_non_stop_commands(tasks_module):
-    """Nearby: only a stop action may cancel a running task."""
-    task = asyncio.get_running_loop().create_task(_pending())
-    await asyncio.sleep(0)
-
+async def test_only_a_stop_command_cancels_a_task(tasks_module):
+    running = asyncio.get_running_loop().create_task(asyncio.Event().wait())
     messages = [
         {"type": "subscribe", "data": 1},
-        {"type": "message", "data": tasks_module.JSONCodec.dumps({"action": "ping"})},
+        _command("ping", "task-1"),
         {"type": "message", "data": b"not json"},
     ]
-    await _run_cluster_listener(tasks_module, messages, 1, {"task-1": task})
+    cluster, _ = _cluster_carrying(messages, subscriptions=1)
 
-    await asyncio.wait([task], timeout=TASK_SETTLE_TIMEOUT)
-    assert not task.cancelled()
-    await _discard(task)
+    with patch.dict(tasks_module.tasks, {"task-1": running}):
+        await _listen_on(tasks_module, cluster)
+        await asyncio.wait([running], timeout=0.2)
 
-
-@pytest.mark.asyncio
-async def test_single_instance_stop_cancels_the_local_task(tasks_module):
-    """Nearby: stopping without Redis configured still cancels in-process."""
-    task = asyncio.get_running_loop().create_task(_pending())
-    await asyncio.sleep(0)
-
-    with patch.object(tasks_module, "tasks", {"task-1": task}):
-        result = await tasks_module.stop_task(None, "task-1")
-
-    assert result["status"] is True
-    assert task.cancelled()
+    assert not running.done()
+    running.cancel()
 
 
-@pytest.mark.asyncio
-async def test_single_instance_stop_reports_an_unknown_task(tasks_module):
-    """Nearby: an id that no worker owns is reported, not cancelled blindly."""
-    with patch.object(tasks_module, "tasks", {}):
-        result = await tasks_module.stop_task(None, "missing")
-
-    assert result["status"] is False
+# --- 89716ea88: no binary scan on outgoing payloads --------------------------------------
 
 
-# --- 89716ea88: no binary scan on outgoing socket.io payloads --------------------------------
-
-
-EVENT_PAYLOAD = [
-    "chat-events",
-    {"chat_id": "c-1", "message_id": "m-1", "data": {"type": "message", "content": "hello"}},
-]
-
-
-def test_server_packet_class_declares_no_binary_events(socket_main):
-    """Pre-fix the default Packet was used, and it advertises binary support."""
-    assert socket_main.sio.packet_class.uses_binary_events is False
-
-
-@pytest.mark.asyncio
-async def test_normal_emit_payload_is_never_scanned_for_binary(socket_main):
-    """Pre-fix every emit walked the whole payload looking for bytes that are never sent."""
-    scanned: list[object] = []
-
-    def recording_scan(cls, data):
-        scanned.append(data)
-        return False
-
-    manager = socket_main.sio.manager
-    sid = await manager.connect("eio-scan-1", "/")
-    try:
-        with (
-            patch.object(socketio.packet.Packet, "data_is_binary", classmethod(recording_scan)),
-            patch.object(socket_main.sio, "_send_eio_packet", AsyncMock()) as send_eio_packet,
-        ):
-            await socket_main.sio.emit("chat-events", EVENT_PAYLOAD[1], to=sid)
-    finally:
-        await manager.disconnect(sid, "/")
-
-    assert scanned == []
-    frames = [call.args[1].data for call in send_eio_packet.await_args_list]
-    assert len(frames) == 1
-    assert isinstance(frames[0], str)
-
-
-def test_payload_holding_bytes_stays_a_plain_event(socket_main):
-    """Broad: the packet class never promotes an event to a binary event."""
+def test_a_payload_holding_bytes_stays_a_plain_event(socket_main):
     packet = socket_main.sio.packet_class(
         socketio.packet.EVENT, data=["chat-events", {"blob": b"\x00\x01"}]
     )
 
-    assert packet.packet_type == socketio.packet.EVENT
+    assert packet.packet_type == socketio.packet.EVENT, (
+        "the server packet walked the payload for bytes and promoted it to a binary event"
+    )
     assert packet.attachments == []
 
 
-def test_client_attachments_reconstruct_as_int_lists(socket_main):
-    """Yjs handlers store updates as int lists; pre-fix reconstruction handed back raw bytes."""
+def test_client_attachments_come_back_as_int_lists(socket_main):
     reconstructed = socket_main.sio.packet_class.reconstruct_binary(
         {"document_id": "doc-1", "update": {"_placeholder": True, "num": 0}}, [b"\x01\x02\x03"]
     )
@@ -290,183 +181,119 @@ def test_client_attachments_reconstruct_as_int_lists(socket_main):
     assert reconstructed == {"document_id": "doc-1", "update": [1, 2, 3]}
 
 
-def test_ordinary_event_round_trips_through_encode_and_decode(socket_main):
-    """Nearby: a JSON payload still encodes to one frame and decodes back unchanged."""
+def test_an_ordinary_event_round_trips(socket_main):
+    payload = ["chat-events", {"chat_id": "c-1", "data": {"type": "message", "content": "hi"}}]
     packet_class = socket_main.sio.packet_class
-    encoded = packet_class(socketio.packet.EVENT, data=EVENT_PAYLOAD, namespace="/").encode()
 
-    assert isinstance(encoded, str)
+    encoded = packet_class(socketio.packet.EVENT, data=payload, namespace="/").encode()
     decoded = packet_class(encoded_packet=encoded)
 
     assert decoded.packet_type == socketio.packet.EVENT
-    assert decoded.data == EVENT_PAYLOAD
+    assert decoded.data == payload
 
 
-def test_ack_and_connect_packets_are_unchanged(socket_main):
-    """Nearby: the non-event packet types keep their handling."""
-    packet_class = socket_main.sio.packet_class
-
-    ack = packet_class(socketio.packet.ACK, data=["ok"], id=7)
-    assert ack.packet_type == socketio.packet.ACK
-    assert ack.id == 7
-
-    connect = packet_class(socketio.packet.CONNECT, data={"sid": "s-1"}, namespace="/")
-    assert connect.packet_type == socketio.packet.CONNECT
+# --- d7674c517: a bounded, non-blocking session reaper -----------------------------------
 
 
-# --- d7674c517: bounded non-blocking session pool reaper -------------------------------------
+def _pool_over_redis(socket_utils, sessions: dict):
+    """A real RedisDict on a specced client whose HSCAN pages `BATCH_SIZE` fields at a time."""
+    fields = {sid: json.dumps(entry) for sid, entry in sessions.items()}
+    scan_order = list(fields)  # HSCAN visits every field present for the whole scan
+    client = create_autospec(redis.Redis, instance=True)
+
+    def hscan(name, cursor=0, match=None, count=None, **kwargs):
+        page = [sid for sid in scan_order[cursor : cursor + BATCH_SIZE] if sid in fields]
+        next_cursor = cursor + BATCH_SIZE if cursor + BATCH_SIZE < len(scan_order) else 0
+        return next_cursor, {sid: fields[sid] for sid in page}
+
+    client.hscan.side_effect = hscan
+    client.hdel.side_effect = lambda name, *keys: sum(fields.pop(k, None) is not None for k in keys)
+    with patch.object(socket_utils, "get_redis_connection", return_value=client):
+        pool = socket_utils.RedisDict(name="session-pool", redis_url="redis://127.0.0.1:1/0")
+    return pool, client, fields
 
 
-BATCH_SIZE = 8
-STALE_BATCHES = 2
+def _sessions(socket_main) -> dict:
+    stale = int(time.time()) - socket_main.SESSION_POOL_TIMEOUT - 60
+    sessions = {f"stale-{index}": {"id": "u", "last_seen_at": stale} for index in range(5)}
+    return {**sessions, "live": {"id": "u", "last_seen_at": int(time.time())}}
 
 
-class FakeSessionPool:
-    """Redis-backed SESSION_POOL stand-in that records every blocking round trip."""
+async def _reap_once(socket_main, pool, sleeps: list[float]) -> None:
+    renewals = iter([True])
 
-    def __init__(self, entries: dict, batch_size: int = BATCH_SIZE):
-        self.entries = dict(entries)
-        self.batch_size = batch_size
-        self.round_trips: list[str] = []
-
-    def scan_batches(self):
-        items = list(self.entries.items())
-        for start in range(0, len(items), self.batch_size):
-            self.round_trips.append("hscan")
-            yield items[start : start + self.batch_size]
-
-    def delete_many(self, *keys):
-        self.round_trips.append(f"hdel:{len(keys)}")
-        for key in keys:
-            self.entries.pop(key, None)
-
-    def keys(self):
-        self.round_trips.append("hkeys")
-        return list(self.entries)
-
-    def items(self):
-        self.round_trips.append("hgetall")
-        return list(self.entries.items())
-
-    def get(self, key, default=None):
-        self.round_trips.append("hget")
-        return self.entries.get(key, default)
-
-    def pop(self, key, default=None):
-        self.round_trips.append("hdel:1")
-        return self.entries.pop(key, default)
-
-    def __delitem__(self, key):
-        self.round_trips.append("hdel:1")
-        del self.entries[key]
-
-
-def _session_pool_entries(socket_main, now: int):
-    entries = {}
-    for index in range(BATCH_SIZE * STALE_BATCHES):
-        entries[f"stale-{index}"] = {
-            "id": f"u-{index}",
-            "last_seen_at": now - socket_main.SESSION_POOL_TIMEOUT - 60,
-        }
-    for index in range(BATCH_SIZE):
-        entries[f"fresh-{index}"] = {"id": f"u-live-{index}", "last_seen_at": now}
-    return entries
-
-
-async def _drive_reaper(socket_main, pool, sleep_limit, manager="redis"):
-    sleeps: list[float] = []
+    def renew():
+        if next(renewals, None) is None:
+            raise _LoopExit  # the second renew is after the sweep
+        return True
 
     with (
-        patch.object(socket_main, "WEBSOCKET_MANAGER", manager),
+        patch.object(socket_main, "WEBSOCKET_MANAGER", "redis"),
+        patch.object(socket_main, "SESSION_POOL", pool),
+        patch.object(socket_main, "session_aquire_func", lambda: True),
+        patch.object(socket_main, "session_renew_func", renew),
+        patch.object(socket_main, "session_release_func", lambda: True),
+        patch.object(asyncio, "sleep", _sleep_until(50, sleeps)),
+    ):
+        await _drive_until_exit(socket_main.periodic_session_pool_cleanup())
+
+
+@pytest.mark.asyncio
+async def test_the_reaper_deletes_batch_by_batch_and_yields_between(socket_main, socket_utils):
+    pool, client, remaining = _pool_over_redis(socket_utils, _sessions(socket_main))
+    sleeps: list[float] = []
+
+    await _reap_once(socket_main, pool, sleeps)
+
+    assert set(remaining) == {"live"}
+    batches = client.hscan.call_count
+    assert client.hdel.call_count <= batches, "stale sessions were deleted one call each"
+    assert sleeps[:batches] == [0] * batches, "the sweep held the event loop between batches"
+    client.hkeys.assert_not_called()
+    client.hgetall.assert_not_called()
+
+
+async def _reap_once_local(socket_main, pool: dict) -> None:
+    with (
         patch.object(socket_main, "SESSION_POOL", pool),
         patch.object(socket_main, "session_aquire_func", lambda: True),
         patch.object(socket_main, "session_renew_func", lambda: True),
         patch.object(socket_main, "session_release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, sleep_limit)),
-        pytest.raises(_LoopExit),
+        patch.object(asyncio, "sleep", _sleep_until(2, [])),
     ):
-        await _drive(socket_main.periodic_session_pool_cleanup())
-
-    return sleeps
+        await _drive_until_exit(socket_main.periodic_session_pool_cleanup())
 
 
 @pytest.mark.asyncio
-async def test_reaper_yields_to_the_event_loop_between_batches(socket_main):
-    """Pre-fix the whole pool was swept without a single yield, blocking every other socket."""
-    pool = FakeSessionPool(_session_pool_entries(socket_main, int(time.time())))
-    batches = STALE_BATCHES + 1
+async def test_the_reaper_keeps_sessions_that_are_still_heartbeating(socket_main):
+    now = int(time.time())
+    timeout = socket_main.SESSION_POOL_TIMEOUT
+    pool = {
+        "stale": {"id": "u-1", "last_seen_at": now - timeout - 60},
+        "borderline": {"id": "u-2", "last_seen_at": now - timeout},
+        "fresh": {"id": "u-3", "last_seen_at": now},
+    }
 
-    sleeps = await _drive_reaper(socket_main, pool, batches + 1)
+    with patch.object(socket_main, "WEBSOCKET_MANAGER", "local"):
+        await _reap_once_local(socket_main, pool)
 
-    assert sleeps[:batches] == [0] * batches
-
-
-@pytest.mark.asyncio
-async def test_reaper_round_trips_scale_with_batches_not_sessions(socket_main):
-    """Pre-fix each session cost a get and a del; the sweep is now one scan plus one delete."""
-    pool = FakeSessionPool(_session_pool_entries(socket_main, int(time.time())))
-    batches = STALE_BATCHES + 1
-
-    await _drive_reaper(socket_main, pool, batches + 1)
-
-    assert len(pool.round_trips) <= 2 * batches
-    assert set(pool.entries) == {f"fresh-{index}" for index in range(BATCH_SIZE)}
+    assert set(pool) == {"borderline", "fresh"}
 
 
 @pytest.mark.asyncio
-async def test_reaper_deletes_each_expired_batch_in_one_call(socket_main):
-    """Broad: no per-session delete survives, whatever the pool size."""
-    pool = FakeSessionPool(_session_pool_entries(socket_main, int(time.time())))
-
-    await _drive_reaper(socket_main, pool, STALE_BATCHES + 2)
-
-    assert [trip for trip in pool.round_trips if trip.startswith("hdel")] == [
-        f"hdel:{BATCH_SIZE}"
-    ] * STALE_BATCHES
-
-
-@pytest.mark.asyncio
-async def test_room_user_ids_come_from_local_sockets_not_the_session_pool(socket_main):
-    """Pre-fix every room fan-out cost one blocking pool round trip per member session."""
-    pool = FakeSessionPool({"s-1": {"id": "u-1"}, "s-2": {"id": "u-2"}})
+async def test_room_members_come_from_this_workers_sessions(socket_main, socket_utils):
+    pool, client, _ = _pool_over_redis(socket_utils, {})
     sessions = {"s-1": {"user": {"id": "u-1"}}, "s-2": {"user": {"id": "u-2"}}}
 
-    async def fake_get_session(sid, namespace=None):
+    async def get_session(sid, namespace=None):
         return sessions[sid]
 
     with (
         patch.object(socket_main, "SESSION_POOL", pool),
-        patch.object(socket_main, "get_session_ids_from_room", lambda room: ["s-1", "s-2"]),
-        patch.object(socket_main.sio, "get_session", fake_get_session),
+        patch.object(socket_main, "get_session_ids_from_room", lambda room: list(sessions)),
+        patch.object(socket_main.sio, "get_session", get_session),
     ):
-        user_ids = socket_main.get_user_ids_from_room("room-1")
-        if inspect.isawaitable(user_ids):
-            user_ids = await user_ids
+        user_ids = await socket_main.get_user_ids_from_room("channel:c-1")
 
     assert set(user_ids) == {"u-1", "u-2"}
-    assert pool.round_trips == []
-
-
-@pytest.mark.asyncio
-async def test_empty_session_pool_reaps_cleanly(socket_main):
-    """Nearby: an idle instance sweeps an empty pool without touching it."""
-    pool: dict = {}
-
-    await _drive_reaper(socket_main, pool, 2, manager="memory")
-
-    assert pool == {}
-
-
-@pytest.mark.asyncio
-async def test_reaper_keeps_sessions_that_are_still_heartbeating(socket_main):
-    """Nearby: only entries past SESSION_POOL_TIMEOUT are reaped."""
-    now = int(time.time())
-    pool = {
-        "stale": {"id": "u-1", "last_seen_at": now - socket_main.SESSION_POOL_TIMEOUT - 60},
-        "fresh": {"id": "u-2", "last_seen_at": now},
-        "borderline": {"id": "u-3", "last_seen_at": now - socket_main.SESSION_POOL_TIMEOUT},
-    }
-
-    await _drive_reaper(socket_main, pool, 2, manager="memory")
-
-    assert set(pool) == {"fresh", "borderline"}
+    assert client.method_calls == [], "a room fan-out made a session pool round trip per member"

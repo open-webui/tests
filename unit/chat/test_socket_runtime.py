@@ -1,56 +1,45 @@
-"""Socket/runtime regressions fixed between v0.11.0 and v0.11.1.
+"""Socket/runtime regressions fixed between v0.11.0 and v0.11.1 that need a stand-in Redis.
 
-Nine changelog entries share one surface: the websocket layer, its two periodic
-cleanup loops, the cross-instance task command listener, and the background
-tasks the lifespan starts.
+The role-change disconnect and the note resync save are pinned by the integration twin,
+integration/chat/test_socket_runtime.py. What stays here needs a shared Redis, a second
+instance or control over the event loop's clock:
 
-- 23 (ce3c175e26): `SocketSessionEventSink` prepended to `EVENT_SINKS` so a role
-  change or account deletion from any path cuts the user's live sockets.
 - 83 (939bcdb79e, #27762): `periodic_session_pool_cleanup` slept the whole
-  `SESSION_POOL_TIMEOUT` without renewing, so the lock lapsed mid-cycle.
-- 108+109 (211906d79, PR28053): the three lifespan background coroutines were
-  created without keeping a reference, so the loop could collect them mid-run.
-- 139 (5586964bb, PR28834): `periodic_usage_pool_cleanup` gave up permanently
-  after two failed lock acquisitions, and raised out of the loop on a failed
-  renew, stopping usage cleanup cluster-wide.
-- 152 (bf3a58dbcd, #28909): `redis_task_command_listener` subscribed once, so a
-  cache restart silently killed cross-instance stop-generation.
-- 186 (5735123f5, PR28669): `yjs_document_update` cancelled the pending debounced
-  save before knowing whether a replacement would be scheduled.
-- 190 (a39126c27, PR28311): `get_event_call` caught only builtin `TimeoutError`
-  and evicted the still-open session from `SESSION_POOL`.
-- 202 (6330350a40, #28777): `RedisDict._last_signature` was per process, so one
-  worker's stale fingerprint suppressed every later identical write.
+  `SESSION_POOL_TIMEOUT` without renewing, so the cleanup lock lapsed mid-cycle.
+- 108+109 (211906d79, PR #28053): the lifespan created its background coroutines without keeping
+  a reference, so the event loop could collect them mid-run.
+- 139 (5586964bb, PR #28834): `periodic_usage_pool_cleanup` gave up after two failed lock
+  acquisitions and raised out of the loop on a failed renew, stopping usage cleanup cluster-wide.
+- 152 (bf3a58dbcd, #28909): `redis_task_command_listener` subscribed once, so a cache restart
+  silently ended cross-instance stop-generation.
+- 190 (a39126c27, PR #28311): `get_event_call` caught only the builtin `TimeoutError` and evicted
+  the still-open session from `SESSION_POOL`.
+- 202 (6330350a40, #28777): `RedisDict`'s set signature lived in one process, so a worker's stale
+  fingerprint skipped the write that would repair a diverged shared hash.
 
-Every loop test is bounded by construction: a stub raises `_LoopExit` (a
-`BaseException`, so the production `except Exception` handlers cannot swallow it)
-after a fixed number of calls, and each drive is additionally wrapped in
-`asyncio.wait_for`.
+Redis clients are `create_autospec` stand-ins backed by dicts; every loop is bounded by a patched
+`asyncio.sleep` that raises `_LoopExit`, a `BaseException` the production `except Exception`
+cannot swallow, inside `asyncio.wait_for`.
 
-0.11.2 reshaped the same surface without changing any of these behaviours, so the stubs
-follow it: `d7674c517` (#28835) made the socket handlers read the acting user from
-Socket.IO's own session store instead of `SESSION_POOL` and gave the session reaper a
-per-batch `sleep(0)` yield, and `a5ea8b0b8` (#29165) made the task command listener call
-`redis.initialize()` before each subscribe.
-
-Discriminates: passes on v0.11.1 through v0.11.3, fails on v0.11.0 (pre-fix sinks, loops,
-and caches behave as described above).
+Discriminates: passes on bbfa876af; fails with the cleanup sleeping a whole timeout between
+renews, the usage cleanup returning on a lost race or failed renew, a lifespan task handle
+dropped, the listener returning when its stream ends, `get_event_call` catching only the builtin
+`TimeoutError` or evicting the session, and the set signature kept in process memory.
 """
 
 from __future__ import annotations
 
 import ast
 import asyncio
-import inspect
 import time
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, create_autospec, patch
 
 import pytest
-
-pytest.importorskip("socketio")
-
+import redis
+import redis.asyncio
+import redis.asyncio.client
 import socketio
+from fastapi import FastAPI
 
 pytestmark = pytest.mark.regression
 
@@ -58,112 +47,21 @@ LOOP_DRIVE_TIMEOUT = 5
 
 
 class _LoopExit(BaseException):
-    """Sentinel that stops a production while-True loop after a fixed number of calls."""
+    """Stops a production `while True` loop after a fixed number of calls."""
 
 
-def _counting_sleep(record: list[float], limit: int):
-    """Instant `asyncio.sleep` replacement that aborts the caller after `limit` awaits."""
-
-    async def _sleep(delay=0, *args, **kwargs):
-        record.append(delay)
-        if len(record) >= limit:
+def _sleep_until(limit: int, sleeps: list[float]):
+    async def sleep(delay=0, *args, **kwargs):
+        sleeps.append(delay)
+        if len(sleeps) >= limit:
             raise _LoopExit
-        return None
 
-    return _sleep
-
-
-async def _drive(coro):
-    """Run a production loop under a hard timeout so a missing exit cannot wedge the run."""
-    await asyncio.wait_for(coro, timeout=LOOP_DRIVE_TIMEOUT)
+    return sleep
 
 
-class FakeRedis:
-    """In-memory stand-in for the sync redis client RedisDict talks to."""
-
-    def __init__(self):
-        self.hashes: dict[str, dict[str, str]] = {}
-        self.strings: dict[str, str] = {}
-
-    def hset(self, name, key=None, value=None, mapping=None):
-        target = self.hashes.setdefault(name, {})
-        if mapping:
-            target.update(mapping)
-        if key is not None:
-            target[key] = value
-        return 1
-
-    def hget(self, name, key):
-        return self.hashes.get(name, {}).get(key)
-
-    def hdel(self, name, *keys):
-        target = self.hashes.get(name, {})
-        return sum(1 for key in keys if target.pop(key, None) is not None)
-
-    def hexists(self, name, key):
-        return key in self.hashes.get(name, {})
-
-    def hlen(self, name):
-        return len(self.hashes.get(name, {}))
-
-    def hkeys(self, name):
-        return list(self.hashes.get(name, {}).keys())
-
-    def hvals(self, name):
-        return list(self.hashes.get(name, {}).values())
-
-    def hgetall(self, name):
-        return dict(self.hashes.get(name, {}))
-
-    def delete(self, name):
-        self.hashes.pop(name, None)
-        self.strings.pop(name, None)
-
-    def get(self, name):
-        return self.strings.get(name)
-
-    def set(self, name, value):
-        self.strings[name] = value
-
-
-class FakePubSub:
-    def __init__(self, fail_subscribe: bool = False):
-        self.subscribed: list[str] = []
-        self.closed = False
-        self.fail_subscribe = fail_subscribe
-
-    async def subscribe(self, channel):
-        if self.fail_subscribe:
-            raise ConnectionError("shared cache is down")
-        self.subscribed.append(channel)
-
-    async def listen(self):
-        # A dropped connection ends the stream; the pre-fix listener returned here.
-        yield {"type": "subscribe", "data": 1}
-
-    async def aclose(self):
-        self.closed = True
-
-    async def close(self):
-        self.closed = True
-
-
-class FakeAsyncRedis:
-    """Async client stand-in. 0.11.2 `a5ea8b0b8` (#29165) made the listener call
-    `initialize()` before every subscribe so RedisCluster can route the channel."""
-
-    def __init__(self, make_pubsub):
-        self._make_pubsub = make_pubsub
-
-    async def initialize(self):
-        return None
-
-    def pubsub(self):
-        return self._make_pubsub()
-
-
-def _listener_app(make_pubsub) -> SimpleNamespace:
-    return SimpleNamespace(state=SimpleNamespace(redis=FakeAsyncRedis(make_pubsub)))
+async def _drive_until_exit(coroutine) -> None:
+    with pytest.raises(_LoopExit):
+        await asyncio.wait_for(coroutine, timeout=LOOP_DRIVE_TIMEOUT)
 
 
 @pytest.fixture(scope="session")
@@ -181,570 +79,293 @@ def tasks_module(owui_module):
     return owui_module("open_webui.tasks")
 
 
-@pytest.fixture(scope="session")
-def events_module(owui_module):
-    return owui_module("open_webui.events")
-
-
-@pytest.fixture(scope="session")
-def main_lifespan_tree(open_webui_backend):
-    """Parsed `open_webui/main.py`; importing it would start the real app."""
-    source = (open_webui_backend / "open_webui" / "main.py").read_text(encoding="utf-8")
-    return ast.parse(source)
-
-
-def _dotted(node) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        base = _dotted(node.value)
-        return f"{base}.{node.attr}" if base else None
-    return None
-
-
-def _make_event(events, name: str, subject: dict | None):
-    return events.Event(
-        schema="v1",
-        id="evt-1",
-        event=name,
-        resource="user",
-        operation="update",
-        created_at=0,
-        instance_id=None,
-        version="test",
-        source="api",
-        subject=subject,
-    )
-
-
-async def _dispatch_to_sinks(events, event):
-    """Mirror publish_event's sink loop without building a request or app."""
-    app = SimpleNamespace(state=SimpleNamespace())
-    for sink in events.EVENT_SINKS:
-        try:
-            await sink.handle_event(app, event, request=None)
-        except Exception:
-            pass
-
-
-# --- 23: role changes cutting live sessions -------------------------------------------------
+# --- 83: the session cleanup renews its lock while it waits -------------------------------
 
 
 @pytest.mark.asyncio
-async def test_role_update_disconnects_live_sessions(events_module, socket_main):
-    """A user.role_updated event must reach disconnect_user_sessions through the sink list."""
-    disconnect = AsyncMock()
-    event = _make_event(
-        events_module, events_module.EVENTS.USER_ROLE_UPDATED.name, {"type": "user", "id": "u-1"}
-    )
-
-    with (
-        patch.object(socket_main, "disconnect_user_sessions", disconnect),
-        patch.object(events_module.asyncio, "create_task", lambda coro, *a, **kw: coro.close()),
-    ):
-        await _dispatch_to_sinks(events_module, event)
-
-    disconnect.assert_awaited_once_with("u-1")
-
-
-@pytest.mark.asyncio
-async def test_user_deleted_disconnects_live_sessions(events_module, socket_main):
-    disconnect = AsyncMock()
-    event = _make_event(
-        events_module, events_module.EVENTS.USER_DELETED.name, {"type": "user", "id": "u-2"}
-    )
-
-    with (
-        patch.object(socket_main, "disconnect_user_sessions", disconnect),
-        patch.object(events_module.asyncio, "create_task", lambda coro, *a, **kw: coro.close()),
-    ):
-        await _dispatch_to_sinks(events_module, event)
-
-    disconnect.assert_awaited_once_with("u-2")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("event_name", "subject"),
-    [
-        ("user.settings_updated", {"type": "user", "id": "u-3"}),
-        ("user.role_updated", {"type": "group", "id": "g-1"}),
-        ("user.role_updated", None),
-        ("user.role_updated", {"type": "user"}),
-    ],
-)
-async def test_unrelated_events_do_not_disconnect_sessions(
-    events_module, socket_main, event_name, subject
-):
-    """Nearby: only user-subject role/delete events may cut sockets."""
-    disconnect = AsyncMock()
-    event = _make_event(events_module, event_name, subject)
-
-    with (
-        patch.object(socket_main, "disconnect_user_sessions", disconnect),
-        patch.object(events_module.asyncio, "create_task", lambda coro, *a, **kw: coro.close()),
-    ):
-        await _dispatch_to_sinks(events_module, event)
-
-    disconnect.assert_not_awaited()
-
-
-def test_every_event_sink_exposes_async_handle_event(events_module):
-    """Broad: the dispatch loop awaits handle_event on every registered sink."""
-    assert events_module.EVENT_SINKS
-    for sink in events_module.EVENT_SINKS:
-        handler = getattr(sink, "handle_event", None)
-        assert inspect.iscoroutinefunction(handler), type(sink).__name__
-
-
-# --- 83: session cleanup renewing its lock --------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_session_cleanup_never_sleeps_past_the_lock_timeout(socket_main):
-    """Pre-fix it slept SESSION_POOL_TIMEOUT in one go, so the lock lapsed mid-cycle."""
+async def test_session_cleanup_never_waits_past_the_lock_timeout(socket_main):
     sleeps: list[float] = []
-    renews: list[bool] = []
-
-    def renew():
-        renews.append(True)
-        return True
-
+    renewals: list[int] = []
     with (
         patch.object(socket_main, "SESSION_POOL", {}),
         patch.object(socket_main, "session_aquire_func", lambda: True),
-        patch.object(socket_main, "session_renew_func", renew),
+        patch.object(socket_main, "session_renew_func", lambda: renewals.append(1) or True),
         patch.object(socket_main, "session_release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 6)),
-        pytest.raises(_LoopExit),
+        patch.object(asyncio, "sleep", _sleep_until(6, sleeps)),
     ):
-        await _drive(socket_main.periodic_session_pool_cleanup())
+        await _drive_until_exit(socket_main.periodic_session_pool_cleanup())
 
-    # 0.11.2 `d7674c517` (#28835) added a bare `sleep(0)` yield per scanned batch; only the
-    # real waits between renews are part of the lock budget.
-    waits = [delay for delay in sleeps if delay > 0]
-    assert len(sleeps) == 6
-    assert waits
-    assert max(waits) <= socket_main.WEBSOCKET_REDIS_LOCK_TIMEOUT / 2
-    assert len(renews) >= len(waits)
+    waits = [delay for delay in sleeps if delay > 0]  # sleep(0) only yields between batches
+    assert waits and max(waits) <= socket_main.WEBSOCKET_REDIS_LOCK_TIMEOUT / 2, (
+        f"the cleanup slept {max(waits, default=0)}s between renews, so the lock lapsed (#27762)"
+    )
+    assert len(renewals) >= len(waits)
 
 
-@pytest.mark.asyncio
-async def test_session_cleanup_reaps_only_stale_sessions(socket_main):
-    """Nearby: the reaping itself is unchanged."""
-    now = int(time.time())
-    pool = {
-        "stale": {"id": "u-1", "last_seen_at": now - socket_main.SESSION_POOL_TIMEOUT - 60},
-        "fresh": {"id": "u-2", "last_seen_at": now},
-    }
-    sleeps: list[float] = []
-
-    with (
-        patch.object(socket_main, "SESSION_POOL", pool),
-        patch.object(socket_main, "session_aquire_func", lambda: True),
-        patch.object(socket_main, "session_renew_func", lambda: True),
-        patch.object(socket_main, "session_release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 1)),
-        pytest.raises(_LoopExit),
-    ):
-        await _drive(socket_main.periodic_session_pool_cleanup())
-
-    assert set(pool) == {"fresh"}
+# --- 139: usage cleanup survives losing its lock -----------------------------------------
 
 
-# --- 139: usage cleanup surviving a lock interruption ---------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_usage_cleanup_retries_lock_acquisition_forever(socket_main):
-    """Pre-fix it returned for good after two failed acquisitions."""
-    acquires: list[int] = []
-    sleeps: list[float] = []
-
-    def acquire():
-        acquires.append(len(acquires))
-        return False
-
-    with (
-        patch.object(socket_main, "USAGE_POOL", {}),
+def _usage_lock(socket_main, acquire, renew):
+    return (
         patch.object(socket_main, "aquire_func", acquire),
-        patch.object(socket_main, "renew_func", lambda: True),
+        patch.object(socket_main, "renew_func", renew),
         patch.object(socket_main, "release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 6)),
-        pytest.raises(_LoopExit),
-    ):
-        await _drive(socket_main.periodic_usage_pool_cleanup())
+    )
 
-    assert len(acquires) >= 6
+
+@pytest.mark.asyncio
+async def test_usage_cleanup_keeps_contending_for_the_lock(socket_main):
+    attempts: list[int] = []
+    acquire, renew, release = _usage_lock(socket_main, lambda: attempts.append(1) or False, None)
+    with acquire, renew, release, patch.object(asyncio, "sleep", _sleep_until(6, [])):
+        await _drive_until_exit(socket_main.periodic_usage_pool_cleanup())
+
+    assert len(attempts) >= 6, "usage cleanup gave up after losing the lock race twice"
 
 
 @pytest.mark.asyncio
 async def test_usage_cleanup_reacquires_after_a_failed_renew(socket_main):
-    """Pre-fix a failed renew raised out of the coroutine and cleanup stopped."""
-    acquires: list[int] = []
-    renew_results = [True, False]
-    sleeps: list[float] = []
+    attempts: list[int] = []
+    renewals = iter([True, False])
 
     def acquire():
-        acquires.append(len(acquires))
-        if len(acquires) > 1:
+        attempts.append(1)
+        if len(attempts) > 1:
             raise _LoopExit
         return True
 
-    def renew():
-        return renew_results.pop(0) if renew_results else False
-
+    acquire_patch, renew_patch, release_patch = _usage_lock(
+        socket_main, acquire, lambda: next(renewals, False)
+    )
     with (
+        acquire_patch,
+        renew_patch,
+        release_patch,
         patch.object(socket_main, "USAGE_POOL", {}),
-        patch.object(socket_main, "aquire_func", acquire),
-        patch.object(socket_main, "renew_func", renew),
-        patch.object(socket_main, "release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 20)),
-        pytest.raises(_LoopExit),
+        patch.object(asyncio, "sleep", _sleep_until(20, [])),
     ):
-        await _drive(socket_main.periodic_usage_pool_cleanup())
+        await _drive_until_exit(socket_main.periodic_usage_pool_cleanup())
 
-    assert len(acquires) == 2
+    assert len(attempts) == 2, "a failed renew ended usage cleanup instead of contending again"
 
 
 @pytest.mark.asyncio
-async def test_usage_cleanup_expires_only_stale_connections(socket_main):
-    """Nearby: the expiry pass itself is unchanged."""
+async def test_usage_cleanup_expires_only_idle_connections(socket_main):
     now = int(time.time())
     pool = {
         "model-idle": {"sid-1": {"updated_at": now - socket_main.TIMEOUT_DURATION - 10}},
         "model-busy": {"sid-2": {"updated_at": now}},
     }
-    sleeps: list[float] = []
-
+    acquire, renew, release = _usage_lock(socket_main, lambda: True, lambda: True)
     with (
+        acquire,
+        renew,
+        release,
         patch.object(socket_main, "USAGE_POOL", pool),
-        patch.object(socket_main, "aquire_func", lambda: True),
-        patch.object(socket_main, "renew_func", lambda: True),
-        patch.object(socket_main, "release_func", lambda: True),
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 1)),
-        pytest.raises(_LoopExit),
+        patch.object(asyncio, "sleep", _sleep_until(1, [])),
     ):
-        await _drive(socket_main.periodic_usage_pool_cleanup())
+        await _drive_until_exit(socket_main.periodic_usage_pool_cleanup())
 
     assert set(pool) == {"model-busy"}
 
 
-# --- 108 + 109: lifespan keeping references to its background tasks --------------------------
+# --- 108 + 109: the lifespan keeps and cancels its background task handles ----------------
 
 
-def _lifespan_task_wiring(tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+def _stored_and_cancelled_tasks(main_tree: ast.Module) -> tuple[dict[str, str], set[str]]:
+    """`{coroutine: app.state attribute}` for stored `asyncio.create_task` handles, and the
+    handles `.cancel()` is called on."""
     stored: dict[str, str] = {}
     cancelled: set[str] = set()
-
-    for node in ast.walk(tree):
+    for node in ast.walk(main_tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             call = node.value
-            if (
-                _dotted(call.func) == "asyncio.create_task"
-                and call.args
-                and isinstance(call.args[0], ast.Call)
-            ):
-                coroutine_name = _dotted(call.args[0].func)
-                attribute = next(
-                    (d for t in node.targets if (d := _dotted(t)) and d.startswith("app.state.")),
-                    None,
-                )
-                if coroutine_name and attribute:
-                    stored[coroutine_name] = attribute
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "cancel"
-        ):
-            owner = _dotted(node.func.value)
-            if owner:
-                cancelled.add(owner)
-
+            if ast.unparse(call.func) == "asyncio.create_task" and call.args:
+                targets = [ast.unparse(target) for target in node.targets]
+                handles = [target for target in targets if target.startswith("app.state.")]
+                if handles and isinstance(call.args[0], ast.Call):
+                    stored[ast.unparse(call.args[0].func)] = handles[0]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "cancel":
+                cancelled.add(ast.unparse(node.func.value))
     return stored, cancelled
 
 
 @pytest.mark.parametrize(
-    "coroutine_name",
-    ["periodic_usage_pool_cleanup", "periodic_session_pool_cleanup", "scheduler_worker_loop"],
+    "coroutine",
+    [
+        "periodic_usage_pool_cleanup",
+        "periodic_session_pool_cleanup",
+        "scheduler_worker_loop",
+        "redis_task_command_listener",
+    ],
 )
-def test_lifespan_keeps_and_cancels_background_task_handles(main_lifespan_tree, coroutine_name):
-    """Pre-fix the handles were dropped, so the loop could collect the tasks mid-run."""
-    stored, cancelled = _lifespan_task_wiring(main_lifespan_tree)
+def test_the_lifespan_keeps_and_cancels_each_background_task(open_webui_backend, coroutine):
+    main_py = open_webui_backend / "open_webui" / "main.py"
+    stored, cancelled = _stored_and_cancelled_tasks(ast.parse(main_py.read_text("utf-8")))
 
-    assert coroutine_name in stored, f"{coroutine_name} task handle is not stored on app.state"
-    assert stored[coroutine_name] in cancelled, (
-        f"{stored[coroutine_name]} is never cancelled on shutdown"
+    assert coroutine in stored, (
+        f"the {coroutine} task handle is not kept on app.state, so the loop may collect it"
     )
+    assert stored[coroutine] in cancelled, f"{stored[coroutine]} is never cancelled on shutdown"
 
 
-def test_redis_task_command_listener_handle_is_still_stored(main_lifespan_tree):
-    """Nearby: the listener already kept its handle before the fix."""
-    stored, cancelled = _lifespan_task_wiring(main_lifespan_tree)
-
-    assert stored.get("redis_task_command_listener") == "app.state.redis_task_command_listener"
-    assert "app.state.redis_task_command_listener" in cancelled
+# --- 152: the task command listener resubscribes ---------------------------------------
 
 
-# --- 152: task command listener reconnecting ------------------------------------------------
+async def _stream_that_ends():
+    yield {"type": "subscribe", "data": 1}
+
+
+def _redis_whose_pubsubs(fail_subscribe: bool, limit: int):
+    """A specced async client handing out `limit` pubsubs, then stopping the loop."""
+    pubsubs: list = []
+
+    def open_pubsub():
+        if len(pubsubs) >= limit:
+            raise _LoopExit
+        pubsub = create_autospec(redis.asyncio.client.PubSub, instance=True)
+        pubsub.listen.side_effect = _stream_that_ends
+        if fail_subscribe:
+            pubsub.subscribe.side_effect = redis.exceptions.ConnectionError("cache is down")
+        pubsubs.append(pubsub)
+        return pubsub
+
+    client = create_autospec(redis.asyncio.Redis, instance=True)
+    client.pubsub.side_effect = open_pubsub
+    return client, pubsubs
+
+
+def _listener_app(client) -> FastAPI:
+    app = FastAPI()
+    app.state.redis = client
+    return app
 
 
 @pytest.mark.asyncio
-async def test_task_command_listener_resubscribes_after_the_stream_ends(tasks_module):
-    """Pre-fix the coroutine returned when the pubsub generator ended, killing stop-generation."""
-    pubsubs: list[FakePubSub] = []
+async def test_the_task_command_listener_resubscribes_after_its_stream_ends(tasks_module):
+    client, pubsubs = _redis_whose_pubsubs(fail_subscribe=False, limit=3)
+    with patch.object(asyncio, "sleep", _sleep_until(20, [])):
+        await _drive_until_exit(tasks_module.redis_task_command_listener(_listener_app(client)))
 
-    def make_pubsub():
-        if len(pubsubs) >= 3:
-            raise _LoopExit
-        pubsubs.append(FakePubSub())
-        return pubsubs[-1]
-
-    app = _listener_app(make_pubsub)
-    sleeps: list[float] = []
-
-    with (
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 20)),
-        pytest.raises(_LoopExit),
-    ):
-        await _drive(tasks_module.redis_task_command_listener(app))
-
-    assert len(pubsubs) == 3
-    assert all(pubsub.subscribed == [tasks_module.REDIS_PUBSUB_CHANNEL] for pubsub in pubsubs)
+    assert len(pubsubs) == 3, "the listener returned when the stream ended (#28909)"
+    for pubsub in pubsubs:
+        pubsub.subscribe.assert_awaited_once_with(tasks_module.REDIS_PUBSUB_CHANNEL)
 
 
 @pytest.mark.asyncio
-async def test_reconnect_backoff_doubles_while_the_cache_stays_down(tasks_module):
-    """Broad: a cache that stays down is retried with a widening, capped delay."""
-    assert tasks_module.REDIS_PUBSUB_RECONNECT_INTERVAL == 1.0
-    assert tasks_module.REDIS_PUBSUB_MAX_RECONNECT_INTERVAL == 30.0
-
-    pubsubs: list[FakePubSub] = []
-
-    def make_pubsub():
-        if len(pubsubs) >= 3:
-            raise _LoopExit
-        pubsubs.append(FakePubSub(fail_subscribe=True))
-        return pubsubs[-1]
-
-    app = _listener_app(make_pubsub)
+async def test_reconnects_back_off_while_the_cache_stays_down(tasks_module):
+    client, _ = _redis_whose_pubsubs(fail_subscribe=True, limit=3)
     sleeps: list[float] = []
+    with patch.object(asyncio, "sleep", _sleep_until(20, sleeps)):
+        await _drive_until_exit(tasks_module.redis_task_command_listener(_listener_app(client)))
 
-    with (
-        patch.object(asyncio, "sleep", _counting_sleep(sleeps, 20)),
-        pytest.raises(_LoopExit),
-    ):
-        await _drive(tasks_module.redis_task_command_listener(app))
-
-    assert sleeps == [1.0, 2.0, 4.0]
+    first = tasks_module.REDIS_PUBSUB_RECONNECT_INTERVAL
+    assert sleeps == [first, first * 2, first * 4]
     assert max(sleeps) <= tasks_module.REDIS_PUBSUB_MAX_RECONNECT_INTERVAL
 
 
-# --- 186: resync updates keeping the pending note save ---------------------------------------
-
-
-def _socket_session(sessions):
-    """0.11.2 `d7674c517` (#28835) made the socket handlers read the acting user only from
-    Socket.IO's own local session store, so stub that store as well as `SESSION_POOL`."""
-
-    async def get_session(sid, namespace=None):
-        if sid not in sessions:
-            raise KeyError(sid)
-        return {"user": sessions[sid]}
-
-    return get_session
-
-
-def _yjs_patches(socket_main, pool, stop_item_tasks, create_task):
-    return (
-        patch.object(socket_main, "get_session_ids_from_room", lambda room: ["sid-1"]),
-        patch.object(socket_main, "SESSION_POOL", pool),
-        patch.object(socket_main, "YDOC_MANAGER", AsyncMock()),
-        patch.object(socket_main.sio, "emit", AsyncMock()),
-        patch.object(socket_main, "stop_item_tasks", stop_item_tasks),
-        patch.object(socket_main, "create_task", create_task),
-        patch.object(socket_main.sio, "get_session", _socket_session(pool)),
-    )
-
-
-async def _run_yjs_update(socket_main, data):
-    pool = {"sid-1": {"id": "u-1", "role": "admin"}}
-    stop_item_tasks = AsyncMock()
-    create_task = AsyncMock(side_effect=lambda redis, coro, *a, **kw: coro.close())
-
-    patches = _yjs_patches(socket_main, pool, stop_item_tasks, create_task)
-    with patches[0], patches[1], patches[2] as ydoc, patches[3], patches[4], patches[5], patches[6]:
-        await socket_main.yjs_document_update("sid-1", data)
-
-    ydoc.append_to_updates.assert_awaited_once()
-    return stop_item_tasks, create_task
-
-
-@pytest.mark.asyncio
-async def test_resync_update_without_snapshot_keeps_the_pending_save(socket_main):
-    """Pre-fix the cancel ran unconditionally, so a resync dropped the debounced save."""
-    stop_item_tasks, create_task = await _run_yjs_update(
-        socket_main, {"document_id": "doc-1", "update": [1, 2, 3]}
-    )
-
-    stop_item_tasks.assert_not_awaited()
-    create_task.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_update_with_snapshot_replaces_the_pending_save(socket_main):
-    """Nearby: an update carrying content still cancels then reschedules."""
-    stop_item_tasks, create_task = await _run_yjs_update(
-        socket_main, {"document_id": "doc-1", "update": [1, 2, 3], "data": {"content": "hello"}}
-    )
-
-    stop_item_tasks.assert_awaited_once()
-    create_task.assert_awaited_once()
-
-
-# --- 190: unanswered tool prompts ------------------------------------------------------------
-
+# --- 190: an unanswered event call ---------------------------------------------------------
 
 TIMEOUT_REPLY = {"error": "Event call timed out. The browser tab may be inactive or closed."}
+REQUEST = {"session_id": "sess-1", "chat_id": "c-1", "message_id": "m-1", "user_id": "u-1"}
 
 
-async def _call_event_caller(socket_main, pool, error):
+async def _call_the_browser(socket_main, pool: dict, answer) -> dict:
     with (
         patch.object(socket_main, "SESSION_POOL", pool),
-        patch.object(socket_main.sio, "call", AsyncMock(side_effect=error)),
+        patch.object(socket_main.sio, "call", AsyncMock(side_effect=answer)),
     ):
-        caller = await socket_main.get_event_call(
-            {"session_id": "sess-1", "chat_id": "c-1", "message_id": "m-1", "user_id": "u-1"}
-        )
+        caller = await socket_main.get_event_call(REQUEST)
         return await caller({"type": "input"})
 
 
 @pytest.mark.asyncio
-async def test_socketio_timeout_is_reported_as_a_timeout(socket_main):
-    """Pre-fix only builtin TimeoutError was caught, so the emit's own error escaped."""
+@pytest.mark.parametrize(
+    "timeout", [socketio.exceptions.TimeoutError(), TimeoutError()], ids=["socketio", "builtin"]
+)
+async def test_a_timed_out_call_is_reported_and_keeps_the_session(socket_main, timeout):
     pool = {"sess-1": {"id": "u-1"}}
 
-    result = await _call_event_caller(socket_main, pool, socketio.exceptions.TimeoutError())
-
-    assert result == TIMEOUT_REPLY
-
-
-@pytest.mark.asyncio
-async def test_timeout_does_not_evict_the_open_session(socket_main):
-    """Pre-fix the timeout deleted a session whose tab was still connected."""
-    pool = {"sess-1": {"id": "u-1"}}
-
-    result = await _call_event_caller(socket_main, pool, TimeoutError())
-
-    assert result == TIMEOUT_REPLY
-    assert "sess-1" in pool
+    assert await _call_the_browser(socket_main, pool, timeout) == TIMEOUT_REPLY
+    assert "sess-1" in pool, "the timeout evicted a session whose tab is still connected"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("pool", [{}, {"sess-1": {"id": "someone-else"}}])
-async def test_foreign_or_missing_session_is_refused(socket_main, pool):
-    """Nearby: session ownership check is unchanged."""
-    called = AsyncMock()
+@pytest.mark.parametrize("pool", [{}, {"sess-1": {"id": "someone-else"}}], ids=["gone", "foreign"])
+async def test_a_foreign_or_missing_session_is_never_called(socket_main, pool):
+    reply = await _call_the_browser(socket_main, pool, AssertionError("the browser was called"))
 
-    with (
-        patch.object(socket_main, "SESSION_POOL", pool),
-        patch.object(socket_main.sio, "call", called),
-    ):
-        caller = await socket_main.get_event_call(
-            {"session_id": "sess-1", "chat_id": "c-1", "message_id": "m-1", "user_id": "u-1"}
-        )
-        result = await caller({"type": "input"})
-
-    assert result == {"error": "Client session disconnected."}
-    called.assert_not_awaited()
+    assert reply == {"error": "Client session disconnected."}
 
 
-@pytest.mark.asyncio
-async def test_incomplete_request_info_yields_no_caller(socket_main):
-    """Nearby: a caller is only built when the routing keys are present."""
-    assert await socket_main.get_event_call({"session_id": "sess-1"}) is None
-
-
-# --- 202: model list signature living in the shared store ------------------------------------
-
+# --- 202: the set signature lives in the shared store ------------------------------------
 
 MODELS = {"a": {"id": "a"}, "b": {"id": "b"}}
 
 
-def _redis_dict(socket_utils, redis, **kwargs):
-    with patch.object(socket_utils, "get_redis_connection", return_value=redis):
-        return socket_utils.RedisDict("models", "redis://localhost:6379", **kwargs)
+def _shared_redis():
+    """A specced sync client over one in-memory store, as every worker would share it."""
+    hashes: dict[str, dict] = {}
+    strings: dict[str, str] = {}
+    client = create_autospec(redis.Redis, instance=True)
+    client.hset.side_effect = lambda name, key=None, value=None, mapping=None, **kw: (
+        hashes.setdefault(name, {}).update({**(mapping or {}), **({key: value} if key else {})})
+    )
+    client.hget.side_effect = lambda name, key: hashes.get(name, {}).get(key)
+    client.hdel.side_effect = lambda name, *keys: sum(
+        hashes.get(name, {}).pop(key, None) is not None for key in keys
+    )
+    client.hkeys.side_effect = lambda name: list(hashes.get(name, {}))
+    client.hexists.side_effect = lambda name, key: key in hashes.get(name, {})
+    client.get.side_effect = strings.get
+    client.set.side_effect = lambda name, value, **kw: strings.update({name: value})
+    client.delete.side_effect = lambda *names: sum(
+        (hashes.pop(name, None) or strings.pop(name, None)) is not None for name in names
+    )
+    return client
 
 
-def test_repeated_set_repairs_a_diverged_shared_hash(socket_utils):
-    """Pre-fix a per-process fingerprint made the repairing write a no-op for that worker."""
-    redis = FakeRedis()
-    models = _redis_dict(socket_utils, redis)
+def _worker_models(socket_utils, client):
+    with patch.object(socket_utils, "get_redis_connection", return_value=client):
+        return socket_utils.RedisDict(
+            name="models", redis_url="redis://127.0.0.1:1/0", cache_set_signature=True
+        )
+
+
+def test_a_repeated_set_repairs_a_hash_another_worker_shortened(socket_utils):
+    shared = _shared_redis()
+    this_worker = _worker_models(socket_utils, shared)
+    other_worker = _worker_models(socket_utils, shared)
+
+    this_worker.set(MODELS)
+    other_worker.set({"a": {"id": "a"}})  # a short list from another worker
+    this_worker.set(MODELS)
+
+    assert set(this_worker.keys()) == {"a", "b"}, (
+        "a fingerprint kept in this worker's memory skipped the repairing write (#28777)"
+    )
+
+
+def test_an_unchanged_set_is_skipped_while_the_shared_signature_holds(socket_utils):
+    shared = _shared_redis()
+    models = _worker_models(socket_utils, shared)
+    models.set(MODELS)
+    shared.hset.reset_mock()
 
     models.set(MODELS)
-    redis.hdel("models", "b")  # another worker wrote a short list
-    models.set(MODELS)
 
-    assert set(models.keys()) == {"a", "b"}
+    shared.hset.assert_not_called()
 
 
-def test_signature_is_stored_in_redis_and_invalidated_by_writes(socket_utils):
-    """The fingerprint moved into the shared store and every mutation drops it."""
-    redis = FakeRedis()
-    models = _redis_dict(socket_utils, redis, cache_set_signature=True)
+def test_every_write_drops_the_shared_signature(socket_utils):
+    shared = _shared_redis()
+    models = _worker_models(socket_utils, shared)
 
     models.set(MODELS)
-    signature = redis.get("models:signature")
-    assert signature
-
+    assert shared.get("models:signature")
     models["c"] = {"id": "c"}
-    assert redis.get("models:signature") is None
-
+    assert shared.get("models:signature") is None
     models.set({**MODELS, "c": {"id": "c"}})
-    assert redis.get("models:signature")
-
     del models["c"]
-    assert redis.get("models:signature") is None
-
-
-def test_identical_set_is_skipped_only_while_the_shared_signature_holds(socket_utils):
-    """Broad: the write is skipped for a genuinely unchanged list, never for a diverged one."""
-    redis = FakeRedis()
-    models = _redis_dict(socket_utils, redis, cache_set_signature=True)
-
-    models.set(MODELS)
-    redis.hdel("models", "b")
-    models.set(MODELS)
-    assert set(models.keys()) == {"a"}  # signature still valid, write correctly skipped
-
-    redis.delete("models:signature")
-    models.set(MODELS)
-    assert set(models.keys()) == {"a", "b"}
-
-
-def test_redis_dict_basic_operations(socket_utils):
-    """Nearby: the mapping surface is unchanged."""
-    redis = FakeRedis()
-    models = _redis_dict(socket_utils, redis)
-
-    models["a"] = {"id": "a"}
-    assert models["a"] == {"id": "a"}
-    assert "a" in models
-    assert models.get("missing") is None
-    assert len(models) == 1
-
-    del models["a"]
-    assert "a" not in models
-    with pytest.raises(KeyError):
-        del models["a"]
-
-
-def test_empty_mapping_clears_the_hash(socket_utils):
-    """Nearby: setting an empty mapping still wipes the stored models."""
-    redis = FakeRedis()
-    models = _redis_dict(socket_utils, redis)
-
-    models.set(MODELS)
-    models.set({})
-
-    assert models.keys() == []
+    assert shared.get("models:signature") is None

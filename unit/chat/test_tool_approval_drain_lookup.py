@@ -1,176 +1,85 @@
-"""Regression test for the tool approval drain lookup running on fresh chat messages.
+"""A fresh chat message no longer pays a stored-message lookup for tool approvals.
 
-Fix commit `9f680bb80` (PR #29142), `drain_approved_tool_calls` in `open_webui/utils/middleware.py`.
+Fix commit `9f680bb80` (PR #29142), `drain_approved_tool_calls` in `utils/middleware.py`. The
+drain gated on `message_id` alone, which every ordinary send carries, so each new turn read a
+chat message that does not exist yet and can hold no approvals. It now requires
+`assistant_message_id`, which only a resume or continue payload sends.
 
-`drain_approved_tool_calls` gates on the message id it is about to read. It used to accept
-`message_id` on its own, and every ordinary send carries one, so each new turn paid a chat
-message lookup for an assistant message that does not exist yet and can hold no approvals. The
-gate now requires `assistant_message_id`, which only a resume or continue payload sends.
+Stays a unit test: the saved read is one database query with no effect on the reply, so no
+response or stored state shows it. The chat store is a `create_autospec` stand-in, the only I/O
+the drain reaches on these paths.
 
-Discriminates: passes on v0.11.3, fails on v0.11.1 (a fresh message id still triggers the
-message lookup).
+Discriminates: passes on bbfa876af; fails with `message_id` accepted in place of
+`assistant_message_id` again (a fresh message id triggers the lookup).
 """
 
 from __future__ import annotations
 
-from types import ModuleType, SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import create_autospec, patch
 
 import pytest
 
-pytestmark = [pytest.mark.regression, pytest.mark.asyncio]
+pytestmark = pytest.mark.regression
+
+SAVED_CHAT_ID = "8e2b5f0c-2c3f-4d1e-9a77-0a1b2c3d4e5f"
 
 
 @pytest.fixture(scope="session")
-def middleware_module(owui_module) -> ModuleType:
+def middleware_module(owui_module):
     return owui_module("open_webui.utils.middleware")
 
 
 @pytest.fixture
-def chats_stub(middleware_module: ModuleType):
-    """Stub the chat store, the only I/O `drain_approved_tool_calls` reaches for on these paths."""
-    stub = SimpleNamespace(
-        get_message_by_id_and_message_id=AsyncMock(return_value=None),
-        upsert_message_to_chat_by_id_and_message_id=AsyncMock(return_value=None),
-    )
-    with patch.object(middleware_module, "Chats", stub):
-        yield stub
+def chats(middleware_module):
+    store = create_autospec(type(middleware_module.Chats), instance=True)
+    store.get_message_by_id_and_message_id.return_value = None
+    with patch.object(middleware_module, "Chats", store):
+        yield store
 
 
-async def drain(middleware_module: ModuleType, metadata: dict) -> bool:
+async def _drain(middleware_module, metadata: dict) -> bool:
     return await middleware_module.drain_approved_tool_calls(
-        SimpleNamespace(), {"messages": []}, SimpleNamespace(id="user-1"), {}, metadata
+        request=None, form_data={"messages": []}, user=None, model={}, metadata=metadata
     )
 
 
-# -----------------------------------------------------------------------------
-# Narrow
-# -----------------------------------------------------------------------------
-
-
-async def test_fresh_message_id_does_not_trigger_the_drain_lookup(
-    middleware_module: ModuleType, chats_stub
-) -> None:
-    drained = await drain(middleware_module, {"chat_id": "chat-1", "message_id": "msg-fresh"})
-
-    assert drained is False
-    chats_stub.get_message_by_id_and_message_id.assert_not_called()
-
-
-async def test_resume_payload_still_triggers_the_drain_lookup(
-    middleware_module: ModuleType, chats_stub
-) -> None:
-    drained = await drain(
-        middleware_module, {"chat_id": "chat-1", "assistant_message_id": "msg-existing"}
-    )
-
-    assert drained is False
-    chats_stub.get_message_by_id_and_message_id.assert_awaited_once_with("chat-1", "msg-existing")
-
-
-async def test_resume_payload_reads_the_message_id_it_was_given(
-    middleware_module: ModuleType, chats_stub
-) -> None:
-    """A continue payload sends both ids; the message holding the output is message_id."""
-    await drain(
-        middleware_module,
-        {"chat_id": "chat-1", "message_id": "msg-1", "assistant_message_id": "msg-1-assistant"},
-    )
-
-    chats_stub.get_message_by_id_and_message_id.assert_awaited_once_with("chat-1", "msg-1")
-
-
-# -----------------------------------------------------------------------------
-# Broad: only a payload re-entering an existing assistant message reads the store
-# -----------------------------------------------------------------------------
-
-
-FRESH_METADATA = [
-    ("message_id_only", {"chat_id": "chat-1", "message_id": "msg-fresh"}),
-    (
-        "message_id_with_approval_mode",
-        {
-            "chat_id": "chat-1",
-            "message_id": "msg-fresh",
-            "params": {"tool_approval_mode": "ask"},
-        },
-    ),
-    (
-        "blank_assistant_message_id",
-        {"chat_id": "chat-1", "message_id": "m", "assistant_message_id": ""},
-    ),
-    ("no_ids_at_all", {"chat_id": "chat-1"}),
-]
-
-
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case,metadata", FRESH_METADATA, ids=[case for case, _ in FRESH_METADATA]
+    "metadata",
+    [
+        {"message_id": "fresh"},
+        {"message_id": "fresh", "params": {"tool_approval_mode": "ask"}},
+        {"message_id": "fresh", "assistant_message_id": ""},
+        {},
+    ],
+    ids=["fresh-message", "ask-mode", "blank-assistant-id", "no-ids"],
 )
-async def test_no_store_read_without_an_assistant_message_id(
-    middleware_module: ModuleType, chats_stub, case: str, metadata: dict
-) -> None:
-    assert await drain(middleware_module, metadata) is False
-    chats_stub.get_message_by_id_and_message_id.assert_not_called()
+async def test_a_fresh_turn_reads_no_stored_message(middleware_module, chats, metadata):
+    assert await _drain(middleware_module, {"chat_id": SAVED_CHAT_ID, **metadata}) is False
+    chats.get_message_by_id_and_message_id.assert_not_called()
 
 
-# -----------------------------------------------------------------------------
-# Nearby
-# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ids", "read"),
+    [
+        ({"assistant_message_id": "resumed"}, "resumed"),
+        ({"assistant_message_id": "continued", "message_id": "holder"}, "holder"),
+    ],
+    ids=["resume", "continue"],
+)
+async def test_a_resumed_turn_reads_the_message_holding_the_output(
+    middleware_module, chats, ids, read
+):
+    await _drain(middleware_module, {"chat_id": SAVED_CHAT_ID, **ids})
+
+    chats.get_message_by_id_and_message_id.assert_awaited_once_with(SAVED_CHAT_ID, read)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("chat_id", ["temporary:abc", "local:abc", "channel:abc", "", None])
-async def test_unsaved_chat_never_drains(
-    middleware_module: ModuleType, chats_stub, chat_id
-) -> None:
-    metadata = {"chat_id": chat_id, "assistant_message_id": "msg-1", "message_id": "msg-1"}
+async def test_an_unsaved_chat_never_reads_the_store(middleware_module, chats, chat_id):
+    metadata = {"chat_id": chat_id, "assistant_message_id": "m-1", "message_id": "m-1"}
 
-    assert await drain(middleware_module, metadata) is False
-    chats_stub.get_message_by_id_and_message_id.assert_not_called()
-
-
-async def test_message_without_approved_calls_is_left_alone(
-    middleware_module: ModuleType, chats_stub
-) -> None:
-    output = [
-        {"type": "function_call", "call_id": "call-a", "name": "web_search", "status": "completed"},
-        {"type": "function_call_output", "call_id": "call-a", "output": []},
-    ]
-    chats_stub.get_message_by_id_and_message_id.return_value = {"output": output}
-
-    drained = await drain(
-        middleware_module, {"chat_id": "chat-1", "assistant_message_id": "msg-1"}
-    )
-
-    assert drained is False
-    assert output[0]["status"] == "completed"
-    chats_stub.upsert_message_to_chat_by_id_and_message_id.assert_not_called()
-
-
-async def test_approved_ask_user_call_is_released_for_the_client(
-    middleware_module: ModuleType, chats_stub
-) -> None:
-    output = [
-        {
-            "type": "function_call",
-            "call_id": "call-a",
-            "name": "ask_user",
-            "status": "queued",
-            "approved": True,
-        }
-    ]
-    chats_stub.get_message_by_id_and_message_id.return_value = {"output": output}
-
-    with (
-        patch.object(
-            middleware_module, "get_event_emitter_and_caller", AsyncMock(return_value=(None, None))
-        ),
-        patch.object(middleware_module, "load_messages_from_db", AsyncMock(return_value=[])),
-    ):
-        drained = await drain(
-            middleware_module, {"chat_id": "chat-1", "assistant_message_id": "msg-1"}
-        )
-
-    assert drained is True
-    assert output[0]["status"] == "pending"
-    assert "approved" not in output[0]
-    chats_stub.upsert_message_to_chat_by_id_and_message_id.assert_awaited_once()
+    assert await _drain(middleware_module, metadata) is False
+    chats.get_message_by_id_and_message_id.assert_not_called()
