@@ -22,6 +22,16 @@ from harness.upstream import MOCK_MODEL_ID, MockUpstream
 TEST_USER_EMAIL = "test@example.com"
 TEST_USER_PASSWORD = "testpassword123"
 
+# Title, tag, follow-up and query tasks share the chat endpoint and would take a scripted reply
+# meant for the chat; a test that needs one turns it on through /api/v1/tasks/config/update.
+QUIET_TASKS = {
+    "ENABLE_TITLE_GENERATION": "false",
+    "ENABLE_TAGS_GENERATION": "false",
+    "ENABLE_FOLLOW_UP_GENERATION": "false",
+    "ENABLE_SEARCH_QUERY_GENERATION": "false",
+    "ENABLE_RETRIEVAL_QUERY_GENERATION": "false",
+}
+
 # Global settings a test may change, by name: (read endpoint, write endpoint).
 SETTINGS = {
     "permissions": ("/api/v1/users/default/permissions", "/api/v1/users/default/permissions"),
@@ -51,7 +61,7 @@ def _publish_mock_model(instance: LaunchedInstance) -> None:
 
 
 def _launch_published(upstream: MockUpstream, env: dict[str, str]) -> Iterator[LaunchedInstance]:
-    for launched in launch(upstream, env):
+    for launched in launch(upstream, {**QUIET_TASKS, **env}):
         _publish_mock_model(launched)
         yield launched
 

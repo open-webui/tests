@@ -22,7 +22,7 @@ MOCK_MODEL_ID = "mock-model"
 
 @dataclass
 class Reply:
-    content: str = ""
+    content: str | list[str] = ""  # a list streams one delta per piece
     reasoning: str | None = None
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict | None = None
@@ -32,7 +32,7 @@ class Reply:
     match: Callable[[dict], bool] | None = None
 
 
-def text(content: str, **options) -> Reply:
+def text(content: str | list[str], **options) -> Reply:
     return Reply(content=content, **options)
 
 
@@ -214,8 +214,9 @@ def _deltas(reply: Reply) -> Iterator[tuple[dict, str | None]]:
     yield {"role": "assistant", "content": ""}, None
     if reply.reasoning:
         yield {"reasoning_content": reply.reasoning}, None
-    if reply.content:
-        yield {"content": reply.content}, None
+    pieces = [reply.content] if isinstance(reply.content, str) else reply.content
+    for piece in filter(None, pieces):
+        yield {"content": piece}, None
     for index, call in enumerate(reply.tool_calls):
         header = {**call, "function": {"name": call["function"]["name"], "arguments": ""}}
         yield {"tool_calls": [{"index": index, **header}]}, None
@@ -237,7 +238,8 @@ def _chunk(delta: dict, finish_reason: str | None, usage: dict | None) -> dict:
 
 
 def _completion(reply: Reply) -> dict:
-    message: dict = {"role": "assistant", "content": reply.content}
+    content = reply.content if isinstance(reply.content, str) else "".join(reply.content)
+    message: dict = {"role": "assistant", "content": content}
     if reply.reasoning:
         message["reasoning_content"] = reply.reasoning
     if reply.tool_calls:
