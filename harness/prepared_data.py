@@ -13,13 +13,13 @@ boot writes each key as a config row verbatim, ahead of the boot's repair of old
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import weakref
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,13 +29,15 @@ import httpx
 import pytest
 
 from harness.instance import (
-    INHERITED_ENV_TO_DROP,
     LAUNCHER,
     LaunchedInstance,
     free_port,
+    isolated_env,
     resolve_backend,
 )
 from harness.upstream import MOCK_MODEL_ID
+
+_legacy_dirs: weakref.WeakKeyDictionary[Callable, Path] = weakref.WeakKeyDictionary()
 
 # config rows in the shapes older releases stored them
 LEGACY_CONFIG_ROWS = {
@@ -66,11 +68,15 @@ def snapshot_database(instance: LaunchedInstance, data_dir: Path) -> Path:
 def with_legacy_config(
     instance_with: Callable[[dict[str, str]], LaunchedInstance], tmp_path_factory
 ) -> LaunchedInstance:
-    """The instance booted on a data directory holding `LEGACY_CONFIG_ROWS` as `config.json`."""
-    data_dir = tmp_path_factory.getbasetemp() / "legacy-config"
-    if not data_dir.exists():
-        data_dir.mkdir()
+    """The instance booted on a data directory holding `LEGACY_CONFIG_ROWS` as `config.json`.
+
+    Each module's `instance_with` gets a fresh directory, since the first boot migrates it.
+    """
+    data_dir = _legacy_dirs.get(instance_with)
+    if data_dir is None:
+        data_dir = tmp_path_factory.mktemp("legacy-config")
         (data_dir / "config.json").write_text(json.dumps(LEGACY_CONFIG_ROWS), encoding="utf-8")
+        _legacy_dirs[instance_with] = data_dir
     return instance_with({"DATA_DIR": str(data_dir)})
 
 
@@ -89,8 +95,7 @@ def boot_until_settled(data_dir: Path, timeout: float = 180.0) -> BootOutcome:
     scratch = Path(tempfile.mkdtemp(prefix="owui-prepared-"))
     (scratch / "static").mkdir()
     port = free_port()
-    env = {name: value for name, value in os.environ.items() if name not in INHERITED_ENV_TO_DROP}
-    env.update(
+    env = isolated_env(
         {
             "PYTHONUNBUFFERED": "1",
             "WEBUI_SECRET_KEY": "integration-secret-key",

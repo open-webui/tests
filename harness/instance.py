@@ -45,6 +45,36 @@ uvicorn.run(
 """
 
 
+# set, not just unset: open_webui.env fills unset names from the checkout's .env
+ISOLATED_ENV = {
+    "DATABASE_TYPE": "",
+    "OPENAI_API_BASE_URLS": "",
+    "OPENAI_API_KEYS": "",
+    "OPENAI_API_CONFIGS": "",
+    "ENABLE_LOGIN_FORM": "true",
+    "GLOBAL_LOG_LEVEL": "",
+    "STORAGE_PROVIDER": "local",
+    "VECTOR_DB": "chroma",
+    "CHROMA_HTTP_HOST": "",
+    "REDIS_URL": "",
+    "REDIS_SENTINEL_HOSTS": "",
+    "WEBSOCKET_MANAGER": "",
+    "WEBUI_ADMIN_EMAIL": "",
+    "WEBUI_ADMIN_PASSWORD": "",
+}
+
+
+def isolated_env(settings: dict[str, str]) -> dict[str, str]:
+    """The caller's environment with `settings` and nothing that reaches the caller's services."""
+    env = {**os.environ, **ISOLATED_ENV, **settings}
+    derived = {
+        "DATABASE_URL": f"sqlite:///{env['DATA_DIR']}/webui.db",
+        "WEBSOCKET_REDIS_URL": env["REDIS_URL"],
+    }
+    env.update({name: value for name, value in derived.items() if name not in settings})
+    return env
+
+
 def resolve_backend() -> Path | None:
     env = os.getenv("OPEN_WEBUI_SOURCE_DIR")
     if env:
@@ -141,24 +171,8 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
         (scratch / name).mkdir()
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
-    env = dict(os.environ)
-    env.update(
+    env = isolated_env(
         {
-            # set, not just unset: open_webui.env fills unset names from the checkout's .env
-            "DATABASE_TYPE": "",
-            "OPENAI_API_BASE_URLS": upstream.base_url,
-            "OPENAI_API_KEYS": "sk-mock",
-            "OPENAI_API_CONFIGS": "",
-            "ENABLE_LOGIN_FORM": "true",
-            "GLOBAL_LOG_LEVEL": "",
-            "STORAGE_PROVIDER": "local",
-            "VECTOR_DB": "chroma",
-            "CHROMA_HTTP_HOST": "",
-            "REDIS_URL": "",
-            "REDIS_SENTINEL_HOSTS": "",
-            "WEBSOCKET_MANAGER": "",
-            "WEBUI_ADMIN_EMAIL": "",
-            "WEBUI_ADMIN_PASSWORD": "",
             "PYTHONUNBUFFERED": "1",
             "WEBUI_SECRET_KEY": "integration-secret-key",
             "WEBUI_AUTH": "true",
@@ -177,14 +191,11 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             "ENABLE_OPENAI_API": "true",
             "OPENAI_API_BASE_URL": upstream.base_url,
             "OPENAI_API_KEY": "sk-mock",
+            "OPENAI_API_BASE_URLS": upstream.base_url,
+            "OPENAI_API_KEYS": "sk-mock",
+            **extra_env,
         }
     )
-    env.update(extra_env)
-    derived = {
-        "DATABASE_URL": f"sqlite:///{env['DATA_DIR']}/webui.db",
-        "WEBSOCKET_REDIS_URL": env["REDIS_URL"],
-    }
-    env.update({name: value for name, value in derived.items() if name not in extra_env})
     log_path = scratch / "server.log"
     # an undrained pipe wedges the child once startup output fills it
     with open(log_path, "w", encoding="utf-8") as log_file:
