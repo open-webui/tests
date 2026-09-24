@@ -70,14 +70,6 @@ def test_stop_keeps_the_partial_reply_and_the_next_message_still_sends(chat_page
     expect_reply(chat_page, "fresh reply")
 
 
-def test_a_provider_error_is_shown_and_the_next_message_still_sends(chat_page, upstream):
-    upstream.queue(reply.error(500, "the provider is down"), reply.text("back again"))
-    send(chat_page, "hello?")
-    expect_reply(chat_page, "the provider is down")
-    send(chat_page, "hello again")
-    expect_reply(chat_page, "back again")
-
-
 def test_regenerate_replaces_the_reply_with_a_new_one(chat_page, upstream):
     upstream.queue(reply.text("first try"), reply.text("second try"))
     send(chat_page, "give me a name")

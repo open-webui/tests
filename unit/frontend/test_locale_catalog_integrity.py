@@ -10,8 +10,8 @@ it (choosing it loads nothing and the UI falls back to raw translation keys).
 A trailing comma or an unescaped quote in any translation.json is the same
 class of accident and breaks that language outright.
 
-A python source audit — it reads the JSON files, so it stays runnable without
-node or the frontend's dependencies installed.
+A data lint over the JSON files, so it runs without node or the frontend's dependencies.
+A missing locales directory or manifest fails and names what to retarget.
 """
 
 from __future__ import annotations
@@ -27,8 +27,7 @@ LOCALES_DIR = Path("src") / "lib" / "i18n" / "locales"
 @pytest.fixture(scope="module")
 def locales_dir(open_webui_backend: Path) -> Path:
     path = open_webui_backend.parent / LOCALES_DIR
-    if not path.is_dir():
-        pytest.skip(f"no locales directory at {path}")
+    assert path.is_dir(), f"no locales directory at {path}; retarget LOCALES_DIR"
     return path
 
 
@@ -42,8 +41,7 @@ def locale_dirs(locales_dir: Path) -> list[str]:
 @pytest.fixture(scope="module")
 def declared_languages(locales_dir: Path) -> list[dict]:
     manifest = locales_dir / "languages.json"
-    if not manifest.is_file():
-        pytest.skip(f"no languages.json at {manifest}")
+    assert manifest.is_file(), f"no languages.json at {manifest}; retarget the language manifest"
     return json.loads(manifest.read_text(encoding="utf-8"))
 
 
