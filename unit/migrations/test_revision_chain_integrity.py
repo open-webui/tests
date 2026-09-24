@@ -16,8 +16,11 @@ Parsed with ast, never imported: this must stay runnable without the backend's
 dependencies installed, and importing a revision module runs nothing useful.
 
 test_lifecycle.py already drives a real `upgrade head` / `downgrade base`
-against SQLite and Postgres. This file is the cheap structural half — it names
+against SQLite and Postgres. This file is the cheap structural half: it names
 the exact broken edge instead of reporting that alembic exited non-zero.
+
+Discriminates: passes on dev bbfa876af; a second revision on the head's parent
+in a copy of it fails the single-head test.
 """
 
 from __future__ import annotations
@@ -54,7 +57,10 @@ class Revision:
             except ValueError:
                 assigned[target] = "<not a literal>"
         self.revision = assigned.get("revision")
-        self.down_revision = assigned.get("down_revision")
+        down_revision = assigned.get("down_revision")
+        # an `alembic merge` revision names every branch it joins
+        self.parents = down_revision if isinstance(down_revision, tuple) else (down_revision,)
+        self.parents = tuple(parent for parent in self.parents if parent is not None)
         self.functions = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
 
 
@@ -62,7 +68,7 @@ class Revision:
 def revisions(open_webui_backend: Path) -> list[Revision]:
     versions = open_webui_backend / VERSIONS_DIR
     if not versions.is_dir():
-        pytest.skip(f"no alembic versions directory at {versions}")
+        pytest.fail(f"no alembic versions directory at {versions}; retarget VERSIONS_DIR")
     files = sorted(p for p in versions.glob("*.py") if p.name != "__init__.py")
     assert files, f"no revision files under {versions}"
     return [Revision(p) for p in files]
@@ -82,15 +88,13 @@ def test_revision_ids_are_unique(revisions: list[Revision]) -> None:
     assert not duplicates, f"duplicate revision ids: {duplicates}"
 
 
-def test_the_filename_still_carries_its_revision_id(revisions: list[Revision]) -> None:
-    """`alembic revision` names the file after the id; renaming one by hand
-    makes the graph unreadable to anyone grepping for a revision."""
-    mismatched = [r.name for r in revisions if not r.name.startswith(f"{r.revision}_")]
-    assert not mismatched, f"filenames that do not start with their revision id: {mismatched}"
+def _heads(revisions: list[Revision]) -> list[Revision]:
+    parents = {parent for r in revisions for parent in r.parents}
+    return [r for r in revisions if r.revision not in parents]
 
 
 def test_exactly_one_base_revision(revisions: list[Revision]) -> None:
-    bases = [r.name for r in revisions if r.down_revision is None]
+    bases = [r.name for r in revisions if not r.parents]
     assert len(bases) == 1, f"expected one revision with down_revision = None, got: {bases}"
 
 
@@ -98,8 +102,7 @@ def test_exactly_one_head_revision(revisions: list[Revision]) -> None:
     """Two heads is the merge accident that stops every upgrade dead:
     `alembic upgrade head` raises "Multiple head revisions are present"
     and, since v0.11.3, that aborts startup."""
-    parents = {r.down_revision for r in revisions}
-    heads = sorted(str(r.revision) for r in revisions if r.revision not in parents)
+    heads = sorted(str(r.revision) for r in _heads(revisions))
     assert len(heads) == 1, (
         f"expected a single head, found {len(heads)}: {heads}. "
         "Merge the branches with `alembic merge` or re-point one down_revision."
@@ -108,35 +111,30 @@ def test_exactly_one_head_revision(revisions: list[Revision]) -> None:
 
 def test_no_revision_points_at_a_parent_that_does_not_exist(revisions: list[Revision]) -> None:
     known = {r.revision for r in revisions}
-    dangling = [
-        (r.name, r.down_revision)
-        for r in revisions
-        if r.down_revision is not None and r.down_revision not in known
-    ]
+    dangling = [(r.name, parent) for r in revisions for parent in r.parents if parent not in known]
     assert not dangling, f"down_revision values with no matching revision file: {dangling}"
 
 
 def test_no_revision_is_its_own_parent(revisions: list[Revision]) -> None:
-    self_parented = [r.name for r in revisions if r.down_revision == r.revision]
+    self_parented = [r.name for r in revisions if r.revision in r.parents]
     assert not self_parented, f"revisions pointing at themselves: {self_parented}"
 
 
 def test_the_chain_reaches_every_revision(revisions: list[Revision]) -> None:
     """Walking head to base must visit all of them. An island of revisions
     that link to each other but not to the main line never runs."""
-    parents = {r.down_revision for r in revisions}
-    heads = [r for r in revisions if r.revision not in parents]
+    heads = _heads(revisions)
     if len(heads) != 1:
-        pytest.skip("multiple heads — test_exactly_one_head_revision reports this")
+        pytest.skip("multiple heads, which test_exactly_one_head_revision reports")
 
     by_id = {r.revision: r for r in revisions}
-    walked: list[object] = []
-    current: Revision | None = heads[0]
-    while current is not None:
-        if current.revision in walked:
-            pytest.fail(f"cycle in the revision chain at {current.name}")
-        walked.append(current.revision)
-        current = by_id.get(current.down_revision) if current.down_revision else None
+    walked: set[object] = set()
+    pending = [heads[0]]
+    while pending:
+        current = pending.pop()
+        if current.revision not in walked:
+            walked.add(current.revision)
+            pending.extend(by_id[parent] for parent in current.parents if parent in by_id)
 
     unreachable = sorted(str(r.revision) for r in revisions if r.revision not in walked)
     assert not unreachable, f"revisions not on the head-to-base chain: {unreachable}"

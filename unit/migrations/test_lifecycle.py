@@ -1,354 +1,150 @@
-"""Full migration + install tests against fresh SQLite and Postgres.
+"""Guard: the migration chain installs, re-runs and unwinds cleanly on SQLite and on Postgres.
 
-Stronger than test_fresh_db_migrations.py — instead of just checking
-that `alembic upgrade head` returns 0 and that one table exists, this
-suite parametrises across both backends and exercises:
+Every startup runs `alembic upgrade head`, and since v0.11.3 a failure there stops the boot, so
+a chain that breaks on a fresh database is a dead install. Regressions pinned here:
 
-  test_upgrade_head_runs_clean         alembic chain completes
-  test_critical_tables_exist           every must-have table is present
-  test_minimum_table_count             chain didn't stop early
-  test_open_webui_config_imports       full import path the user actually hits
-  test_user_crud_round_trip            schema is usable, not just present
-  test_upgrade_is_idempotent           re-running upgrade is a no-op
-  test_downgrade_to_base_clean         schema unwinds without errors
+* #29280 (8c0c7b3b6, v0.11.3): `migrations/env.py` imports `Calendar`, whose import chain
+  reached back into a still-loading `open_webui.config`; `upgrade head` raised before a single
+  table existed.
+* 38d63c18f30f (Postgres, #24560): recreated the user primary key on a fresh database; DDL is
+  transactional, so the whole chain rolled back and startup crashed on `relation "config" does
+  not exist`.
+* b10670c03dd5 (SQLite): dropped the index backing a UNIQUE constraint, which SQLite refuses,
+  so the chain stopped partway and later tables were missing.
 
-Each test gets its own fresh database, automatically created and
-cleaned up by the `fresh_db` fixture:
+One run per engine, in a fresh interpreter: upgrade a new database to head, list its tables,
+upgrade again (a restart), import the config module, round-trip a user through the model layer
+and unwind to base. Each test reads one step of that run. A fresh SQLite install at boot is also
+what every integration instance does; Postgres is only covered here.
 
-  - SQLite — temp file under pytest's tmp_path (auto-deleted).
-  - Postgres — embedded `pgserver`, instance under tmp_path, server
-    stopped and pgdata removed on fixture teardown. Test is skipped if
-    `pgserver` isn't installed (`pip install pgserver`).
+Discriminates: passes on dev bbfa876af on both engines; a module-scope
+`from open_webui.config import ...` in a copy's `models/calendar.py` (the #29280 cycle) fails
+the upgrade on both.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-import textwrap
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
-# Tables that every successful upgrade must produce. Catches partial
-# migration chains: any one of these missing means the chain stopped
-# before reaching the migration that creates it.
-_CRITICAL_TABLES: frozenset[str] = frozenset(
-    {
-        "auth",
-        "chat",
-        "config",
-        "function",
-        "group",
-        "knowledge",
-        "knowledge_directory",
-        "knowledge_file",
-        "memory",
-        "note",
-        "oauth_session",
-        "prompt",
-        "tag",
-        "tool",
-        "user",
-    }
-)
+from .conftest import postgres_at, sqlite_at
 
-# Sanity lower-bound on total tables. Each new migration usually adds
-# 1+ tables — currently dev is at ~40. Set well below that so the
-# threshold isn't a magnet for churn.
-_MIN_TABLE_COUNT = 30
+pytestmark = pytest.mark.regression
 
+# Any one of these missing means the chain stopped before the migration creating it.
+CRITICAL_TABLES = {
+    "auth",
+    "calendar",
+    "chat",
+    "config",
+    "function",
+    "group",
+    "knowledge",
+    "knowledge_directory",
+    "knowledge_file",
+    "memory",
+    "note",
+    "oauth_session",
+    "prompt",
+    "tag",
+    "tool",
+    "user",
+}
+# Well below the ~60 tables of dev, so new tables never make it churn.
+MIN_TABLE_COUNT = 30
 
-# -----------------------------------------------------------------------------
-# Subprocess helper
-# -----------------------------------------------------------------------------
+LIFECYCLE = """
+import asyncio, importlib, traceback
+from sqlalchemy import create_engine, inspect
 
-
-def _run_python(
-    backend: Path, db_url: str, data_dir: Path, body: str, *, timeout: int = 180
-) -> subprocess.CompletedProcess:
-    """Run a Python snippet with `backend/` on sys.path and DB env set.
-
-    Each test runs in its own subprocess so sys.modules state doesn't
-    leak between tests (open_webui caches a lot at import time).
-    """
-    preamble = textwrap.dedent(
-        f"""
-        import json, os, sys
-        os.environ['DATABASE_URL'] = {db_url!r}
-        os.environ['DATA_DIR'] = {str(data_dir)!r}
-        sys.path.insert(0, {str(backend)!r})
-        """
-    )
-    return subprocess.run(
-        [sys.executable, "-c", preamble + body],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
-    )
+report = {}
 
 
-def _assert_ok(result: subprocess.CompletedProcess, sentinel: str, label: str) -> None:
-    if result.returncode != 0 or sentinel not in result.stdout:
-        pytest.fail(
-            f"{label} failed.\n"
-            f"--- stderr (tail) ---\n{result.stderr[-3000:]}\n"
-            f"--- stdout (tail) ---\n{result.stdout[-1500:]}"
-        )
-
-
-# -----------------------------------------------------------------------------
-# Fresh-DB fixtures
-# -----------------------------------------------------------------------------
-
-
-@contextmanager
-def _sqlite_fresh(tmp_path: Path) -> Iterator[tuple[str, Path]]:
-    """SQLite at tmp_path/webui.db. tmp_path is auto-cleaned by pytest."""
-    db_path = (tmp_path / "webui.db").resolve()
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(exist_ok=True)
-    yield (f"sqlite:///{db_path.as_posix()}", data_dir)
-
-
-@contextmanager
-def _postgres_fresh(tmp_path: Path) -> Iterator[tuple[str, Path]]:
-    """Embedded Postgres via pgserver. Stops + removes pgdata on exit."""
-    pgserver = pytest.importorskip(
-        "pgserver", reason="pgserver not installed (pip install pgserver)"
-    )
-    pg_dir = tmp_path / "pgdata"
-    pg_dir.mkdir(exist_ok=True)
-    data_dir = tmp_path / "data"
-    data_dir.mkdir(exist_ok=True)
-    server = pgserver.get_server(str(pg_dir), cleanup_mode=None)
+def step(name, action):
     try:
-        url = server.get_uri().replace("postgresql://", "postgresql+psycopg2://", 1)
-        yield (url, data_dir)
+        report[name] = {'value': action()}
+    except Exception:
+        report[name] = {'error': traceback.format_exc()[-3000:]}
+    return 'error' not in report[name]
+
+
+def table_names():
+    engine = create_engine(os.environ['DATABASE_URL'])
+    try:
+        return sorted(inspect(engine).get_table_names())
     finally:
-        try:
-            server.cleanup()
-        except Exception:
-            pass
+        engine.dispose()
 
 
-@pytest.fixture(params=["sqlite", "postgres"])
-def fresh_db(request, tmp_path: Path) -> Iterator[tuple[str, Path]]:
-    """Yield (DATABASE_URL, DATA_DIR) for a fresh DB; cleans up after.
+async def user_round_trip():
+    from open_webui.models.users import Users
 
-    Parametrised on backend so every test runs against both engines.
-    """
-    factory = _sqlite_fresh if request.param == "sqlite" else _postgres_fresh
-    with factory(tmp_path) as resource:
-        yield resource
-
-
-# -----------------------------------------------------------------------------
-# Body chunks (executed inside the subprocess)
-# -----------------------------------------------------------------------------
+    user_id = 'lifecycle-user'
+    await Users.insert_new_user(id=user_id, name='Original', email='life@example.com', role='user')
+    stored = await Users.get_user_by_id(id=user_id)
+    await Users.update_user_by_id(id=user_id, updated={'name': 'Renamed'})
+    renamed = await Users.get_user_by_id(id=user_id)
+    await Users.delete_user_by_id(id=user_id)
+    gone = await Users.get_user_by_id(id=user_id) is None
+    return [stored.email, renamed.name, gone]
 
 
-_BODY_UPGRADE = """
-from alembic import command
-from alembic.config import Config as AlembicConfig
-from open_webui.env import OPEN_WEBUI_DIR
-
-cfg = AlembicConfig(OPEN_WEBUI_DIR / 'alembic.ini')
-cfg.set_main_option('script_location', str(OPEN_WEBUI_DIR / 'migrations'))
-command.upgrade(cfg, 'head')
+if step('upgrade', lambda: command.upgrade(cfg, 'head')):
+    step('tables', table_names)
+    step('upgrade again', lambda: command.upgrade(cfg, 'head'))
+    step('config import', lambda: importlib.import_module('open_webui.config').__name__)
+    step('user round trip', lambda: asyncio.run(user_round_trip()))
+    step('downgrade', lambda: command.downgrade(cfg, 'base'))
+    step('tables after downgrade', table_names)
+print('RESULT:' + json.dumps(report))
 """
 
 
-# -----------------------------------------------------------------------------
-# Tests
-# -----------------------------------------------------------------------------
+@pytest.fixture(scope="module", params=["sqlite", "postgres"])
+def lifecycle(request, open_webui_backend: Path, tmp_path_factory) -> dict:
+    root = tmp_path_factory.mktemp(request.param)
+    if request.param == "sqlite":
+        return sqlite_at(open_webui_backend, root).run(LIFECYCLE, what="the SQLite lifecycle")
+    with postgres_at(open_webui_backend, root) as database:
+        return database.run(LIFECYCLE, what="the Postgres lifecycle")
 
 
-@pytest.mark.regression
-def test_upgrade_head_runs_clean(open_webui_backend: Path, fresh_db) -> None:
-    """alembic upgrade head completes without raising on a fresh DB."""
-    db_url, data_dir = fresh_db
-    result = _run_python(open_webui_backend, db_url, data_dir, _BODY_UPGRADE + "\nprint('OK')\n")
-    _assert_ok(result, "OK", "alembic upgrade head")
+def _outcome(lifecycle: dict, step: str):
+    if step not in lifecycle:
+        pytest.fail(f"the run never reached {step!r}: the upgrade failed first")
+    if "error" in lifecycle[step]:
+        pytest.fail(f"{step} raised:\n{lifecycle[step]['error']}")
+    return lifecycle[step]["value"]
 
 
-@pytest.mark.regression
-def test_critical_tables_exist(open_webui_backend: Path, fresh_db) -> None:
-    """Every must-have table is present after upgrade head."""
-    db_url, data_dir = fresh_db
-    body = _BODY_UPGRADE + textwrap.dedent("""
-        from sqlalchemy import create_engine, inspect
-        engine = create_engine(os.environ['DATABASE_URL'])
-        tables = sorted(inspect(engine).get_table_names())
-        engine.dispose()
-        print('TABLES:', json.dumps(tables))
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "TABLES:", "collecting table list")
-
-    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("TABLES:")), None)
-    assert line is not None
-    tables = set(json.loads(line.removeprefix("TABLES:").strip()))
-
-    missing = _CRITICAL_TABLES - tables
-    assert not missing, (
-        f"Critical tables missing after upgrade head: {sorted(missing)}. Present: {sorted(tables)}"
-    )
+def test_upgrade_head_runs_clean_on_a_fresh_database(lifecycle):
+    _outcome(lifecycle, "upgrade")
 
 
-@pytest.mark.regression
-def test_minimum_table_count(open_webui_backend: Path, fresh_db) -> None:
-    """Total table count is at the lower bound — catches "chain stopped
-    early" cases that still happen to include the critical subset."""
-    db_url, data_dir = fresh_db
-    body = _BODY_UPGRADE + textwrap.dedent("""
-        from sqlalchemy import create_engine, inspect
-        engine = create_engine(os.environ['DATABASE_URL'])
-        tables = sorted(inspect(engine).get_table_names())
-        engine.dispose()
-        print('COUNT:', len(tables))
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "COUNT:", "collecting table count")
+def test_the_chain_creates_every_critical_table(lifecycle):
+    tables = set(_outcome(lifecycle, "tables"))
 
-    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("COUNT:")), None)
-    assert line is not None
-    count = int(line.removeprefix("COUNT:").strip())
-    assert count >= _MIN_TABLE_COUNT, (
-        f"Only {count} tables after upgrade head; expected >= {_MIN_TABLE_COUNT}. "
-        f"Migration chain probably stopped partway."
-    )
+    assert not CRITICAL_TABLES - tables, f"missing after upgrade: {CRITICAL_TABLES - tables}"
+    assert len(tables) >= MIN_TABLE_COUNT, f"only {len(tables)} tables; the chain stopped early"
 
 
-@pytest.mark.regression
-def test_open_webui_config_imports_cleanly(open_webui_backend: Path, fresh_db) -> None:
-    """Full user-facing import path: importing `open_webui.config` must not
-    raise. It runs the DB-backed config load at import time — the exact path
-    that crashed in urbenlegend's open-webui#24560 report.
-
-    (Dev reshaped the legacy module-level CONFIG_DATA dict into per-key `config`
-    rows, so the regression check is that the import path completes and the
-    module surface is intact, not that the old dict is present.)"""
-    db_url, data_dir = fresh_db
-    body = textwrap.dedent("""
-        import open_webui.config as c
-        assert c.__name__ == 'open_webui.config'
-        # reaching here means the import + DB-backed config load did not raise
-        assert hasattr(c, 'run_migrations'), 'config module did not fully initialize'
-        print('CONFIG_OK')
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "CONFIG_OK", "open_webui.config import")
+def test_upgrading_an_upgraded_database_again_is_a_no_op(lifecycle):
+    """Container restarts and redeploys run it on every boot."""
+    _outcome(lifecycle, "upgrade again")
 
 
-@pytest.mark.regression
-def test_user_crud_round_trip(open_webui_backend: Path, fresh_db) -> None:
-    """Schema is usable, not just present: create / read / update /
-    delete a user via the SQLAlchemy User model. Catches schema bugs
-    that pass alembic but break ORM use (wrong column type, missing
-    nullable, broken JSON cast, etc.)."""
-    db_url, data_dir = fresh_db
-    body = _BODY_UPGRADE + textwrap.dedent("""
-        import time
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from open_webui.models.users import User
-
-        engine = create_engine(os.environ['DATABASE_URL'])
-        Session = sessionmaker(bind=engine)
-        s = Session()
-
-        now = int(time.time())
-        uid = 'crud-test-user'
-        s.add(User(
-            id=uid, name='Original', email='crud@example.com', role='user',
-            last_active_at=now, created_at=now, updated_at=now,
-        ))
-        s.commit()
-
-        fetched = s.query(User).filter_by(id=uid).one()
-        assert fetched.email == 'crud@example.com', fetched.email
-        assert fetched.name == 'Original', fetched.name
-
-        fetched.name = 'Renamed'
-        s.commit()
-
-        again = s.query(User).filter_by(id=uid).one()
-        assert again.name == 'Renamed', again.name
-
-        s.delete(again)
-        s.commit()
-
-        assert s.query(User).filter_by(id=uid).first() is None
-        s.close()
-        engine.dispose()
-        print('CRUD_OK')
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "CRUD_OK", "User CRUD round-trip")
+def test_the_config_module_loads_on_the_migrated_database(lifecycle):
+    assert _outcome(lifecycle, "config import") == "open_webui.config"
 
 
-@pytest.mark.regression
-def test_upgrade_is_idempotent(open_webui_backend: Path, fresh_db) -> None:
-    """`alembic upgrade head` is safe to re-run — the second invocation
-    should be a no-op, not an error. Container restarts and helm
-    redeploys rely on this."""
-    db_url, data_dir = fresh_db
-    body = textwrap.dedent("""
-        from alembic import command
-        from alembic.config import Config as AlembicConfig
-        from open_webui.env import OPEN_WEBUI_DIR
-
-        cfg = AlembicConfig(OPEN_WEBUI_DIR / 'alembic.ini')
-        cfg.set_main_option('script_location', str(OPEN_WEBUI_DIR / 'migrations'))
-
-        command.upgrade(cfg, 'head')
-        command.upgrade(cfg, 'head')   # idempotent re-run
-        print('IDEMPOTENT_OK')
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "IDEMPOTENT_OK", "re-running upgrade head")
+def test_a_user_round_trips_through_the_model_layer(lifecycle):
+    """A usable schema: types, defaults and JSON columns included."""
+    assert _outcome(lifecycle, "user round trip") == ["life@example.com", "Renamed", True]
 
 
-@pytest.mark.regression
-def test_downgrade_to_base_clean(open_webui_backend: Path, fresh_db) -> None:
-    """`alembic downgrade base` after `upgrade head` must unwind the
-    schema completely. Any leftover (other than alembic_version) means
-    a migration has a broken downgrade()."""
-    db_url, data_dir = fresh_db
-    body = textwrap.dedent("""
-        from alembic import command
-        from alembic.config import Config as AlembicConfig
-        from open_webui.env import OPEN_WEBUI_DIR
-        from sqlalchemy import create_engine, inspect
+def test_downgrade_to_base_unwinds_every_table(lifecycle):
+    _outcome(lifecycle, "downgrade")
+    leftover = set(_outcome(lifecycle, "tables after downgrade")) - {"alembic_version"}
 
-        cfg = AlembicConfig(OPEN_WEBUI_DIR / 'alembic.ini')
-        cfg.set_main_option('script_location', str(OPEN_WEBUI_DIR / 'migrations'))
-
-        command.upgrade(cfg, 'head')
-        command.downgrade(cfg, 'base')
-
-        engine = create_engine(os.environ['DATABASE_URL'])
-        remaining = sorted(inspect(engine).get_table_names())
-        engine.dispose()
-
-        # alembic_version is alembic's own bookkeeping table; everything
-        # else should be gone after downgrade to base.
-        leftover = [t for t in remaining if t != 'alembic_version']
-        print('LEFTOVER:', json.dumps(leftover))
-    """)
-    result = _run_python(open_webui_backend, db_url, data_dir, body)
-    _assert_ok(result, "LEFTOVER:", "downgrade to base")
-
-    line = next((ln for ln in result.stdout.splitlines() if ln.startswith("LEFTOVER:")), None)
-    assert line is not None
-    leftover = json.loads(line.removeprefix("LEFTOVER:").strip())
-    assert not leftover, (
-        f"Tables left after downgrade base: {leftover}. "
-        f"At least one migration's downgrade() doesn't fully reverse upgrade()."
-    )
+    assert not leftover, f"a migration's downgrade() leaves tables behind: {sorted(leftover)}"
