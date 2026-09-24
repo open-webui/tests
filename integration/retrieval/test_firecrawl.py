@@ -10,6 +10,9 @@ seen from outside.
 - An unset key sends no `Authorization` header: a self-hosted Firecrawl without auth rejects an
   empty `Bearer `.
 - 429 and 5xx answers are retried, after `Retry-After` when one is given.
+- A page Firecrawl returns blank, or cannot scrape in three attempts, is refused with a 400
+  that names the link instead of attaching nothing (#31347, PR #31351). Those two tests fail
+  on dev until that fix merges.
 
 Twin of unit/retrieval/test_firecrawl.py, which keeps the audit that every web module calling
 `requests` imports it (#23966 Bug 1, broad) and the timeout parsing no route reaches.
@@ -73,6 +76,12 @@ def read_page(client, page):
     return response.json()["content"]
 
 
+def refused_link(client, page) -> str:
+    response = client.post("/api/v1/retrieval/process/web?process=false", json={"url": page})
+    assert response.status_code == 400, response.text
+    return response.json()["detail"]
+
+
 def search(client, query="who won the race"):
     return client.post("/api/v1/retrieval/process/web/search", json={"queries": [query]})
 
@@ -117,11 +126,12 @@ def test_the_scrape_timeout_is_sent_in_bounded_milliseconds(admin_client, listen
     assert listener.requests_to("/v2/scrape")[0].json().get("timeout") == sent
 
 
-def test_blank_markdown_is_no_content(admin_client, listener):
+def test_blank_markdown_is_refused_naming_the_link(admin_client, listener):
     listener.route("POST", "/v2/scrape", scraped("   "))
     use_firecrawl(admin_client, listener)
 
-    assert read_page(admin_client, f"{listener.base_url}/article") == ""
+    page = f"{listener.base_url}/article"
+    assert page in refused_link(admin_client, page)
 
 
 def test_a_rate_limited_scrape_waits_for_retry_after_and_succeeds(admin_client, listener):
@@ -140,11 +150,14 @@ def test_a_rate_limited_scrape_waits_for_retry_after_and_succeeds(admin_client, 
     assert arrivals[1] - arrivals[0] >= 1.9, "the retry did not wait for Retry-After"
 
 
-def test_persistent_server_errors_give_up_after_three_attempts(admin_client, listener):
+def test_persistent_server_errors_give_up_after_three_attempts_naming_the_link(
+    admin_client, listener
+):
     listener.route("POST", "/v2/scrape", (503, {"Retry-After": "0"}, b"{}"))
     use_firecrawl(admin_client, listener)
 
-    assert read_page(admin_client, f"{listener.base_url}/article") == ""
+    page = f"{listener.base_url}/article"
+    assert page in refused_link(admin_client, page)
     assert len(listener.requests_to("/v2/scrape")) == 3
 
 
