@@ -138,6 +138,7 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
+          python -m playwright install --with-deps chromium
 
       - name: Run the integration suite
         working-directory: tests
