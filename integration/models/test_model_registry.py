@@ -20,7 +20,9 @@ already pinned by integration/security/test_connection_listing_roles.py.
 
 Discriminates: passes on dev `bbfa876af`; each narrow test fails with its fix reverted (the alias
 removal, the sync update, the prefix strip, the passthrough timeout, the fallback ordering and
-the three self-reference guards, one mutation each). The two xfails pin bugs dev still has.
+the three self-reference guards, one mutation each). Two tests fail on dev until their fixes
+merge: the fallback on the web client path (#31345, PR #31353) and a re-sync on the default
+SQLite setup (#31346, PR #31349).
 """
 
 from __future__ import annotations
@@ -299,12 +301,8 @@ def test_an_admin_still_gets_the_fallback(fallback_instance, orphaned_preset):
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="dev bbfa876af: the web client's per-model fan-out in chat_completion rebuilds the "
-    "request with the requested model id, so the fallback is dropped for every account",
-)
 def test_the_web_client_path_also_gets_the_fallback(fallback_instance, orphaned_preset):
+    """#31345: the per-model fan-out rebuilt the request with the requested model id."""
     fallback_instance.upstream.queue(reply.text("answered by the fallback"))
     with create_user(fallback_instance).client() as client:
         _, message = ask(client, "hello", model=orphaned_preset)
@@ -346,13 +344,8 @@ def test_syncing_a_model_that_already_exists_updates_it(instance_with):
 
 
 @pytest.mark.slow
-@pytest.mark.xfail(
-    strict=True,
-    reason="dev bbfa876af: on SQLite without DATABASE_ENABLE_SESSION_SHARING, sync_models' "
-    "UPDATE holds the write lock while set_access_grants opens a second session, which times "
-    "out with 'database is locked'; the broad handler returns [] and nothing is updated",
-)
 def test_syncing_a_model_that_already_exists_updates_it_by_default(fallback_instance):
+    """#31346: the update held SQLite's write lock while the grant write opened a second session."""
     answered, stored = _sync_twice(fallback_instance)
 
     assert stored["name"] == "Renamed on the second sync", answered

@@ -9,8 +9,9 @@ PDF's images are opened by Pillow and read by rapidocr on onnxruntime and OpenCV
 bump that breaks one of those paths fails the upload or loses the text, which
 `GET /api/v1/files/{id}/data/content` shows. The library contracts are in unit/deps/.
 
-EUC-KR text is a strict xfail: chardet 5 named it EUC-KR, chardet 7.4.3 says CP949, which the
-codec map in `_detect_text_encoding` lacks, so the file is decoded as GB18030 mojibake.
+EUC-KR and Shift-JIS text fail on dev until #31352 is fixed (PR #31356): chardet 7.4.3 says
+CP949 for EUC-KR, which the codec map in `_detect_text_encoding` lacks, and Shift-JIS is missing
+from its try order, so both are decoded as GB18030 mojibake.
 
 Discriminates: passes on dev bbfa876af (.rst, .epub and .odt with a pandoc binary on PATH). One
 backend copy broke pypdf's `extract_text`, `docx2txt.process`, the xlsx, rst and epub partitions
@@ -278,14 +279,12 @@ def test_a_document_pandoc_converts_is_read_as_text(make_user, filename, build, 
         pytest.param("gb18030", "港口灯塔的预算已经批准。简体中文编码测试。", id="gb18030"),
         pytest.param("big5", "港口燈塔的預算已經批准。繁體中文編碼測試。", id="big5"),
         pytest.param(
-            "euc-kr",
-            "항구 등대 예산이 승인되었습니다. 한국어 인코딩 감지 테스트.",
-            id="euc-kr",
-            marks=pytest.mark.xfail(
-                raises=AssertionError,
-                strict=True,
-                reason="chardet 7 says CP949, which the loader's codec map lacks",
-            ),
+            "euc-kr", "항구 등대 예산이 승인되었습니다. 한국어 인코딩 감지 테스트.", id="euc-kr"
+        ),
+        pytest.param(
+            "shift_jis",
+            "港の灯台の予算が承認されました。日本語エンコーディング検出テスト。",
+            id="shift-jis",
         ),
     ],
 )

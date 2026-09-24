@@ -11,7 +11,7 @@ Python can decode the bytes with, correctly for CJK text.
 
 Which name chardet picks for a codec family is not pinned: chardet 5 said SHIFT_JIS and EUC-KR,
 chardet 7 says cp932 and CP949, and each decodes the text. (The loader's own map lacks cp949;
-integration/deps/test_document_extraction.py carries that as a strict xfail.) Two earlier
+integration/deps/test_document_extraction.py pins that, #31352.) Two earlier
 assertions on exact guesses (empty input, pure ASCII) broke on the 5 to 7 bump for nothing the
 loader reads, so none are made here.
 

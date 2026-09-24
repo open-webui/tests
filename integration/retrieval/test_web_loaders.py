@@ -5,9 +5,10 @@
   empty attachment.
 - Unreadable links blamed on the knowledge base (issue #28361, PR #28362, commit 121f2404e):
   fetching and saving sat in one `try` whose handler said "Error querying knowledge base". A link
-  that cannot be read now names the link. A closed port still gets the old message: the default
-  loader swallows the connection error and the empty page fails at the vector save (strict
-  `xfail` below).
+  that cannot be read now names the link. A closed port still got the old message (#31347, PR
+  #31351): the default loader swallows the connection error and the empty page fails at the
+  vector save. The chat's own attach route answered a generic error for it (PR #31354). Both
+  tests below fail on dev until those fixes merge.
 - Microsoft Web IQ loader (issue #28688, commits 6dcc2d5269 + 140d2cf4b5): its constructor did
   not take the `api_base_url` that `get_web_loader` always passes, so Web IQ never loaded a page.
 - Content-type sniffing (commit 886248de36): any type merely containing `xml` counted as text,
@@ -132,11 +133,19 @@ def test_a_link_that_cannot_be_read_is_named_in_the_error(web_admin):
     assert KNOWLEDGE_BASE_ERROR not in refused.json()["detail"].lower()
 
 
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="a closed port is a save error")
 def test_a_link_on_a_closed_port_is_named_in_the_error(web_admin):
     link = f"http://127.0.0.1:{free_port()}/gone"
 
     refused = attach(web_admin, link)
+
+    assert refused.status_code == 400
+    assert link in refused.json()["detail"], refused.json()["detail"]
+
+
+def test_the_chat_attach_route_names_a_link_on_a_closed_port(web_admin):
+    link = f"http://127.0.0.1:{free_port()}/gone"
+
+    refused = web_admin.post("/api/v1/retrieval/process/url", json={"url": link})
 
     assert refused.status_code == 400
     assert link in refused.json()["detail"], refused.json()["detail"]
