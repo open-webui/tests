@@ -1,664 +1,193 @@
-"""Regression: three 0.11.0 fixes in `open_webui/retrieval/web/utils.py`.
+"""Regression: the Playwright web loader checks every request and every redirect hop it routes.
 
-1. `1717b49` added address unwrapping, which pulls out the IPv4 address an IPv6 answer can
-   carry (IPv4-mapped, IPv4-compatible `::a.b.c.d`, 6to4, teredo, NAT64) and re-checks the
-   embedded address. v0.10.2 asked `ipaddress.ip_address(ip).is_global` and nothing else, so
-   any encoding CPython reports as global reached an internal host. On CPython 3.12 the
-   encodings that actually slipped through are `::a.b.c.d` and the NAT64 well-known prefix
-   `64:ff9b::/96`; mapped/6to4/teredo are already non-global there and are covered as the
-   broad layer.
+`bef63a2` (v0.11.0) rewrote the Playwright route hooks in `open_webui/retrieval/web/utils.py`.
+v0.10.2 waved through every request whose `resource_type` was not `document`, and with
+`AIOHTTP_CLIENT_ALLOW_REDIRECTS` on it let the browser follow a redirect chain unchecked, so a
+public page could pull an internal target as a sub-resource or redirect to one. v0.11.0 fetches
+every request and every hop itself through the address checks and blocks service workers and
+websockets when it opens the page.
 
-2. `bef63a2` rewrote the Playwright route hooks. v0.10.2 waved through every request whose
-   `resource_type` was not `document`, and when `AIOHTTP_CLIENT_ALLOW_REDIRECTS` was on it
-   let Playwright follow the redirect chain unvalidated. So a public page could pull an
-   internal target as a sub-resource, or redirect to one. v0.11.0 validates every request and
-   every hop, and blocks service workers and websockets at page creation.
+The unit lane has no browser, so `lazy_load` and `alazy_load` run against specced Playwright
+classes (`unit/specced_playwright.py`) while the loader's own SSRF-safe sessions make real
+requests: the page host is a local service the loader may fetch, the internal host a second one
+on 127.0.0.2 that the fetch filter list blocks.
 
-3. `1e0ab8471` (#27528, issue #26079) unshadowed the `time` module. `from datetime import
-   datetime, time, timedelta` made `_sync_wait_for_rate_limit` call `datetime.time.sleep`,
-   which raises `AttributeError`. The exception surfaced inside each loader's per-URL `try`,
-   so with `continue_on_failure=True` the page in flight was dropped, and Tavily logged the
-   loss as an SSL verification failure.
+The address unwrapping (`1717b49`) and the pacing fix (`1e0ab8471`) moved to
+integration/security/test_ssrf_address_and_fetch_scope.py; the positive path for public
+addresses stays here because showing it over HTTP means fetching a public host.
 
-v0.11.1 (`e3e4bd87d`, #27823) kept all three verdicts and moved the machinery: the route hooks
-take the SSRF-safe session as a second argument and fetch each hop through it rather than
-through Playwright's `route.fetch`, fulfilling with an explicit status/headers/body, and
-`SafeTavilyLoader` lost its `api_base_url` argument. The hooks are therefore driven through
-whichever shape the checkout declares.
-
-Discriminates: passes on v0.11.0 and v0.11.1, fails on v0.10.2 (no address unwrapping,
-sub-resources and redirect hops unchecked, no worker/socket block, and the rate limiter raising
-instead of sleeping).
-
-No network is touched: DNS is replaced with a lookup table, the Playwright driver and the
-per-hop transport are fakes, and the pacing path runs on a frozen clock so the one real sleep
-is a single millisecond.
+Discriminates: passes on dev bbfa876af; continuing sub-resource routes, continuing a redirected
+document, opening the page without `service_workers='block'` or dropping the websocket route each
+fail their tests, and blocking every address that embeds an IPv4 one fails the public addresses.
 """
 
 from __future__ import annotations
 
-import inspect
-from datetime import datetime
-from types import SimpleNamespace
-
 import pytest
 
-pytest.importorskip("multidict")
-
-from multidict import CIMultiDict
+from harness.listener import listening, text_answer
+from unit.specced_playwright import released, specced_browser, websocket_opened
 
 pytestmark = pytest.mark.regression
 
-
-# --- DNS lookup table standing in for resolve_hostname ---
-
-FAKE_DNS = {
-    "public.example": (["93.184.216.34"], []),
-    "internal.example": (["10.0.0.5"], []),
-    "127.0.0.1": (["127.0.0.1"], []),
-    "firecrawl.test": (["93.184.216.34"], []),
-}
-
-
-def _install_address(monkeypatch, mod, address):
-    """Point validate_url at a single resolved address, with the filters neutral."""
-    monkeypatch.setattr(mod, "ENABLE_LOCAL_WEB_FETCH", False)
-    monkeypatch.setattr(mod, "WEB_FETCH_FILTER_LIST", [])
-    is_v6 = ":" in address
-    monkeypatch.setattr(
-        mod,
-        "resolve_hostname",
-        lambda hostname: ([] if is_v6 else [address], [address] if is_v6 else []),
-    )
-
-
-def _install_fake_dns(monkeypatch, mod):
-    monkeypatch.setattr(mod, "ENABLE_LOCAL_WEB_FETCH", False)
-    monkeypatch.setattr(mod, "WEB_FETCH_FILTER_LIST", [])
-    monkeypatch.setattr(mod, "resolve_hostname", lambda hostname: FAKE_DNS[hostname])
-
-
-# --- narrow: IPv6 encodings that CPython calls global but that carry an internal IPv4 ---
+INTERNAL_HOST = "127.0.0.2"
 
 
 @pytest.mark.parametrize(
     "address",
-    [
-        "::7f00:1",  # IPv4-compatible 127.0.0.1
-        "::a00:1",  # IPv4-compatible 10.0.0.1
-        "::a9fe:a9fe",  # IPv4-compatible 169.254.169.254
-        "64:ff9b::127.0.0.1",  # NAT64 well-known prefix
-        "64:ff9b::10.0.0.1",
-        "64:ff9b::169.254.169.254",
-    ],
+    ["93.184.216.34", "[2606:4700:4700::1111]", "[::1.1.1.1]", "[64:ff9b::8.8.8.8]"],
 )
-def test_ipv6_wrapping_an_internal_ipv4_is_refused(
-    retrieval_web_utils_module, monkeypatch, address
-):
-    mod = retrieval_web_utils_module
-    _install_address(monkeypatch, mod, address)
-
-    with pytest.raises(ValueError):
-        mod.validate_url("http://target.example")
-
-
-# --- broad: every embedding form the fix knows about resolves to the same verdict ---
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "::ffff:127.0.0.1",
-        "::ffff:10.0.0.1",
-        "::ffff:169.254.169.254",
-        "2002:7f00:0001::",  # 6to4 wrapping 127.0.0.1
-        "2002:0a00:0001::",  # 6to4 wrapping 10.0.0.1
-        "2002:a9fe:a9fe::",  # 6to4 wrapping 169.254.169.254
-        "2001:0:4136:e378:8000:63bf:3fff:fdd2",  # teredo
-        "64:ff9b:1::7f00:1",  # NAT64 local-use prefix
-        "127.0.0.1",
-        "10.0.0.1",
-        "169.254.169.254",
-        "::1",
-    ],
-)
-def test_every_internal_address_encoding_is_refused(
-    retrieval_web_utils_module, monkeypatch, address
-):
-    mod = retrieval_web_utils_module
-    _install_address(monkeypatch, mod, address)
-
-    with pytest.raises(ValueError):
-        mod.validate_url("http://target.example")
-
-
-# --- nearby: genuinely public addresses, wrapped or not, stay reachable ---
-
-
-@pytest.mark.parametrize(
-    "address",
-    [
-        "93.184.216.34",
-        "2606:4700:4700::1111",
-        "::1.1.1.1",  # IPv4-compatible, public payload
-        "64:ff9b::8.8.8.8",  # NAT64, public payload
-    ],
-)
-def test_public_addresses_are_still_allowed(retrieval_web_utils_module, monkeypatch, address):
-    mod = retrieval_web_utils_module
-    _install_address(monkeypatch, mod, address)
-
-    assert mod.validate_url("http://target.example") is True
-
-
-# --- fake Playwright route objects and the per-hop transport behind them ---
-
-
-class CannedResponse:
-    def __init__(self, url, status=200, location=None):
-        self.url = url
-        self.status = status
-        self.headers = {"location": location} if location else {}
-
-
-class Transport:
-    """Serves one canned response per URL and records every hop that was fetched."""
-
-    def __init__(self, responses):
-        self.responses = responses
-        self.fetched = []
-
-    def serve(self, url):
-        self.fetched.append(url)
-        return self.responses[url]
-
-
-class _RawHeaders:
-    def __init__(self, headers):
-        self._headers = dict(headers)
-
-    def getlist(self, name):
-        value = self._headers.get(name)
-        return [value] if value else []
-
-    def items(self):
-        return self._headers.items()
-
-
-class _RequestsShapedResponse:
-    def __init__(self, canned):
-        self.url = canned.url
-        self.status_code = canned.status
-        self.headers = dict(canned.headers)
-        self.content = canned.url.encode()  # identifies which hop was fulfilled
-        self.raw = SimpleNamespace(headers=_RawHeaders(canned.headers))
-
-
-class _AiohttpShapedResponse:
-    def __init__(self, canned):
-        self.url = canned.url
-        self.status = canned.status
-        self.headers = CIMultiDict(canned.headers)
-        self._body = canned.url.encode()
-
-    async def read(self):
-        return self._body
-
-
-class FakeRequestsSession:
-    def __init__(self, transport):
-        self.transport = transport
-
-    def request(self, method, url, **kwargs):
-        return _RequestsShapedResponse(self.transport.serve(url))
-
-
-class FakeAiohttpSession:
-    def __init__(self, transport):
-        self.transport = transport
-
-    async def request(self, method, url, **kwargs):
-        return _AiohttpShapedResponse(self.transport.serve(url))
-
-
-class FakeRequest:
-    def __init__(self, url, resource_type):
-        self.url = url
-        self.resource_type = resource_type
-        self.method = "GET"
-        self.post_data_buffer = None
-
-    def all_headers(self):
-        return {"user-agent": "test", "host": "public.example"}
-
-
-class AsyncFakeRequest(FakeRequest):
-    async def all_headers(self):
-        return FakeRequest.all_headers(self)
-
-
-class FakeRoute:
-    """Records what the hook decided; `fetch` serves the same canned responses the
-    session does, so either transport shape drives the same scenario."""
-
-    request_cls = FakeRequest
-
-    def __init__(self, url, resource_type="document", responses=None):
-        self.transport = Transport(responses or {url: CannedResponse(url)})
-        self.request = self.request_cls(url, resource_type)
-        self.actions = []
-        self.fulfilled_url = None
-
-    @property
-    def fetched(self):
-        return self.transport.fetched
-
-    def fetch(self, url=None, max_redirects=None):
-        return self.transport.serve(url or self.request.url)
-
-    def continue_(self):
-        self.actions.append("continue")
-
-    def abort(self):
-        self.actions.append("abort")
-
-    def fulfill(self, response=None, status=None, headers=None, body=None):
-        self.actions.append("fulfill")
-        self.fulfilled_url = response.url if response is not None else body.decode()
-
-
-class AsyncFakeRoute(FakeRoute):
-    request_cls = AsyncFakeRequest
-
-    async def fetch(self, url=None, max_redirects=None):
-        return FakeRoute.fetch(self, url=url, max_redirects=max_redirects)
-
-    async def continue_(self):
-        FakeRoute.continue_(self)
-
-    async def abort(self):
-        FakeRoute.abort(self)
-
-    async def fulfill(self, response=None, status=None, headers=None, body=None):
-        FakeRoute.fulfill(self, response=response, status=status, headers=headers, body=body)
-
-
-def _playwright_loader(mod, **kwargs):
-    loader = mod.SafePlaywrightURLLoader(
-        web_paths=kwargs.pop("web_paths", ["http://public.example/"]),
-        verify_ssl=False,
-        **kwargs,
-    )
-    loader.evaluator = SimpleNamespace(evaluate=lambda page, browser, response: "text")
-    return loader
-
-
-def _takes_session(hook):
-    """0.11.1 fetches each hop through a session handed to the hook; 0.11.0 uses route.fetch."""
-    return "session" in inspect.signature(hook).parameters
-
-
-def _drive_sync_hook(mod, route):
-    hook = _playwright_loader(mod)._intercept_navigation_sync
-    if _takes_session(hook):
-        hook(route, FakeRequestsSession(route.transport))
-    else:
-        hook(route)
-
-
-async def _drive_async_hook(mod, route):
-    hook = _playwright_loader(mod)._intercept_navigation
-    if _takes_session(hook):
-        await hook(route, FakeAiohttpSession(route.transport))
-    else:
-        await hook(route)
-
-
-# --- narrow: sub-resource requests go through the address rules ---
-
-
-@pytest.mark.parametrize("resource_type", ["image", "xhr", "fetch", "script"])
-def test_sub_resource_request_to_an_internal_host_is_refused(
-    retrieval_web_utils_module, monkeypatch, resource_type
-):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    route = FakeRoute("http://internal.example/admin", resource_type=resource_type)
-
-    _drive_sync_hook(mod, route)
-
-    assert route.actions == ["abort"], (
-        f"a {resource_type} sub-resource pointing at an internal host was not refused: "
-        f"{route.actions}"
-    )
-    assert route.fetched == [], "the internal sub-resource was fetched anyway"
-
-
-def test_sub_resource_request_is_not_waved_through_unvalidated(
-    retrieval_web_utils_module, monkeypatch
-):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    route = FakeRoute("http://public.example/app.js", resource_type="script")
-
-    _drive_sync_hook(mod, route)
-
-    assert "continue" not in route.actions, "sub-resource bypassed the fetch hook"
-    assert route.actions == ["fulfill"]
-
-
-@pytest.mark.asyncio
-async def test_async_sub_resource_request_to_an_internal_host_is_refused(
-    retrieval_web_utils_module, monkeypatch
-):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    route = AsyncFakeRoute("http://internal.example/admin", resource_type="xhr")
-
-    await _drive_async_hook(mod, route)
-
-    assert route.actions == ["abort"]
-    assert route.fetched == []
-
-
-# --- narrow: each redirect hop is validated in turn ---
-
-
-def test_redirect_hop_pointing_at_loopback_is_refused(retrieval_web_utils_module, monkeypatch):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    monkeypatch.setattr(mod, "AIOHTTP_CLIENT_ALLOW_REDIRECTS", True)
-    start = "http://public.example/go"
-    route = FakeRoute(
-        start,
-        responses={
-            start: CannedResponse(start, status=302, location="http://127.0.0.1/admin"),
-            "http://127.0.0.1/admin": CannedResponse("http://127.0.0.1/admin"),
-        },
-    )
-
-    _drive_sync_hook(mod, route)
-
-    assert route.actions == ["abort"], "redirect hop to loopback was not refused"
-    assert "http://127.0.0.1/admin" not in route.fetched
-
-
-def test_redirect_chain_is_followed_hop_by_hop_to_the_final_response(
-    retrieval_web_utils_module, monkeypatch
-):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    monkeypatch.setattr(mod, "AIOHTTP_CLIENT_ALLOW_REDIRECTS", True)
-    start = "http://public.example/go"
-    hop = "http://public.example/next"
-    route = FakeRoute(
-        start,
-        responses={
-            start: CannedResponse(start, status=302, location="/next"),
-            hop: CannedResponse(hop, status=200),
-        },
-    )
-
-    _drive_sync_hook(mod, route)
-
-    assert route.actions == ["fulfill"]
-    assert route.fulfilled_url == hop, "the hop was not fetched separately"
-    assert route.fetched == [start, hop]
-
-
-@pytest.mark.asyncio
-async def test_async_redirect_hop_pointing_at_loopback_is_refused(
-    retrieval_web_utils_module, monkeypatch
-):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    monkeypatch.setattr(mod, "AIOHTTP_CLIENT_ALLOW_REDIRECTS", True)
-    start = "http://public.example/go"
-    route = AsyncFakeRoute(
-        start,
-        responses={
-            start: CannedResponse(start, status=302, location="http://127.0.0.1/admin"),
-            "http://127.0.0.1/admin": CannedResponse("http://127.0.0.1/admin"),
-        },
-    )
-
-    await _drive_async_hook(mod, route)
-
-    assert route.actions == ["abort"]
-    assert "http://127.0.0.1/admin" not in route.fetched
-
-
-def test_redirect_chain_is_bounded(retrieval_web_utils_module, monkeypatch):
-    mod = retrieval_web_utils_module
-    _install_fake_dns(monkeypatch, mod)
-    monkeypatch.setattr(mod, "AIOHTTP_CLIENT_ALLOW_REDIRECTS", True)
-    start = "http://public.example/loop"
-    route = FakeRoute(
-        start, responses={start: CannedResponse(start, status=302, location="/loop")}
-    )
-
-    _drive_sync_hook(mod, route)
-
-    assert route.actions == ["abort"], "an endless redirect chain was not aborted"
-    assert len(route.fetched) <= 25
-
-
-# --- narrow: service workers and websockets are blocked at page creation ---
-
-
-class FakePage:
-    def __init__(self):
-        self.ws_handlers = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def route(self, pattern, handler):
-        pass
-
-    def route_web_socket(self, pattern, handler):
-        self.ws_handlers.append(handler)
-
-    def unroute_all(self, behavior=None):
-        pass
-
-    def goto(self, url, timeout=None):
-        return CannedResponse(url)
-
-    def content(self):
-        return "<html><body><p>page text</p></body></html>"
-
-
-class FakeBrowser:
-    def __init__(self):
-        self.new_page_kwargs = []
-        self.pages = []
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def new_page(self, **kwargs):
-        self.new_page_kwargs.append(kwargs)
-        page = FakePage()
-        self.pages.append(page)
-        return page
-
-    def close(self):
-        """0.10.2 closes the browser explicitly; 0.11.x uses `with browser:`."""
-        pass
-
-
-class FakePlaywrightContext:
-    def __init__(self, browser):
-        self.chromium = SimpleNamespace(
-            launch=lambda **kwargs: browser,
-            connect=lambda *args, **kwargs: browser,
-        )
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-def _run_playwright_loader(mod, monkeypatch):
-    import playwright.sync_api
-
-    browser = FakeBrowser()
-    monkeypatch.setattr(
-        playwright.sync_api,
-        "sync_playwright",
-        lambda: FakePlaywrightContext(browser),
-    )
-    docs = list(_playwright_loader(mod, continue_on_failure=False).lazy_load())
-    return browser, docs
-
-
-def test_service_workers_are_blocked_on_every_fetched_page(retrieval_web_utils_module, monkeypatch):
-    mod = retrieval_web_utils_module
-    browser, docs = _run_playwright_loader(mod, monkeypatch)
-
-    assert len(docs) == 1
-    assert browser.new_page_kwargs == [{"service_workers": "block"}], (
-        f"page was created without the service-worker block: {browser.new_page_kwargs}"
-    )
-
-
-def test_websocket_connections_the_page_opens_never_reach_the_server(
-    retrieval_web_utils_module, monkeypatch
-):
-    """Only connect_to_server dials out; the sync close() busy-spins the dispatcher (#30024)."""
-    mod = retrieval_web_utils_module
-    browser, _ = _run_playwright_loader(mod, monkeypatch)
-
-    handlers = browser.pages[0].ws_handlers
-    assert handlers, "no websocket route was registered, the page can dial any host"
-
-    calls = []
-    handlers[0](
-        SimpleNamespace(
-            close=lambda: calls.append("close"),
-            connect_to_server=lambda: calls.append("connect_to_server"),
-        )
-    )
-    assert "connect_to_server" not in calls, "the websocket route handler let the page dial out"
-    assert "close" not in calls, "sync close() inside the route handler spins a CPU core forever"
-
-
-# --- narrow: the paced loaders must not drop the page they are pacing ---
+def test_public_addresses_stay_allowed(retrieval_web_utils_module, monkeypatch, address):
+    monkeypatch.setattr(retrieval_web_utils_module, "ENABLE_LOCAL_WEB_FETCH", False)
+    monkeypatch.setattr(retrieval_web_utils_module, "WEB_FETCH_FILTER_LIST", [])
+
+    assert retrieval_web_utils_module.validate_url(f"http://{address}/") is True
 
 
 @pytest.fixture
-def frozen_clock(retrieval_web_utils_module, monkeypatch):
-    """Freeze the loader's clock so pacing always takes the sleep branch."""
-    instant = datetime.now()
-    monkeypatch.setattr(
-        retrieval_web_utils_module,
-        "datetime",
-        SimpleNamespace(now=staticmethod(lambda: instant)),
+def hosts(retrieval_web_utils_module, monkeypatch):
+    """A page host the loader may fetch, and an internal host the filter list blocks."""
+    monkeypatch.setattr(retrieval_web_utils_module, "ENABLE_LOCAL_WEB_FETCH", True)
+    monkeypatch.setattr(retrieval_web_utils_module, "WEB_FETCH_FILTER_LIST", [f"!{INTERNAL_HOST}"])
+    with listening() as page_host, listening(host=INTERNAL_HOST) as internal_host:
+        page_host.route("GET", "/page", text_answer("<p>public page</p>"))
+        page_host.route("GET", "/app.js", text_answer("run()", content_type="text/javascript"))
+        internal_host.route("GET", "/admin", text_answer("internal only"))
+        yield page_host, internal_host
+
+
+def playwright_loader(module, url, continue_on_failure=False):
+    return module.SafePlaywrightURLLoader(
+        web_paths=[url], verify_ssl=False, continue_on_failure=continue_on_failure
     )
-    return instant
 
 
-def test_paced_firecrawl_fetch_returns_every_page(
-    retrieval_web_utils_module, monkeypatch, frozen_clock
+async def load_async(loader):
+    return [document async for document in loader.alazy_load()]
+
+
+def assert_refused(route):
+    assert route.abort.called, f"{route.request.url} was not aborted"
+    assert not route.continue_.called, f"{route.request.url} was left to the browser"
+    assert not route.fulfill.called
+
+
+@pytest.mark.parametrize("resource_type", ["script", "stylesheet", "xhr", "fetch", "image"])
+def test_sub_resource_on_an_internal_host_is_refused(
+    retrieval_web_utils_module, hosts, resource_type
 ):
-    mod = retrieval_web_utils_module
-    from langchain_core.documents import Document
+    page_host, internal_host = hosts
+    internal = f"{internal_host.base_url}/admin"
 
-    scraped = []
+    with specced_browser(subresources=((internal, resource_type),)) as browsing:
+        list(
+            playwright_loader(retrieval_web_utils_module, f"{page_host.base_url}/page").lazy_load()
+        )
 
-    def fake_scrape(api_url, api_key, url, **kwargs):
-        scraped.append(url)
-        return Document(page_content=f"body of {url}", metadata={"source": url})
-
-    monkeypatch.setattr(mod, "scrape_firecrawl_url", fake_scrape)
-    urls = ["http://public.example/a", "http://public.example/b", "http://public.example/c"]
-    loader = mod.SafeFireCrawlLoader(
-        web_paths=urls,
-        verify_ssl=False,
-        requests_per_second=1000,  # 1 ms interval, so the real sleep stays bounded
-        api_key="k",
-        api_url="http://firecrawl.test",
-    )
-
-    docs = list(loader.lazy_load())
-
-    assert scraped == urls, f"pacing dropped a page before it was fetched: {scraped}"
-    assert [d.metadata["source"] for d in docs] == urls
+    assert_refused(browsing.routes_to(internal)[0])
+    assert internal_host.received == []
 
 
-def test_paced_url_check_succeeds_instead_of_raising(
-    retrieval_web_utils_module, monkeypatch, frozen_clock
+@pytest.mark.asyncio
+async def test_async_sub_resource_on_an_internal_host_is_refused(retrieval_web_utils_module, hosts):
+    page_host, internal_host = hosts
+    internal = f"{internal_host.base_url}/admin"
+
+    with specced_browser(asynchronous=True, subresources=((internal, "xhr"),)) as browsing:
+        await load_async(
+            playwright_loader(retrieval_web_utils_module, f"{page_host.base_url}/page")
+        )
+
+    assert_refused(browsing.routes_to(internal)[0])
+    assert internal_host.received == []
+
+
+def test_public_sub_resource_is_fetched_by_the_loader_not_the_browser(
+    retrieval_web_utils_module, hosts
 ):
-    mod = retrieval_web_utils_module
-    loader = mod.SafeFireCrawlLoader(
-        web_paths=[], verify_ssl=False, requests_per_second=1000, api_key="k"
-    )
-    loader._sync_wait_for_rate_limit()
+    page_host, _ = hosts
+    script = f"{page_host.base_url}/app.js"
 
-    assert loader._safe_process_url_sync("http://public.example/a") is True
+    with specced_browser(subresources=((script, "script"),)) as browsing:
+        list(
+            playwright_loader(retrieval_web_utils_module, f"{page_host.base_url}/page").lazy_load()
+        )
+
+    [route] = browsing.routes_to(script)
+    assert not route.continue_.called
+    assert route.fulfill.call_args.kwargs["body"] == b"run()"
 
 
-def test_paced_tavily_loss_is_not_reported_as_a_security_check_failure(
-    retrieval_web_utils_module, monkeypatch, frozen_clock, caplog
+@pytest.fixture
+def redirects_allowed(retrieval_web_utils_module, monkeypatch):
+    monkeypatch.setattr(retrieval_web_utils_module, "AIOHTTP_CLIENT_ALLOW_REDIRECTS", True)
+
+
+def redirect_to(location):
+    return 302, {"Location": location}, b""
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_redirect_hop_to_an_internal_host_is_refused(
+    retrieval_web_utils_module, hosts, redirects_allowed, asynchronous
 ):
-    mod = retrieval_web_utils_module
-    from langchain_core.documents import Document
+    page_host, internal_host = hosts
+    start = f"{page_host.base_url}/go"
+    page_host.route("GET", "/go", redirect_to(f"{internal_host.base_url}/admin"))
+    loader = playwright_loader(retrieval_web_utils_module, start, continue_on_failure=True)
 
-    urls = ["http://public.example/a", "http://public.example/b"]
+    with specced_browser(asynchronous=asynchronous) as browsing:
+        documents = await load_async(loader) if asynchronous else list(loader.lazy_load())
 
-    class FakeTavilyLoader:
-        def __init__(self, urls, **kwargs):
-            self.urls = urls
-
-        def lazy_load(self):
-            for url in self.urls:
-                yield Document(page_content="body", metadata={"source": url})
-
-    monkeypatch.setattr(mod, "TavilyLoader", FakeTavilyLoader)
-    kwargs = {
-        "web_paths": urls,
-        "verify_ssl": False,
-        "requests_per_second": 1000,
-        "api_key": "k",
-    }
-    # 0.11.1 dropped api_base_url from the constructor.
-    if "api_base_url" in inspect.signature(mod.SafeTavilyLoader.__init__).parameters:
-        kwargs["api_base_url"] = "https://api.tavily.test"
-    loader = mod.SafeTavilyLoader(**kwargs)
-
-    with caplog.at_level("WARNING", logger=mod.log.name):
-        docs = list(loader.lazy_load())
-
-    assert [d.metadata["source"] for d in docs] == urls
-    assert "SSL verification failed" not in caplog.text
+    assert documents == []
+    assert_refused(browsing.routes_to(start)[0])
+    assert internal_host.received == []
 
 
-# --- nearby: pacing is skipped entirely when no rate is configured ---
+def test_redirect_chain_is_followed_hop_by_hop(
+    retrieval_web_utils_module, hosts, redirects_allowed
+):
+    page_host, _ = hosts
+    start = f"{page_host.base_url}/go"
+    page_host.route("GET", "/go", redirect_to("/page"))
+
+    with specced_browser() as browsing:
+        list(playwright_loader(retrieval_web_utils_module, start).lazy_load())
+
+    [route] = browsing.routes_to(start)
+    assert route.fulfill.call_args.kwargs["body"] == b"<p>public page</p>"
+    assert [request.path for request in page_host.received] == ["/go", "/page"]
 
 
-def test_unpaced_fetch_returns_every_page(retrieval_web_utils_module, monkeypatch):
-    mod = retrieval_web_utils_module
-    from langchain_core.documents import Document
+def test_endless_redirect_chain_is_abandoned(retrieval_web_utils_module, hosts, redirects_allowed):
+    page_host, _ = hosts
+    start = f"{page_host.base_url}/loop"
+    page_host.route("GET", "/loop", redirect_to("/loop"))
+    loader = playwright_loader(retrieval_web_utils_module, start, continue_on_failure=True)
 
-    monkeypatch.setattr(
-        mod,
-        "scrape_firecrawl_url",
-        lambda api_url, api_key, url, **kwargs: Document(
-            page_content="body", metadata={"source": url}
-        ),
-    )
-    urls = ["http://public.example/a", "http://public.example/b"]
-    loader = mod.SafeFireCrawlLoader(
-        web_paths=urls, verify_ssl=False, requests_per_second=None, api_key="k"
-    )
+    with specced_browser() as browsing:
+        assert list(loader.lazy_load()) == []
 
-    assert [d.metadata["source"] for d in loader.lazy_load()] == urls
+    assert_refused(browsing.routes_to(start)[0])
+    assert len(page_host.requests_to("/loop")) <= 25
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_every_page_blocks_service_workers_and_websockets(
+    retrieval_web_utils_module, hosts, asynchronous
+):
+    page_host, _ = hosts
+    loader = playwright_loader(retrieval_web_utils_module, f"{page_host.base_url}/page")
+
+    with specced_browser(asynchronous=asynchronous) as browsing:
+        documents = await load_async(loader) if asynchronous else list(loader.lazy_load())
+    websocket = await websocket_opened(browsing.pages[0], asynchronous=asynchronous)
+
+    assert len(documents) == 1
+    assert browsing.browser.new_page.call_args.kwargs.get("service_workers") == "block"
+    assert not websocket.connect_to_server.called, "the page's websocket may dial any host"
+    if not asynchronous:
+        assert not websocket.close.called, "sync close() inside the handler spins a core (#30024)"
+    assert released(browsing.pages[0])
