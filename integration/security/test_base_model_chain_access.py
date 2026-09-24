@@ -63,7 +63,7 @@ def raw_model(admin, upstream):
 
         yield share
         for model_id in created:
-            client.post(f"/api/v1/models/model/delete?id={model_id}")
+            client.post("/api/v1/models/model/delete", json={"id": model_id}).raise_for_status()
         upstream.models.remove(RAW_MODEL)
         client.get("/api/models?refresh=true")
 
