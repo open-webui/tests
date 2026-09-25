@@ -53,6 +53,7 @@ asyncio_default_test_loop_scope = "function"
 markers = [
     # ── purpose ────────────────────────────────────────────────────────────
     "regression: pinned to a specific upstream issue/PR; fails only if that bug returns",
+    "journey: broad baseline coverage of a feature, not pinned to one issue",
     # ── cost ───────────────────────────────────────────────────────────────
     "slow: long-running (comprehensive scans, real postgres boot). Deselect with -m 'not slow'",
     # ── scope / auth (browser + API tests) ─────────────────────────────────
