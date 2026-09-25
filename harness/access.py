@@ -3,7 +3,9 @@
 `Shareable` says how one kind of resource is created and shared over the API. `cast(...)` adds
 the accounts, sharing with the reader and writer directly or through a group of their own, and
 `statuses(...)` sends one route as each of them, each on a fresh resource shared the same way,
-so a route that deletes or toggles never changes what the next account meets.
+so a route that deletes or toggles never changes what the next account meets. `attempts(...)`
+does the same and reads the owner's view of the resource around each request, so a refused
+write can be shown to have changed nothing.
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable
+
+import httpx
 
 from harness.actors import Actor
 
@@ -109,4 +113,42 @@ def statuses(cast: Cast, method: str, path: str, body: dict | None = None) -> di
         with cast.actor(role).client() as client:
             response = client.request(method, path.format(id=resource_id), json=body)
         answered[role] = response.status_code
+    return answered
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One account's request on a fresh resource, and the owner's view of it before and after."""
+
+    status: int
+    before: object
+    after: object
+
+
+def attempts(
+    cast: Cast,
+    method: str,
+    path: str,
+    body: dict | Callable[[Actor, dict], dict] | None = None,
+    setup: Callable[[Actor, str], dict] | None = None,
+    look: Callable[[httpx.Client, dict], object] | None = None,
+) -> dict[str, Attempt]:
+    """`{role: Attempt}` for one route, sent by every role in the cast.
+
+    `setup(owner, resource_id)` adds fields to each fresh resource (a file, an event) that the
+    path, `body(actor, fields)` and `look(owner_client, fields)` read next to `id`.
+    """
+    answered = {}
+    for role in ROLES:
+        resource_id = create_shared(cast)
+        fields = {"id": resource_id, **(setup(cast.owner, resource_id) if setup else {})}
+        actor = cast.actor(role)
+        payload = body(actor, fields) if callable(body) else body
+        with cast.owner.client() as owner_client:
+            before = look(owner_client, fields) if look else None
+        with actor.client() as client:
+            response = client.request(method, path.format(**fields), json=payload)
+        with cast.owner.client() as owner_client:
+            after = look(owner_client, fields) if look else None
+        answered[role] = Attempt(response.status_code, before, after)
     return answered
