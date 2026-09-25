@@ -3,10 +3,10 @@
 python-mimeparse decides which uploads count as audio, aiofiles writes the upload, the speech
 the engine returns and the cache that answers a repeated request, and pydub transcodes speech
 that does not come back as MP3 (through ffmpeg, so that test skips on a host without it). The
-engine is a local listener named at boot: changing the audio settings at runtime would reload
-the local Whisper model when they are restored, which an offline instance cannot.
+engine is the audio stand-in of `harness/audio_engine.py`, saved into the shared instance's audio
+settings for each test.
 
-Discriminates: passes on dev bbfa876af; in a backend copy, `strict_match_mime_type` taking the
+Discriminates: passes on dev ac00d40e3; in a backend copy, `strict_match_mime_type` taking the
 first supported type without `mimeparse.best_match` lets the text upload through, skipping the
 cache lookup in `speech` asks the engine twice and dropping the `aiofiles` write of the speech
 serves an empty file. The pydub test is unproven on a host without ffmpeg.
@@ -23,18 +23,9 @@ import numpy
 import pytest
 import soundfile
 
-from harness.actors import create_user
-from harness.listener import json_answer, listening
+from harness.audio_engine import SPEECH, TRANSCRIPT, serve_audio_engine, using_audio_engine
 
-pytestmark = [
-    pytest.mark.depcheck,
-    pytest.mark.api,
-    pytest.mark.requires_source,
-    pytest.mark.slow,
-]
-
-TRANSCRIPT = "the quick brown fox"
-SPEECH = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x64" * 64  # an MP3 as far as we care
+pytestmark = [pytest.mark.depcheck, pytest.mark.api, pytest.mark.requires_source]
 
 
 def _ogg_recording() -> bytes:
@@ -55,29 +46,16 @@ def _wav_speech() -> bytes:
     return speech.getvalue()
 
 
-@pytest.fixture(scope="module")
-def engine():
-    with listening() as service:
-        service.route("POST", "/audio/transcriptions", json_answer({"text": TRANSCRIPT}))
-        service.route("POST", "/audio/speech", (200, {"Content-Type": "audio/mpeg"}, SPEECH))
-        yield service
-
-
-@pytest.fixture(scope="module")
-def audio(instance_with, engine):
-    return instance_with(
-        {
-            "AUDIO_STT_ENGINE": "openai",
-            "AUDIO_STT_OPENAI_API_BASE_URL": engine.base_url,
-            "AUDIO_TTS_ENGINE": "openai",
-            "AUDIO_TTS_OPENAI_API_BASE_URL": engine.base_url,
-        }
-    )
+@pytest.fixture
+def engine(admin, listener):
+    engine = serve_audio_engine(listener)
+    with admin.client() as client, using_audio_engine(client, engine):
+        yield engine
 
 
 @pytest.fixture
-def speaker(audio):
-    return create_user(audio)
+def speaker(make_user):
+    return make_user()
 
 
 def _transcribe(speaker, filename: str, content: bytes, content_type: str):
@@ -94,28 +72,28 @@ def _speak(speaker, text: str):
 
 def test_an_ogg_recording_is_written_and_transcribed(speaker, engine):
     recording = _ogg_recording()
-    before = len(engine.requests_to("/audio/transcriptions"))
+    before = len(engine.transcription_requests())
 
     transcribed = _transcribe(speaker, "recording.ogg", recording, "audio/ogg")
 
     assert transcribed.status_code == 200, transcribed.text
     assert transcribed.json()["text"] == TRANSCRIPT
-    sent = engine.requests_to("/audio/transcriptions")[before:]
+    sent = engine.transcription_requests()[before:]
     assert len(sent) == 1 and sent[0].headers["Content-Type"].startswith("multipart/form-data")
     assert recording in sent[0].body
 
 
 def test_a_text_upload_is_not_taken_for_audio(speaker, engine):
-    before = len(engine.requests_to("/audio/transcriptions"))
+    before = len(engine.transcription_requests())
 
     refused = _transcribe(speaker, "notes.ogg", b"just some text", "text/plain")
 
     assert refused.status_code == 400, refused.text
-    assert len(engine.requests_to("/audio/transcriptions")) == before
+    assert len(engine.transcription_requests()) == before
 
 
 def _speech_requests_for(engine, text: str) -> list:
-    requests = engine.requests_to("/audio/speech")
+    requests = engine.listener.requests_to("/audio/speech")
     return [request for request in requests if text.encode() in request.body]
 
 
@@ -134,11 +112,9 @@ def test_speech_is_asked_for_once_and_then_served_from_the_cache(speaker, engine
 
 @pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="pydub transcodes through ffmpeg")
 def test_wav_speech_is_transcoded_to_mp3(speaker, engine):
-    engine.route("POST", "/audio/speech", (200, {"Content-Type": "audio/wav"}, _wav_speech()))
-    try:
-        spoken = _speak(speaker, f"transcode this {uuid.uuid4().hex}")
-    finally:
-        engine.route("POST", "/audio/speech", (200, {"Content-Type": "audio/mpeg"}, SPEECH))
+    engine.speech, engine.speech_type = _wav_speech(), "audio/wav"
+
+    spoken = _speak(speaker, f"transcode this {uuid.uuid4().hex}")
 
     assert spoken.status_code == 200, spoken.text
     assert spoken.content[:3] == b"ID3" or spoken.content[:2] in (b"\xff\xfb", b"\xff\xf3")
