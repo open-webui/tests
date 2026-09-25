@@ -147,8 +147,12 @@ class OidcProvider:
             self.access_tokens[token] = dict(userinfo)
         return token
 
-    def logout_token(self, sub: str) -> str:
-        """A signed back-channel logout token telling the relying party `sub` signed out."""
+    def logout_token(self, sub: str | None, *, signature: str = "provider", **claims) -> str:
+        """A signed back-channel logout token telling the relying party `sub` signed out.
+
+        `claims` add to the payload, and one set to None is left out; `signature="foreign-key"`
+        signs with a key the provider never published.
+        """
         payload = {
             "iss": self.issuer,
             "aud": self.client_id,
@@ -156,8 +160,11 @@ class OidcProvider:
             "jti": secrets.token_hex(8),
             "sub": sub,
             "events": {"http://schemas.openid.net/event/backchannel-logout": {}},
+            **claims,
         }
-        return jwt.encode(payload, self.key, algorithm="RS256", headers={"kid": self.kid})
+        payload = {name: value for name, value in payload.items() if value is not None}
+        signing_key = _new_key() if signature == "foreign-key" else self.key
+        return jwt.encode(payload, signing_key, algorithm="RS256", headers={"kid": self.kid})
 
     def requests_to(self, path: str) -> list[ProviderRequest]:
         with self.lock:

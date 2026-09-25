@@ -223,11 +223,19 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
         )
     try:
         _wait_for_health(proc, base_url, log_path)
-        signup = httpx.post(
-            f"{base_url}/api/v1/auths/signup",
-            json={"name": "Admin", "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-            timeout=60.0,
-        )
+        if env["WEBUI_AUTH"].lower() == "false":
+            # the web client's empty sign-in, which makes the first visitor the admin
+            signup = httpx.post(
+                f"{base_url}/api/v1/auths/signin",
+                json={"email": "", "password": ""},
+                timeout=60.0,
+            )
+        else:
+            signup = httpx.post(
+                f"{base_url}/api/v1/auths/signup",
+                json={"name": "Admin", "email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+                timeout=60.0,
+            )
         if signup.status_code != 200:
             pytest.fail(f"admin signup failed: HTTP {signup.status_code} {signup.text}")
         yield LaunchedInstance(
