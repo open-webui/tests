@@ -39,11 +39,17 @@ def builder(make_user):
                 client.delete(f"/api/v1/prompts/id/{prompt['id']}/delete")
 
 
+def _choose_from_models(page: Page, name: str) -> None:
+    # the list renders only the rows in view, so search to bring the model into it
+    page.get_by_role("textbox", name="Search In Models").fill(name)
+    available = page.get_by_role("listbox", name="Available models")
+    available.get_by_role("option", name=f"Select {name} model").click()
+
+
 def _pick_model(page: Page, name: str) -> None:
     page.goto("/")
     page.get_by_role("button", name=re.compile("^Selected model")).click()
-    available = page.get_by_role("listbox", name="Available models")
-    available.get_by_role("option", name=f"Select {name} model").click()
+    _choose_from_models(page, name)
     expect(page.get_by_role("button", name=f"Selected model: {name}")).to_be_visible()
 
 
@@ -55,9 +61,7 @@ def test_a_preset_sends_its_system_prompt_with_the_chat(page_for, builder, upstr
     editor = page.get_by_role("main")
     editor.get_by_role("textbox", name="Model Name").fill(name)
     editor.get_by_role("button", name="Select a base model (e.g. llama3, gpt-4o)").click()
-    page.get_by_role("listbox", name="Available models").get_by_role(
-        "option", name="Select mock-model model"
-    ).click()
+    _choose_from_models(page, "mock-model")
     editor.get_by_role("textbox", name=re.compile("^Write your model system prompt")).fill(
         system_prompt
     )
@@ -69,7 +73,8 @@ def test_a_preset_sends_its_system_prompt_with_the_chat(page_for, builder, upstr
     send(page, "greet me")
     expect_reply(page, "Arr, ahoy!")
 
-    messages = upstream.chat_requests()[-1]["messages"]
+    # later task requests (title, tags) may follow the chat request
+    messages = next(filter(reply.answering("greet me"), upstream.chat_requests()))["messages"]
     assert messages[0]["role"] == "system"
     assert system_prompt in messages[0]["content"]
     assert messages[-1] == {"role": "user", "content": "greet me"}

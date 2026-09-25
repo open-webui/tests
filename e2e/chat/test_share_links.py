@@ -51,6 +51,8 @@ def shared_chat(page_for, make_user, upstream):
 def _grant(dialog: Locator, account) -> None:
     dialog.get_by_role("button", name="Add Access").click()
     picker = dialog.page.get_by_role("dialog").filter(has_text="Add Access").last
+    # the picker lists one page of users; searching reaches any account
+    picker.get_by_placeholder("Search").fill(account.name)
     picker.get_by_role("button", name=account.name).click()
     picker.get_by_role("button", name="Add", exact=True).click()
     expect(dialog.page.get_by_text("Access updated")).to_be_visible()
