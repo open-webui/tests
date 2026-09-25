@@ -11,3 +11,4 @@ reports/
 .ruff_cache/
 frontend/node_modules/
 test-results/
+coverage-report/

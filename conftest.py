@@ -23,6 +23,11 @@ load_dotenv()
 
 pytest_plugins = ["harness.fixtures"]
 
+from harness import coverage_run  # noqa: E402
+
+# before anything imports open_webui, so module-level lines count too
+coverage_run.start()
+
 # The venv ships a .pth that puts a fixed open-webui checkout on sys.path at
 # interpreter startup. It otherwise wins over OPEN_WEBUI_SOURCE_DIR, and once
 # anything imports open_webui the package __path__ is pinned, so submodule
@@ -346,6 +351,9 @@ def _drift_reports(reports) -> list:
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     """Append the skeptic-verification instruction whenever tests fail."""
     tr = terminalreporter
+    total = coverage_run.report()
+    if total is not None:
+        tr.write_sep("-", f"backend coverage {total:.1f}%, report in {coverage_run.REPORT_DIR}")
     failed = tr.stats.get("failed", [])
     errored = tr.stats.get("error", [])
 

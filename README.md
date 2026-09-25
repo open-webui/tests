@@ -81,6 +81,10 @@ OWUI_TEST_REDIS=1 pytest integration e2e             # a redis-server of its own
 
 They combine. The Redis switch needs `redis-server` on `PATH` and skips without it. An instance a test gives its own database or Redis (a prepared data directory, a Redis stand-in) keeps it. A test that only holds on one backend skips in the other mode and names why.
 
+### Coverage
+
+`OWUI_TEST_COVERAGE=1 pytest integration e2e` measures which backend lines the run executes (needs `pip install coverage`). Every scratch instance runs under coverage, as does the pytest process itself, so `pytest unit` can be measured the same way. At the end of the session the data is combined into `coverage-report/html/index.html` and `coverage-report/coverage.json` (`OWUI_TEST_COVERAGE_DIR` moves it), and the total is printed. Each session starts from empty data; to merge two sessions, give them separate directories and run `coverage combine --keep` over their `data/` folders.
+
 `scripts/e2e_instance.py --clone ../open-webui` starts a standalone instance with the two seeded accounts, for poking at by hand.
 
 `integration/migrations/test_upgrade_from_release.py` boots the checkout on data sets made by older releases (`integration/migrations/upgrade_data/`). To regenerate them, or add a release, run `python scripts/seed_upgrade_data.py --clone ../open-webui v0.9.6 v0.10.2 v0.11.4` (with `pgserver` installed for the Postgres sets) and commit the new files.

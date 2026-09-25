@@ -33,6 +33,9 @@ ADMIN_PASSWORD = "adminpassword123"
 # `loop="none"` as `open-webui serve` does: uvicorn's default loop leaves Windows sockets unwired
 LAUNCHER = """
 import os, sys
+if os.environ.get("COVERAGE_PROCESS_START"):
+    import coverage
+    coverage.process_startup()
 sys.path.insert(0, sys.argv[1])
 os.chdir(sys.argv[1])
 import uvicorn
