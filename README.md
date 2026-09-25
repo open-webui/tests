@@ -85,6 +85,7 @@ Registered in `pyproject.toml` (`--strict-markers` is on). Combine with `-m "<ex
 | Marker | Meaning |
 |--------|---------|
 | `regression` | pinned to a specific upstream issue/PR; fails only if that bug returns |
+| `journey` | broad baseline coverage of a feature, not pinned to one issue |
 | `slow` | long-running (extra instance boots, real postgres) |
 | `api` | API-level via `httpx` |
 | `requires_source` | needs the backend checkout |
@@ -111,6 +112,8 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `listener` | a local HTTP service for the instance to call, recording what it gets |
 
 `harness.chat.ask(client, "text")` sends a message the way the web client does and returns the stored reply.
+
+Local fakes, each described in its module docstring: `audio_engine` (speech and transcription), `model_runners` (llama.cpp, LM Studio), `ldap_server`, `external_knowledge` (Qdrant) and `mcp_oauth` (an OAuth-protected MCP server), plus model management in `ollama_provider`, token refresh in `oidc_provider` and live note edits in `socket_client`. `harness.access` sends one route as the owner, a stranger, a reader, a writer and the admin of a shared resource.
 
 **`e2e/conftest.py`**: `page_for(actor)` opens a signed-in page in a browser of its own; `page`, `authenticated_page` and `admin_page` as before.
 

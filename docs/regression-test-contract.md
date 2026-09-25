@@ -90,6 +90,10 @@ Every fix gets all three; one of them alone is not coverage.
 2. **Broad.** The invariant the bug was an instance of. If one endpoint gained an ownership check, assert the property across its siblings so the next instance is caught too.
 3. **Nearby.** Adjacent behaviour that is currently correct: the positive path, boundaries, empty and None inputs, the admin-versus-user split. These pass on both refs, which shows the fix did not over-correct.
 
+## Journey tests
+
+A journey test is broad baseline coverage of a feature as a person or a client uses it, pinned to no single issue: an LDAP sign-in, a live note edit, the role every route asks for. It carries `pytest.mark.journey` in place of `regression`. With no fix to undo, it still gets a mutation proof: break the behaviour it guards in a backend copy and name that edit, and what it turned red, in its `Discriminates:` line. `harness/access.py` gives the owner, stranger, reader, writer and admin matrix for a shared resource.
+
 ## Proving a test discriminates
 
 An unproven regression test is decoration, so every narrow test is shown to fail with its fix undone. Undo the fix on a scratch copy: a shared checkout or worktree may be in use by someone else.
