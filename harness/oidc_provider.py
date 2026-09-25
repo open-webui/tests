@@ -6,6 +6,11 @@ in next with `sign_in_as(...)`: the claims the ID token and userinfo carry, extr
 entries or a userinfo answer that differs from the ID token. `rotate_key()` rolls the signing
 key under the same `kid`, the way an IdP rotates without renaming its key.
 
+The token endpoint also takes `grant_type=refresh_token`: a live refresh token gets new tokens
+and is spent (rotation), a spent, revoked or unknown one answers `invalid_grant`. Setting
+`token_lifetime` shortens the `expires_in` of the tokens it issues next, and
+`revoke_refresh_tokens()` withdraws every refresh token issued so far.
+
 `sso_env(provider)` is the environment that points an instance at it, `sign_in(instance)` walks
 the browser's redirect chain with httpx and returns the session the callback handed out, and
 `oauth_settings(instance, ...)` changes admin-panel OAuth settings for the length of a block.
@@ -65,7 +70,9 @@ class OidcProvider:
     signature: str = "provider"
     codes: dict[str, dict] = field(default_factory=dict)
     access_tokens: dict[str, dict] = field(default_factory=dict)
+    refresh_tokens: dict[str, dict] = field(default_factory=dict)  # live ones only
     issued: list[dict] = field(default_factory=list)  # every token response, newest last
+    token_lifetime: int = 3600  # seconds, for access tokens and ID tokens issued from now on
 
     @property
     def issuer(self) -> str:
@@ -80,6 +87,7 @@ class OidcProvider:
         with self.lock:
             self.requests.clear()
             self.issued.clear()
+            self.token_lifetime = 3600
         self.sign_in_as()
 
     def sign_in_as(
@@ -118,6 +126,11 @@ class OidcProvider:
         with self.lock:
             self.key = _new_key()
 
+    def revoke_refresh_tokens(self) -> None:
+        """Withdraw every refresh token issued so far; using one then answers `invalid_grant`."""
+        with self.lock:
+            self.refresh_tokens.clear()
+
     def issue_access_token(
         self, userinfo: dict, *, claims: dict | None = None, opaque: bool = False
     ) -> str:
@@ -126,7 +139,8 @@ class OidcProvider:
             token = secrets.token_urlsafe(24)
         else:
             now = int(time.time())
-            payload = {"iss": self.issuer, "iat": now, "exp": now + 3600, **(claims or {})}
+            expiry = now + self.token_lifetime
+            payload = {"iss": self.issuer, "iat": now, "exp": expiry, **(claims or {})}
             payload["jti"] = secrets.token_hex(8)
             token = jwt.encode(payload, self.key, algorithm="RS256", headers={"kid": self.kid})
         with self.lock:
@@ -186,6 +200,11 @@ class OidcProvider:
         return f"{query['redirect_uri']}{separator}{urllib.parse.urlencode(answer)}"
 
     def _token(self, form: dict[str, str]) -> tuple[int, dict]:
+        if form.get("grant_type") == "refresh_token":
+            return self._refresh(form)
+        return self._exchange_code(form)
+
+    def _exchange_code(self, form: dict[str, str]) -> tuple[int, dict]:
         with self.lock:
             grant = self.codes.pop(form.get("code", ""), None)
         if grant is None:
@@ -193,7 +212,12 @@ class OidcProvider:
         person = grant["claims"]
         now = int(time.time())
         id_claims = grant["id_token_claims"] if grant["id_token_claims"] is not None else person
-        id_payload = {"iss": self.issuer, "aud": self.client_id, "iat": now, "exp": now + 3600}
+        id_payload = {
+            "iss": self.issuer,
+            "aud": self.client_id,
+            "iat": now,
+            "exp": now + self.token_lifetime,
+        }
         id_payload.update(id_claims)
         if grant["nonce"]:
             id_payload["nonce"] = grant["nonce"]
@@ -204,18 +228,33 @@ class OidcProvider:
             signing_key = _new_key() if grant["signature"] == "foreign-key" else self.key
             id_token = jwt.encode(id_payload, signing_key, algorithm="RS256", headers=header)
         userinfo = grant["userinfo"] if grant["userinfo"] is not None else person
-        access_token = self.issue_access_token(userinfo, claims={"sub": str(person["sub"])})
+        return 200, self._issue_tokens(userinfo, str(person["sub"]), id_token=id_token)
+
+    def _refresh(self, form: dict[str, str]) -> tuple[int, dict]:
+        if form.get("client_id") != self.client_id:
+            return 401, {"error": "invalid_client"}
+        with self.lock:
+            holder = self.refresh_tokens.pop(form.get("refresh_token", ""), None)
+        if holder is None:
+            return 400, {"error": "invalid_grant"}
+        return 200, self._issue_tokens(holder["userinfo"], holder["sub"])
+
+    def _issue_tokens(self, userinfo: dict, sub: str, *, id_token: str | None = None) -> dict:
+        """A token response for `userinfo`, kept in `issued`; a refresh has no ID token."""
+        access_token = self.issue_access_token(userinfo, claims={"sub": sub})
+        refresh_token = secrets.token_urlsafe(24)
         answer = {
             "access_token": access_token,
             "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": secrets.token_urlsafe(24),
-            "id_token": id_token,
+            "expires_in": self.token_lifetime,
+            "refresh_token": refresh_token,
+            **({"id_token": id_token} if id_token else {}),
             "scope": "openid email profile",
         }
         with self.lock:
+            self.refresh_tokens[refresh_token] = {"userinfo": dict(userinfo), "sub": sub}
             self.issued.append(answer)
-        return 200, answer
+        return answer
 
     def _userinfo(self, authorization: str) -> tuple[int, dict]:
         token = authorization.removeprefix("Bearer ").strip()
