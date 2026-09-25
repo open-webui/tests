@@ -3,7 +3,8 @@
 `serve_ollama(listener, *models)` keeps the server's models in `server.models` (append one later
 and the server reports it) and answers what Open WebUI asks an Ollama server: `/api/tags`,
 `/api/ps` (the names in `server.loaded`), `/api/version`, `/api/show`, `/api/chat` with one
-finished reply, `/api/generate` (an empty prompt with `keep_alive: 0` unloads, as Ollama does),
+finished reply (or the next answer queued with `server.queue_chat(...)`, which `chat_stream` and
+`chat_line` shape), `/api/generate` (an empty prompt with `keep_alive: 0` unloads, as Ollama does),
 `/api/embed`, and the model management calls. `/api/pull` and `/api/create` stream NDJSON
 progress and add the model, `/api/copy` adds the copy and `/api/delete` removes the model; an
 unknown model is a 404 with Ollama's error body. `server.sent(path)` is what each call carried.
@@ -32,6 +33,18 @@ def ndjson(*lines: dict) -> Answer:
     return 200, {"Content-Type": "application/x-ndjson"}, body.encode()
 
 
+def chat_line(model: str, message: dict, **final) -> dict:
+    """One `/api/chat` line carrying `message`; `final` (a `done_reason`, the counters) ends it."""
+    line = {"model": model, "message": {"role": "assistant", **message}, "done": bool(final)}
+    return {**line, **final}
+
+
+def chat_stream(model: str, *messages: dict, **counters) -> Answer:
+    """A streamed `/api/chat` reply: a line per message, then the finishing line with `counters`."""
+    finished = chat_line(model, {"content": ""}, done_reason="stop", **counters)
+    return ndjson(*(chat_line(model, message) for message in messages), finished)
+
+
 def model_not_found(name: str) -> Answer:
     return json_answer({"error": f"model '{name}' not found"}, status=404)
 
@@ -47,12 +60,21 @@ class OllamaServer:
     models: list[str] = field(default_factory=list)
     loaded: list[str] = field(default_factory=list)
     version: str = OLLAMA_VERSION
+    chat_answers: list[Answer] = field(default_factory=list)
 
     def sent(self, path: str) -> list[dict]:
         return [request.json() for request in self.listener.requests_to(path) if request.body]
 
     def chat_requests(self) -> list[dict]:
         return self.sent("/api/chat")
+
+    def queue_chat(self, *answers: Answer) -> None:
+        self.chat_answers.extend(answers)
+
+    def chat(self, _request: ReceivedRequest) -> Answer:
+        if self.chat_answers:
+            return self.chat_answers.pop(0)
+        return json_answer({"message": {"role": "assistant", "content": "pong"}, "done": True})
 
     def tags(self, _request: ReceivedRequest) -> Answer:
         return json_answer({"models": [_tag(name) for name in self.models]})
@@ -154,11 +176,7 @@ def serve_ollama(listener: Listener, *models: str) -> OllamaServer:
     listener.route("GET", "/api/ps", server.running)
     listener.route("GET", "/api/version", lambda _request: json_answer({"version": server.version}))
     listener.route("POST", "/api/show", server.show)
-    listener.route(
-        "POST",
-        "/api/chat",
-        json_answer({"message": {"role": "assistant", "content": "pong"}, "done": True}),
-    )
+    listener.route("POST", "/api/chat", server.chat)
     listener.route("POST", "/api/generate", server.generate)
     listener.route("POST", "/api/embed", server.embed)
     listener.route("POST", "/api/pull", server.pull)
