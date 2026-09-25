@@ -8,6 +8,7 @@ what the browser suite drives.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
@@ -23,6 +24,7 @@ from typing import Iterator
 import httpx
 import pytest
 
+from harness import backends
 from harness.upstream import MockUpstream
 
 ADMIN_EMAIL = "admin@example.com"
@@ -115,6 +117,8 @@ class LaunchedInstance:
     admin_token: str
     upstream: MockUpstream
     serves_frontend: bool
+    database_url: str = ""
+    redis_url: str = ""
 
     def client(self, token: str | None = None) -> httpx.Client:
         return httpx.Client(
@@ -171,6 +175,8 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
     if backend is None:
         pytest.skip("open-webui backend source not found (set OPEN_WEBUI_SOURCE_DIR)")
     build = resolve_frontend_build(backend)
+    services = contextlib.ExitStack()
+    service_env = services.enter_context(backends.services_for(extra_env))
 
     scratch = Path(tempfile.mkdtemp(prefix="owui-integration-"))
     for name in ("data", "static"):
@@ -199,6 +205,7 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             "OPENAI_API_KEY": "sk-mock",
             "OPENAI_API_BASE_URLS": upstream.base_url,
             "OPENAI_API_KEYS": "sk-mock",
+            **service_env,
             **extra_env,
         }
     )
@@ -228,6 +235,8 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             admin_token=signup.json()["token"],
             upstream=upstream,
             serves_frontend=build is not None,
+            database_url=env["DATABASE_URL"],
+            redis_url=env["REDIS_URL"],
         )
     finally:
         proc.terminate()
@@ -240,6 +249,7 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             Path(keep_logs_in).mkdir(parents=True, exist_ok=True)
             shutil.copy(log_path, Path(keep_logs_in) / f"server-{port}.log")
         shutil.rmtree(scratch, ignore_errors=True)
+        services.close()
 
 
 def _wait_for_health(proc: subprocess.Popen, base_url: str, log_path: Path) -> None:

@@ -20,6 +20,7 @@ from contextlib import closing
 
 import pytest
 
+from harness import backends
 from harness.prepared_data import boot_until_settled, snapshot_database
 
 pytestmark = [
@@ -27,6 +28,9 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.api,
     pytest.mark.requires_source,
+    pytest.mark.skipif(
+        backends.DATABASE == "postgres", reason="copies the SQLite file, none on Postgres"
+    ),
 ]
 
 UNKNOWN_REVISION = "deadbeef"

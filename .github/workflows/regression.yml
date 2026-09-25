@@ -158,6 +158,69 @@ jobs:
           path: tests/test-results
           if-no-files-found: ignore
 
+  # The integration suite again with every instance on Postgres and Redis. Reports without
+  # gating a release until that mode has settled.
+  integration-postgres-redis:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            open-webui/backend/requirements.txt
+            tests/pyproject.toml
+
+      # The suite starts a redis-server of its own per instance and Postgres through pgserver.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+          python -m playwright install --with-deps chromium
+
+      - name: Run the integration suite on Postgres and Redis
+        working-directory: tests
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+          OWUI_TEST_DATABASE: postgres
+          OWUI_TEST_REDIS: '1'
+        run: pytest integration -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+
+      - name: Summarise the results
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite on Postgres and Redis" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-postgres-redis-report-${{ inputs.open-webui-ref }}
+          path: tests/test-results
+          if-no-files-found: ignore
+
   # Reports without gating a release until the browser suite has settled.
   e2e:
     runs-on: ubuntu-latest

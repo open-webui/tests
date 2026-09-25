@@ -5,7 +5,7 @@ move of a folder under itself or under one of its own descendants. A folder whos
 loops is never a root, so it and everything below it vanished from the sidebar with no way back.
 The fix answers 400 for such a move and has `GET /api/v1/folders/` put a looping folder back at
 the top level, so a loop already in the database becomes reachable again. Loops that predate the
-fix are seeded straight into the scratch instance's SQLite file.
+fix are seeded straight into the scratch instance's database.
 
 Twin of unit/security/test_folder_move_cycle.py.
 
@@ -16,10 +16,9 @@ listing the seeded loops are listed unchanged; the other tests pass on both.
 
 from __future__ import annotations
 
-import contextlib
-import sqlite3
-
 import pytest
+
+from harness.backends import write_rows
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -59,12 +58,8 @@ def _unreachable(parents: dict[str, str | None]) -> set[str]:
 
 def _write_parents(instance, parent_by_folder_id: dict[str, str | None]) -> None:
     """Write parent ids straight into the database, the state data from before the fix is in."""
-    database = instance.data_dir / "webui.db"
-    with contextlib.closing(sqlite3.connect(database, timeout=30)) as connection, connection:
-        connection.executemany(
-            "UPDATE folder SET parent_id = ? WHERE id = ?",
-            [(parent_id, folder_id) for folder_id, parent_id in parent_by_folder_id.items()],
-        )
+    rows = [{"parent": parent, "folder": folder} for folder, parent in parent_by_folder_id.items()]
+    write_rows(instance, "UPDATE folder SET parent_id = :parent WHERE id = :folder", rows)
 
 
 @pytest.fixture

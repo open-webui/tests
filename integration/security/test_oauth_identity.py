@@ -138,7 +138,9 @@ def test_a_back_channel_logout_reaches_an_account_with_a_numeric_sub(sso, idp):
     assert logout.status_code == 200, logout.text
     with sso.client(account.token) as client:
         disconnect = client.delete("/api/v1/auths/oauth/sessions/oidc")
-    assert disconnect.status_code == 404, "the logout missed the account's SSO session"
+    # with Redis a logout that found the account also revokes its token
+    expected = 401 if sso.redis_url else 404
+    assert disconnect.status_code == expected, "the logout missed the account's SSO session"
 
 
 def test_a_numeric_sub_signs_in_to_the_same_account_twice(sso, idp):

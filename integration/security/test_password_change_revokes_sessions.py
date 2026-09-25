@@ -8,7 +8,8 @@ validation already checks, for as long as a token can live. The marker lives in 
 Redis nothing can be revoked and the backend now logs a warning naming the user.
 
 The revocation tests run on an instance of their own backed by `StatefulRedis`; the no-Redis
-warning is read from the shared instance's log.
+warning is read from the shared instance's log, or from a Redis-less one of its own when the run
+puts the shared instance on Redis.
 
 Twin of unit/security/test_password_change_revokes_sessions.py.
 
@@ -213,8 +214,10 @@ def test_signing_out_one_session_leaves_the_others(redis_instance):
     )
 
 
-def test_without_redis_the_change_logs_that_nothing_was_revoked(instance, make_user):
-    account = make_user()
+def test_without_redis_the_change_logs_that_nothing_was_revoked(instance, instance_with):
+    if instance.redis_url:
+        instance = instance_with({"REDIS_URL": ""})
+    account = create_user(instance)
     other_device = sign_in(instance, account.email, account.password)
     log_offset = instance.log_size()
 

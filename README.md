@@ -70,13 +70,24 @@ A run against the latest `dev` is expected to show **red for any regression whos
 
 A failing browser test leaves a Playwright trace per browser in `test-results/` (`playwright show-trace <file>.zip`). Set `OPEN_WEBUI_LOG_DIR` to keep each scratch instance's server log.
 
+### Postgres and Redis
+
+The scratch instances run on SQLite with in-process state by default. Two switches move every instance the suite boots onto the backends a multi-worker deployment uses:
+
+```bash
+OWUI_TEST_DATABASE=postgres pytest integration e2e   # a database of its own per instance, on one embedded Postgres (pgserver)
+OWUI_TEST_REDIS=1 pytest integration e2e             # a redis-server of its own per instance, for sockets, config sync and tasks
+```
+
+They combine. The Redis switch needs `redis-server` on `PATH` and skips without it. An instance a test gives its own database or Redis (a prepared data directory, a Redis stand-in) keeps it. A test that only holds on one backend skips in the other mode and names why.
+
 `scripts/e2e_instance.py --clone ../open-webui` starts a standalone instance with the two seeded accounts, for poking at by hand.
 
 `integration/migrations/test_upgrade_from_release.py` boots the checkout on data sets made by older releases (`integration/migrations/upgrade_data/`). To regenerate them, or add a release, run `python scripts/seed_upgrade_data.py --clone ../open-webui v0.9.6 v0.10.2 v0.11.4` (with `pgserver` installed for the Postgres sets) and commit the new files.
 
 ### CI
 
-`.github/workflows/regression.yml` is called by Open WebUI's release pull requests with the ref under test. It runs the unit, integration, browser and vitest suites in parallel jobs; each writes a summary of failures to the job page and uploads its report, server logs and traces. The browser job reports without gating a release for now.
+`.github/workflows/regression.yml` is called by Open WebUI's release pull requests with the ref under test. It runs the unit, integration, browser and vitest suites in parallel jobs; each writes a summary of failures to the job page and uploads its report, server logs and traces. A further job runs the integration suite with both switches on. It and the browser job report without gating a release for now.
 
 ---
 

@@ -332,7 +332,8 @@ def test_automation_search_finds_a_non_ascii_prompt(any_codec_admin):
         any_codec_admin.delete(f"/api/v1/automations/{automation_id}/delete")
 
     assert automation_id in [item["id"] for item in found["items"]], (
-        "searching an automation's non-ASCII prompt missed the row this codec wrote (#28399)"
+        "searching an automation's non-ASCII prompt missed the row this codec wrote"
+        " (#28399, on Postgres #31422)"
     )
 
 
@@ -365,7 +366,9 @@ def test_model_tag_search_finds_a_non_ascii_tag(any_codec_admin):
     finally:
         any_codec_admin.post("/api/v1/models/model/delete", json={"id": model_id})
 
-    assert model_id in found, "a non-ASCII model tag missed the row this codec wrote (#28399)"
+    assert model_id in found, (
+        "a non-ASCII model tag missed the row this codec wrote (#28399, on Postgres #31422)"
+    )
 
 
 # ---------------------------------------------------------------- nearby

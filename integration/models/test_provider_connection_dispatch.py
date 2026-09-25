@@ -8,7 +8,7 @@
   base-model access walk; what still shows is the pipe's own settings reaching the continuation.
 * A function or tool row without an owner failed the read model's `user_id: str`, so every
   listing that validated it (the model list, the function and tool lists, startup) answered 500
-  (`48f78ca58`, #26850). The test clears the owner in the scratch database, as a legacy row has it.
+  (`48f78ca58`, #26850). The test clears the owner in the database, as a legacy row has it.
 * A connection's `prefix_id` was removed anywhere in the model name, not only in front
   (`ed663f16e`), and Ollama refused a model pulled after its model list was cached (#27353).
 * Saving a connection left the previous model list live until a restart; both config updates
@@ -29,14 +29,14 @@ disabled request is not refused.
 
 from __future__ import annotations
 
-import sqlite3
 import uuid
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from typing import Iterator
 
 import httpx
 import pytest
 
+from harness.backends import write_rows
 from harness.chat import ask
 from harness.listener import json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
@@ -118,11 +118,10 @@ def _add_openai_connection(client: httpx.Client, base_url: str, **config) -> Non
 @contextmanager
 def _ownerless(instance, table: str, row_id: str, owner_id: str) -> Iterator[None]:
     """The row's owner cleared, the way a legacy or orphaned row is stored; restored after."""
-    database_path = instance.data_dir / "webui.db"
 
     def set_owner(owner: str | None) -> None:
-        with closing(sqlite3.connect(database_path, timeout=10)) as database, database:
-            database.execute(f"UPDATE {table} SET user_id = ? WHERE id = ?", (owner, row_id))
+        statement = f"UPDATE {table} SET user_id = :owner WHERE id = :row_id"
+        write_rows(instance, statement, [{"owner": owner, "row_id": row_id}])
 
     set_owner(None)
     try:
