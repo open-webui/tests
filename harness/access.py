@@ -5,7 +5,8 @@ the accounts, sharing with the reader and writer directly or through a group of 
 `statuses(...)` sends one route as each of them, each on a fresh resource shared the same way,
 so a route that deletes or toggles never changes what the next account meets. `attempts(...)`
 does the same and reads the owner's view of the resource around each request, so a refused
-write can be shown to have changed nothing.
+write can be shown to have changed nothing; `reads(...)` builds that view from the owner's GET
+routes, compared byte for byte.
 """
 
 from __future__ import annotations
@@ -25,11 +26,15 @@ ROLES = ("owner", "stranger", "reader", "writer", "admin")
 class Shareable:
     """A kind of resource: where it is created and where its access grants are replaced."""
 
-    create_path: str
-    create_body: Callable[[], dict]
-    access_path: str  # with `{id}`
+    create_path: str = ""
+    create_body: Callable[[], dict] = dict
+    access_path: str = ""  # with `{id}`
     # added to the access body, for kinds that also name the resource there
     access_fields: Callable[[str], dict] = field(default=lambda resource_id: {})
+    # workspace permissions the owner needs to create one, e.g. {"workspace": {"tools": True}}
+    owner_permissions: dict | None = None
+    # for kinds shared through another resource: creates, shares with the grants, returns the id
+    create_shared: Callable[[httpx.Client, list[dict]], str] | None = None
 
 
 @dataclass
@@ -54,13 +59,13 @@ def grant(principal_type: str, principal_id: str, permission: str) -> dict:
     }
 
 
-def make_group(admin: Actor, members: list[Actor]) -> str:
+def make_group(admin: Actor, members: list[Actor], permissions: dict | None = None) -> str:
     """A group holding `members`, added the way the admin panel adds one."""
+    form = {"name": f"group {uuid.uuid4().hex[:8]}", "description": "access matrix"}
+    if permissions:
+        form["permissions"] = permissions
     with admin.client() as client:
-        created = client.post(
-            "/api/v1/groups/create",
-            json={"name": f"group {uuid.uuid4().hex[:8]}", "description": "access matrix"},
-        )
+        created = client.post("/api/v1/groups/create", json=form)
         assert created.status_code == 200, created.text
         group_id = created.json()["id"]
         added = client.post(
@@ -77,6 +82,8 @@ def cast(kind: Shareable, admin: Actor, make_user: Callable[..., Actor], via: st
     `via="group"` grants to a one-member group per account instead of to the account.
     """
     owner, stranger, reader, writer = make_user(), make_user(), make_user(), make_user()
+    if kind.owner_permissions:
+        make_group(admin, [owner], kind.owner_permissions)
     if via == "group":
         reader_principal = ("group", make_group(admin, [reader]))
         writer_principal = ("group", make_group(admin, [writer]))
@@ -94,6 +101,8 @@ def create_shared(cast: Cast) -> str:
     """A new resource of the owner's, shared with the cast's reader and writer."""
     kind = cast.kind
     with cast.owner.client() as client:
+        if kind.create_shared:
+            return kind.create_shared(client, cast.grants)
         created = client.post(kind.create_path, json=kind.create_body())
         assert created.status_code == 200, created.text
         resource_id = created.json()["id"]
@@ -152,3 +161,13 @@ def attempts(
             after = look(owner_client, fields) if look else None
         answered[role] = Attempt(response.status_code, before, after)
     return answered
+
+
+def reads(*paths: str) -> Callable[[httpx.Client, dict], list[tuple[int, bytes]]]:
+    """A `look` that fetches `paths`, formatted with the fields, and keeps each answer whole."""
+
+    def look(client: httpx.Client, fields: dict) -> list[tuple[int, bytes]]:
+        responses = [client.get(path.format(**fields)) for path in paths]
+        return [(response.status_code, response.content) for response in responses]
+
+    return look

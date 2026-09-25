@@ -14,13 +14,15 @@ Discriminates: in a backend copy, removing `user=Depends(get_admin_user)` from
 and `test_a_signed_out_client_is_refused_every_signed_in_route` (HTTP 200) red; swapping it for
 a module-local dependency that checks nothing turns the same two red (no role the sweep knows);
 letting `get_admin_user` pass a user and `get_verified_user` pass a pending account turns the
-user and pending sweeps red.
+user and pending sweeps red; switching `/api/v1/models/base` to `get_verified_user` leaves the
+user sweep green and turns `test_no_pinned_admin_route_was_opened_to_users` red.
 """
 
 from __future__ import annotations
 
 import ast
 import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -77,6 +79,8 @@ CHECKED_IN_HANDLER = {
 UNMOUNTED_ROUTERS = {
     "scim": "ENABLE_SCIM is off on the shared instance",
 }
+
+PINNED_ADMIN_ROUTES = Path(__file__).with_name("admin_routes.txt")
 
 
 def _dependency_name(default: ast.expr) -> str | None:
@@ -174,10 +178,14 @@ def _router_prefixes(main_tree: ast.Module) -> dict[str, str]:
 
 @pytest.fixture(scope="module")
 def source_routes() -> dict[tuple[str, str], tuple[str, str | None]]:
-    """`{(METHOD, path): (router module, role)}` for every route the source declares."""
     backend = resolve_backend()
     if backend is None:
         pytest.skip("open-webui backend source not found (set OPEN_WEBUI_SOURCE_DIR)")
+    return classify_source_routes(backend)
+
+
+def classify_source_routes(backend: Path) -> dict[tuple[str, str], tuple[str, str | None]]:
+    """`{(METHOD, path): (router module, role)}` for every route the source declares."""
     package = backend / "open_webui"
     main_tree = ast.parse((package / "main.py").read_text(encoding="utf-8"))
     modules = {"main": ("", main_tree)}
@@ -307,3 +315,22 @@ def test_the_sweep_covers_the_route_table(source_routes, live_routes):
     served_roles = [source_routes[route][1] for route in live_routes if route in source_routes]
     assert served_roles.count("admin") > 100, served_roles.count("admin")
     assert served_roles.count("verified") > 200, served_roles.count("verified")
+
+
+def test_no_pinned_admin_route_was_opened_to_users(source_routes):
+    """The sweeps follow each route's current dependency, so a downgraded route just moves.
+
+    `admin_routes.txt` lists what dev ac00d40e3 reads as admin-only, one `METHOD path` a line.
+    A listed route still declared must still want an admin; one that is gone, or an admin route
+    not yet listed, passes. Append a new admin route to the file to pin it too.
+    """
+    pinned = [tuple(line.split(" ", 1)) for line in PINNED_ADMIN_ROUTES.read_text().splitlines()]
+    assert len(pinned) > 100, f"retarget this check: only {len(pinned)} pinned routes read"
+
+    downgraded = [
+        f"{method} {path} now wants {source_routes[(method, path)][1]}"
+        for method, path in pinned
+        if (method, path) in source_routes and source_routes[(method, path)][1] != "admin"
+    ]
+
+    assert not downgraded, f"admin-only routes that no longer require an admin: {downgraded}"
