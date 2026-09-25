@@ -24,7 +24,7 @@ tests/
 ├── unit/<area>/           # source-level tests that nothing further out can see
 ├── frontend/              # vitest over src/lib
 ├── utils/                 # browser helpers (chat_ui.py: send, read replies)
-├── scripts/               # e2e_instance.py (a manual instance), junit_summary.py (CI)
+├── scripts/               # e2e_instance.py (a manual instance), junit_summary.py (CI), seed_upgrade_data.py
 └── docs/                  # the test contract
 ```
 
@@ -71,6 +71,8 @@ A run against the latest `dev` is expected to show **red for any regression whos
 A failing browser test leaves a Playwright trace per browser in `test-results/` (`playwright show-trace <file>.zip`). Set `OPEN_WEBUI_LOG_DIR` to keep each scratch instance's server log.
 
 `scripts/e2e_instance.py --clone ../open-webui` starts a standalone instance with the two seeded accounts, for poking at by hand.
+
+`integration/migrations/test_upgrade_from_release.py` boots the checkout on data sets made by older releases (`integration/migrations/upgrade_data/`). To regenerate them, or add a release, run `python scripts/seed_upgrade_data.py --clone ../open-webui v0.9.6 v0.10.2 v0.11.4` (with `pgserver` installed for the Postgres sets) and commit the new files.
 
 ### CI
 

@@ -1,0 +1,261 @@
+{
+  "release": "v0.10.2",
+  "engine": "postgres",
+  "data_dir": "/tmp/seed-v0.10.2-0y5ejz5i/data",
+  "accounts": {
+    "admin": {
+      "name": "Ada Admin",
+      "email": "admin@example.com",
+      "password": "admin-pass-1",
+      "id": "67ef985a-48e7-487c-923d-071d8b9e49dd",
+      "role": "admin"
+    },
+    "alice": {
+      "name": "Alice Author",
+      "email": "alice@example.com",
+      "password": "alice-pass-1",
+      "id": "dc17da4f-5ae0-43e8-8060-0a6440f5d13b",
+      "role": "user"
+    },
+    "bob": {
+      "name": "Bob Reader",
+      "email": "bob@example.com",
+      "password": "bob-pass-1",
+      "id": "d804873d-7b72-4e93-9a40-0bda37bb1ad1",
+      "role": "user"
+    },
+    "carol": {
+      "name": "Carol Outsider",
+      "email": "carol@example.com",
+      "password": "carol-pass-1",
+      "id": "fb49ad82-624e-4285-81ce-4ee4c54114a6",
+      "role": "user"
+    }
+  },
+  "group": {
+    "id": "4993b04a-51fe-4fb9-a229-27dcdaf577de",
+    "name": "Research",
+    "members": [
+      "alice",
+      "bob"
+    ]
+  },
+  "settings": {
+    "admin": {
+      "DEFAULT_USER_ROLE": "user",
+      "ENABLE_COMMUNITY_SHARING": false,
+      "ENABLE_CHANNELS": true,
+      "WEBUI_URL": "https://chat.example.com"
+    },
+    "permissions": {
+      "chat.delete": false,
+      "workspace.prompts": true
+    },
+    "banner": {
+      "id": "upgrade-banner",
+      "type": "info",
+      "title": "Maintenance",
+      "content": "Maintenance on Sunday",
+      "dismissible": true,
+      "timestamp": 1700000000
+    },
+    "alice_ui": {
+      "theme": "dark",
+      "chatBubble": false,
+      "notesSeen": 3
+    }
+  },
+  "prompts": {
+    "summarize": {
+      "owner": "admin",
+      "name": "Summarize",
+      "content": "Summarize the following text in three bullet points.",
+      "readers": [
+        "alice",
+        "bob"
+      ]
+    },
+    "alice-draft": {
+      "owner": "alice",
+      "name": "Alice's draft",
+      "content": "Draft a polite reply to this email.",
+      "readers": []
+    }
+  },
+  "tool": {
+    "id": "weather_tool",
+    "name": "Weather",
+    "readers": [
+      "alice",
+      "bob"
+    ]
+  },
+  "function": {
+    "id": "shout_filter",
+    "name": "Shout filter",
+    "valves": {
+      "suffix": "!!!"
+    }
+  },
+  "model": {
+    "id": "research-assistant",
+    "name": "Research assistant",
+    "system": "You answer from the handbook.",
+    "readers": [
+      "bob"
+    ]
+  },
+  "knowledge": {
+    "id": "4b6900cb-2b10-48b1-af2f-efe9c71fcb37",
+    "name": "Handbook",
+    "file_id": "2cf32e92-32fa-4892-ba15-3fd26e843c00",
+    "filename": "handbook.txt",
+    "text": "The upgrade handbook says the lighthouse key hangs behind the blue door.",
+    "readers": [
+      "alice",
+      "bob"
+    ]
+  },
+  "folders": {
+    "parent": {
+      "id": "57782922-f63f-4036-9ab7-6da6484c93d4",
+      "name": "Trips"
+    },
+    "child": {
+      "id": "53de6777-f1fa-48d9-b3ec-ec388fe26fb5",
+      "name": "Vienna"
+    }
+  },
+  "chats": {
+    "branched": {
+      "id": "02bee87f-3861-4ea1-8681-6c9e8797cf9d",
+      "title": "Packing for Vienna",
+      "current_id": "a2-0000-4000-8000-000000000000",
+      "messages": {
+        "u1-0000-4000-8000-000000000000": {
+          "parent": null,
+          "children": [
+            "a1-0000-4000-8000-000000000000",
+            "a1b-0000-4000-8000-000000000000"
+          ],
+          "role": "user",
+          "content": "What should I pack for Vienna?"
+        },
+        "a1-0000-4000-8000-000000000000": {
+          "parent": "u1-0000-4000-8000-000000000000",
+          "children": [],
+          "role": "assistant",
+          "content": "Pack an umbrella."
+        },
+        "a1b-0000-4000-8000-000000000000": {
+          "parent": "u1-0000-4000-8000-000000000000",
+          "children": [
+            "u2-0000-4000-8000-000000000000"
+          ],
+          "role": "assistant",
+          "content": "<details type=\"tool_calls\" done=\"true\" id=\"call_1\" name=\"get_weather\" arguments=\"{&quot;city&quot;: &quot;Vienna&quot;}\" result=\"&quot;Sunny in Vienna&quot;\">\n<summary>Tool Executed</summary>\n</details>\nIt is sunny, so pack sunglasses."
+        },
+        "u2-0000-4000-8000-000000000000": {
+          "parent": "a1b-0000-4000-8000-000000000000",
+          "children": [
+            "a2-0000-4000-8000-000000000000"
+          ],
+          "role": "user",
+          "content": "And for the evening?"
+        },
+        "a2-0000-4000-8000-000000000000": {
+          "parent": "u2-0000-4000-8000-000000000000",
+          "children": [],
+          "role": "assistant",
+          "content": "A light jacket."
+        }
+      },
+      "folder_id": "53de6777-f1fa-48d9-b3ec-ec388fe26fb5",
+      "share_id": "3de160e0-b056-4906-922a-8b021216a337"
+    },
+    "live": {
+      "id": "ea3d322a-c375-4340-beb1-c6221d80f9b2",
+      "title": "Schnitzel questions",
+      "current_id": "bd828522-4ccc-47a4-8203-20544a66a0c2",
+      "reply_id": "777490fd-ed01-438c-bed1-77995462be75",
+      "messages": {
+        "22bf9f82-6fd3-424d-8ddc-0c54d3cb64dc": {
+          "parent": null,
+          "children": [
+            "777490fd-ed01-438c-bed1-77995462be75"
+          ],
+          "role": "user",
+          "content": "What is a Schnitzel?"
+        },
+        "777490fd-ed01-438c-bed1-77995462be75": {
+          "parent": "22bf9f82-6fd3-424d-8ddc-0c54d3cb64dc",
+          "children": [
+            "6d3443b7-e11b-48ec-aea6-43224248c9ea"
+          ],
+          "role": "assistant",
+          "content": ""
+        },
+        "6d3443b7-e11b-48ec-aea6-43224248c9ea": {
+          "parent": "777490fd-ed01-438c-bed1-77995462be75",
+          "children": [
+            "bd828522-4ccc-47a4-8203-20544a66a0c2"
+          ],
+          "role": "user",
+          "content": "How do I eat it?"
+        },
+        "bd828522-4ccc-47a4-8203-20544a66a0c2": {
+          "parent": "6d3443b7-e11b-48ec-aea6-43224248c9ea",
+          "children": [],
+          "role": "assistant",
+          "content": ""
+        }
+      }
+    },
+    "archived": {
+      "id": "9359297a-076c-45ae-9320-b3e7f9efd33c",
+      "title": "Old plans"
+    }
+  },
+  "chat_file": {
+    "id": "b83de30c-541b-4605-8a26-1e9e9979bc44",
+    "filename": "packing.txt",
+    "text": "Packing list: umbrella, passport, a very old map of Vienna."
+  },
+  "feedback": {
+    "id": "a98a61d5-481e-4fc4-81e6-19f14191ec07",
+    "reason": "Accurate",
+    "rating": 1
+  },
+  "note": {
+    "id": "7533a74f-53f1-43a3-9e64-fb2322920175",
+    "title": "Groceries",
+    "md": "# Groceries\n\n- apples\n- *dark* chocolate",
+    "writers": [
+      "bob"
+    ]
+  },
+  "memories": {
+    "owner": "alice",
+    "contents": [
+      "Alice is allergic to peanuts.",
+      "Alice prefers window seats."
+    ]
+  },
+  "channel": {
+    "id": "7e033a7d-2785-48db-85e5-8b32797ae87b",
+    "name": "lighthouse",
+    "readers": [
+      "alice",
+      "bob"
+    ],
+    "message": {
+      "id": "2f4c4c2d-3770-42d4-aeb5-ef54f10fda66",
+      "content": "Who has the lighthouse key?"
+    },
+    "reply": {
+      "id": "f0d267ef-f35f-4dca-b121-ec9d89a9c28b",
+      "content": "Behind the blue door."
+    },
+    "reaction": "thumbsup"
+  }
+}
