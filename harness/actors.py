@@ -52,7 +52,7 @@ def create_user(
     password: str = "userpassword123",
 ) -> Actor:
     """A new account added by the admin, the way the admin panel adds one."""
-    suffix = uuid.uuid4().hex[:8]
+    suffix = uuid.uuid4().hex[:16]
     name = name or f"User {suffix}"
     email = email or f"user-{suffix}@example.com"
     with instance.client() as client:
