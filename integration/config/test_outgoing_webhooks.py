@@ -27,12 +27,12 @@ called).
 
 from __future__ import annotations
 
-import sqlite3
 import time
 
 import pytest
 
 from harness.actors import admin_of, create_user
+from harness.backends import write_rows
 from harness.inflight import start_slow_reply
 from harness.listener import json_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
@@ -221,12 +221,9 @@ def _add_targets(account, *targets: dict) -> None:
 
 
 def _mark_idle(instance, account) -> None:
-    connection = sqlite3.connect(instance.data_dir / "webui.db")
-    try:
-        with connection:
-            connection.execute("UPDATE user SET last_active_at = 0 WHERE id = ?", (account.id,))
-    finally:
-        connection.close()
+    write_rows(
+        instance, 'UPDATE "user" SET last_active_at = 0 WHERE id = :id', [{"id": account.id}]
+    )
 
 
 @pytest.fixture

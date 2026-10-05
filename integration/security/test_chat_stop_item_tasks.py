@@ -123,8 +123,10 @@ def test_a_stranger_cannot_stop_someone_elses_chat(make_user, upstream):
 
 
 def test_a_reply_finishing_during_the_stop_does_not_end_it_early(
-    admin, make_user, upstream, listener
+    instance, admin, make_user, upstream, listener
 ):
+    if instance.redis_url:
+        pytest.skip("with Redis the stop sends every cancel without waiting on any, so no window")
     first_may_stop, second_may_finish = threading.Event(), threading.Event()
     listener.route("GET", "/ready", (200, {"Content-Type": "text/plain"}, b"ok"))
     listener.route("GET", "/stopping", _held_until(first_may_stop))
