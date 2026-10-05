@@ -33,8 +33,10 @@ PR open-webui/open-webui#31617 open).
 Also red on dev b859124f9, in some of its four cases per run: the direct connection answered by
 the browser. Since 24e30d1cb the socket router checks the tab's session token again for every
 event the tab sends, so the reply's pieces can overtake each other while those checks run and the
-stored reply comes back scrambled or empty; it passes on dev 015dbc861 and on b859124f9 with that
-check taken back out of the router.
+stored reply comes back scrambled or empty. The same change leaves the events of a tab opened
+after a Redis restart unanswered on an instance with the switch off, which turns the last Redis
+loss case red on a Postgres and Redis run. Both pass on dev 015dbc861 and on b859124f9 with that check taken back out
+of the router.
 
 Discriminates: passes on dev 176d31d1d apart from that finding (red with the switch on only). In a
 backend copy: the room listener dropping room channel messages turns every switched-on case that
