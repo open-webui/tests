@@ -30,13 +30,13 @@ with the switch on, since Redis refuses the pattern subscription `socketio#*` an
 a room channel (NOPERM) and the listener retries every second; with the switch off it works (fix
 PR open-webui/open-webui#31617 open).
 
-Also red on dev b859124f9, in some of its four cases per run: the direct connection answered by
-the browser. Since 24e30d1cb the socket router checks the tab's session token again for every
-event the tab sends, so the reply's pieces can overtake each other while those checks run and the
-stored reply comes back scrambled or empty. The same change leaves the events of a tab opened
-after a Redis restart unanswered on an instance with the switch off, which turns the last Redis
-loss case red on a Postgres and Redis run. Both pass on dev 015dbc861 and on b859124f9 with that check taken back out
-of the router.
+Also red on dev b859124f9, in some of its four cases per run: the direct connection answered by the
+browser (open-webui/open-webui#31953). Since 24e30d1cb the socket router checks the tab's session
+token again for every event the tab sends, so the reply's pieces can overtake each other while those
+checks run and the stored reply comes back scrambled or empty. The same change leaves the events of
+a tab opened after a Redis restart unanswered on an instance with the switch off, which turns the
+last Redis loss case red on a Postgres and Redis run. Both pass on dev 015dbc861 and on b859124f9
+with that check taken back out of the router.
 
 Discriminates: passes on dev 176d31d1d apart from that finding (red with the switch on only). In a
 backend copy: the room listener dropping room channel messages turns every switched-on case that
@@ -423,7 +423,7 @@ def test_a_direct_connection_is_answered_by_the_users_tab(fleet, mode, tab_on):
         message = wait_for_reply(client, turn)
 
     assert len(tab.requests) == 1, "the tab was not asked to run the completion"
-    assert message["content"] == "from my browser", message
+    assert message["content"] == "from my browser", f"reply scrambled (#31953): {message}"
 
 
 def _stored_chat(owner: Actor) -> tuple[str, str]:

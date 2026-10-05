@@ -5,11 +5,11 @@ the completion (the request, the model and a channel), then reads the stream the
 on that channel and stores the reply like any other: text, usage, tool calls it runs itself
 before asking the tab again with the result. The tab here plays the web client's part.
 
-The streamed reply test is red on dev b859124f9 on Postgres and Redis, and now and then on
-SQLite: since 24e30d1cb the socket router checks the tab's session token again for every event
-the tab sends, so the reply's pieces can overtake each other while those checks run and the stored
-reply comes back scrambled or empty. It passes on dev 015dbc861 and on b859124f9 with that check
-taken back out of the router.
+The streamed reply and tool call tests are red on dev b859124f9 on Postgres and Redis, and now and
+then on SQLite (open-webui/open-webui#31953): since 24e30d1cb the socket router checks the tab's
+session token again for every event the tab sends, so the reply's pieces can overtake each other
+while those checks run and the stored reply comes back scrambled or empty. It passes on dev
+015dbc861 and on b859124f9 with that check taken back out of the router.
 
 Discriminates: in a backend copy, dropping the dict frames the tab forwards fails the streamed
 reply test, ignoring the tab's refusal (treating any acknowledgement as a go) fails the refusal
@@ -51,7 +51,7 @@ def test_a_streamed_reply_from_the_tab_is_stored(make_user, upstream):
         )
         message = wait_for_reply(client, _send(client, tab.session_id, "hello"))
 
-    assert message["content"] == "hi there"
+    assert message["content"] == "hi there", "the streamed reply came back scrambled (#31953)"
     assert (message["usage"]["input_tokens"], message["usage"]["output_tokens"]) == (3, 2)
     [request] = tab.requests
     assert request["session_id"] == tab.session_id
@@ -72,7 +72,7 @@ def test_a_tool_call_runs_on_the_server_and_goes_back_to_the_tab(make_user, upst
         tab.stream(chunk_line({"content": "It is late."}), chunk_line({}, "stop"))
         message = wait_for_reply(client, _send(client, tab.session_id, "what time is it?"))
 
-    assert message["content"] == "It is late."
+    assert message["content"] == "It is late.", "the streamed reply came back scrambled (#31953)"
     first, follow_up = tab.requests
     assert first["channel"] != follow_up["channel"]
     assistant, tool = follow_up["form_data"]["messages"][-2:]

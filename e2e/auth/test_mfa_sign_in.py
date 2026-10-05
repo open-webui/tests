@@ -12,10 +12,11 @@ generating new ones shows them once and signs the browser out.
 Discriminates: in a backend copy, making `is_mfa_required` always answer False turns every test
 here red (the password alone opens the chat, SSO included).
 
-The two tests of new codes from Settings > Account fail on dev b859124f9: the change signs the
-account out, the browser's socket reconnects with the ended session and the app sends it to the
-sign-in page within a second, so the codes, shown nowhere else, are gone before anyone can save
-them (after generating, the old codes no longer work either).
+The two tests of new codes from Settings > Account fail on dev b859124f9
+(open-webui/open-webui#31954): the change signs the account out, the browser's socket reconnects
+with the ended session and the app sends it to the sign-in page within a second, so the codes, shown
+nowhere else, are gone before anyone can save them (after generating, the old codes no longer work
+either).
 """
 
 from __future__ import annotations
@@ -202,7 +203,7 @@ def expect_codes_kept_on_screen(page: Page) -> None:
     page.wait_for_timeout(3_000)
     assert "/auth" not in page.url, (
         "the new recovery codes were taken off the screen before they could be saved: the "
-        "browser was sent to the sign-in page as soon as the change signed the account out"
+        "browser was sent to the sign-in page as soon as the change signed the account out (#31954)"
     )
     expect(page.get_by_role("listitem")).to_have_count(10)
     page.get_by_label("I have saved my recovery codes").check()

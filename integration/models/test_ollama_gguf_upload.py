@@ -12,9 +12,9 @@ the end of its stream (or asked for `stream: false`). The file URL is served by
 `harness/model_hub.py` on an instance of its own, as the route only downloads from Hugging Face or
 GitHub. Twin of e2e/models/test_ollama_gguf_upload.py.
 
-One test is red on purpose and names a bug with no fix yet: the URL Mode download hashes and pushes
-the file while its last write is still in the file buffer, so a file whose last chunk arrives on its
-own and is under 8 KiB reaches Ollama without that chunk.
+One test is red on purpose and names a bug with no fix yet (open-webui/open-webui#31956): the URL
+Mode download hashes and pushes the file while its last write is still in the file buffer, so a file
+whose last chunk arrives on its own and is under 8 KiB reaches Ollama without that chunk.
 
 Discriminates: passes on dev b859124f9; with 1b2ceedd6 reverted in a backend copy, the File Mode
 upload leaves no model on the server and the URL Mode download never calls `/api/create`.
@@ -130,5 +130,5 @@ def test_a_model_file_whose_last_chunk_is_short_reaches_ollama_whole(ollama, hub
     pushed = b"".join(server.blobs.values())
     assert pushed == LARGE_BODY + SHORT_TAIL, (
         f"the blob lost the file's last {len(LARGE_BODY + SHORT_TAIL) - len(pushed)} bytes: the "
-        "download is hashed and pushed before its last write leaves the file buffer"
+        "download is hashed and pushed before its last write leaves the file buffer (#31956)"
     )

@@ -5,9 +5,9 @@ Preview heading: the page confirms "Copied to clipboard" and the clipboard holds
 The copy is expected to be the JSON the preview shows, edited name included.
 
 Discriminates: in a frontend build without the Copy button the copy tests go red (no button).
-The two tests that compare the copy with the preview are red on the current build on purpose:
-Copy puts the editor's unedited starting state on the clipboard (capabilities empty, an edited
-name missing) while the preview shows the current form.
+The two tests that compare the copy with the preview are red on the current build on purpose
+(open-webui/open-webui#31955): Copy puts the editor's unedited starting state on the clipboard
+(capabilities empty, an edited name missing) while the preview shows the current form.
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ def test_the_copy_is_the_json_the_preview_shows(page_for, builder, own_model):
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
     assert json.loads(copied(page)) == json.loads(preview.input_value()), (
-        "Copy put different JSON on the clipboard than the JSON Preview beside it shows"
+        "Copy put different JSON on the clipboard than the JSON Preview beside it shows (#31955)"
     )
 
 
@@ -98,5 +98,5 @@ def test_the_copy_matches_the_preview_after_the_name_is_edited(page_for, builder
     on_clipboard = json.loads(copied(page))
     assert on_clipboard["name"] == renamed, (
         f"Copy put the unedited name {on_clipboard['name']!r} on the clipboard while the "
-        f"JSON Preview shows {renamed!r}"
+        f"JSON Preview shows {renamed!r} (#31955)"
     )
