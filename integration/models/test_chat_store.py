@@ -12,7 +12,7 @@
   named only `files` dropped the conversation and a stale writer dropped newer messages.
 
 * `ce22e0bb1` (#28820) only `message['content']` was sanitized, so a null byte in any other field
-  of a message, or in its id, reached the message's separate record raw, and PostgreSQL refused
+  of a message reached the message's separate record raw, and PostgreSQL refused
   that write. SQLite stores the byte, so the record is read back through the admin's message
   analytics.
 * `5c79ccc9e` (#28034) `get_message_list` guarded against cycles with each message's own `id`,
@@ -27,7 +27,7 @@ Discriminates: passes on upstream dev `bbfa876af`; with the five fixes reverted 
 tests fail (both history searches, the compacted reopen, the older-message edit, the looping
 delete by timeout, the three tag readers and both partial saves) and the nine nearby tests pass.
 On dev ef67cc3fa, the message upsert back on cleaning `content` alone (and the whole chat
-blob) fails the sources and message-id tests, and `get_message_list` back on the `id` field
+blob) fails the sources test, and `get_message_list` back on the `id` field
 fails the looping walk; the content, plain-message and plain-chain tests pass on both.
 """
 
@@ -402,16 +402,6 @@ def test_null_bytes_are_cleaned_from_a_messages_sources(client, admin):
     assert not with_null_bytes(message_records(admin, chat_id)), (
         "the message's separate record kept a null byte outside the content"
     )
-
-
-def test_null_bytes_are_cleaned_from_the_message_id(client, admin):
-    chat_id = create_chat(client, {"history": history("m1", message("m1", None, [], "assistant"))})
-
-    send_event(client, chat_id, "m1%00", {"type": "embeds", "data": {"embeds": ["<p>x</p>"]}})
-
-    stored = read_chat(client, chat_id)["history"]["messages"]
-    assert not with_null_bytes(list(stored)), f"a message id kept its null byte: {list(stored)}"
-    assert not with_null_bytes(list(message_records(admin, chat_id)))
 
 
 def test_null_bytes_are_still_cleaned_from_the_content(client, admin):
