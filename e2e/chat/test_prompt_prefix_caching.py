@@ -11,14 +11,16 @@ input across a reload. Another has a real Open Terminal picked for the chat from
 with a file written, a command run and the file read back across a reload. Every consecutive
 pair of the provider's requests is checked.
 
-One terminal test stays red, on what the page does not name as a breaker: a reload with the
-terminal's shell open closes it, which drops the two user shell tools and rewrites the tool list at
-the very start of the prefix (open-webui/open-webui#31590, fix PR #31602 open).
+Two terminal tests stay red, on what the page does not name as a breaker, each rewriting the tool
+list at the very start of the prefix: opening a folder in the terminal's file browser moves the
+working directory written into the run_command tool's description
+(open-webui/open-webui#31589), and a reload with the terminal's shell open closes it, which drops
+the two user shell tools (open-webui/open-webui#31590, fix PR #31602 open).
 
-Discriminates: passes on dev 176d31d1d apart from that one, which fails there. In backend
+Discriminates: passes on dev 176d31d1d apart from those two, which fail there. In backend
 copies, a clock value added to the model's system prompt and the tool list shuffled per request
-each turned every test red; with the shell tools offered whether or not the shell is open, the
-reload test passed.
+each turned every test red; with no working directory in the tool description and the shell
+tools offered whether or not the shell is open, the two terminal tests passed.
 """
 
 from __future__ import annotations
@@ -210,6 +212,22 @@ def test_a_chat_with_an_open_terminal_only_appends(terminal_chat, open_terminal,
     assert "You have access to a computer" in requests[0]["messages"][0]["content"]
     assert (open_terminal.home / "ferry.txt").read_text() == "06:40 from pier 7\n"
     assert_append_only(requests)
+
+
+@pytest.mark.regression
+def test_opening_a_folder_in_the_terminal_file_browser_keeps_the_prefix(terminal_chat, upstream):
+    page = terminal_chat
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    with page.expect_request(lambda sent: sent.method == "POST" and "/files/cwd" in sent.url):
+        page.get_by_role("region", name="File browser").get_by_text("tickets").first.click()
+    ask(page, upstream, "anything new?", reply.text("Nothing new."))
+
+    requests = [body for body in upstream.chat_requests() if body.get("stream")]
+    broken = first_break(requests)
+    assert broken is None, (
+        "#31589: opening a folder in the terminal's file browser rewrote the run_command tool "
+        f"definition, which carries the folder, at the start of the cached prefix: {broken}"
+    )
 
 
 def test_a_reload_with_the_terminal_shell_open_keeps_the_prefix(terminal_chat, upstream):
