@@ -90,9 +90,8 @@ def admin_token(admin: Actor) -> str:
 def _new_context(
     browser: Browser, config: AppConfig, base_url: str, **context_options
 ) -> BrowserContext:
-    context = browser.new_context(
-        viewport={"width": 1920, "height": 1080}, base_url=base_url, **context_options
-    )
+    options = {"viewport": {"width": 1920, "height": 1080}, **context_options}
+    context = browser.new_context(base_url=base_url, **options)
     context.set_default_timeout(config.default_timeout)
     context.set_default_navigation_timeout(config.navigation_timeout)
     context.tracing.start(screenshots=True, snapshots=True)
@@ -141,7 +140,8 @@ def page_for(
 ) -> Generator[Callable[[Actor], Page], None, None]:
     """`page_for(actor)` opens a signed-in page on the actor's instance, in a browser of its own.
 
-    Further keywords go to the browser context, such as `timezone_id` for a browser in another zone.
+    Further keywords go to the browser context, such as `timezone_id` for a browser in another zone
+    or `utils.phone.PHONE` for a phone's screen.
     """
     opened: list[BrowserContext] = []
 
