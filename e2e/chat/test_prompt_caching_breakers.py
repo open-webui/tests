@@ -2,20 +2,26 @@
 
 The page lists what breaks the provider's cached prefix and what does not. A person drives chats
 on the page's setup in the web client and applies exactly one breaker per test: a model with File
-Context on and a text file attached, the same file switched to Using Entire Document (with File
-Context off the page says that does nothing, and the chat stays append-only), Citations on with a
-knowledge file read by a tool, a memory added in Settings > Personalization while the memory
-system context is on, an AGENTS.md written
-into the Open Terminal's home between turns, a skill saved there between turns, a builtin tool
-category unticked on the model by an admin in the model editor, web search switched on from the
-Integrations menu, and an earlier question edited and sent again. The page also calls two changes
-harmless, and two tests keep them green: the first file attached in a chat adds the Files tools
-once and every request after that appends again, and an AGENTS.md or a skill that was in the
-terminal from the first turn changes nothing. Each red test checks where the page says the break
-falls, the system message or the tool list.
+Context on and a text file attached, the same file switched to Using Entire Document, Citations
+on with a knowledge file read by a tool, a memory added in Settings > Personalization while the
+memory system context is on, an AGENTS.md written into the Open Terminal's home between turns, a
+skill saved there between turns, a builtin tool category unticked on the model by an admin in the
+model editor, web search switched on from the Integrations menu, an earlier question edited and
+sent again, and a skill mentioned with `$` in a later turn, which is how a chat attaches one (its
+whole text joins the system message). The page also calls some changes harmless, and those tests
+stay green: a file or a whole knowledge base switched to Using Entire Document with File Context
+off, memories in the system context that do not change, the first file attached in a chat adding
+the Files tools once with every request after it appending again, and an AGENTS.md or a skill
+that was in the terminal from the first turn. Each control checks where the break falls.
 
-Discriminates: passes on dev 30f3f6a8f; every control turns red with its breaker and the positive
-twins stay green.
+Three more controls show breakers the page does not name, each rewriting the system message:
+a chat moved into a folder that has its own system prompt, a knowledge base attached to the chat
+after its first turn (its `<attached_knowledge>` list is in the system message, not in the
+message that carried it) and a skill shared with the person mid-chat (every readable skill is
+listed in the system message, whether or not it was attached).
+
+Discriminates: passes on dev 30f3f6a8f. In a backend copy with a clock value added to the
+model's system prompt the positive tests fail and every control still finds its break.
 """
 
 from __future__ import annotations
@@ -23,11 +29,13 @@ from __future__ import annotations
 import contextlib
 import re
 import shutil
+import uuid
 
 import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.knowledge_bases import knowledge_base
 from harness.prompt_caching import (
     ADMIN_CONFIG,
     assert_append_only,
@@ -35,11 +43,13 @@ from harness.prompt_caching import (
     first_break,
     turn_off_memory_system_context,
 )
+from harness.python_tools import EVERYONE_READS
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings
 from utils.cached_chat import (
     ask,
     attach,
+    attach_from_menu,
     calling,
     chat_requests,
     offered_tools,
@@ -171,6 +181,22 @@ def test_using_the_entire_document_with_file_context_off_does_nothing(
     assert_append_only(requests)
 
 
+def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
+    cached_setup, page_for, make_user, upstream
+):
+    page = page_for(make_user())
+    page.goto(f"/?models={cached_setup.id}")
+
+    attach_from_menu(page, "Attach Knowledge", "Harbour handbook")
+    use_entire_document(page, "Harbour handbook collection")
+    ask(page, upstream, "when does the ferry leave?", reply.text("At 06:40."))
+    ask(page, upstream, "and from which pier?", reply.text("Pier 7."))
+
+    requests = chat_requests(upstream)
+    assert "The ferry leaves pier 7" not in str(requests[0]["messages"])
+    assert_append_only(requests)
+
+
 # --- Citations ------------------------------------------------------------------------------
 
 
@@ -234,6 +260,30 @@ def test_a_memory_added_mid_chat_with_the_system_context_on_rewrites_the_prefix(
     broken = first_break(requests)
     assert broken is not None, "a memory added mid-chat left the prefix append-only"
     assert "messages[0] (system)" in broken, broken
+
+
+def test_unchanged_memories_with_the_system_context_on_only_append(
+    cached_setup, admin, page_for, make_user, upstream
+):
+    with admin.client() as client:
+        current = client.get(ADMIN_CONFIG).json()
+        saved = client.post(ADMIN_CONFIG, json={**current, "ENABLE_MEMORY_SYSTEM_CONTEXT": True})
+    assert saved.status_code == 200, saved.text
+    person = make_user()
+    with person.client() as client:
+        for memory in (FIRST_MEMORY, SECOND_MEMORY):
+            client.post("/api/v1/memories/add", json={"content": memory}).raise_for_status()
+    page = page_for(person)
+    page.goto(f"/?models={cached_setup.id}")
+
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    ask(page, upstream, "what is the weather?", reply.text("Clear."))
+    page.reload()
+    ask(page, upstream, "and the tides?", reply.text("High at noon."))
+
+    requests = chat_requests(upstream)
+    assert SECOND_MEMORY in requests[0]["messages"][0]["content"]
+    assert_append_only(requests)
 
 
 # --- The first file attached to a chat ------------------------------------------------------
@@ -379,6 +429,39 @@ def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
     assert broken is not None and "in tools" in broken, broken
 
 
+def test_a_skill_mentioned_mid_chat_rewrites_the_prefix(
+    cached_setup, admin, page_for, make_user, upstream
+):
+    skill_id = f"tide-tables-{uuid.uuid4().hex[:6]}"
+    with admin.client() as client:
+        created = client.post(
+            "/api/v1/skills/create",
+            json={
+                "id": skill_id,
+                "name": "Tide tables",
+                "description": "Reading tide tables",
+                "content": "Read the high tide column first.",
+                "meta": {},
+                "access_grants": [EVERYONE_READS],
+            },
+        )
+        assert created.status_code == 200, created.text
+        try:
+            page = page_for(make_user())
+            page.goto(f"/?models={cached_setup.id}")
+            ask(page, upstream, "good morning", reply.text("Morning."))
+            chat_input(page).click()
+            page.keyboard.type("$Tide")
+            page.get_by_role("button", name=re.compile("Tide tables")).click()
+            ask(page, upstream, "when is high tide?", reply.text("At noon."))
+        finally:
+            client.delete(f"/api/v1/skills/id/{skill_id}/delete")
+
+    requests = chat_requests(upstream)
+    assert "Read the high tide column first." in requests[1]["messages"][0]["content"]
+    assert first_break(requests) is not None, "a skill mentioned mid-chat left the prefix alone"
+
+
 # --- Editing an earlier question ------------------------------------------------------------
 
 
@@ -402,4 +485,77 @@ def test_an_earlier_question_edited_and_sent_again_rewrites_the_prefix(
     assert "night ferry" in str(requests[-1]["messages"])
     broken = first_break(requests)
     assert broken is not None, "an edited question left the prefix append-only"
-    assert chat_input(page).is_visible()
+
+
+# --- breakers the page does not name --------------------------------------------------------
+
+
+def test_moving_a_chat_into_a_folder_with_a_prompt_rewrites_the_prefix(
+    page_for, cached_setup, make_user, upstream
+):
+    person = make_user()
+    with person.client() as client:
+        folder = client.post(
+            "/api/v1/folders/",
+            json={"name": "Harbour", "data": {"system_prompt": "Answer as the harbour master."}},
+        )
+    assert folder.status_code == 200, folder.text
+    page = page_for(person)
+    page.goto(f"/?models={cached_setup.id}")
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    chat_id = page.url.rsplit("/", 1)[-1]
+    with person.client() as client:
+        moved = client.post(
+            f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder.json()["id"]}
+        )
+    assert moved.status_code == 200, moved.text
+    ask(page, upstream, "anything new?", reply.text("Nothing new."))
+
+    broken = first_break(chat_requests(upstream))
+    assert broken is not None and "messages[0] (system)" in broken, broken
+
+
+def test_a_knowledge_base_attached_after_the_first_turn_rewrites_the_prefix(
+    page_for, cached_setup, admin, make_user, upstream
+):
+    person = make_user()
+    with admin.client() as client, knowledge_base(client, "Timetables", [EVERYONE_READS]):
+        page = page_for(person)
+        page.goto(f"/?models={cached_setup.id}")
+        ask(page, upstream, "good morning", reply.text("Morning."))
+        attach_from_menu(page, "Attach Knowledge", "Timetables")
+        ask(page, upstream, "when does the bus leave?", reply.text("At 07:15."))
+
+    broken = first_break(chat_requests(upstream))
+    assert broken is not None and "messages[0] (system)" in broken, broken
+
+
+def test_a_skill_shared_with_the_person_mid_chat_rewrites_the_prefix(
+    page_for, cached_setup, admin, make_user, upstream
+):
+    page = page_for(make_user())
+    page.goto(f"/?models={cached_setup.id}")
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    skill_id = f"tide-tables-{uuid.uuid4().hex[:6]}"
+    with admin.client() as client:
+        created = client.post(
+            "/api/v1/skills/create",
+            json={
+                "id": skill_id,
+                "name": "Tide tables",
+                "description": "Reading tide tables",
+                "content": "Read the high tide column first.",
+                "meta": {},
+                "access_grants": [EVERYONE_READS],
+            },
+        )
+        assert created.status_code == 200, created.text
+        try:
+            ask(page, upstream, "anything new?", reply.text("Nothing new."))
+        finally:
+            client.delete(f"/api/v1/skills/id/{skill_id}/delete")
+
+    requests = chat_requests(upstream)
+    assert "Tide tables" in requests[1]["messages"][0]["content"]
+    broken = first_break(requests)
+    assert broken is not None, "a new skill left the prefix alone"
