@@ -5,6 +5,8 @@ knowledge base and an uploaded file in its settings, drags chats into, between a
 folders, renames and deletes folders, opens a folder's page and folds folders open and shut.
 A pinned chat that also sits in a folder, dragged onto Chats or onto Pinned, lands there with the
 stored pinned state that section means (open-webui/open-webui#31368, issue #31367).
+A folder's icon, picked on its page, shows on its sidebar row, and a background image uploaded
+in its edit dialog shows behind the folder page; both are stored and survive a reload.
 Each outcome is read back from what the server stored or after a reload, and the folder's
 settings from the request the scripted provider receives for a new chat started in the folder.
 
@@ -12,9 +14,10 @@ Discriminates: passes on the dev a5bc78300 build; in a frontend copy of the dev 
 each test fails, one edit each: the subfolder dialog creating at the top level, the folder dialog
 saving without its prompt and files, a chat dropped on a folder not being moved, the in-place
 rename saving the old name, the delete confirmation inverting its checkbox (both delete tests), a
-chat started on the folder page sent without the folder and the expand toggle not being saved. In
-the a5bc78300 build with #31368 reverted, the pinned chat dropped on Chats stays under Pinned and
-the one dropped on Pinned ends unpinned.
+chat started on the folder page sent without the folder, the expand toggle not being saved, the
+icon pick saved empty and the edit dialog saving without the background image. In the a5bc78300
+build with #31368 reverted, the pinned chat dropped on Chats stays under Pinned and the one
+dropped on Pinned ends unpinned.
 
 The in-place rename test also pins open-webui/open-webui#31582, fixed by PR #31584: pressing Enter
 saved the folder twice, so two update requests and two "Folder updated successfully" toasts
@@ -23,6 +26,7 @@ followed one rename. It fails on dev 176d31d1d.
 
 from __future__ import annotations
 
+import base64
 import re
 import time
 import uuid
@@ -31,6 +35,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
 
@@ -467,3 +472,42 @@ def test_a_folder_stays_open_or_shut_across_reloads(page_for, make_user):
     reloaded(sidebar)
     expect(folder_row(sidebar, "Letters")).to_be_visible()
     expect(chat_row(sidebar, "Dear Ada")).to_have_count(0)
+
+
+def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_user, tmp_path):
+    owner = make_user()
+    folder_id = create_folder(owner, "Seascapes")
+    picture = tmp_path / "backdrop.png"
+    picture.write_bytes(base64.b64decode(PNG_BASE64))
+    page = page_for(owner)
+    page.goto(f"/folders/{folder_id}")
+    background = page.locator("[style*='background-image']")
+    expect(background).to_have_count(0)
+
+    page.get_by_label("Change folder icon").click()
+    page.get_by_placeholder("Search all emojis").fill("anchor")
+    page.get_by_role("button", name="2693", exact=True).click()
+    expect(page.get_by_text("Folder updated successfully")).to_be_visible()
+    assert stored_folder(owner, folder_id)["meta"]["icon"] == "anchor"
+
+    sidebar = open_sidebar(page)
+    expect(sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor")).to_be_visible()
+
+    row = sidebar.locator(f"#folder-{folder_id}-button")
+    row.hover()
+    row.get_by_role("button").last.click()
+    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    dialog = page.get_by_role("dialog")
+    dialog.locator("#folder-background-image-input").set_input_files(picture)
+    expect(dialog.get_by_role("button", name="Reset")).to_be_visible()
+    dialog.get_by_role("button", name="Save").click()
+    expect(background).to_have_count(1)
+
+    stored = stored_folder(owner, folder_id)["meta"]
+    assert stored["icon"] == "anchor", "saving the background dropped the icon"
+    assert stored["background_image_url"].startswith("data:image/png;base64,")
+
+    page.reload()
+    expect(background).to_have_count(1)
+    show_folders(sidebar)
+    expect(sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor")).to_be_visible()

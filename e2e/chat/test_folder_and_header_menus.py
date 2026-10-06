@@ -1,15 +1,18 @@
-"""Journey: the folder menu and the chat header menu mark, export, move and delete for good.
+"""Journey: the folder menu and the chat header menu mark, export, move, delete and scroll for good.
 
 The "More" menu on a folder's sidebar row marks every chat in the folder as read, the unread dot
 of a chat outside it stays, and the chats stay read after a reload. Its Export downloads a file
 holding the folder's chats and no others, read back from disk. The "Chat actions" menu on an open
 chat moves the chat into a folder, listed there after a reload, and deletes it after the confirm
-dialog: the page goes home, the sidebar and the API no longer know the chat. The unread dot has no
-text or role of its own, so it is found by its colour class.
+dialog: the page goes home, the sidebar and the API no longer know the chat. In a chat long enough
+to scroll, left scrolled to its end, "Scroll to Top" brings the first message back into view. The
+unread dot has no text or role of its own, so it is found by its colour class.
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy each test fails when its route answers
 without storing the change: the folder read route marking nothing read, the folder chat list
 answering empty, the chat folder route not moving the chat and the chat delete route not deleting.
+In a frontend copy of dev 30f3f6a8f the Scroll to Top entry closes the menu and leaves the chat at
+its end.
 """
 
 from __future__ import annotations
@@ -206,3 +209,25 @@ def test_header_menu_delete_removes_the_open_chat_for_good(make_user, page_for):
     sidebar = _open_sidebar(page)
     expect(_entry(sidebar, kept)).to_be_visible()
     expect(sidebar.locator("#sidebar-chat-group").filter(has_text=title)).to_have_count(0)
+
+
+def test_header_menu_scroll_to_top_brings_the_first_message_into_view(make_user, page_for):
+    account = make_user()
+    opening = f"Opening line {uuid.uuid4().hex[:6]}"
+    filler = "The tide table runs on and on. " * 40
+    messages = [{"role": "user", "content": opening}]
+    for turn in range(12):
+        messages.append({"role": "assistant", "content": f"{filler} Entry {turn}"})
+        messages.append({"role": "user", "content": f"Question {turn}"})
+    with account.client() as client:
+        chat_id, _ = seed_chat(client, messages)
+    page = page_for(account)
+    page.goto(f"/c/{chat_id}")
+    first = page.get_by_text(opening, exact=True)
+    expect(page.get_by_text("Question 11", exact=True)).to_be_in_viewport()
+    expect(first).not_to_be_in_viewport()
+
+    page.get_by_label("Chat actions").click()
+    page.get_by_role("menu").get_by_role("button", name="Scroll to Top").click()
+
+    expect(first).to_be_in_viewport()

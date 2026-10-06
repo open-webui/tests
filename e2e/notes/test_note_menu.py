@@ -6,17 +6,19 @@ its formatting as HTML. Download as plain text saves what the editor holds under
 title, and the Markdown download keeps a table cell of two lines inside its row
 (open-webui/open-webui#31539, issue #31538). Upload files attaches a file to the note as a chip
 above the text, stored with the note and still there after a reload, and the chip's close
-button detaches it again. The Access button opens Access Control, where an owner allowed to
-share notes adds a person or a group from the access list at Read or Write, changes the level or
-removes them, or makes the note public; each change is saved at once, and the other account then
-meets the note read-only, editable or not at all. Without the sharing permission the panel has no
-access list.
+button detaches it again. Delete asks for a confirmation, then goes to the Notes page where the
+note is no longer listed, and the API no longer finds it. The Access button opens Access Control,
+where an owner allowed to share notes adds a person or a group from the access list at Read or
+Write, changes the level or removes them, or makes the note public; each change is saved at once,
+and the other account then meets the note read-only, editable or not at all. Without the sharing
+permission the panel has no access list.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the copied link pointing at the Notes page (editor and list), the clipboard's plain text
 getting the HTML, the plain-text download writing the HTML, the upload not saving the note's
-files, the chip's close button not saving, the access panel never sending the grants, removing a
-person dropping only their write grant and the access list shown without the sharing permission.
+files, the chip's close button not saving, the access panel never sending the grants, the editor's
+Delete not calling the API, removing a person dropping only their write grant and the access list
+shown without the sharing permission.
 In the a5bc78300 build with #31539 reverted, the second line of a table cell starts a broken row.
 """
 
@@ -268,6 +270,33 @@ def test_the_close_button_on_a_notes_file_detaches_it(page_for, make_user):
     page.reload()
     expect(_note_editor(page)).to_contain_text("see the itinerary")
     expect(chip).to_have_count(0)
+
+
+# ---------------------------------------------------------------- delete
+
+
+def test_delete_in_the_editor_removes_the_note_from_the_list_and_the_server(page_for, make_user):
+    author = make_user()
+    doomed = _unique("Doomed")
+    kept = _unique("Kept")
+    doomed_id = _create_note(author, doomed, "to be thrown out")
+    _create_note(author, kept, "to be kept")
+    page = page_for(author)
+    _open_note(page, doomed_id, "to be thrown out")
+
+    _open_note_menu(page).get_by_role("button", name="Delete").click()
+    page.get_by_role("dialog", name="Delete note?").get_by_role("button", name="Confirm").click()
+
+    expect(page.get_by_text("Note deleted successfully")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/notes$"))
+    cards = page.get_by_role("main").get_by_role("button", name="Open note")
+    expect(cards.filter(has_text=kept)).to_have_count(1)
+    expect(cards.filter(has_text=doomed)).to_have_count(0)
+    with author.client() as client:
+        assert client.get(f"/api/v1/notes/{doomed_id}").status_code != 200, "the note is stored"
+    page.reload()
+    expect(cards.filter(has_text=kept)).to_have_count(1)
+    expect(cards.filter(has_text=doomed)).to_have_count(0)
 
 
 # ---------------------------------------------------------------- the Access panel
