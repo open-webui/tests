@@ -10,7 +10,11 @@ admin switch step 5 of the page offers.
 `prefix_break(earlier, later)` serializes the cached part of two provider requests and returns
 `None` when the earlier one is a byte-for-byte prefix of the later one. Otherwise it names the
 first differing byte range, and which tool or message it falls in, so a failure shows exactly
-what was rewritten.
+what was rewritten. `first_break(requests)` is the first such break in a run of requests.
+
+`cache_optimal_model(admin, with_knowledge=False)` leaves the knowledge base off the model, which
+is when the knowledge discovery tools are offered; capabilities passed as keywords replace the
+checklist's, for a control that turns one breaker back on.
 """
 
 from __future__ import annotations
@@ -102,6 +106,14 @@ def _part_at(parts: list[tuple[str, bytes]], offset: int) -> tuple[str, int]:
     return "the end of the earlier request", position
 
 
+def first_break(requests: list[dict]) -> str | None:
+    for earlier, later in zip(requests, requests[1:]):
+        broken = prefix_break(earlier, later)
+        if broken:
+            return broken
+    return None
+
+
 def assert_append_only(requests: list[dict]) -> None:
     """Every request keeps the cached part of the one before it, byte for byte."""
     assert len(requests) >= 2, f"expected at least two provider requests, got {len(requests)}"
@@ -118,7 +130,9 @@ class CachedModel:
 
 
 @contextlib.contextmanager
-def cache_optimal_model(admin: Actor) -> Iterator[CachedModel]:
+def cache_optimal_model(
+    admin: Actor, with_knowledge: bool = True, **capabilities: bool
+) -> Iterator[CachedModel]:
     """The model the page's checklist describes, readable by everyone, with its knowledge base."""
     model_id = f"cached-{uuid.uuid4().hex[:8]}"
     with (
@@ -131,8 +145,10 @@ def cache_optimal_model(admin: Actor) -> Iterator[CachedModel]:
             "base_model_id": MOCK_MODEL_ID,
             "name": f"Cached Assistant {model_id[-8:]}",
             "meta": {
-                "capabilities": CAPABILITIES,
-                "knowledge": [{"type": "collection", "id": base_id, "name": "Harbour handbook"}],
+                "capabilities": {**CAPABILITIES, **capabilities},
+                "knowledge": [{"type": "collection", "id": base_id, "name": "Harbour handbook"}]
+                if with_knowledge
+                else [],
             },
             "params": {"system": SYSTEM_PROMPT, "function_calling": "native"},
             "access_grants": [EVERYONE_READS],
