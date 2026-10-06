@@ -9,7 +9,8 @@ message box changes them for the messages after. A model whose variables all hav
 answers the first message straight away, with the defaults filled in.
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy that writes every chat variable as empty
-into the system prompt every test fails.
+into the system prompt every test fails, and in a frontend build that sends the first message
+without asking the three tests that fill the form fail.
 """
 
 from __future__ import annotations
