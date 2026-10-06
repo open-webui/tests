@@ -2,10 +2,11 @@
 
 `FakeComfyUI(save_node_class)` finishes every queued prompt at once: it announces the end of the
 run on the `/ws` websocket the client waits on and reports one image from the workflow's output
-node, whose `class_type` is `save_node_class`, and `/object_info` lists `CHECKPOINTS`.
-`serving(fake)` runs it and yields its base URL; `comfyui_settings(base_url, workflow)` is the
-admin's image configuration for generation and editing through it. Wrap a change on the shared
-instance in `preserve(IMAGES_CONFIG)`.
+node, whose `class_type` is `save_node_class`, and `/object_info` lists `CHECKPOINTS`. It keeps
+every queued prompt in `queued` and every uploaded input image in `uploads`.
+`serving(fake)` runs it and yields its base URL, also kept as `fake.base_url`;
+`comfyui_settings(base_url, workflow)` is the admin's image configuration for generation and
+editing through it. Wrap a change on the shared instance in `preserve(IMAGES_CONFIG)`.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ class FakeComfyUI:
 
     def __init__(self) -> None:
         self.queued: list[dict] = []
+        self.uploads: list[bytes] = []
+        self.base_url = ""
         self.sockets: dict[str, web.WebSocketResponse] = {}
 
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
@@ -75,6 +78,8 @@ class FakeComfyUI:
         return web.json_response({"CheckpointLoaderSimple": loader})
 
     async def upload(self, request: web.Request) -> web.Response:
+        form = await request.post()
+        self.uploads.append(form["image"].file.read())
         return web.json_response({"name": "input.png"})
 
 
@@ -88,15 +93,18 @@ def serving(fake: FakeComfyUI) -> Iterator[str]:
     app.router.add_get("/object_info", fake.object_info)
     app.router.add_post("/api/upload/image", fake.upload)
 
+    # the loop runs on a thread of its own, so a caller that runs a loop (Playwright) can use it
     loop = asyncio.new_event_loop()
-    runner = web.AppRunner(app)
-    loop.run_until_complete(runner.setup())
-    port = free_port()
-    loop.run_until_complete(web.TCPSite(runner, "127.0.0.1", port).start())
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
+    runner = web.AppRunner(app)
+    asyncio.run_coroutine_threadsafe(runner.setup(), loop).result(timeout=10)
+    port = free_port()
+    site = web.TCPSite(runner, "127.0.0.1", port)
+    asyncio.run_coroutine_threadsafe(site.start(), loop).result(timeout=10)
+    fake.base_url = f"http://127.0.0.1:{port}"
     try:
-        yield f"http://127.0.0.1:{port}"
+        yield fake.base_url
     finally:
         asyncio.run_coroutine_threadsafe(runner.cleanup(), loop).result(timeout=10)
         loop.call_soon_threadsafe(loop.stop)
