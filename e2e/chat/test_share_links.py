@@ -1,14 +1,16 @@
 """Journey: sharing a chat by link, opening it as someone else, and taking the link back.
 
 The owner opens the chat's Share dialog, creates the link and grants one account read access.
-That account opens `/s/{id}` in its own browser and reads the conversation; an account left off
-the access list is sent back home. Once the owner deletes the link, the granted account is sent
+That account opens `/s/{id}` in its own browser and reads the conversation, and Clone Chat copies
+it into the account's own chats to carry on from; an account left off the access list is sent
+back home. Once the owner deletes the link, the granted account is sent
 home too. A signed-out visitor is sent to the sign-in page, which returns them to the chat
 (open-webui/open-webui#31337): the page used to send them home, where they were asked to sign in
 and then landed on a new chat with the link lost.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with `DELETE /api/v1/chats/{id}/share`
 answering true without removing the share the deletion test fails (the old link still opens),
+with the shared clone route storing an empty conversation the clone test fails,
 and with `can_read_shared_chat` granting any signed-in account the stranger test fails. With
 `2178777340` reverted (the 015dbc861 mutation build) the signed-out test fails (sent home).
 """
@@ -83,6 +85,32 @@ def test_a_granted_account_reads_the_link_until_the_owner_deletes_it(
 
     viewer_page.goto(share_path)
     _sent_home(viewer_page)
+
+
+def test_a_granted_account_clones_the_chat_and_carries_on_in_its_copy(
+    shared_chat, page_for, make_user, upstream
+):
+    owner_page, dialog, share_path = shared_chat
+    viewer = make_user()
+    _grant(dialog, viewer)
+    viewer_page = page_for(viewer)
+    viewer_page.goto(share_path)
+    viewer_page.get_by_role("button", name="Clone Chat").click()
+
+    expect(viewer_page).to_have_url(re.compile(r"/c/"))
+    expect_reply(viewer_page, ANSWER)
+    upstream.queue(reply.text("mostly coots", match=reply.answering("anything else")))
+    send(viewer_page, "anything else?")
+    expect_reply(viewer_page, "mostly coots")
+    sent = upstream.chat_requests()[-1]["messages"]
+    assert [entry["content"] for entry in sent if entry["role"] == "assistant"] == [ANSWER]
+
+    viewer_page.reload()
+    expect_reply(viewer_page, "mostly coots")
+    expect(conversation(viewer_page).get_by_text(ANSWER)).to_be_visible()
+    owner_page.reload()
+    expect_reply(owner_page, ANSWER)
+    expect(conversation(owner_page).get_by_text("mostly coots")).to_have_count(0)
 
 
 def test_an_account_left_off_the_access_list_is_sent_home(shared_chat, page_for, make_user):
