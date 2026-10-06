@@ -103,7 +103,7 @@ def _deltas(socket, chat_id: str) -> list[tuple[str, str]]:
 
 def _ask_watched(actor, prompt: str, **options) -> tuple[object, dict, list[tuple[str, str]]]:
     """Ask as a web client with a tab open; returns the turn, the stored reply and the deltas."""
-    with connected(actor) as socket, actor.client() as client:
+    with connected(actor, in_order=True) as socket, actor.client() as client:
         turn, message = ask(client, prompt, **options)
         # the stored reply can be done before the tab has every event
         socket.wait_for(turn.chat_id, "chat:completion", done=True)

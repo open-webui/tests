@@ -135,8 +135,8 @@ def test_a_tab_on_the_other_codec_receives_the_mixed_text_stream(pair, writer, r
     pair["stdlib"].upstream.queue(reply.text(PIECES, match=reply.answering(prompt)))
 
     with (
-        connected(_on(account, receiver)) as far_tab,
-        connected(account) as near_tab,
+        connected(_on(account, receiver), in_order=True) as far_tab,
+        connected(account, in_order=True) as near_tab,
         account.client() as client,
     ):
         turn = send_message(client, prompt)

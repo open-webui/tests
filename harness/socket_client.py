@@ -3,6 +3,9 @@
 `connected(actor)` joins the account's `user:{id}` room the way the web client does (over a
 websocket, or the `transports` given), records every `events` message the server pushes to it,
 and `call(event, data)` sends an event and returns once the server's handler has finished.
+The client hands each event to its handler on a thread of its own, so a busy machine can record
+them out of order; `connected(actor, in_order=True)` records them on the reading thread, in the
+order they arrived, for a test that compares sequences (its handlers must not wait on the server).
 `join_note` and `edit_note` do what the note editor does with a note's live Yjs document;
 `note_edit(text)` is the raw update it sends after typing `text` into an empty note (built with
 pycrdt, which the backend depends on) and `note_text(state)` reads back a document state the
@@ -16,6 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Iterator
 
+import engineio
 import pycrdt
 import socketio
 
@@ -69,11 +73,23 @@ class SocketSession:
         raise AssertionError(f"no {event_type} {data} event for chat {chat_id} within {timeout}s")
 
 
+class _InOrderEngineIO(engineio.Client):
+    def _trigger_event(self, event, *args, **kwargs):
+        kwargs["run_async"] = False
+        return super()._trigger_event(event, *args, **kwargs)
+
+
+class _InOrderClient(socketio.Client):
+    def _engineio_client_class(self):
+        return _InOrderEngineIO
+
+
 @contextmanager
 def connected(
-    actor: Actor, transports: tuple[str, ...] = ("websocket",)
+    actor: Actor, transports: tuple[str, ...] = ("websocket",), in_order: bool = False
 ) -> Iterator[SocketSession]:
-    session = SocketSession(socketio.Client(reconnection=False))
+    client_class = _InOrderClient if in_order else socketio.Client
+    session = SocketSession(client_class(reconnection=False))
     session.client.on("events", session.events.append)
     session.client.on("ydoc:document:state", session.document_states.append)
     session.client.on("ydoc:document:update", session.document_updates.append)
