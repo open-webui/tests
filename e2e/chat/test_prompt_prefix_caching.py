@@ -23,7 +23,8 @@ reload with the terminal's shell open closes it, which drops the two user shell 
 timer or a background sub-agent's report starts is sent the chat's finished system prompt with
 the model's system prompt and knowledge added again (open-webui/open-webui#31568, fix PR #31579
 open). The Create skill command is sent as the skill authoring prompt on its own turn and as the
-typed command on the next, so that turn rewrites an earlier user message.
+typed command on the next, so that turn rewrites an earlier user message
+(open-webui/open-webui#31591, fix PR #31598 open).
 
 Discriminates: passes on dev 30f3f6a8f apart from those five, which fail there. In backend
 copies, a clock value added to the model's system prompt turned every other test red; with no
@@ -568,7 +569,8 @@ def test_the_create_skill_command_keeps_the_prefix(terminal_skill, terminal_chat
     assert "view_skill" in {tool["function"]["name"] for tool in requests[0]["tools"]}
     broken = first_break(requests)
     assert broken is None, (
-        "the Create skill command's message went to the model as the skill authoring prompt on "
+        "#31591: the Create skill command's message went to the model as the skill authoring "
+        "prompt on "
         f"its own turn and as the typed command on the next, rewriting it: {broken}"
     )
 
