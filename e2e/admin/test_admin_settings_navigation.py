@@ -3,7 +3,8 @@
 An admin opens Settings from the chat and finds the admin tabs in five named groups, in this order:
 System (General, Authentication, Interface), AI (Connections, Models, Sub-agents), Tools
 (Integrations, Documents, Audio, Images, Web Search, Code Execution, Pipelines), Quality
-(Evaluations, Analytics) and Data (Database). A person without the admin role sees none of them.
+(Analytics, Evaluations, in that order since dev 4a145af22) and Data (Database). A person without
+the admin role sees none of them.
 
 Discriminates: in a frontend build with the group map back to the earlier grouping (Interface,
 Audio and Images under an Experience heading, Integrations and Documents among the system tabs),
@@ -38,8 +39,8 @@ ADMIN_NAVIGATION = [
     "Code Execution",
     "Pipelines",
     "Quality",
-    "Evaluations",
     "Analytics",
+    "Evaluations",
     "Data",
     "Database",
 ]
