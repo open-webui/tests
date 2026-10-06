@@ -5,12 +5,14 @@ the user menu and in Admin Panel > Users, the Bio on the profile card that opens
 in that list. With the admin's API Keys switch on and the default permission for API Keys on, the
 tab offers a key: one created there answers `/api/models` over HTTP, and once it is deleted in
 the tab the same key is refused. With the admin switch off, or the permission off, the tab offers
-no API keys section at all.
+no API keys section at all. A photo uploaded there is the profile picture everybody is served,
+and Remove puts the default picture back.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, the save leaving the name out of the
 profile it sends turns the name test red, leaving the Bio out turns the Bio test red, the delete
 confirmation not calling the delete route turns the key test red (the key still works), and
-`canUseApiKeys` ignoring the permission turns the permission case of the section test red.
+`canUseApiKeys` ignoring the permission turns the permission case of the section test red. A save
+that sends the stored profile picture in place of the chosen one turns the photo test red.
 """
 
 from __future__ import annotations
@@ -160,3 +162,41 @@ def test_the_account_settings_offer_no_api_keys_when_either_is_off(
 
     expect(settings.get_by_role("textbox", name="Name")).to_be_visible()
     expect(settings.locator("section").filter(has_text="API keys")).to_have_count(0)
+
+
+# a PNG of one red pixel; the account tab redraws any photo as a 250 pixel WebP
+RED_PIXEL_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108020000009077"
+    "53de0000000c4944415478da63f8cfc000000301010018dd8db00000000049454e44ae426082"
+)
+
+
+def _profile_image_type(viewer: Actor, account: Actor) -> str:
+    with viewer.client() as client:
+        served = client.get(f"/api/v1/users/{account.id}/profile/image")
+    assert served.status_code == 200, served.text
+    return served.headers["content-type"]
+
+
+def test_an_uploaded_photo_is_the_profile_picture_others_are_served(page_for, make_user, admin):
+    account = make_user()
+    assert _profile_image_type(admin, account) == "image/png"
+    page = page_for(account)
+    settings = _account_settings(page)
+
+    with page.expect_file_chooser() as chooser:
+        settings.get_by_role("button", name="Upload Photo").click()
+    chooser.value.set_files(
+        files=[{"name": "portrait.png", "mimeType": "image/png", "buffer": RED_PIXEL_PNG}]
+    )
+    expect(settings.locator("img[src^='data:image/webp']").first).to_be_visible()
+    _save(page, settings)
+
+    assert _profile_image_type(admin, account) == "image/webp"
+
+    page.goto("/")
+    settings = _account_settings(page)
+    settings.get_by_role("button", name="Remove", exact=True).click()
+    _save(page, settings)
+
+    assert _profile_image_type(admin, account) == "image/png"

@@ -3,7 +3,9 @@
 Title Generation switched on there, with a prompt of the admin's own, sends that prompt with the
 first question to the model and titles the chat with its answer; switched off, the chat keeps
 its first message as the title and the model is never asked. Follow Up Generation switched on
-puts the model's suggested questions under the reply, and pressing one asks it.
+puts the model's suggested questions under the reply, and pressing one asks it. Autocomplete
+Generation switched on lets a person who turns Prompt Autocompletion on in their own settings see
+the model's continuation of what they type, and Tab takes it into the message.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Interface form sends the stored
 task settings back in place of the edited ones, every test fails.
@@ -15,7 +17,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -23,6 +25,7 @@ CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
 TITLE_PROMPT = "Write a newspaper headline for this exchange: {{MESSAGES:END:2}}"
 HEADLINE_MARKER = "Write a newspaper headline"
 FOLLOW_UP_MARKER = "Suggest 3-5 relevant follow-up questions"
+AUTOCOMPLETE_MARKER = "You are an autocompletion system"
 QUESTION = "When does the ferry to Hallstatt leave?"
 ANSWER = "The first ferry leaves at seven."
 
@@ -134,3 +137,33 @@ def test_a_switched_on_follow_up_generation_offers_questions_that_ask_when_press
 
     expect_reply(page, "About twenty minutes.")
     assert len(requests_with(upstream, FOLLOW_UP_MARKER)) >= 1
+
+
+def test_a_switched_on_autocomplete_suggests_a_continuation_that_tab_accepts(
+    page_for, admin, make_user, upstream, tasks_restored
+):
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Autocomplete Generation", turn_on=True)
+    save(settings)
+    page = page_for(make_user())
+    page.goto("/?settings=interface")
+    personal = page.locator("#tab-interface").get_by_role("switch", name="Prompt Autocompletion")
+    with page.expect_response(lambda response: "/user/settings/update" in response.url):
+        personal.click()
+    upstream.queue(
+        reply.text('{"text": " early in the autumn."}', match=reply.answering(AUTOCOMPLETE_MARKER))
+    )
+
+    page.goto("/")
+    expect(chat_input(page)).to_be_visible()
+    chat_input(page).click()
+    page.keyboard.type("The best time to visit Hallstatt is")
+    expect(page.locator("[data-suggestion]")).to_have_attribute(
+        "data-suggestion", " early in the autumn."
+    )
+    page.keyboard.press("Tab")
+
+    expect(chat_input(page)).to_have_text(
+        "The best time to visit Hallstatt is early in the autumn."
+    )
+    assert "Hallstatt" in str(requests_with(upstream, AUTOCOMPLETE_MARKER)[-1]["messages"])
