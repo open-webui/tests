@@ -12,25 +12,34 @@ person who turns Prompt Autocompletion on in their own settings see the model's 
 what they type, and Tab takes it into the message. Retrieval Query Generation switched on asks the
 model, with the admin's Query Generation Prompt, what to search a file attached to the chat for:
 the status under the reply shows its queries and they are what the file is searched with; switched
-off, the file is searched with the question as typed and no queries show. Web Search Query
-Generation and the image and tool calling prompts only act under legacy function calling, which
-this suite leaves out.
+off, the file is searched with the question as typed and no queries show. Context Compaction
+switched on, with a low token threshold and a prompt of the admin's own, summarises a long chat on
+its next turn with that prompt, tells the person the context was compacted and sends the model the
+summary in place of the older turns; switched off, the whole chat is sent. Tool Permissions
+switched on offers Ask for approval in the chat input menu, switched off takes it away. Web Search
+Query Generation and the image and tool calling prompts only act under legacy function calling,
+which this suite leaves out.
 
 Discriminates: passes on dev ebc6add67; in a frontend build whose Interface form sends the stored
-task settings back in place of the edited ones, every test fails. In a backend copy, with the task
-parameters left out of task requests the parameters test fails, with the generated queries thrown
-away the switched on retrieval test fails (no queries show) and with the retrieval switch ignored
-the switched off one fails (the model's queries show).
+task settings back in place of the edited ones, every generation test fails, and in one whose
+form sends the stored chat settings back, the compaction and tool permission tests fail. In a
+backend copy, with the task parameters left out of task requests the parameters test fails, with
+the generated queries thrown away the switched on retrieval test fails (no queries show), with the
+retrieval switch ignored the switched off one fails (the model's queries show) and with the
+admin's compaction prompt ignored the switched on compaction test fails.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.actors import Actor
+from harness.chat_history import seed_chat
 from utils.cached_chat import attach
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 
@@ -49,6 +58,8 @@ ANSWER = "The first ferry leaves at seven."
 SHELF_QUESTION = "Which shelf holds the atlas?"
 SHELF_NOTES = "The atlas is kept on the top shelf of the map room."
 QUERY_MARKER = "List the library searches for this request"
+COMPACTION_MARKER = "Sum up the travel planning so far"
+SUMMARY = "The traveller asked about three ferries."
 
 
 @pytest.fixture
@@ -64,7 +75,8 @@ def open_interface_settings(page: Page) -> Locator:
 
 
 def set_switch(settings: Locator, name: str, turn_on: bool) -> None:
-    switch = settings.get_by_role("switch", name=name, exact=True)
+    # a label may carry a badge after its name
+    switch = settings.get_by_role("switch", name=re.compile(rf"^{re.escape(name)}(\s|$)"))
     if (switch.get_attribute("aria-checked") == "true") != turn_on:
         switch.click()
     expect(switch).to_have_attribute("aria-checked", "true" if turn_on else "false")
@@ -346,3 +358,127 @@ def test_a_switched_off_retrieval_query_generation_searches_the_upload_with_the_
     expect(conversation(page).get_by_text("map room atlas shelf")).to_have_count(0)
     assert [body for body in upstream.chat_requests() if not body.get("stream")] == []
     assert SHELF_QUESTION in embedded_texts(upstream)
+
+
+def number_field(settings: Locator, label: str) -> Locator:
+    return settings.get_by_text(label, exact=True).locator("xpath=following-sibling::div//input")
+
+
+def set_compaction(admin_client, turn_on: bool) -> None:
+    current = admin_client.get(CHAT_CONFIG[0]).json()
+    saved = admin_client.post(
+        CHAT_CONFIG[1],
+        json={
+            **current,
+            "ENABLE_CONTEXT_COMPACTION": turn_on,
+            "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 50,
+            "CONTEXT_COMPACTION_TOKEN_CAP": 50,
+        },
+    )
+    saved.raise_for_status()
+
+
+def open_long_chat(page_for, account: Actor) -> Page:
+    """A page on a chat of three long turns, far past a threshold of 50 tokens."""
+    turns = []
+    for number in range(1, 4):
+        turns.append({"role": "user", "content": f"ferry question {number} " + "q" * 400})
+        turns.append({"role": "assistant", "content": f"ferry answer {number} " + "a" * 400})
+    with account.client() as client:
+        chat_id, _ = seed_chat(client, turns)
+    page = page_for(account)
+    page.goto(f"/c/{chat_id}")
+    expect(conversation(page).get_by_text("ferry answer 3", exact=False)).to_be_visible()
+    return page
+
+
+def streamed_requests(upstream) -> list[dict]:
+    return [body for body in upstream.chat_requests() if body.get("stream")]
+
+
+def test_a_switched_on_context_compaction_summarises_a_long_chat_with_the_admins_prompt(
+    page_for, admin, make_user, upstream, tasks_restored
+):
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Context Compaction", turn_on=True)
+    number_field(settings, "Token Threshold").fill("50")
+    number_field(settings, "Token Cap").fill("50")
+    prompt_field(settings, "Context Compaction Prompt").fill(
+        f"{COMPACTION_MARKER}: {{{{COMPACTED_MESSAGES}}}}"
+    )
+    save(settings)
+    page = open_long_chat(page_for, make_user())
+    upstream.queue(
+        reply.text(SUMMARY, match=reply.answering(COMPACTION_MARKER)),
+        reply.text("The last ferry leaves at nine.", match=reply.answering("ferry question 4")),
+    )
+
+    send(page, "ferry question 4")
+
+    expect_reply(page, "The last ferry leaves at nine.")
+    expect(page.get_by_text("Context compacted")).to_be_visible()
+    [summary_request] = requests_with(upstream, COMPACTION_MARKER)
+    assert "ferry question 1" in str(summary_request["messages"])
+    [chat_request] = streamed_requests(upstream)
+    assert SUMMARY in str(chat_request["messages"])
+    assert "ferry question 1" not in str(chat_request["messages"])
+
+
+def test_a_switched_off_context_compaction_sends_the_whole_long_chat(
+    page_for, admin, make_user, upstream, tasks_restored
+):
+    with admin.client() as client:
+        set_compaction(client, turn_on=True)
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Context Compaction", turn_on=False)
+    save(settings)
+    page = open_long_chat(page_for, make_user())
+    upstream.queue(
+        reply.text(SUMMARY, match=lambda body: not body.get("stream")),
+        reply.text("The last ferry leaves at nine.", match=reply.answering("ferry question 4")),
+    )
+
+    send(page, "ferry question 4")
+
+    expect_reply(page, "The last ferry leaves at nine.")
+    [chat_request] = streamed_requests(upstream)
+    assert "ferry question 1" in str(chat_request["messages"])
+    assert SUMMARY not in str(chat_request["messages"])
+    expect(page.get_by_text("Context compacted")).to_have_count(0)
+
+
+def tool_permissions_offered(page_for, account: Actor) -> Locator:
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+    page.locator("#input-menu-button").click()
+    return page.get_by_role("button", name="Tool Permissions")
+
+
+def test_switching_tool_permissions_on_offers_approval_in_the_chat_input_menu(
+    page_for, admin, make_user, tasks_restored
+):
+    expect(tool_permissions_offered(page_for, make_user())).to_have_count(0)
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Tool Permissions", turn_on=True)
+    save(settings)
+
+    offered = tool_permissions_offered(page_for, make_user())
+
+    offered.click()
+    expect(offered.page.get_by_role("button", name="Ask for approval")).to_be_visible()
+
+
+def test_switching_tool_permissions_off_takes_approval_out_of_the_chat_input_menu(
+    page_for, admin, make_user, tasks_restored
+):
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        client.post(
+            CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True}
+        ).raise_for_status()
+    expect(tool_permissions_offered(page_for, make_user())).to_be_visible()
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Tool Permissions", turn_on=False)
+    save(settings)
+
+    expect(tool_permissions_offered(page_for, make_user())).to_have_count(0)
