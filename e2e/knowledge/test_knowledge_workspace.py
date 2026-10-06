@@ -5,13 +5,18 @@ row's menu. Inside a base it uploads several files at once, pastes text as a new
 uploads a folder, whose subfolders come along; each file is listed once processed and opening
 one shows its text. A directory made from the add-content menu is listed after a reload and holds
 the text added inside it, and deleting it removes what it held, so a chat that attaches the base
-is no longer sent that text. A webpage added by its link is listed once processed and its text
-reaches a chat that attaches the base; the page is a local service, on an instance that may fetch
-loopback addresses. An admin exports a base from its row's menu and the downloaded zip holds the
-base's files and their text. The base's search narrows the list to matching file names, and a file
-removed from the base is no longer sent to a chat that attaches the base. The owner renames the
-base, shares it with a group read-only and then with write access, and a group member sees each
-change: the new name, the base marked read only with its controls locked, then editable. An
+is no longer sent that text. Organising a base is read back after a reload and over the API: a
+directory renamed from its row keeps its files, a file dragged onto a directory is listed inside
+it and no longer at the top level, a directory dragged onto another shows nested with its files,
+and deleting a directory while keeping its contents moves the files up a level, where a chat that
+attaches the base is still sent their text. A webpage added by its link is listed once processed
+and its text reaches a chat that attaches the base; the page is a local service, on an instance
+that may fetch loopback addresses. An admin exports a base from its row's menu and the downloaded
+zip holds the base's files and their text. The base's search narrows the list to matching file
+names, and a file removed from the base is no longer sent to a chat that attaches the base. The
+owner renames the base, shares it with a group read-only and then with write access, and a group
+member sees each change: the new name, the base marked read only with its controls locked, then
+editable. An
 account outside the group does not see it. Resetting the base empties it.
 
 Chromium's directory picker cannot be driven by Playwright, so the folder upload test hides it
@@ -26,8 +31,11 @@ changes nothing fails the write test, a reset confirm that resets nothing fails 
 and a delete confirm that deletes nothing fails the create and delete test. In a backend copy,
 leaving a removed file's chunks in the base's collection fails the removal test (the chat is
 still sent its text), a directory delete route that answers success and deletes nothing fails
-the directory test, a web page route that returns no text fails the webpage test and an export
-that leaves the files out of the zip fails the export test.
+the directory test, a web page route that returns no text fails the webpage test, an export
+that leaves the files out of the zip fails the export test, a directory rename that is never
+stored fails the directory rename test, a file move that is never stored fails the file drag test,
+a directory move that is never stored fails the directory drag test and a directory delete that
+removes the files it was asked to keep fails the keep files test.
 """
 
 from __future__ import annotations
@@ -337,6 +345,155 @@ def test_a_new_directory_holds_its_text_and_deleting_it_removes_that_text(
     sent = _sent_to_the_model(curator, upstream, knowledge_id, question)
     assert "fuel dock takes cards" in sent
     assert "4242" not in sent, "the chat is still sent the text of a deleted directory"
+
+
+def _create_directory(owner: Actor, knowledge_id: str, name: str) -> str:
+    with owner.client() as client:
+        created = client.post(f"/api/v1/knowledge/{knowledge_id}/dirs/create", json={"name": name})
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
+def _file_in_directory(
+    owner: Actor, knowledge_id: str, directory_id: str, filename: str, text: str
+):
+    _add_files(owner, knowledge_id, {filename: text})
+    with owner.client() as client:
+        listed = client.get(f"/api/v1/knowledge/{knowledge_id}/files", params={"directory_id": ""})
+        file_id = next(i["id"] for i in listed.json()["items"] if i["filename"] == filename)
+        moved = client.post(
+            f"/api/v1/knowledge/{knowledge_id}/file/move",
+            json={"file_id": file_id, "directory_id": directory_id},
+        )
+    assert moved.status_code == 200, moved.text
+
+
+def _level(owner: Actor, knowledge_id: str, directory_id: str = "") -> tuple[list[str], list[str]]:
+    """The directory names and file names listed at one level; the empty id is the top level."""
+    with owner.client() as client:
+        listed = client.get(
+            f"/api/v1/knowledge/{knowledge_id}/files", params={"directory_id": directory_id}
+        )
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    return (
+        sorted(entry["name"] for entry in body["directories"]),
+        sorted(entry["filename"] for entry in body["items"]),
+    )
+
+
+def _directory_row(base: Locator, name: str) -> Locator:
+    # a directory row is no list item, and its menu button has no label
+    return base.locator("div[draggable=true]").filter(has_text=name)
+
+
+def test_a_renamed_directory_keeps_its_files_under_the_new_name(page_for, curator):
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    moorings = _create_directory(curator, knowledge_id, "moorings")
+    _file_in_directory(curator, knowledge_id, moorings, "gate.txt", "The gate code is 4242.")
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+
+    row = _directory_row(base, "moorings")
+    row.focus()
+    row.get_by_role("button").last.click()
+    page.get_by_role("menu").get_by_role("button", name="Rename").click()
+    # the row no longer shows its name as text while it is edited
+    renaming = base.locator("div[draggable=true]").get_by_role("textbox")
+    renaming.fill("pontoons")
+    renaming.press("Enter")
+    # Enter and the blur that follows both save, so the toast shows twice
+    expect(page.get_by_text("Directory renamed.").first).to_be_visible()
+
+    page.reload()
+    base = page.get_by_role("main")
+    expect(base.get_by_role("button", name="pontoons").last).to_be_visible()
+    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
+    base.get_by_role("button", name="pontoons").last.click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    assert _level(curator, knowledge_id) == (["pontoons"], [])
+    assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
+
+
+def test_a_file_dragged_onto_a_directory_is_listed_inside_it(page_for, curator):
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    moorings = _create_directory(curator, knowledge_id, "moorings")
+    _add_files(
+        curator,
+        knowledge_id,
+        {"gate.txt": "The gate code is 4242.", "fuel.txt": "The fuel dock takes cards only."},
+    )
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+
+    _file_row(base, "gate.txt").drag_to(_directory_row(base, "moorings"))
+    expect(page.get_by_text("File moved.")).to_be_visible()
+
+    page.reload()
+    base = page.get_by_role("main")
+    expect(_file_row(base, "fuel.txt")).to_be_visible()
+    expect(_file_row(base, "gate.txt")).to_have_count(0)
+    base.get_by_role("button", name="moorings").last.click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    expect(_file_row(base, "fuel.txt")).to_have_count(0)
+    assert _level(curator, knowledge_id) == (["moorings"], ["fuel.txt"])
+    assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
+
+
+def test_a_directory_dragged_onto_another_shows_nested_with_its_files(page_for, curator):
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    moorings = _create_directory(curator, knowledge_id, "moorings")
+    harbour = _create_directory(curator, knowledge_id, "quay")
+    _file_in_directory(curator, knowledge_id, moorings, "gate.txt", "The gate code is 4242.")
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+    expect(_directory_row(base, "quay")).to_be_visible()
+
+    _directory_row(base, "moorings").drag_to(_directory_row(base, "quay"))
+    expect(page.get_by_text("Directory moved.")).to_be_visible()
+
+    page.reload()
+    base = page.get_by_role("main")
+    expect(_directory_row(base, "quay")).to_be_visible()
+    expect(_directory_row(base, "moorings")).to_have_count(0)
+    base.get_by_role("button", name="quay").last.click()
+    expect(_directory_row(base, "moorings")).to_be_visible()
+    base.get_by_role("button", name="moorings").last.click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    assert _level(curator, knowledge_id) == (["quay"], [])
+    assert _level(curator, knowledge_id, harbour) == (["moorings"], [])
+    assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
+
+
+def test_deleting_a_directory_but_keeping_its_contents_moves_the_files_up(
+    page_for, curator, upstream
+):
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    moorings = _create_directory(curator, knowledge_id, "moorings")
+    _add_files(curator, knowledge_id, {"fuel.txt": "The fuel dock takes cards only."})
+    _file_in_directory(curator, knowledge_id, moorings, "gate.txt", "The gate code is 4242.")
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+
+    row = _directory_row(base, "moorings")
+    row.focus()
+    row.get_by_role("button").last.click()
+    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    deleting = page.get_by_role("dialog", name="Delete directory?")
+    # the checkbox has no label of its own, and it is the dialog's only one
+    deleting.get_by_role("checkbox").uncheck()
+    deleting.get_by_role("button", name="Confirm").click()
+    expect(page.get_by_text("Directory deleted.")).to_be_visible()
+
+    page.reload()
+    base = page.get_by_role("main")
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    expect(_file_row(base, "fuel.txt")).to_be_visible()
+    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
+    assert _level(curator, knowledge_id) == ([], ["fuel.txt", "gate.txt"])
+    sent = _sent_to_the_model(curator, upstream, knowledge_id, "what is the gate code?")
+    assert "4242" in sent, "the files kept from a deleted directory are no longer sent to a chat"
 
 
 @pytest.fixture(scope="module")
