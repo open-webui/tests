@@ -11,7 +11,9 @@ under the reply and runs. A toggleable filter runs only while switched on in the
 as a default filter starts switched on. A builtin tool category unticked for the model, or the
 Builtin Tools capability as a whole, leaves those tools out of the chat. A model made in the
 editor is private to its maker until the editor shares it with a group, whose members then see
-it. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
+it. With realtime voice calls on, a Realtime Voice set in the editor is the voice a call on the
+model opens with, and cleared it falls back to the admin's; with calls on Standard the editor
+offers no such field. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
@@ -20,7 +22,8 @@ out of the save, the group member never sees the model. In a backend copy that o
 builtin tool whatever the model says, both builtin tool tests fail, in one that ignores the
 knowledge attached to a model the knowledge test fails, in one that runs toggleable filters
 whether switched on or not the toggle test fails, and in one that never runs them both toggleable
-filter tests fail.
+filter tests fail. The realtime voice tests pass on the dev ebc6add67 build, and the first fails
+on a build of it whose editor saves without the Realtime Voice.
 """
 
 from __future__ import annotations
@@ -36,6 +39,13 @@ from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
+from harness.realtime_provider import (
+    VOICE,
+    next_event,
+    realtime_call,
+    serving_realtime_provider,
+    using_realtime,
+)
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_ui import chat_input, expect_reply, send
@@ -534,3 +544,53 @@ def test_a_new_model_is_private_until_shared_with_a_group(page_for, builder, cre
     member_page.get_by_role("textbox", name="Search In Models").fill(model["name"])
     expect(model_option(member_page, model["name"])).to_be_visible()
     assert not sees_model(stranger, model["id"]), "sharing with a group showed it to everyone"
+
+
+@pytest.fixture
+def realtime_calls(admin):
+    with serving_realtime_provider() as provider:
+        with admin.client() as client, using_realtime(client, provider):
+            yield provider
+
+
+def stored_meta(actor, model: dict) -> dict:
+    with actor.client() as client:
+        return client.get("/api/v1/models/model", params={"id": model["id"]}).json()["meta"]
+
+
+def call_voice(actor, model: dict) -> str:
+    """The voice a realtime call on the model is opened with."""
+    with realtime_call(actor.base_url, actor.token, model["id"]) as call:
+        return next_event(call, "bridge.ready")["voice"]
+
+
+def test_a_realtime_voice_set_in_the_editor_is_the_voice_of_calls_on_the_model(
+    page_for, builder, preset, realtime_calls, make_user
+):
+    page = page_for(builder)
+    editor = open_editor(page, preset)
+    voice_box = editor.get_by_role("combobox", name="Realtime Voice")
+    expect(voice_box).to_have_attribute("placeholder", "Admin default")
+
+    voice_box.fill("cedar")
+    save(editor)
+
+    assert stored_meta(builder, preset)["voice"] == {"voice": "cedar"}
+    assert call_voice(make_user(), preset) == "cedar"
+    realtime_calls.wait_for(lambda: realtime_calls.calls, "a call")
+    assert realtime_calls.calls[-1].session["audio"]["output"]["voice"] == "cedar"
+
+    editor = open_editor(page, preset)
+    expect(editor.get_by_role("combobox", name="Realtime Voice")).to_have_value("cedar")
+    editor.get_by_role("combobox", name="Realtime Voice").fill("")
+    save(editor)
+
+    assert stored_meta(builder, preset).get("voice") is None
+    assert call_voice(make_user(), preset) == VOICE
+
+
+def test_the_editor_offers_no_realtime_voice_while_calls_are_standard(page_for, builder, preset):
+    editor = open_editor(page_for(builder), preset)
+
+    expect(editor.get_by_text("TTS Voice", exact=True)).to_be_visible()
+    expect(editor.get_by_role("combobox", name="Realtime Voice")).to_have_count(0)

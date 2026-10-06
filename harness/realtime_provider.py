@@ -10,7 +10,8 @@ connection, in a `RealtimeCall` (`call.received(kind)`, `call.session`, `call.pa
 
 The fake hears what a test lines up with `fake.hears(transcript)`: once a fifth of a second of
 microphone audio arrived it reports speech and then that transcript, the way server-side voice
-detection and input transcription do. Asked to respond to it, it hands the request to the chat
+detection and input transcription do; `fake.mishears()` lines up a turn whose transcription
+fails instead. Asked to respond to it, it hands the request to the chat
 model through the `generate_chat_completion` function, or with `answers=text` speaks that text
 itself. Asked to respond to a function result, it speaks the result's answer; asked for a call
 status, it speaks the status sentence; asked to read text (the realtime text-to-speech engine),
@@ -61,6 +62,7 @@ PROVIDER_ERROR_TEXT = "invalid key sk-realtime-secret for instructions"
 class Turn:
     transcript: str
     answer: str | None  # None hands the request to the chat model
+    fails: bool = False
 
 
 @dataclass
@@ -104,6 +106,11 @@ class FakeRealtime:
     def hears(self, transcript: str, answers: str | None = None) -> None:
         with self.lock:
             self.turns.append(Turn(transcript, answers))
+
+    def mishears(self) -> None:
+        """The next turn's transcription fails."""
+        with self.lock:
+            self.turns.append(Turn("", None, fails=True))
 
     def wait_for(self, condition: Callable[[], bool], what: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
@@ -167,6 +174,10 @@ def _hear(fake: FakeRealtime, call: RealtimeCall, audio: str) -> None:
     item_id = _new_id("item")
     call.inputs[item_id] = turn
     call.send({"type": "input_audio_buffer.speech_started", "item_id": item_id})
+    if turn.fails:
+        failed = {"type": "conversation.item.input_audio_transcription.failed", "item_id": item_id}
+        call.send({**failed, "content_index": 0, "error": {"message": "inaudible"}})
+        return
     call.send(
         {
             "type": "conversation.item.input_audio_transcription.completed",
@@ -212,7 +223,7 @@ def _answer(fake: FakeRealtime, call: RealtimeCall, event: dict) -> None:
         _respond(fake, call, event.get("response") or {})
     elif kind == "conversation.item.create" and event["item"]["type"] == "function_call_output":
         item = event["item"]
-        call.results[item["call_id"]] = json.loads(item["output"])["answer"]
+        call.results[item["call_id"]] = json.loads(item["output"]).get("answer", "")
 
 
 @contextlib.contextmanager

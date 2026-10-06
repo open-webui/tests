@@ -2,22 +2,29 @@
 
 With Call mode set to Realtime under Admin Settings > Audio, Voice mode opens the call panel,
 which connects to the instance's realtime call and through it to the provider (here
-`harness.realtime_provider`, heard through Chromium's fake microphone). What the provider
-transcribes lands in the chat as the user's message; a request it hands on goes to the chat's
-own model, whose answer shows in the chat as usual and is then spoken, its spoken transcript
-saved on that reply; an answer the voice model gives itself is saved as a reply of its own.
-Both survive a reload. Mute stops the microphone reaching the provider, End call closes the
-panel and the provider's session, and a provider that refuses or drops the call shows its
-message and closes the panel.
+`harness.realtime_provider`, heard through Chromium's fake microphone). A call in an existing
+chat first tells the provider the conversation so far. What the provider transcribes lands in
+the chat as the user's message; a request it hands on goes to the chat's own model, whose answer
+shows in the chat as usual and is then spoken, its spoken transcript saved on that reply; an
+answer the voice model gives itself is saved as a reply of its own. Both survive a reload. While
+the chat model works the panel shows Thinking... and its Stop cancels the request and tells the
+provider so. Mute stops the microphone reaching the provider, Review in chat closes the panel
+with the call still on and Voice mode returns to it, End call closes the panel and the
+provider's session, and a provider that refuses or drops the call shows its message and closes
+the panel. Realtime calls open on the browser's speech-to-text engine too, which the standard
+call refuses, and without the call permission there is no Voice mode at all.
 
-Discriminates: passes on the dev ebc6add67 build; in a frontend copy, a transcript that is never
-added to the chat turns the transcript tests red, a spoken answer never saved turns the
-metadata test red, a mute that keeps sending audio turns the mute test red and a call failure
-that leaves the panel open turns the provider failure tests red.
+Discriminates: passes on the dev ebc6add67 build. In one frontend copy a spoken answer never
+saved turns the chat model test red, the voice model's own answer never added turns that test
+red, a mute that keeps sending audio, End call leaving the call connected, a failure leaving the
+panel open, an empty conversation sent to the provider, a panel Stop that does nothing and Voice
+mode refusing realtime calls on the browser's speech-to-text each turn their test red, while the
+panel test stays green. In another, closing the panel ending the call turns the review test red.
 """
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -25,8 +32,10 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.audio_engine import AUDIO_CONFIG
+from harness.chat_history import seed_chat
 from harness.realtime_provider import serving_realtime_provider, using_realtime
-from utils.chat_ui import conversation, expect_reply
+from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -67,6 +76,11 @@ def wait_for_stored(actor, chat_id: str, condition, what: str) -> list[dict]:
             return messages
         time.sleep(0.2)
     raise AssertionError(f"the chat never stored {what}: {stored_messages(actor, chat_id)}")
+
+
+def call_buttons(page: Page):
+    """The call panel's row of buttons; the chat input has a Stop button of its own."""
+    return page.get_by_role("button", name="End call").locator("xpath=..")
 
 
 def spoken_of(message: dict) -> list[str]:
@@ -205,3 +219,117 @@ def test_a_dropped_call_shows_why_and_closes_the_panel(voice_page_for, make_user
 
     expect(page.get_by_text("Voice provider connection closed")).to_be_visible()
     expect(page.get_by_role("button", name="End call")).to_have_count(0)
+
+
+def test_a_call_in_an_existing_chat_tells_the_provider_the_conversation(
+    voice_page_for, make_user, realtime
+):
+    question, answer = f"where is the pier {words()}", f"The pier is north {words()}."
+    caller = make_user()
+    with caller.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [{"role": "user", "content": question}, {"role": "assistant", "content": answer}],
+        )
+    page = voice_page_for(caller)
+    page.goto(f"/c/{chat_id}")
+    expect_reply(page, answer)
+
+    start_call(page)
+
+    call = realtime.wait_for_call()
+    realtime.wait_for(lambda: call.received("conversation.item.create"), "the conversation")
+    told = [event["item"] for event in call.received("conversation.item.create")]
+    assert [(item["role"], item["content"][0]["text"]) for item in told] == [
+        ("user", question),
+        ("assistant", answer),
+    ]
+
+
+def test_review_in_chat_keeps_the_call_and_voice_mode_returns_to_it(
+    voice_page_for, make_user, realtime
+):
+    page = voice_page_for(make_user())
+    start_call(page)
+    call = realtime.wait_for_call()
+    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+
+    page.get_by_role("button", name="Review in chat").click()
+
+    expect(page.get_by_role("button", name="End call")).to_have_count(0)
+    assert not call.ended.wait(1), "reviewing in chat ended the call"
+    start_call(page)
+    expect(call_status(page, "Listening...")).to_be_visible()
+    assert len(realtime.calls) == 1, "returning to the call opened a new one"
+
+
+def test_stopping_the_chat_model_tells_the_provider_it_was_cancelled(
+    voice_page_for, make_user, realtime, upstream
+):
+    question = f"read me the whole almanac {words()}"
+    pages = [f"page {number} " for number in range(60)]
+    upstream.queue(reply.text(pages, chunk_delay=0.5, match=reply.answering(question)))
+    realtime.hears(question)
+    page = voice_page_for(make_user())
+    start_call(page)
+    expect(call_status(page, "Thinking...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+
+    call_buttons(page).get_by_role("button", name="Stop", exact=True).click()
+
+    call = realtime.calls[-1]
+    realtime.wait_for(lambda: call.results, "the function result")
+    assert list(call.results.values()) == [
+        "The backend request was cancelled. Completed actions have not been undone."
+    ]
+    outputs = [
+        json.loads(event["item"]["output"])
+        for event in call.received("conversation.item.create")
+        if event["item"]["type"] == "function_call_output"
+    ]
+    assert [output["status"] for output in outputs] == ["cancelled"]
+    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+
+
+def test_realtime_calls_work_with_the_browsers_speech_to_text(
+    voice_page_for, make_user, admin, realtime
+):
+    with admin.client() as client:
+        current = client.get(AUDIO_CONFIG[0]).json()
+        current["stt"]["ENGINE"] = "web"
+        saved = client.post(AUDIO_CONFIG[1], json=current)
+    assert saved.status_code == 200, saved.text
+    page = voice_page_for(make_user())
+
+    start_call(page)
+
+    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    assert realtime.wait_for_call()
+
+
+def test_without_the_call_permission_there_is_no_voice_mode(
+    voice_page_for, make_user, admin, realtime, preserve
+):
+    preserve("permissions")
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"]["call"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+    page = voice_page_for(make_user())
+
+    expect(chat_input(page)).to_be_visible()
+    expect(page.get_by_role("button", name="Voice mode")).to_have_count(0)
+
+
+def test_a_turn_that_cannot_be_transcribed_is_asked_again_with_no_message_of_the_user(
+    voice_page_for, make_user, realtime
+):
+    realtime.mishears()
+    page = voice_page_for(make_user())
+
+    start_call(page)
+
+    realtime.wait_for(lambda: realtime.spoken, "a spoken status")
+    assert "I could not transcribe that. Please repeat it." in realtime.spoken[0]
+    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    expect(conversation(page).locator(".chat-user")).to_have_count(0)
