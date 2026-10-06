@@ -7,7 +7,8 @@ clicked. Picking a model has it answer in a thread under the message, which the 
 a reply count that opens the thread panel on the answer; with the admin's reply mode set to the
 channel the answer lands in the channel itself for every member. A file attached through "Upload
 Files" posts with the message and the other member sees it on the message and can open its
-content.
+content. Typing "#" offers the person's channels; a picked channel posts as a "#<name>" link
+that opens that channel for the other member who clicks it.
 
 A message sent while its file still uploads waits in the input's queue and posts by itself once
 the upload is done, with a file the other member can open; it posted at once with a file nobody
@@ -16,7 +17,8 @@ mention markup until PR #31601 (open-webui/open-webui#31586).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, a picker that drops the mention type
 turns the person and thread model tests red, a toast that goes nowhere on click turns the person
-test red and sending the message without its files turns the file test red; in a backend copy,
+test red, sending the message without its files turns the file test red and a channel link
+that opens nothing turns the channel link test red (checked on dev ebc6add67); in a backend copy,
 answering in a thread whatever the reply mode turns the channel reply mode test red.
 """
 
@@ -243,3 +245,25 @@ def test_a_message_sent_while_its_file_uploads_waits_and_posts_with_the_file(peo
     on_member = _message(member_page, "tide table attached")
     expect(on_member.get_by_text("tide-table.txt")).to_be_visible()
     assert _attached_content(member, channel_id) == ["low tide at six"]
+
+
+def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
+    sender, member, channel_id = people
+    linked_id = group_channel(sender, member)
+    with sender.client() as client:
+        linked_name = client.get(f"/api/v1/channels/{linked_id}").json()["name"]
+    page = _open_channel(page_for, sender, channel_id)
+    member_page = _open_channel(page_for, member, channel_id)
+
+    chat_input(page).click()
+    page.keyboard.type(f"#{linked_name}")
+    page.locator("#suggestions-container").get_by_role("button", name=linked_name).click()
+    page.keyboard.type(" has the packing list")
+    page.keyboard.press("Enter")
+
+    link = _message(member_page, "has the packing list").locator(".mention")
+    expect(link).to_have_text(f"#{linked_name}")
+    [stored] = _stored(sender, channel_id)
+    assert stored["content"].startswith(f"<#C:{linked_id}|{linked_name}>")
+    link.click()
+    expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))

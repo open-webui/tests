@@ -2,16 +2,17 @@
 
 Two fresh accounts share a group channel, each with it open in a browser of their own. The author
 edits a message in place and it reads "(edited)" on both screens; deleting it after the confirm
-dialog removes it from both. A member sees no edit or delete button on someone else's message.
-Pinning marks the message "Pinned" for both and lists it under "Pinned Messages", where unpinning
-takes it off again. A reaction the second member joins counts both, names who reacted, and drops
-back as each takes theirs away.
+dialog removes it from both. A member sees no edit or delete button on someone else's message; an
+admin in the channel does, and a message the admin deletes leaves the author's screen. Pinning marks
+the message "Pinned" for both and lists it under "Pinned Messages", where unpinning takes it off
+again. A reaction the second member joins counts both, names who reacted, and drops back as each
+takes theirs away.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, saving an edit with the old content
 turns the edit test red, deleting nothing on confirm turns the delete test red, offering edit and
-delete on every message turns the someone else's message test red, pinning with the old pinned
-state turns the pin test red and removing a reaction by adding it again turns the reaction test
-red.
+delete on every message turns the someone else's message test red, offering them to nobody but the
+author turns the admin test red (checked on dev ebc6add67), pinning with the old pinned state turns
+the pin test red and removing a reaction by adding it again turns the reaction test red.
 """
 
 from __future__ import annotations
@@ -166,3 +167,25 @@ def test_a_joined_reaction_counts_both_names_them_and_drops_as_each_removes_it(p
     expect(on_member.get_by_role("button", name="rocket")).to_have_count(0)
     [stored] = _stored(member, channel_id)
     assert stored["reactions"] == []
+
+
+def test_an_admin_deletes_a_members_message_and_it_leaves_the_members_screen(
+    people, admin, page_for
+):
+    _, member, _ = people
+    channel_id = group_channel(admin, member)
+    post_message(member, channel_id, "buy cheap watches here")
+    post_message(member, channel_id, "when does the ferry leave?")
+    member_page = _open_channel(page_for, member, channel_id)
+    admin_page = _open_channel(page_for, admin, channel_id)
+    expect(_message(member_page, "buy cheap watches here")).to_be_visible()
+
+    _message_tool(admin_page, "buy cheap watches here", "Delete").click()
+    admin_page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
+
+    expect(member_page.get_by_text("buy cheap watches here")).to_have_count(0)
+    expect(_message(member_page, "when does the ferry leave?")).to_be_visible()
+    assert "Edit" in _tooltips(_message(admin_page, "when does the ferry leave?"))
+    assert [message["content"] for message in _stored(member, channel_id)] == [
+        "when does the ferry leave?"
+    ]

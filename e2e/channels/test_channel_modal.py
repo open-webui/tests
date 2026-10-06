@@ -1,20 +1,23 @@
 """Journey: people create, rename and delete channels and give them webhooks from the sidebar.
 
 The Channels section's plus button opens the Create Channel modal. A group channel made there is
-private, lists in the owner's sidebar, opens at once and takes messages, and someone who was not
-let in is sent home when they open it. A direct message made there with a person picked by name
-reaches that person in their own sidebar. The gear on an owned channel opens Edit Channel: a new
-name shows in the sidebar and the navbar for the owner and, after a reload, for another member.
-Delete asks for a confirmation, then the channel leaves the owner's sidebar and a member who
-opens its address is sent home. The Webhooks modal makes a webhook, copies its address, and
-posting to that address shows the message to a member under the webhook's name; deleting the
-webhook makes the address refuse further posts.
+private, lists in the owner's sidebar, opens at once and takes messages, and someone who was not let
+in is sent home when they open it. A direct message made there with a person picked by name reaches
+that person in their own sidebar. The gear on an owned channel opens Edit Channel: a new name shows
+in the sidebar and the navbar for the owner and, after a reload, for another member. Delete asks for
+a confirmation, then the channel leaves the owner's sidebar and a member who opens its address is
+sent home. The Webhooks modal makes a webhook, copies its address, and posting to that address shows
+the message to a member under the webhook's name; deleting the webhook makes the address refuse
+further posts. A post reaches a member who has the channel open without a reload; renaming the
+webhook in the modal shows its earlier posts under the new name, and once it is deleted they read
+"Deleted Webhook".
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, a create form that sends a fixed name
 turns the group test red, a direct message created without its picked person turns the direct
-message test red, an update that sends the old name turns the rename test red, a delete that
-skips its request turns the delete test red, and a webhook delete that skips its request turns
-the webhook test red.
+message test red, an update that sends the old name turns the rename test red, a delete that skips
+its request turns the delete test red, and a webhook delete that skips its request turns the webhook
+test red; in a backend copy, showing the name a post was made under in place of the webhook's
+current one turns the renaming test red (checked on dev ebc6add67).
 """
 
 from __future__ import annotations
@@ -231,3 +234,37 @@ def test_a_webhook_made_in_the_modal_posts_under_its_name_until_it_is_deleted(
     post_message(owner, channel_id, "back to people")
     expect(_message(member_page, "back to people")).to_be_visible()
     expect(member_page.get_by_text("high tide again")).to_have_count(0)
+
+
+def test_webhook_posts_arrive_live_and_follow_the_webhooks_name(channels_on, make_user, page_for):
+    owner, member = make_user(), make_user()
+    channel_id = group_channel(owner, member)
+    with owner.client() as client:
+        made = client.post(
+            f"/api/v1/channels/{channel_id}/webhooks/create", json={"name": "Tide Bot"}
+        )
+    assert made.status_code == 200, made.text
+    webhook = made.json()
+    url = f"{owner.base_url}/api/v1/channels/webhooks/{webhook['id']}/{webhook['token']}"
+    member_page = page_for(member)
+    _open_channel(member_page, channel_id)
+
+    assert httpx.post(url, json={"content": "low tide at noon"}, timeout=30).status_code == 200
+
+    expect(_message(member_page, "low tide at noon")).to_contain_text("Tide Bot")
+    page = page_for(owner)
+    _open_channel(page, channel_id)
+    _open_edit_modal(page, "channel-").get_by_role("button", name="Manage").click()
+    webhooks = page.get_by_role("dialog").filter(has_text="New Webhook")
+    webhooks.get_by_role("button", name="Tide Bot").click()
+    webhooks.get_by_placeholder("Webhook Name").fill("Harbour Bot")
+    webhooks.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("Saved", exact=True)).to_be_visible()
+    member_page.reload()
+    expect(_message(member_page, "low tide at noon")).to_contain_text("Harbour Bot")
+
+    with owner.client() as client:
+        deleted = client.delete(f"/api/v1/channels/{channel_id}/webhooks/{webhook['id']}/delete")
+    assert deleted.status_code == 200, deleted.text
+    member_page.reload()
+    expect(_message(member_page, "low tide at noon")).to_contain_text("Deleted Webhook")
