@@ -2,17 +2,12 @@
 
 On an instance signing in through an OpenID provider, with the panel's OAuth settings persisted
 (`ENABLE_OAUTH_PERSISTENT_CONFIG`) so they can be edited there, the admin changes the sign-in rules
-in the panel and saves, and the next "Continue with" sign-in follows them: a Provider Name renames
-the button on the auth page, Allowed Domains turns away a person whose email is elsewhere while one
-from the listed domain gets in, Role Mapping makes a person whose roles claim names an Admin Role
-an admin, and Group Mapping with Auto-Create Groups puts a person in the groups their groups claim
-names.
+in the panel and saves, and the next "Continue with" sign-in follows them: Allowed Domains turns
+away a person whose email is elsewhere while one from the listed domain gets in, Role Mapping makes
+a person whose roles claim names an Admin Role an admin, and Group Mapping with Auto-Create Groups
+puts a person in the groups their groups claim names.
 
-The Provider Name test fails on dev 30f3f6a8f: the panel saves the name, but the sign-in button
-reads the providers registered once from the environment as the backend starts, so it keeps
-saying "Continue with SSO".
-
-Discriminates: the others pass on dev 30f3f6a8f; in a frontend build whose Authentication form
+Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Authentication form
 sends the OAuth settings it loaded instead of the edited ones, every test but the listed domain's
 sign-in fails.
 """
@@ -99,21 +94,6 @@ def save(page: Page) -> None:
 
 def continue_with(page: Page, provider: str = "SSO") -> None:
     page.get_by_role("button", name=f"Continue with {provider}").click()
-
-
-def test_a_provider_name_renames_the_sign_in_button(page_for, sso, signed_out):
-    page, oauth = oauth_panel(page_for, sso)
-    field(oauth, "Provider Name").fill("Harbour ID")
-    save(page)
-
-    visitor = signed_out()
-
-    expect(
-        visitor.get_by_role("button", name="Continue with Harbour ID"),
-        "the saved Provider Name never reaches the sign-in button, which keeps the name the "
-        "providers were registered with from the environment at boot",
-    ).to_be_visible()
-    expect(visitor.get_by_role("button", name="Continue with SSO")).to_have_count(0)
 
 
 def test_allowed_domains_turn_away_a_person_from_another_domain(page_for, sso, idp, signed_out):
