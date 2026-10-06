@@ -3,7 +3,12 @@
 A fresh admin creates a knowledge base, finds it by name in the list and deletes it from the
 row's menu. Inside a base it uploads several files at once, pastes text as a new file and
 uploads a folder, whose subfolders come along; each file is listed once processed and opening
-one shows its text. The base's search narrows the list to matching file names, and a file
+one shows its text. A directory made from the add-content menu is listed after a reload and holds
+the text added inside it, and deleting it removes what it held, so a chat that attaches the base
+is no longer sent that text. A webpage added by its link is listed once processed and its text
+reaches a chat that attaches the base; the page is a local service, on an instance that may fetch
+loopback addresses. An admin exports a base from its row's menu and the downloaded zip holds the
+base's files and their text. The base's search narrows the list to matching file names, and a file
 removed from the base is no longer sent to a chat that attaches the base. The owner renames the
 base, shares it with a group read-only and then with write access, and a group member sees each
 change: the new name, the base marked read only with its controls locked, then editable. An
@@ -20,14 +25,18 @@ name field left editable for readers fails the read-only test, an access level s
 changes nothing fails the write test, a reset confirm that resets nothing fails the reset test
 and a delete confirm that deletes nothing fails the create and delete test. In a backend copy,
 leaving a removed file's chunks in the base's collection fails the removal test (the chat is
-still sent its text).
+still sent its text), a directory delete route that answers success and deletes nothing fails
+the directory test, a web page route that returns no text fails the webpage test and an export
+that leaves the files out of the zip fails the export test.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -35,9 +44,11 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.access import make_group
-from harness.actors import Actor
+from harness.actors import Actor, admin_of
 from harness.chat import ask
 from harness.knowledge_bases import add_text_file
+from harness.listener import listening, text_answer
+from harness.web_retrieval import LOCAL_WEB_FETCH
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -50,6 +61,13 @@ def curator(make_user):
     """A fresh admin, whose knowledge bases are deleted afterwards."""
     account = make_user(role="admin")
     yield account
+    with account.client() as client:
+        for knowledge in client.get("/api/v1/knowledge/").json().get("items", []):
+            if knowledge["user_id"] == account.id:
+                client.delete(f"/api/v1/knowledge/{knowledge['id']}/delete")
+
+
+def _delete_bases_of(account: Actor) -> None:
     with account.client() as client:
         for knowledge in client.get("/api/v1/knowledge/").json().get("items", []):
             if knowledge["user_id"] == account.id:
@@ -257,6 +275,132 @@ def test_a_removed_file_is_no_longer_sent_to_a_chat(page_for, curator, upstream)
     sent = json.dumps(next(filter(reply.answering(question), upstream.chat_requests())))
     assert "fuel dock takes cards" in sent
     assert "4242" not in sent
+
+
+def _sent_to_the_model(owner: Actor, upstream, knowledge_id: str, question: str) -> str:
+    upstream.queue(reply.text("Noted.", match=reply.answering(question)))
+    with owner.client() as client:
+        ask(client, question, files=[{"type": "collection", "id": knowledge_id}])
+    return json.dumps(next(filter(reply.answering(question), upstream.chat_requests())))
+
+
+def test_a_new_directory_holds_its_text_and_deleting_it_removes_that_text(
+    page_for, curator, upstream
+):
+    name = _unique("Harbour")
+    knowledge_id = _create_base(curator, name)
+    _add_files(curator, knowledge_id, {"fuel.txt": "The fuel dock takes cards only."})
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+
+    _add_content(page, base, "New directory")
+    page.get_by_role("dialog").get_by_placeholder("Directory name").fill("moorings")
+    page.get_by_role("dialog").get_by_role("button", name="Create").click()
+    expect(page.get_by_text("Directory created.")).to_be_visible()
+    page.reload()
+    base = page.get_by_role("main")
+    directory = base.get_by_role("button", name="moorings").last
+    expect(directory).to_be_visible()
+
+    directory.click()
+    _add_content(page, base, "Add text content")
+    writing = page.get_by_role("dialog")
+    writing.get_by_placeholder("Title").fill("gate")
+    writing.get_by_placeholder("Write something...").fill("The gate code is 4242.")
+    writing.get_by_role("button", name="Save").click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    page.reload()
+    base = page.get_by_role("main")
+    expect(_file_row(base, "fuel.txt")).to_be_visible()
+    expect(_file_row(base, "gate.txt")).to_have_count(0)
+    base.get_by_role("button", name="moorings").last.click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    expect(_file_row(base, "fuel.txt")).to_have_count(0)
+
+    # the root crumb carries the base's name
+    base.get_by_role("button", name=name, exact=True).click()
+    # a directory row is no list item, and its menu button has no label
+    row = base.locator("div[draggable=true]").filter(has_text="moorings")
+    row.get_by_role("button").last.click()
+    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    page.get_by_role("dialog", name="Delete directory?").get_by_role(
+        "button", name="Confirm"
+    ).click()
+    expect(page.get_by_text("Directory deleted.")).to_be_visible()
+    page.reload()
+    base = page.get_by_role("main")
+    expect(_file_row(base, "fuel.txt")).to_be_visible()
+    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
+
+    assert _stored_file_names(curator, knowledge_id) == ["fuel.txt"]
+    question = "what is the gate code?"
+    sent = _sent_to_the_model(curator, upstream, knowledge_id, question)
+    assert "fuel dock takes cards" in sent
+    assert "4242" not in sent, "the chat is still sent the text of a deleted directory"
+
+
+@pytest.fixture(scope="module")
+def pages():
+    with listening() as service:
+        service.route("GET", "/tides", text_answer("<p>High tide at the harbour is at noon</p>"))
+        yield service
+
+
+@pytest.mark.slow
+def test_a_webpage_added_by_its_link_is_listed_and_its_text_reaches_a_chat(
+    page_for, instance_with, pages
+):
+    launched = instance_with(LOCAL_WEB_FETCH)
+    if not launched.serves_frontend:
+        pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
+    owner = admin_of(launched)
+    knowledge_id = _create_base(owner, _unique("Harbour"))
+    link = f"http://localhost:{pages.port}/tides"
+    page = page_for(owner)
+    base = _open_base(page, knowledge_id)
+
+    _add_content(page, base, "Add webpage")
+    page.get_by_role("textbox", name="Webpage URLs").fill(link)
+    page.get_by_role("button", name="Add", exact=True).click()
+
+    expect(page.get_by_text("File added successfully.")).to_be_visible(timeout=30_000)
+    page.reload()
+    base = page.get_by_role("main")
+    expect(base.get_by_role("listitem")).to_have_count(1)
+    expect(base.get_by_text("1 file")).to_be_visible()
+    question = "when is high tide?"
+    sent = _sent_to_the_model(owner, launched.upstream, knowledge_id, question)
+    assert "High tide at the harbour is at noon" in sent
+    _delete_bases_of(owner)
+
+
+def test_an_admin_exports_a_base_as_a_zip_of_its_files_and_their_text(
+    page_for, curator, tmp_path: Path
+):
+    name = _unique("Harbour")
+    knowledge_id = _create_base(curator, name)
+    _add_files(
+        curator,
+        knowledge_id,
+        {"tides.txt": "High tide at 06:40, low tide at 12:55.", "fuel.txt": "Cards only."},
+    )
+    page = page_for(curator)
+
+    row = _list_row(page, name)
+    row.get_by_role("button", name="More Options").last.click()
+    with page.expect_download() as download:
+        page.get_by_role("menu").get_by_role("button", name="Export").click()
+    saved = tmp_path / "export.zip"
+    download.value.save_as(saved)
+
+    expect(page.get_by_text("Knowledge exported successfully")).to_be_visible()
+    assert download.value.suggested_filename == f"{name}.zip"
+    with zipfile.ZipFile(io.BytesIO(saved.read_bytes())) as archive:
+        exported = {entry: archive.read(entry).decode() for entry in archive.namelist()}
+    assert exported == {
+        "tides.txt": "High tide at 06:40, low tide at 12:55.",
+        "fuel.txt": "Cards only.",
+    }
 
 
 @pytest.fixture
