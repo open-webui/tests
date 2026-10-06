@@ -5,7 +5,9 @@ The dialog opens from the sidebar's Search entry or the search shortcut. Typing 
 `folder:`, `pinned:` and `archived:` filters, offered as suggestions while typing; a match in the
 text shows as a highlighted snippet. Hovering or arrowing onto a result previews its conversation
 and a click opens it. "Start a new conversation" sends the typed text as the first message of a
-new chat. Another account's matching chat never appears.
+new chat. Another account's matching chat never appears. The menu on a result renames, pins,
+clones, archives and deletes the chat (after a confirm dialog), and each change is read back after a
+reload or over the API as the owner.
 
 Two tests pin fixed bugs: Enter on a highlighted chat closed the dialog without opening the chat
 (#31003, fixed by PR #31004), and a new conversation started from the dialog dropped the text after
@@ -16,9 +18,12 @@ Twin of integration/models/test_chat_search_filters.py.
 Discriminates: passes on the a5bc78300 build; the two tests above fail on the 176d31d1d build,
 before their fixes. On a build whose sidebar Search entries open nothing, whose snippet never
 highlights, whose result rows ignore the pointer, whose ArrowUp stays put, whose empty result list
-shows no text and whose new-conversation action drops the query, one test each goes red; on a
-backend whose search matches neither titles nor message text, whose filters are ignored or that
-searches every account's chats, the title, snippet, filter and other-account tests go red.
+shows no text and whose new-conversation action drops the query, one test each goes red; in a
+backend copy whose chat update drops the title, whose pin or archive toggle stores nothing, whose
+clone stores a chat without the conversation or whose delete route answers without deleting, the
+matching menu test goes red and no other; on a backend whose search matches neither titles nor
+message text, whose filters are ignored or that searches every account's chats,
+the title, snippet, filter and other-account tests go red.
 """
 
 from __future__ import annotations
@@ -347,3 +352,127 @@ def test_start_a_new_conversation_keeps_an_ampersand(page_for, make_user, upstre
         page.get_by_label("Chat Conversation").get_by_text(question),
         "the text after the & was dropped from the new chat's first message (#31469)",
     ).to_be_visible()
+
+
+@pytest.fixture
+def owned_chat(make_user) -> tuple:
+    """An account with one stored chat whose title holds a word no other chat has."""
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = import_chat(
+            client, f"Garden {word}", question="What grows in shade?", answer="Ferns and hostas."
+        )
+    return account, word, chat_id
+
+
+def open_result_menu(page: Page, word: str, title: str) -> Locator:
+    """Searches for `word` and opens the chat menu on the row of `title`."""
+    dialog = open_from_shortcut(page)
+    search_box(dialog).fill(word)
+    expect(result(dialog, title)).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+    dialog.get_by_label("Chat Menu").click()
+    return page.get_by_role("menu")
+
+
+def search_after_reload(page: Page, text: str) -> Locator:
+    page.reload()
+    dialog = open_from_shortcut(page)
+    search_box(dialog).fill(text)
+    return dialog
+
+
+def stored_chat_status(account, chat_id: str) -> int:
+    with account.client() as client:
+        return client.get(f"/api/v1/chats/{chat_id}").status_code
+
+
+def test_a_chat_renamed_from_the_dialog_is_found_and_listed_under_its_new_title(
+    page_for, owned_chat
+):
+    account, word, _chat_id = owned_chat
+    new_word = unique_word()
+    page = page_for(account)
+    open_result_menu(page, word, f"Garden {word}").get_by_role("button", name="Rename").click()
+    page.keyboard.press("Control+A")
+    page.keyboard.type(f"Orchard {new_word}")
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog")
+    expect(result(dialog, f"Orchard {new_word}")).to_be_visible()
+
+    dialog = search_after_reload(page, new_word)
+
+    expect(result(dialog, f"Orchard {new_word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+    search_box(dialog).fill(word)
+    expect(dialog.get_by_text("No results found")).to_be_visible()
+    page.keyboard.press("Escape")
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+    expect(sidebar.get_by_role("button", name=f"Orchard {new_word}")).to_be_visible()
+
+
+def test_a_chat_pinned_from_the_dialog_is_listed_under_pinned(page_for, owned_chat):
+    account, word, chat_id = owned_chat
+    page = page_for(account)
+    open_result_menu(page, word, f"Garden {word}").get_by_role("button", name="Pin").click()
+
+    dialog = search_after_reload(page, f"{word} pinned:true")
+
+    expect(result(dialog, f"Garden {word}")).to_be_visible()
+    page.keyboard.press("Escape")
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+    expect(sidebar.get_by_role("button", name="Pinned")).to_be_visible()
+    with account.client() as client:
+        pinned = client.get("/api/v1/chats/pinned").json()
+    assert [chat["id"] for chat in pinned] == [chat_id], "the pinned chat is not stored as pinned"
+
+
+def test_a_chat_cloned_from_the_dialog_holds_the_same_conversation(page_for, owned_chat):
+    account, word, chat_id = owned_chat
+    page = page_for(account)
+    open_result_menu(page, word, f"Garden {word}").get_by_role("button", name="Clone").click()
+    dialog = page.get_by_role("dialog")
+    expect(result(dialog, f"Clone of Garden {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(2)
+
+    dialog = search_after_reload(page, word)
+
+    expect(results(dialog)).to_have_count(2)
+    result(dialog, f"Clone of Garden {word}").click()
+    expect(page).not_to_have_url(re.compile(f"/c/{chat_id}$"))
+    expect(page.get_by_text("What grows in shade?")).to_be_visible()
+    expect(page.get_by_text("Ferns and hostas.")).to_be_visible()
+
+
+def test_a_chat_archived_from_the_dialog_is_found_only_under_archived_true(page_for, owned_chat):
+    account, word, _chat_id = owned_chat
+    page = page_for(account)
+    open_result_menu(page, word, f"Garden {word}").get_by_role("button", name="Archive").click()
+    expect(page.get_by_role("dialog").get_by_text("No results found")).to_be_visible()
+
+    dialog = search_after_reload(page, word)
+    expect(dialog.get_by_text("No results found")).to_be_visible()
+    search_box(dialog).fill(f"{word} archived:true")
+
+    expect(result(dialog, f"Garden {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_a_chat_deleted_from_the_dialog_after_its_confirmation_is_gone_for_good(
+    page_for, owned_chat
+):
+    account, word, chat_id = owned_chat
+    page = page_for(account)
+    open_result_menu(page, word, f"Garden {word}").get_by_role("button", name="Delete").click()
+    page.get_by_role("dialog", name="Delete chat?").get_by_role("button", name="Confirm").click()
+    expect(page.get_by_role("dialog", name="Delete chat?")).to_be_hidden()
+
+    dialog = search_after_reload(page, word)
+    expect(dialog.get_by_text("No results found")).to_be_visible()
+    search_box(dialog).fill(f"{word} archived:true")
+
+    expect(dialog.get_by_text("No results found")).to_be_visible()
+    assert stored_chat_status(account, chat_id) != 200, "the deleted chat can still be read"
