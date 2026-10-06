@@ -3,16 +3,19 @@
 The owner opens the chat's Share dialog, creates the link and grants one account read access.
 That account opens `/s/{id}` in its own browser and reads the conversation, and Clone Chat copies
 it into the account's own chats to carry on from; an account left off the access list is sent
-back home. Once the owner deletes the link, the granted account is sent
-home too. A signed-out visitor is sent to the sign-in page, which returns them to the chat
-(open-webui/open-webui#31337): the page used to send them home, where they were asked to sign in
-and then landed on a new chat with the link lost.
+back home. Once the owner deletes the link, the granted account is sent home too. Messages sent
+after sharing stay out of the link until the owner presses Update and Copy Link, after which the
+same link shows them. A signed-out visitor is sent to the sign-in page, which returns them to the
+chat (open-webui/open-webui#31337): the page used to send them home, where they were asked to sign
+in and then landed on a new chat with the link lost.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with `DELETE /api/v1/chats/{id}/share`
 answering true without removing the share the deletion test fails (the old link still opens),
 with the shared clone route storing an empty conversation the clone test fails,
 and with `can_read_shared_chat` granting any signed-in account the stranger test fails. With
-`2178777340` reverted (the 015dbc861 mutation build) the signed-out test fails (sent home).
+`2178777340` reverted (the 015dbc861 mutation build) the signed-out test fails (sent home). On
+dev ebc6add67 a frontend copy whose share dialog hands back the old link without sharing again
+turns the update test red.
 """
 
 from __future__ import annotations
@@ -29,6 +32,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 QUESTION = "which birds winter by the lake?"
 ANSWER = "herons and a few grebes"
+LATER_QUESTION = "and in spring?"
+LATER_ANSWER = "swallows over the reeds"
 
 
 def _share_dialog(page: Page) -> Locator:
@@ -136,3 +141,27 @@ def test_a_signed_out_visitor_signs_in_and_comes_back_to_the_link(shared_chat, m
     page.get_by_role("button", name="Sign in", exact=True).click()
     expect(page).to_have_url(re.compile(re.escape(share_path) + "$"))
     expect(conversation(page).get_by_text(ANSWER)).to_be_visible()
+
+
+def test_updating_the_link_shares_the_messages_sent_since(
+    shared_chat, page_for, make_user, upstream
+):
+    owner_page, dialog, share_path = shared_chat
+    viewer = make_user()
+    _grant(dialog, viewer)
+    dialog.get_by_role("button", name="Close").click()
+    upstream.queue(reply.text(LATER_ANSWER, match=reply.answering(LATER_QUESTION)))
+    send(owner_page, LATER_QUESTION)
+    expect_reply(owner_page, LATER_ANSWER)
+
+    viewer_page = page_for(viewer)
+    viewer_page.goto(share_path)
+    expect(conversation(viewer_page).get_by_text(ANSWER)).to_be_visible()
+    expect(conversation(viewer_page).get_by_text(LATER_ANSWER)).to_have_count(0)
+
+    _share_dialog(owner_page).get_by_role("button", name="Update and Copy Link").click()
+    expect(owner_page.get_by_text("Copied shared chat URL to clipboard!")).to_be_visible()
+
+    viewer_page.reload()
+    expect(conversation(viewer_page).get_by_text(LATER_ANSWER)).to_be_visible()
+    expect(conversation(viewer_page).get_by_text(ANSWER)).to_be_visible()

@@ -3,13 +3,16 @@
 The owner shares a chat, which stores a snapshot under a new share id, and gives a user read
 access to it. That user opens the share, a signed-out visitor and a stranger are refused, and
 messages sent after sharing stay out of the snapshot until the owner shares again. Unsharing one
-chat or deleting all shares revokes the links, an account without `chat.share` cannot share, and
-cloning a shared chat gives the reader a copy of their own.
+chat or deleting all shares revokes the links, as does deleting the chat or all of the owner's
+chats, an account without `chat.share` cannot share, and cloning a shared chat gives the reader a
+copy of their own.
 
 Discriminates: in a backend copy, `delete_shared_chat_by_id` leaving the snapshot and grants in
 place fails the unshare test, `unshare_all_chats` deleting no rows fails the delete-all test,
 `share_chat_by_id` skipping the `chat.share` check fails the permission test, and
-`clone_shared_chat_by_id` importing the copy under the sharer's id fails the clone test.
+`clone_shared_chat_by_id` importing the copy under the sharer's id fails the clone test. On dev
+ebc6add67, deleting a chat or all of an account's chats while leaving their snapshots in place
+fails the two deletion tests.
 """
 
 from __future__ import annotations
@@ -134,6 +137,36 @@ def test_deleting_all_shares_revokes_every_share(make_user, upstream):
     assert deleted.status_code == 200, deleted.text
     assert [_open_share(reader, share_id).status_code for share_id in share_ids] == [401, 401]
     assert [_stored_chat(owner, chat_id)["share_id"] for chat_id in chat_ids] == [None, None]
+    assert listed.json() == []
+    assert _open_share(reader, other_share).status_code == 200, "another user's share was revoked"
+
+
+def test_deleting_a_shared_chat_revokes_its_share(make_user, upstream):
+    owner, reader = make_user(), make_user()
+    chat_id, _ = _start_chat(owner, upstream, "soon deleted")
+    share_id = _share(owner, chat_id, reader)
+
+    with owner.client() as client:
+        deleted = client.delete(f"/api/v1/chats/{chat_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert _open_share(reader, share_id).status_code == 401
+
+
+def test_deleting_all_chats_revokes_every_share(make_user, upstream):
+    owner, reader = make_user(), make_user()
+    chat_ids = [_start_chat(owner, upstream, f"doomed {n}")[0] for n in range(2)]
+    share_ids = [_share(owner, chat_id, reader) for chat_id in chat_ids]
+    other_owner = make_user()
+    other_chat, _ = _start_chat(other_owner, upstream, "someone else's chat")
+    other_share = _share(other_owner, other_chat, reader)
+
+    with owner.client() as client:
+        deleted = client.delete("/api/v1/chats/")
+        listed = client.get("/api/v1/chats/shared")
+
+    assert deleted.status_code == 200, deleted.text
+    assert [_open_share(reader, share_id).status_code for share_id in share_ids] == [401, 401]
     assert listed.json() == []
     assert _open_share(reader, other_share).status_code == 200, "another user's share was revoked"
 

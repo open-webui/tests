@@ -1,9 +1,9 @@
 """Journey: Settings > Data Controls exports a person's chats and manages their links and files.
 
 Export Chats downloads every chat of the account as JSON and nobody else's. Shared Chats lists
-the chats the account shared by link: unsharing one there closes its link at once, and Unshare
-All Shared Chats closes every link. Manage Files lists the files the account uploaded, and a
-file deleted there is gone.
+the chats the account shared by link: unsharing one there closes its link at once, so the
+account it was shared with is sent home from it, and Unshare All Shared Chats closes every link.
+Manage Files lists the files the account uploaded, and a file deleted there is gone.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Export Chats saves an empty
 list, whose unshare and Unshare All handlers skip their requests and whose file delete skips its
@@ -13,12 +13,15 @@ request, every test fails.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness.access import grant
+from utils.chat_ui import conversation
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -38,14 +41,21 @@ def row_button(settings: Locator, row_label: str, button: str) -> Locator:
 
 
 def new_chat(client, title: str) -> str:
-    created = client.post("/api/v1/chats/new", json={"chat": {"title": title}})
+    question = {"id": "q1", "parentId": None, "childrenIds": [], "role": "user", "content": title}
+    history = {"currentId": "q1", "messages": {"q1": question}}
+    created = client.post("/api/v1/chats/new", json={"chat": {"title": title, "history": history}})
     assert created.status_code == 200, created.text
     return created.json()["id"]
 
 
-def share(client, chat_id: str) -> str:
+def share(client, chat_id: str, *readers) -> str:
     shared = client.post(f"/api/v1/chats/{chat_id}/share")
     assert shared.status_code == 200, shared.text
+    grants = [grant("user", reader.id, "read") for reader in readers]
+    granted = client.post(
+        f"/api/v1/chats/shared/{chat_id}/access/update", json={"access_grants": grants}
+    )
+    assert granted.status_code == 200, granted.text
     return shared.json()["share_id"]
 
 
@@ -80,12 +90,15 @@ def open_shared_chats(page: Page) -> Locator:
 
 
 def test_unsharing_a_chat_in_shared_chats_closes_its_link(page_for, make_user):
-    account = make_user()
+    account, reader = make_user(), make_user()
     title = f"Harbour walk {uuid.uuid4().hex[:6]}"
     with account.client() as client:
         kept_id = new_chat(client, "Lighthouse visit")
         kept_share = share(client, kept_id)
-        unshared_share = share(client, new_chat(client, title))
+        unshared_share = share(client, new_chat(client, title), reader)
+    reader_page = page_for(reader)
+    reader_page.goto(f"/s/{unshared_share}")
+    expect(conversation(reader_page).get_by_text(title)).to_be_visible()
     page = page_for(account)
     shared = open_shared_chats(page)
     row = shared.locator("div").filter(has=page.get_by_role("link", name=title)).last
@@ -98,6 +111,9 @@ def test_unsharing_a_chat_in_shared_chats_closes_its_link(page_for, make_user):
     with account.client() as client:
         assert link_status(client, unshared_share) == 401
         assert link_status(client, kept_share) == 200
+    reader_page.reload()
+    expect(reader_page).to_have_url(re.compile(r"/$"))
+    expect(conversation(reader_page).get_by_text(title)).to_have_count(0)
 
 
 def test_unshare_all_closes_every_link(page_for, make_user):
