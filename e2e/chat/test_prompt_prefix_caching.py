@@ -11,8 +11,9 @@ input across a reload. Others have a real Open Terminal picked for the chat from
 with a file written, a command run and the file read back across a reload, and with every tool
 the terminal offers called, its processes included. Then a chat started in a folder with its own
 prompt and knowledge, the last reply regenerated, the temperature changed in Controls and the
-model's description edited mid-chat, a workspace skill loaded on demand and a sub-agent. Every
-consecutive pair of the provider's requests is checked.
+model's description edited mid-chat, a workspace tool picked before the first turn, a workspace
+skill loaded on demand and a sub-agent. Every consecutive pair of the provider's requests is
+checked.
 
 Five tests stay red, on what the page does not name as a breaker. Two rewrite the tool list at
 the very start of the prefix: opening a folder in the terminal's file browser moves the working
@@ -50,7 +51,7 @@ from harness.prompt_caching import (
     first_break,
     turn_off_memory_system_context,
 )
-from harness.python_tools import EVERYONE_READS
+from harness.python_tools import EVERYONE_READS, python_tool
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import (
     ask,
@@ -61,6 +62,7 @@ from utils.cached_chat import (
     chat_requests,
     pick_terminal,
     tool_results,
+    turn_on_tool,
 )
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply
 
@@ -68,6 +70,15 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 TIMER_PROMPT = "Time to leave for the ferry."
+TIDE_TOOL = """
+class Tools:
+    def tide_time(self, harbour: str) -> str:
+        \"\"\"
+        The next high tide in a harbour.
+        :param harbour: The harbour's name
+        \"\"\"
+        return f"High tide in {harbour} is at noon."
+"""
 NOTES = ("berths.txt", "Berth 3 is reserved for the pilot boat.\nBerth 5 is free on Mondays.\n")
 
 
@@ -558,3 +569,29 @@ def test_the_create_skill_command_keeps_the_prefix(terminal_skill, terminal_chat
         "the Create skill command's message went to the model as the skill authoring prompt on "
         f"its own turn and as the typed command on the next, rewriting it: {broken}"
     )
+
+
+def test_a_workspace_tool_picked_before_the_first_turn_only_appends(
+    page_for, cached_setup, admin, make_user, upstream
+):
+    with python_tool(admin, TIDE_TOOL, name="Tide clock"):
+        page = page_for(make_user())
+        page.goto(f"/?models={cached_setup.id}")
+        turn_on_tool(page, "Tide clock")
+        ask(page, upstream, "good morning", reply.text("Morning."))
+        ask(
+            page,
+            upstream,
+            "when is high tide here and in Oban?",
+            calling_together(
+                ("tide_time", {"harbour": "Portree"}), ("tide_time", {"harbour": "Oban"})
+            ),
+            reply.text("At noon in both."),
+        )
+        page.reload()
+        ask(page, upstream, "thanks", reply.text("Safe travels."))
+
+    requests = chat_requests(upstream)
+    assert "tide_time" in called_tools(requests[-1])
+    assert "High tide in Oban is at noon." in tool_results(requests[-1]), tool_results(requests[-1])
+    assert_append_only(requests)

@@ -6,13 +6,14 @@ Context on and a text file attached, the same file switched to Using Entire Docu
 on with a knowledge file read by a tool, a memory added in Settings > Personalization while the
 memory system context is on, an AGENTS.md written into the Open Terminal's home between turns, a
 skill saved there between turns, a builtin tool category unticked on the model by an admin in the
-model editor, web search switched on from the Integrations menu, an earlier question edited and
-sent again, and a skill mentioned with `$` in a later turn, which is how a chat attaches one (its
-whole text joins the system message). The page also calls some changes harmless, and those tests
-stay green: a file or a whole knowledge base switched to Using Entire Document with File Context
-off, memories in the system context that do not change, the first file attached in a chat adding
-the Files tools once with every request after it appending again, and an AGENTS.md or a skill
-that was in the terminal from the first turn. Each control checks where the break falls.
+model editor, web search or a workspace tool switched on from the Integrations menu, an earlier
+question edited and sent again, and a skill mentioned with `$` in a later turn, which is how a
+chat attaches one (its whole text joins the system message). The page also calls some changes
+harmless, and those tests stay green: a file or a whole knowledge base switched to Using Entire
+Document with File Context off, memories in the system context that do not change, the first file
+attached in a chat adding the Files tools once with every request after it appending again, and
+an AGENTS.md or a skill that was in the terminal from the first turn. Each control checks where
+the break falls.
 
 Three more controls show breakers the page does not name, each rewriting the system message:
 a chat moved into a folder that has its own system prompt, a knowledge base attached to the chat
@@ -43,7 +44,7 @@ from harness.prompt_caching import (
     first_break,
     turn_off_memory_system_context,
 )
-from harness.python_tools import EVERYONE_READS
+from harness.python_tools import EVERYONE_READS, python_tool
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings
 from utils.cached_chat import (
@@ -55,6 +56,7 @@ from utils.cached_chat import (
     offered_tools,
     pick_terminal,
     tool_results,
+    turn_on_tool,
 )
 from utils.chat_ui import chat_input, conversation, expect_reply
 
@@ -66,6 +68,15 @@ SKILL = (
     f"---\nname: {SKILL_NAME}\ndescription: Reading tide tables\n---\n"
     "Read the high tide column first.\n"
 )
+TIDE_TOOL = """
+class Tools:
+    def tide_time(self, harbour: str) -> str:
+        \"\"\"
+        The next high tide in a harbour.
+        :param harbour: The harbour's name
+        \"\"\"
+        return f"High tide in {harbour} is at noon."
+"""
 AGENTS_MD = "Always greet the harbour master by name.\n"
 FIRST_MEMORY = "lives by the harbour"
 SECOND_MEMORY = "takes the early ferry"
@@ -460,6 +471,22 @@ def test_a_skill_mentioned_mid_chat_rewrites_the_prefix(
     requests = chat_requests(upstream)
     assert "Read the high tide column first." in requests[1]["messages"][0]["content"]
     assert first_break(requests) is not None, "a skill mentioned mid-chat left the prefix alone"
+
+
+def test_a_workspace_tool_switched_on_mid_chat_rewrites_the_prefix(
+    cached_setup, admin, page_for, make_user, upstream
+):
+    with python_tool(admin, TIDE_TOOL, name="Tide clock"):
+        page = page_for(make_user())
+        page.goto(f"/?models={cached_setup.id}")
+        ask(page, upstream, "good morning", reply.text("Morning."))
+        turn_on_tool(page, "Tide clock")
+        ask(page, upstream, "when is high tide?", reply.text("At noon."))
+
+    requests = chat_requests(upstream)
+    assert "tide_time" in offered_tools(requests[1])
+    broken = first_break(requests)
+    assert broken is not None and "in tools" in broken, broken
 
 
 # --- Editing an earlier question ------------------------------------------------------------

@@ -10,6 +10,7 @@ is every streamed request the provider received, the ones the cache sees.
 from __future__ import annotations
 
 import itertools
+import re
 
 from playwright.sync_api import Page, expect
 
@@ -88,3 +89,12 @@ def tool_results(request: dict) -> str:
     return "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "tool"
     )
+
+
+def turn_on_tool(page: Page, tool_name: str) -> None:
+    """Switch a workspace tool on for this chat from the Integrations menu."""
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_label("Integrations").click()
+    page.get_by_role("button", name=re.compile(r"^Tools")).click()
+    page.get_by_role("button", name=tool_name).click()
+    page.keyboard.press("Escape")
