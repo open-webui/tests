@@ -9,9 +9,9 @@ tests in integration/deps/test_audio_stack.py.
 
 Discriminates: passes on the dev ef67cc3fa build; in a backend copy whose `av.open` fails, the
 recording is never transcribed and the chat input stays empty, as it does when faster-whisper's
-`transcribe` is given `beams` for `beam_size` or a segment is read as `txt` for `text`. In one
-whose audio settings update ignores `WHISPER_MODEL` the Audio tab test fails (the model is never
-loaded).
+`transcribe` is given `beams` for `beam_size` or a segment is read as `txt` for `text`. In a
+frontend build whose Audio tab saves an empty Whisper model the Audio tab test fails (no model is
+loaded and the chat input stays empty).
 """
 
 from __future__ import annotations

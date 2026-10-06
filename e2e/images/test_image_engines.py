@@ -18,7 +18,8 @@ skips the width and height nodes the ComfyUI test fails, whose Automatic1111 bra
 `IMAGE_STEPS` the Automatic1111 test fails, whose Gemini branch always calls `:predict` the Gemini
 test fails, whose `load_url_image` hands the engines the file id in place of the picture the
 three edit tests fail, and whose OpenAI generation leaves out `IMAGES_OPENAI_API_PARAMS` the
-OpenAI test fails.
+OpenAI test fails. In a frontend build whose Images tab saves no node ids for the width node the
+ComfyUI test fails too.
 """
 
 from __future__ import annotations

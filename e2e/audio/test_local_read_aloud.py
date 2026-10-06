@@ -8,8 +8,8 @@ and unlike the speaker named before. Twin, in the browser, of
 integration/deps/test_local_text_to_speech.py.
 
 Discriminates: passes on the dev ef67cc3fa build; in a backend copy whose pipeline is built for
-text generation the speech request fails and the answer is never played, and in one whose audio
-settings update ignores the TTS model the speaker test fails (the old speaker reads the answer).
+text generation the speech request fails and the answer is never played. In a frontend build
+whose Audio tab saves an empty TTS model the speaker test fails (the fallback speaker reads it).
 """
 
 from __future__ import annotations

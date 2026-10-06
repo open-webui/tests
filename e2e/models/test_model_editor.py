@@ -13,7 +13,9 @@ Builtin Tools capability as a whole, leaves those tools out of the chat. A model
 editor is private to its maker until the editor shares it with a group, whose members then see
 it. With realtime voice calls on, a Realtime Voice set in the editor is the voice a call on the
 model opens with, and cleared it falls back to the admin's; with calls on Standard the editor
-offers no such field. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
+offers no such field. A TTS voice set for the model reads its replies aloud, over the voice the
+user picked for themselves. The system prompt is covered by
+e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
@@ -23,7 +25,8 @@ builtin tool whatever the model says, both builtin tool tests fail, in one that 
 knowledge attached to a model the knowledge test fails, in one that runs toggleable filters
 whether switched on or not the toggle test fails, and in one that never runs them both toggleable
 filter tests fail. The realtime voice tests pass on the dev ebc6add67 build, and the first fails
-on a build of it whose editor saves without the Realtime Voice.
+on a build of it whose editor saves without the Realtime Voice. In a frontend build whose Read
+Aloud skips the model's own voice the TTS voice test fails.
 """
 
 from __future__ import annotations
@@ -36,11 +39,12 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.audio_engine import VOICE, serve_audio_engine, using_audio_engine
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
+from harness.realtime_provider import VOICE as REALTIME_VOICE
 from harness.realtime_provider import (
-    VOICE,
     next_event,
     realtime_call,
     serving_realtime_provider,
@@ -49,6 +53,7 @@ from harness.realtime_provider import (
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.speech_audio import silent_wav
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -586,7 +591,7 @@ def test_a_realtime_voice_set_in_the_editor_is_the_voice_of_calls_on_the_model(
     save(editor)
 
     assert stored_meta(builder, preset).get("voice") is None
-    assert call_voice(make_user(), preset) == VOICE
+    assert call_voice(make_user(), preset) == REALTIME_VOICE
 
 
 def test_the_editor_offers_no_realtime_voice_while_calls_are_standard(page_for, builder, preset):
@@ -594,3 +599,37 @@ def test_the_editor_offers_no_realtime_voice_while_calls_are_standard(page_for, 
 
     expect(editor.get_by_text("TTS Voice", exact=True)).to_be_visible()
     expect(editor.get_by_role("combobox", name="Realtime Voice")).to_have_count(0)
+
+
+def test_a_tts_voice_set_in_the_editor_reads_the_replies_over_the_users_own(
+    page_for, admin, make_user, builder, preset, listener, upstream
+):
+    engine = serve_audio_engine(listener)
+    engine.speech = silent_wav(0.5)
+    engine.voices |= {"lighthouse": "The Lighthouse", "storyteller": "The Storyteller"}
+    reader = make_user()
+    with reader.client() as client:
+        own_voice = {"voice": "storyteller", "defaultVoice": VOICE}
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"audio": {"tts": own_voice}}}
+        )
+    assert saved.status_code == 200, saved.text
+
+    with admin.client() as client, using_audio_engine(client, engine):
+        editor = open_editor(page_for(builder), preset)
+        editor.get_by_placeholder("e.g. alloy, echo, shimmer").fill("lighthouse")
+        save(editor)
+
+        page = page_for(reader)
+        open_chat_on(page, preset)
+        question = unique("which light is that?")
+        answer = unique("That is the harbour light.")
+        upstream.queue(reply.text(answer, match=reply.answering(question)))
+        send(page, question)
+        expect_reply(page, answer)
+        with page.expect_response(lambda response: "/api/v1/audio/speech" in response.url):
+            page.get_by_role("button", name="Read Aloud").click()
+
+    spoken = engine.speech_requests()
+    voices = [request["voice"] for request in spoken if answer in request["input"]]
+    assert voices == ["lighthouse"], f"the model's reply was read in {voices}"

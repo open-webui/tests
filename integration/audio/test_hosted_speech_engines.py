@@ -11,8 +11,8 @@ test is red on dev ebc6add67: the transcription keeps only Deepgram's status ("4
 'Unauthorized'") and drops the reason Deepgram gives, which the error handler means to show.
 
 Discriminates: the other tests pass on dev ebc6add67; in a backend copy whose `_tts_elevenlabs`
-sends no `model_id`, whose ElevenLabs voice list is answered without asking ElevenLabs, or whose
-`_transcribe_deepgram` leaves out the language or the model, one test each turns red.
+asks for the admin's voice in place of the one asked for the speech test fails, and in one whose
+`_transcribe_deepgram` leaves out the language the transcript test fails.
 """
 
 from __future__ import annotations

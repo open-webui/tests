@@ -9,7 +9,9 @@ whether a reply of two paragraphs with two sentences each is sent as four, two o
 request; a user's Speech-to-Text Language reaches the engine with the recording; the admin's
 speech-to-text model is the one the engine is asked for; a voice the user picked is dropped when
 the admin changes the default voice; and a user who picks the Web API as their own Speech-to-Text
-Engine dictates in the browser without the engine being called.
+Engine dictates in the browser without the engine being called. The Response Splitting select
+should be named for a screen reader as its markup asks; on dev ebc6add67 the shared select
+component drops the name it is given, so that test is red.
 
 Discriminates: passes on the dev ebc6add67 build; in a frontend copy, the admin tab leaving the
 Azure Endpoint URL out of its save turns both Azure tests red, leaving out the Mistral API Base
@@ -31,6 +33,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.audio_engine import (
+    AUDIO_CONFIG,
     AUDIO_NAMESPACE,
     CONFIG_IMPORT,
     TRANSCRIPT,
@@ -43,7 +46,6 @@ from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-AUDIO_CONFIG = ("/api/v1/audio/config", "/api/v1/audio/config/update")
 # nothing listens here: a setting the admin tab fails to save sends the call to this dead end
 DEAD_END = "http://127.0.0.1:9"
 AZURE_KEY = "azure-key-0123456789"
@@ -304,6 +306,18 @@ def test_mistral_transcribes_a_dictation_through_the_admin_tab(
     [sent] = listener.requests_to("/audio/transcriptions")
     assert sent.headers["Authorization"] == f"Bearer {MISTRAL_KEY}"
     assert form_field(sent.body, "model") == b"voxtral-test-model"
+
+
+def test_the_response_splitting_select_has_the_name_it_is_given(admin_page):
+    settings = open_admin_audio(admin_page)
+
+    expect(
+        settings.get_by_role(
+            "combobox", name="Select how to split message text for TTS requests", exact=True
+        ),
+        "the Response Splitting select has no accessible name: the select component replaces "
+        "the aria-label it is passed with its own empty one",
+    ).to_be_visible()
 
 
 @pytest.mark.parametrize(
