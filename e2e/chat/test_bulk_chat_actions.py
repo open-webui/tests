@@ -4,21 +4,30 @@ Archive All Chats and Delete All Chats each ask for confirmation, and cancelling
 The archived chats list searches by title, and its rows unarchive a chat back into the sidebar or
 delete it for good. Export downloads a file holding the account's chats, archived ones included and
 no one else's, and importing that file into an emptied account brings the chats back. Each result
-is read back after a reload, so what shows is what the server stored.
+is read back after a reload, so what shows is what the server stored. The archive's Actions menu
+unarchives every chat back into the sidebar and exports the archived chats alone, and Delete All
+also closes the account's share links, so someone it shared a chat with is sent home.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy each test fails when its control does
 nothing: the archive, delete and unarchive buttons skipping their request, the confirmation
 dialog confirming on cancel, the archive search ignoring its text and the export saving an empty
-list or the import dropping the file.
+list or the import dropping the file. On dev ebc6add67 a frontend copy whose Unarchive All skips
+its request and whose archive export saves an empty list turns those two tests red, and a
+backend copy whose delete-all leaves the account's shares in place turns the share link test red.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
+
+from harness.access import grant
+from harness.chat_history import seed_chat
+from utils.chat_ui import conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -250,3 +259,91 @@ def test_an_exported_file_imports_back_into_an_emptied_account(owner, page_for, 
 
     page.reload()
     assert _titles(owner) == {f"Alpha {marker}", f"Beta {marker}"}
+
+
+def _archive_action(settings: Locator, action: str) -> None:
+    settings.locator("#tab-archived-chats").get_by_role("button", name="Actions").first.click()
+    settings.page.get_by_role("menu").get_by_role("button", name=action).click()
+
+
+def test_unarchive_all_brings_every_archived_chat_back(owner, make_user, page_for):
+    stranger = make_user()
+    _seed_chats(owner, "Kept out", "Brought in", archived=True)
+    _seed_chats(stranger, "Stranger archive", archived=True)
+    page = page_for(owner)
+    sidebar = _open_sidebar(page)
+    settings = _open_settings_tab(page, "Archived Chats")
+    expect(_archived_row(settings, "Brought in")).to_be_visible()
+
+    _archive_action(settings, "Unarchive All")
+    page.get_by_role("dialog", name="Confirm your action").get_by_role(
+        "button", name="Unarchive All"
+    ).click()
+    expect(page.get_by_text("All chats have been unarchived.")).to_be_visible()
+    expect(settings.get_by_text("You have no archived conversations.")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="Brought in")).to_be_visible()
+
+    page.reload()  # the sidebar stays open
+    expect(sidebar.get_by_role("button", name="Kept out")).to_be_visible()
+    assert _titles(owner) == {"Kept out", "Brought in"}
+    assert _titles(stranger, archived=True) == {"Stranger archive"}
+
+
+def test_export_from_the_archive_downloads_only_the_archived_chats(owner, page_for, tmp_path):
+    _seed_chats(owner, "Live plans")
+    _seed_chats(owner, "Old plans", "Older plans", archived=True)
+    page = page_for(owner)
+    settings = _open_settings_tab(page, "Archived Chats")
+    expect(_archived_row(settings, "Old plans")).to_be_visible()
+
+    with page.expect_download() as download_info:
+        _archive_action(settings, "Export")
+    download = download_info.value
+    path = tmp_path / download.suggested_filename
+    download.save_as(path)
+    exported = json.loads(path.read_text())
+
+    assert download.suggested_filename.startswith("archived-chat-export-")
+    assert {chat["title"] for chat in exported} == {"Old plans", "Older plans"}
+
+
+def _share_with(account, reader) -> str:
+    with account.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": "where to?"},
+                {"role": "assistant", "content": "the dunes"},
+            ],
+        )
+        shared = client.post(f"/api/v1/chats/{chat_id}/share")
+        assert shared.status_code == 200, shared.text
+        granted = client.post(
+            f"/api/v1/chats/shared/{chat_id}/access/update",
+            json={"access_grants": [grant("user", reader.id, "read")]},
+        )
+        assert granted.status_code == 200, granted.text
+    return shared.json()["share_id"]
+
+
+def test_delete_all_closes_the_accounts_share_links(owner, make_user, page_for):
+    reader = make_user()
+    share_id = _share_with(owner, reader)
+    reader_page = page_for(reader)
+    reader_page.goto(f"/s/{share_id}")
+    expect(conversation(reader_page).get_by_text("the dunes")).to_be_visible()
+
+    page = page_for(owner)
+    settings = _open_settings_tab(page, "Data Controls")
+    confirm = _click_bulk_action(settings, "Delete All")
+    with page.expect_response(lambda response: response.request.method == "DELETE"):
+        confirm.get_by_role("button", name="Confirm").click()
+    assert _titles(owner) == set()
+
+    reader_page.reload()
+    expect(reader_page).to_have_url(re.compile(r"/$"))
+    expect(conversation(reader_page).get_by_text("the dunes")).to_have_count(0)
+    shared_chats = settings.get_by_text("Shared Chats", exact=True)
+    shared_chats.locator("xpath=ancestor::div[.//button][1]").get_by_role("button").click()
+    shared = page.get_by_role("dialog").filter(has_text="Unshare All Shared Chats")
+    expect(shared.get_by_text("No results found")).to_be_visible()
