@@ -183,6 +183,12 @@ def _router_prefixes(main_tree: ast.Module) -> dict[str, str]:
     return prefixes
 
 
+def _router_source(routers: Path, module: str) -> Path:
+    """The router's file, or its package's `__init__.py` (audio became one in 093bfce2b)."""
+    module_file = routers / f"{module}.py"
+    return module_file if module_file.exists() else routers / module / "__init__.py"
+
+
 @pytest.fixture(scope="module")
 def source_routes() -> dict[tuple[str, str], tuple[str, str | None]]:
     backend = resolve_backend()
@@ -197,7 +203,7 @@ def classify_source_routes(backend: Path) -> dict[tuple[str, str], tuple[str, st
     main_tree = ast.parse((package / "main.py").read_text(encoding="utf-8"))
     modules = {"main": ("", main_tree)}
     for module, prefix in _router_prefixes(main_tree).items():
-        source = (package / "routers" / f"{module}.py").read_text(encoding="utf-8")
+        source = _router_source(package / "routers", module).read_text(encoding="utf-8")
         modules[module] = (prefix, ast.parse(source))
 
     routes = {}

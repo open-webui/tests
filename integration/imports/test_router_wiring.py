@@ -6,11 +6,12 @@ endpoints that all answer 404, a router mounted a second time on another prefix 
 endpoints twice, and two routers mounted on one prefix leave the second one's colliding
 endpoints unreachable. None of that fails at startup.
 
-Every `@router.<method>(path)` in every file under `routers/` is read from the source and looked
-up in the live `/openapi.json`. A module counts as mounted under a prefix when every one of its
-endpoints is served at that prefix plus its path, with the operation id FastAPI derives from the
-module's own handler; each module needs exactly one such prefix. The instance runs with SCIM on,
-so the one router main.py mounts behind a switch is served too.
+Every `@router.<method>(path)` in every file under `routers/`, router packages such as `audio/`
+included, is read from the source and looked up in the live `/openapi.json`. A module counts as
+mounted under a prefix when every one of its endpoints is served at that prefix plus its path,
+with the operation id FastAPI derives from the module's own handler; each module needs exactly
+one such prefix. The instance runs with SCIM on, so the one router main.py mounts behind a
+switch is served too.
 
 Twin of unit/imports/test_router_wiring.py, which keeps the audit of main.py's mount lines for
 what no request sees: a duplicate mount on the same prefix, and two routers sharing a prefix
@@ -18,7 +19,8 @@ before any of their paths collide.
 Discriminates: in a backend copy, deleting the `include_router` line for `notifications` fails
 `test_every_router_module_is_served`; mounting `utils` a second time under `/api/v1/utils2`
 fails `test_no_router_module_is_served_twice`; mounting `automations` on the `/api/v1/notes`
-prefix fails `test_every_router_module_is_served` for `notes` (`/create` and `/{id}` collide).
+prefix fails `test_every_router_module_is_served` for `notes` (`/create` and `/{id}` collide);
+deleting the mount of the `audio` package fails it for `audio`.
 """
 
 from __future__ import annotations
@@ -82,17 +84,23 @@ def _declared_endpoints(source: str) -> list[tuple[str, str, str]]:
     return endpoints
 
 
+def _module_name(routers: Path, path: Path) -> str:
+    """`audio` for `audio/__init__.py`, `audio.realtime` for `audio/realtime.py`."""
+    parts = path.relative_to(routers).with_suffix("").parts
+    return ".".join(part for part in parts if part != "__init__")
+
+
 @pytest.fixture(scope="module")
 def declared() -> dict[str, list[tuple[str, str, str]]]:
-    """`{router module: its endpoints}` for every file under `routers/`."""
+    """`{router module: its endpoints}` for every file under `routers/` and its packages."""
     backend = resolve_backend()
     if backend is None:
         pytest.skip("open-webui backend source not found (set OPEN_WEBUI_SOURCE_DIR)")
     routers = Path(backend) / "open_webui" / "routers"
     modules = {
-        path.stem: _declared_endpoints(path.read_text(encoding="utf-8"))
-        for path in sorted(routers.glob("*.py"))
-        if path.stem != "__init__"
+        _module_name(routers, path): _declared_endpoints(path.read_text(encoding="utf-8"))
+        for path in sorted([*routers.glob("*.py"), *routers.glob("*/*.py")])
+        if path.parent != routers or path.stem != "__init__"
     }
     assert len(modules) > 20, f"retarget this sweep: only {len(modules)} router modules read"
     return modules
