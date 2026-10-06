@@ -1,12 +1,14 @@
-"""Journey: the sidebar's chat menu renames, pins, archives, deletes and moves a chat for good.
+"""Journey: the sidebar chat menu renames, pins, archives, deletes, moves, clones and marks a chat.
 
 Each action is taken from the menu on the chat's sidebar row, and each is read back after a
 reload, so what shows is what the server stored: the new title, the chat under Pinned, the chat
-among Archived Chats in the settings, the chat gone, the chat inside its folder.
+among Archived Chats in the settings, the chat gone, the chat inside its folder, a copy holding the
+conversation beside the original, and the unread dot until the chat is opened again.
 
-Discriminates: passes on dev ac00d40e3; in a backend copy each test fails when its route answers
+Discriminates: passes on dev 30f3f6a8f; in a backend copy each test fails when its route answers
 without storing the change: the chat update dropping `title`, the pin and archive toggles not
-flipping, the delete route not deleting and the folder route not moving the chat.
+flipping, the delete route not deleting, the folder route not moving the chat, the clone route
+storing an empty conversation and the unread route leaving the read time alone.
 """
 
 from __future__ import annotations
@@ -17,6 +19,15 @@ from playwright.sync_api import Locator, Page, expect
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 TITLE = "Trip to the coast"
+QUESTION = {"id": "q1", "parentId": None, "childrenIds": ["a1"], "role": "user"}
+ANSWER = {"id": "a1", "parentId": "q1", "childrenIds": [], "role": "assistant", "done": True}
+HISTORY = {
+    "currentId": "a1",
+    "messages": {
+        "q1": {**QUESTION, "content": "Where should we stay?"},
+        "a1": {**ANSWER, "content": "A cottage above the harbour."},
+    },
+}
 
 
 @pytest.fixture
@@ -24,7 +35,9 @@ def owner(make_user):
     """A fresh account with one chat and one expanded folder."""
     account = make_user()
     with account.client() as client:
-        created = client.post("/api/v1/chats/new", json={"chat": {"title": TITLE}})
+        created = client.post(
+            "/api/v1/chats/new", json={"chat": {"title": TITLE, "history": HISTORY}}
+        )
         assert created.status_code == 200, created.text
         folder = client.post("/api/v1/folders/", json={"name": "Holidays"})
         assert folder.status_code == 200, folder.text
@@ -130,3 +143,37 @@ def test_a_chat_moved_into_a_folder_stays_there(sidebar):
     expect(folder).to_be_visible()
     expect(sidebar.get_by_text("No chats")).to_have_count(0)
     expect(_chat_row(sidebar, TITLE)).to_have_count(1)
+
+
+def test_a_clone_holds_the_conversation_and_leaves_the_original(sidebar):
+    page = sidebar.page
+    _chat_menu(sidebar, TITLE).get_by_role("button", name="Clone").click()
+    clone_title = f"Clone of {TITLE}"
+    expect(_chat_row(sidebar, clone_title)).to_be_visible()
+    expect(page.get_by_text("A cottage above the harbour.")).to_be_visible()
+
+    _reloaded(sidebar)
+    expect(_chat_row(sidebar, clone_title)).to_be_visible()
+    expect(page.get_by_text("A cottage above the harbour.")).to_be_visible()
+    _chat_row(sidebar, TITLE).first.click()
+    expect(page.get_by_text("A cottage above the harbour.")).to_be_visible()
+
+
+def _unread_dot(sidebar: Locator, title: str) -> Locator:
+    # the dot has no text or role of its own
+    row = sidebar.locator("#sidebar-chat-group").filter(has_text=title)
+    return row.locator(".bg-sky-500.rounded-full")
+
+
+def test_a_chat_marked_unread_keeps_its_dot_until_it_is_opened(sidebar):
+    expect(_unread_dot(sidebar, TITLE)).to_have_count(0)
+    _chat_menu(sidebar, TITLE).get_by_role("button", name="Mark as unread").click()
+    expect(_unread_dot(sidebar, TITLE)).to_be_visible()
+
+    _reloaded(sidebar)
+    expect(_unread_dot(sidebar, TITLE)).to_be_visible()
+    _chat_row(sidebar, TITLE).first.click()
+    expect(sidebar.page.get_by_text("A cottage above the harbour.")).to_be_visible()
+    sidebar.page.goto("/")
+    expect(_chat_row(sidebar, TITLE).first).to_be_visible()
+    expect(_unread_dot(sidebar, TITLE)).to_have_count(0)
