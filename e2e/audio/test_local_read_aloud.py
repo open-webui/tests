@@ -84,23 +84,27 @@ def _set_speaker(instance, name: str) -> None:
 
 def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking):
     answer = "the ferry leaves the harbour at noon."
+    named_speaker = speaker(40)
     owner = create_user(speaking)
-    with owner.client() as client:
-        first_speaker_says = _speak(client, answer)
-        chat_id, _ = seed_chat(
-            client,
-            [{"role": "user", "content": "ferry?"}, {"role": "assistant", "content": answer}],
-        )
-    admin_page = page_for(create_user(speaking, role="admin"))
-    admin_page.goto("/admin/settings/audio")
-    settings = admin_page.get_by_role("dialog")
-    model_box = settings.get_by_role("combobox", name="CMU ARCTIC speaker embedding name")
-    expect(model_box).to_have_value(FIRST_SPEAKER)
-    model_box.fill(speaker(40))
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
     try:
+        with owner.client() as client:
+            first_speaker_says = _speak(client, answer)
+            _set_speaker(speaking, named_speaker)
+            named_speaker_says = _speak(client, answer)
+            _set_speaker(speaking, FIRST_SPEAKER)
+            chat_id, _ = seed_chat(
+                client,
+                [{"role": "user", "content": "ferry?"}, {"role": "assistant", "content": answer}],
+            )
+        admin_page = page_for(create_user(speaking, role="admin"))
+        admin_page.goto("/admin/settings/audio")
+        settings = admin_page.get_by_role("dialog")
+        model_box = settings.get_by_role("combobox", name="CMU ARCTIC speaker embedding name")
+        expect(model_box).to_have_value(FIRST_SPEAKER)
+        model_box.fill(named_speaker)
+        settings.get_by_role("button", name="Save", exact=True).click()
+        expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+
         page = page_for(owner)
         page.goto(f"/c/{chat_id}")
         expect(page.get_by_text(answer)).to_be_visible()
@@ -109,7 +113,6 @@ def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking)
         assert spoken.value.ok, spoken.value.text()
         page.wait_for_function(PLAYED)
         with owner.client() as client:
-            named_speaker_says = _speak(client, answer + " ")
             # the same body again is answered from the cache: the speech the browser played
             replayed = client.post(
                 "/api/v1/audio/speech",
@@ -120,6 +123,5 @@ def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking)
         _set_speaker(speaking, FIRST_SPEAKER)
 
     assert replayed.status_code == 200, replayed.text
-    read_aloud = replayed.content
-    assert read_aloud != first_speaker_says, "the answer was read by the speaker named before"
-    assert read_aloud == named_speaker_says, "the answer was not read by the speaker named"
+    assert first_speaker_says != named_speaker_says, "the two speakers sound alike"
+    assert replayed.content == named_speaker_says, "the answer was not read by the speaker named"

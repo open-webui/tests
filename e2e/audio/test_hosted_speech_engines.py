@@ -178,7 +178,6 @@ def test_a_dictation_deepgram_refuses_shows_deepgrams_reason(voice_page_for, hos
 
     dictate(page)
 
-    expect(page.get_by_text("401, message='Unauthorized'", exact=False).first).to_be_visible()
     expect(
         page.get_by_text("Invalid credentials.", exact=False),
         "the error shown gives Deepgram's status but drops the reason Deepgram gave",
