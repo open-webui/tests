@@ -7,17 +7,20 @@ feature starts a new chat with it on. Advanced params reach the provider with th
 becomes a filter of the model selector and a prompt suggestion shows on the new chat and sends
 itself. A tool ticked for the model is offered to the provider, a knowledge base attached to it is
 searched when the model asks, a filter changes the message before it is sent and an action shows
-under the reply and runs. A builtin tool category unticked for the model, or the Builtin Tools
-capability as a whole, leaves those tools out of the chat. A model made in the editor is private
-to its maker until the editor shares it with a group, whose members then see it. The system prompt
-is covered by e2e/workspace/test_workspace_presets.py.
+under the reply and runs. A toggleable filter runs only while switched on in the chat, and one set
+as a default filter starts switched on. A builtin tool category unticked for the model, or the
+Builtin Tools capability as a whole, leaves those tools out of the chat. A model made in the
+editor is private to its maker until the editor shares it with a group, whose members then see
+it. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
 and starts a new model shared with everyone, every test fails. With only the access grants left
 out of the save, the group member never sees the model. In a backend copy that offers every
-builtin tool whatever the model says, both builtin tool tests fail, and in one that ignores the
-knowledge attached to a model the knowledge test fails.
+builtin tool whatever the model says, both builtin tool tests fail, in one that ignores the
+knowledge attached to a model the knowledge test fails, in one that runs toggleable filters
+whether switched on or not the toggle test fails, and in one that never runs them both toggleable
+filter tests fail.
 """
 
 from __future__ import annotations
@@ -388,6 +391,74 @@ def test_a_filter_ticked_in_the_editor_runs_on_the_chat(page_for, admin, builder
         request = sent_request(page, upstream, "may I moor here?")
 
     assert request["messages"][-1]["content"] == "may I moor here? (checked at the harbour gate)"
+
+
+TOGGLE_FILTER_SOURCE = """class Filter:
+    def __init__(self):
+        self.toggle = True
+
+    def inlet(self, body: dict, __user__=None) -> dict:
+        body["messages"][-1]["content"] += " (logged by the harbour master)"
+        return body
+"""
+
+
+def filter_switch(page: Page, filter_id: str) -> Locator:
+    """The filter's switch in the chat's Integrations menu."""
+    open_menu(page, "Integrations")
+    return page.get_by_role("menu").get_by_role("button", name=re.compile(filter_id))
+
+
+def test_a_toggleable_filter_runs_only_while_switched_on_in_the_chat(
+    page_for, admin, builder, preset, upstream
+):
+    with installed_function(admin, TOGGLE_FILTER_SOURCE) as filter_id:
+        page = page_for(builder)
+        editor = open_editor(page, preset)
+        pick(editor, "Filter", filter_id)
+        save(editor)
+
+        open_chat_on(page, preset)
+        expect(filter_switch(page, filter_id)).to_have_attribute("aria-pressed", "false")
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
+        assert sent_request(page, upstream, "may I moor?")["messages"][-1]["content"] == (
+            "may I moor?"
+        )
+
+        switch = filter_switch(page, filter_id)
+        switch.click()
+        expect(switch).to_have_attribute("aria-pressed", "true")
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
+        request = sent_request(page, upstream, "may I moor now?")
+
+    assert request["messages"][-1]["content"] == "may I moor now? (logged by the harbour master)"
+
+
+def test_a_default_filter_starts_switched_on_in_a_new_chat(
+    page_for, admin, builder, preset, upstream
+):
+    with installed_function(admin, TOGGLE_FILTER_SOURCE) as filter_id:
+        page = page_for(builder)
+        editor = open_editor(page, preset)
+        pick(editor, "Filter", filter_id)
+        defaults = editor.get_by_text("Default Filters", exact=True).locator("xpath=..")
+        defaults.get_by_text("Select Filter", exact=True).click()
+        page.get_by_placeholder("Search filters").last.fill(filter_id)
+        page.get_by_role("button", name=filter_id).last.click()
+        page.keyboard.press("Escape")
+        save(editor)
+
+        open_chat_on(page, preset)
+        expect(filter_switch(page, filter_id)).to_have_attribute("aria-pressed", "true")
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
+        request = sent_request(page, upstream, "may I anchor here?")
+
+    assert request["messages"][-1]["content"] == (
+        "may I anchor here? (logged by the harbour master)"
+    )
 
 
 def test_an_action_ticked_in_the_editor_shows_under_the_reply_and_runs(
