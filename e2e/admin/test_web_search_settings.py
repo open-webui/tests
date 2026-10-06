@@ -42,7 +42,8 @@ def engine(admin, preserve, listener):
 
 
 def web_search_tab(page: Page) -> Locator:
-    page.goto("/admin/settings/web")
+    with page.expect_response(lambda response: response.url.endswith("/retrieval/config")):
+        page.goto("/admin/settings/web")
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("switch", name="Web Search", exact=True)).to_be_checked()
     return settings

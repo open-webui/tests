@@ -81,9 +81,15 @@ def model_row(page: Page, name: str) -> Locator:
     return row
 
 
+def is_model_save(response) -> bool:
+    return response.request.method == "POST" and "/models" in response.url
+
+
 def choose_from_menu(page: Page, row: Locator, entry: str) -> None:
     tooltip_button(row, "More").click()
-    page.get_by_role("menu").get_by_role("button", name=entry).click()
+    with page.expect_response(is_model_save) as saved:
+        page.get_by_role("menu").get_by_role("button", name=entry).click()
+    assert saved.value.ok, saved.value.status
 
 
 def offered_to(page: Page, name: str) -> Locator:
