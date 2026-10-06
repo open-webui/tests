@@ -15,6 +15,11 @@ Kokoro model is a download the suite cannot make, so here the model request is a
 404: the call asks for the model, shows the loading error and stays open. A spoken reply is not
 covered.
 
+Red on dev ebc6add67 since 093bfce2b: a new chat opened with `?call=true` shows the side panel
+without the call. Opening the call now sets the panel's switches at once, where it waited a
+moment before, and the call does not stay open. Both tests that expect a call are red; they pass
+on that build with the wait put back.
+
 Discriminates: passes on the dev b859124f9 build, fails on that build with 79baaca3b and
 51da3eefc reverted (each refused case opens a call without its message, and the Kokoro call
 never asks for the model).
@@ -37,6 +42,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.
 
 KOKORO_MODEL = re.compile(r"Kokoro-82M")
 MODEL_LOAD_ERROR = re.compile(r"Could not locate file: .*Kokoro-82M")
+NO_CALL_FROM_URL = "?call=true opened the side panel without the call (093bfce2b)"
 # a call opened in error shows at once, so this is long enough to see none open
 NO_CALL_WAIT_MS = 1500
 
@@ -111,7 +117,7 @@ def test_voice_mode_from_the_url_opens_the_call(voice_page_for, make_user, speec
 
     open_from_url(page, "call=true")
 
-    expect(end_call_button(page)).to_be_visible()
+    expect(end_call_button(page), NO_CALL_FROM_URL).to_be_visible()
 
 
 def test_without_allow_call_the_url_opens_no_call(
@@ -159,6 +165,6 @@ def test_a_kokoro_call_from_the_url_sets_up_the_voice(voice_page_for, kokoro_cal
     page.context.route(KOKORO_MODEL, refuse_download)
     open_from_url(page, "call=true")
 
-    expect(end_call_button(page)).to_be_visible()
+    expect(end_call_button(page), NO_CALL_FROM_URL).to_be_visible()
     expect(page.get_by_text(MODEL_LOAD_ERROR), "#31828: no Kokoro setup was tried").to_be_visible()
     assert asked_for_model, "#31828: the call never set up the Kokoro voice"

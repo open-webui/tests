@@ -91,7 +91,8 @@ def test_interrupting_the_call_stops_the_rest_of_the_reply(
     start_call(page)
     wait_for_sentence_audio(page, 1)
 
-    page.get_by_role("button", name="Tap to interrupt").click()
+    # the status line is a live region since 093bfce2b, so the button it sits in has no name
+    call_status(page, "Tap to interrupt").click()
     expect(call_status(page, "Listening...")).to_be_visible()
     transcribed = len(long_sentences.transcription_requests())
     time.sleep(QUIET_SECONDS)
