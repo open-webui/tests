@@ -5,8 +5,9 @@ holds only the first turn and answers from it, the question's Delete (after its 
 takes the question and its reply out of the stored chat, the Regenerate menu sends a typed change
 or More Concise to the model after the earlier reply, and Save on an edited question keeps the new
 text without asking the model again. A picture removed while editing a question is not sent with
-it again. Each result is read after a reload or in what the model was sent, as a fresh
-account against the scripted model.
+it again, and a document removed while editing one and saved is gone from it after a reload. Each
+result is read after a reload or in what the model was sent, as a fresh account against the
+scripted model.
 
 The two regenerate tests are red on dev: a saved chat sends the model only the stored history up
 to the question, so a suggested change or More Concise reaches the model without the reply it is
@@ -15,8 +16,8 @@ about (with the regenerated reply appended from the database both pass).
 Discriminates: passes on dev 30f3f6a8f apart from the two regenerate tests; in a backend copy the
 fork test fails with the fork route copying the whole conversation past the chosen reply and the
 delete test with the message delete route storing nothing; in a frontend build whose Save edits
-nothing the save test fails, and in one whose Remove file while editing keeps the file the picture
-test fails.
+nothing the save test fails, in one whose Remove file while editing keeps the file the picture
+test fails, and in one whose Remove File on a document chip does nothing the document test fails.
 """
 
 from __future__ import annotations
@@ -211,3 +212,32 @@ def test_a_picture_removed_while_editing_a_question_is_not_sent_again(
 
     expect_reply(page, "I cannot see one now.")
     assert _images_sent(upstream, "what colour is the buoy") == 0
+
+
+def test_a_document_removed_while_editing_a_question_stays_off_it_after_a_save(
+    page_for, make_user, upstream
+):
+    page = page_for(make_user())
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_role("button", name="More", exact=True).last.click()
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("menu").get_by_role("button", name="Upload Files").click()
+    chooser.value.set_files(
+        {"name": "packing-list.txt", "mimeType": "text/plain", "buffer": b"rope, lamp, oilskin"}
+    )
+    expect(page.get_by_role("button", name="Remove File", exact=True)).to_be_visible()
+    upstream.queue(reply.text("Rope and a lamp.", match=reply.answering("what do I pack")))
+    send(page, "what do I pack?")
+    expect_reply(page, "Rope and a lamp.")
+    expect(_questions(page).last.get_by_text("packing-list.txt")).to_be_visible()
+
+    question = _shown(_questions(page).last)
+    question.get_by_role("button", name="Edit").click()
+    question.get_by_role("button", name="Remove File", exact=True).click()
+    expect(question.get_by_text("packing-list.txt")).to_have_count(0)
+    question.get_by_role("button", name="Save", exact=True).click()
+
+    page.reload()
+    expect_reply(page, "Rope and a lamp.")
+    expect(_questions(page).last).to_contain_text("what do I pack?")
+    expect(_questions(page).last.get_by_text("packing-list.txt")).to_have_count(0)
