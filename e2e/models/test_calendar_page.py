@@ -14,6 +14,10 @@
   calendar is shared with it.
 * Saving a later occurrence of a repeating event moved the whole series to that day, issue
   #30970, fixed by PR #30971.
+* An event created from the header after 23:00 is saved ending a day late. The editor starts from
+  now until an hour later, which ends on the next day, and since PR #31303 (6fdbe3ab6) the end
+  keeps that one day offset from whatever day is typed, though the editor shows no end date. The
+  other editor tests open it at noon, so they do not depend on when they run.
 
 Discriminates: in a frontend build with the editor dropping the location on create, the all-day
 start taken from the time field, the edit saving the old title, the delete never sent, a clicked
@@ -22,6 +26,7 @@ week, the page no longer sending the browser's zone and the sidebar toggle ignor
 test went red and the rest stayed green; in a backend copy with the calendar tool reading times
 as UTC the model's event test went red, and with calendars listed to their owners only the
 sharing test went red at the reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
+The late evening test is red on dev ebc6add67 (the bug above).
 """
 
 from __future__ import annotations
@@ -104,7 +109,9 @@ def _days_showing(page: Page, title: str) -> list[int]:
     return [int(text.split()[0]) for text in cells.all_inner_texts()]
 
 
-def _open_editor(page: Page) -> Locator:
+def _open_editor(page: Page, at: dt.time = dt.time(12)) -> Locator:
+    """The header's editor, opened at `at` today: its new event starts then."""
+    page.clock.set_fixed_time(dt.datetime.combine(dt.date.today(), at))
     page.goto("/calendar")
     page.get_by_role("button", name="Create", exact=True).click()
     return page.get_by_role("dialog")
@@ -179,6 +186,25 @@ def test_an_all_day_event_runs_from_midnight_to_the_end_of_the_day(page_for, mak
         to_ns(_this_month(17, 23, 59)),
         True,
     )
+
+
+def test_an_event_created_late_in_the_evening_ends_on_its_own_day(page_for, make_user):
+    owner = make_user()
+    title = _title("Breakfast")
+    page = page_for(owner)
+
+    editor = _open_editor(page, at=dt.time(23, 30))
+    editor.get_by_placeholder("Event title").fill(title)
+    _fill_when(editor, _this_month(21, 0).date(), "10:30", "11:45")
+    _save(editor, "Create")
+
+    expect(_chip(page, title).first).to_be_visible()
+    saved = _saved(owner, title)
+    assert saved["end_at"] == to_ns(_this_month(21, 11, 45)), (
+        "an event created after 23:00 was saved ending a day late, the day after the one typed: "
+        "the editor's default end on the next day keeps its offset (6fdbe3ab6, PR #31303)"
+    )
+    assert _days_showing(page, title) == [21]
 
 
 def test_clicking_an_empty_day_starts_an_event_at_nine_that_day(page_for, make_user):
