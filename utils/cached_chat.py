@@ -2,8 +2,9 @@
 
 `ask` sends a prompt and waits for the last of its scripted replies, each tied to that prompt, so
 a tool round and the answer after it are one call. `attach` uploads a file through the chat
-input's menu, `pick_terminal` picks an Open Terminal for the chat before the first message, and
-`chat_requests` is every streamed request the provider received, the ones the cache sees.
+input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
+`pick_terminal` picks an Open Terminal for the chat before the first message, and `chat_requests`
+is every streamed request the provider received, the ones the cache sees.
 """
 
 from __future__ import annotations
@@ -27,6 +28,19 @@ def attach(page: Page, name: str, content: str | bytes, mime_type: str = "text/p
         page.get_by_role("menu").get_by_role("button", name="Upload Files").click()
     buffer = content.encode() if isinstance(content, str) else content
     chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": buffer})
+
+
+def attach_from_menu(page: Page, submenu: str, name: str) -> None:
+    """Attach a knowledge base, note or chat through the chat input's More menu."""
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_role("button", name="More", exact=True).last.click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("button").first).to_be_visible()
+    if menu.get_by_role("button", name=submenu).count() == 0:
+        menu.get_by_role("button").first.click()  # it reopens on the list last picked from
+    menu.get_by_role("button", name=submenu).click()
+    menu.get_by_role("button", name=name).first.click()
+    expect(page.locator("form").get_by_text(name).first).to_be_visible()
 
 
 def ask(page: Page, upstream, prompt: str, *replies: Reply) -> None:
