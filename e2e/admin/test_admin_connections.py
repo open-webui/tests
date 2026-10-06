@@ -7,8 +7,9 @@ connection switched off in its row, or deleted from its settings, takes its mode
 selector; a new key saved in its settings is the one the provider gets on the next chat. Once a
 connection is verified, the allowlist's model field suggests the models the provider served that
 are not yet on the list, and Enter in that field does not save the dialog. An Ollama
-connection added the same way lists its models under its prefix. Every provider is a local
-stand-in, and every test puts the connection settings back afterwards.
+connection added the same way lists its models under its prefix. The OpenAI API switch at the top
+takes every OpenAI-compatible model out of a user's selector and brings them back. Every provider
+is a local stand-in, and every test puts the connection settings back afterwards.
 
 Twin of integration/models/test_admin_connection_settings.py.
 
@@ -18,7 +19,8 @@ turns the switch-off test red, the edited key not reaching the saved settings tu
 red (the provider gets the old key), the delete not saving turns the delete test red, and the
 Ollama add dropping the dialog's settings turns the Ollama test red (its model shows without the
 prefix). In a frontend build without the verified models' suggestions and the Enter guard, the two
-allowlist tests go red (no suggestions; the dialog saves on Enter).
+allowlist tests go red (no suggestions; the dialog saves on Enter). In a frontend build of dev
+30f3f6a8f whose OpenAI API switch saves the stored state, the switch test goes red.
 """
 
 from __future__ import annotations
@@ -332,3 +334,27 @@ def test_enter_in_the_model_field_does_not_save_the_connection(
 
     expect(form).to_be_visible()
     assert saved_openai_connection(admin, url) is None, "Enter in the model field saved the dialog"
+
+
+def test_the_openai_api_switch_takes_every_openai_model_away_and_back(
+    page_for, make_user, preserve
+):
+    preserve(OPENAI_CONFIG)
+    admin_page = page_for(make_user(role="admin"))
+    settings = open_admin_connections(admin_page)
+    switch = settings.get_by_role("switch", name="OpenAI API")
+    expect(switch).to_be_checked()
+    with admin_page.expect_response(is_openai_save):
+        switch.click()
+    expect(switch).not_to_be_checked()
+
+    page = page_for(make_user())
+    expect(chat_input(page)).to_be_visible()
+    expect(model_options(page, reply.MOCK_MODEL_ID)).to_have_count(0)
+
+    settings = open_admin_connections(admin_page)
+    with admin_page.expect_response(is_openai_save):
+        settings.get_by_role("switch", name="OpenAI API").click()
+    page.reload()
+    expect(chat_input(page)).to_be_visible()
+    expect(model_options(page, reply.MOCK_MODEL_ID)).to_have_count(1)

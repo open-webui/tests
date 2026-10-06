@@ -7,12 +7,15 @@ the auth page, which shows in the group's member count and its Users list, while
 the newcomer joins no group. On the auth page a wrong password shows the sign-in error and leaves
 the sign-in form where it is. On an instance that asks for a password confirmation, a sign-up
 whose two passwords differ says so and creates no account, while matching passwords sign in.
+With Login Form switched off, the auth page offers no email and password form and a sign-up over
+the API is refused, while signing in with a password over the API still works.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, the page saving the endpoint list as
 an empty string turns the restriction test red (the listed endpoint is refused too), the page
 saving no group turns the Default Group test red (the group stays empty), the sign-up handler
 skipping its password comparison turns the mismatch test red (the account is created), and the
-sign-in handler swallowing the error turns the wrong password test red.
+sign-in handler swallowing the error turns the wrong password test red. In a frontend build of dev
+30f3f6a8f whose Authentication form saves the stored admin settings, the Login Form test goes red.
 """
 
 from __future__ import annotations
@@ -266,3 +269,32 @@ def test_a_sign_up_with_matching_passwords_creates_the_account(visitor_page, con
 
     expect(chat_input(visitor_page)).to_be_visible(timeout=PAGE_TIMEOUT_MS)
     assert [found["email"] for found in _accounts_named(confirming, email)] == [email]
+
+
+def test_with_the_login_form_off_the_auth_page_offers_no_password_form(
+    admin_page, page, admin, make_user, preserve
+):
+    preserve("admin_config")
+    _change_admin_config(admin, ENABLE_SIGNUP=True, DEFAULT_USER_ROLE="user")
+    account = make_user()
+    settings = _authentication_settings(admin_page)
+    login_form = settings.get_by_role("switch", name="Login Form")
+    expect(login_form).to_be_checked()
+    login_form.click()
+    _save(admin_page, settings)
+
+    page.goto("/auth")
+
+    expect(page.get_by_label("Email")).to_have_count(0)
+    expect(page.get_by_label("Password", exact=True)).to_have_count(0)
+    name, email = _new_visitor()
+    refused = httpx.post(
+        f"{account.base_url}/api/v1/auths/signup",
+        json={"name": name, "email": email, "password": PASSWORD},
+    )
+    assert refused.status_code >= 400, refused.text
+    signed_in = httpx.post(
+        f"{account.base_url}/api/v1/auths/signin",
+        json={"email": account.email, "password": account.password},
+    )
+    assert signed_in.status_code == 200, signed_in.text
