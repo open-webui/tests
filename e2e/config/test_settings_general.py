@@ -4,11 +4,14 @@ A user picks the Dark theme and the page turns dark, picks Deutsch and the app s
 both stay after a reload. A personal system prompt and a custom temperature saved on the tab are
 sent with every chat and are still in the tab after a reload. A second account in a browser of its
 own meets none of it: the default theme and language, and a chat sent without the prompt or the
-temperature.
+temperature. Stream Chat Response switched off asks the model for the whole reply at once, which
+still shows, and max_tokens, a stop sequence and the reasoning effort saved there reach the model.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, dropping the class the theme picker
 adds to the page turns the theme test red, not passing the chosen language to i18next turns the
 language test red, and saving General without its `system` field turns the system prompt test red.
+In a frontend build of dev 30f3f6a8f whose chat request leaves out the account's saved parameters
+(stream, params and stop), the temperature, stream and parameter tests fail.
 """
 
 from __future__ import annotations
@@ -111,3 +114,40 @@ def test_the_system_prompt_and_temperature_reach_the_model(page_for, make_user, 
     sent_for_other = ask(other, upstream, "Is the harbour busy?")
     assert system_prompts(sent_for_other) == []
     assert "temperature" not in sent_for_other
+
+
+def parameter_button(tab: Locator, label: str) -> Locator:
+    return tab.get_by_text(label, exact=True).locator("xpath=following-sibling::button")
+
+
+def test_stream_chat_response_off_asks_for_the_whole_reply_at_once(page_for, make_user, upstream):
+    page = page_for(make_user())
+    tab = general_tab(page)
+    tab.get_by_role("button", name="Show").click()
+    stream = parameter_button(tab, "Stream Chat Response")
+    stream.click()
+    stream.click()
+    expect(stream).to_have_text("Off")
+    save(page, tab)
+
+    sent = ask(page, upstream, "Is the fog lifting?")
+
+    assert sent["stream"] is False
+
+
+def test_max_tokens_stop_and_reasoning_effort_reach_the_model(page_for, make_user, upstream):
+    page = page_for(make_user())
+    tab = general_tab(page)
+    tab.get_by_role("button", name="Show").click()
+    for label in ("max_tokens", "Stop Sequence", "Reasoning Effort"):
+        parameter_button(tab, label).click()
+    tab.get_by_role("spinbutton", name="max_tokens").fill("64")
+    tab.get_by_role("textbox", name="Stop Sequence").fill("OVER")
+    tab.get_by_role("textbox", name="Reasoning Effort").fill("low")
+    save(page, tab)
+
+    sent = ask(page, upstream, "How far is the next buoy?")
+
+    assert sent["max_tokens"] == 64
+    assert sent["stop"] == ["OVER"]
+    assert sent["reasoning_effort"] == "low"
