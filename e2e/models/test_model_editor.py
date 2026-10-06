@@ -5,21 +5,24 @@ opens a chat on it. Unticking File Upload leaves the chat's upload marked as uns
 unticking Web Search takes the Web Search toggle out of the chat. Web Search ticked as a default
 feature starts a new chat with it on. Advanced params reach the provider with the chat, a tag
 becomes a filter of the model selector and a prompt suggestion shows on the new chat and sends
-itself. A tool ticked for the model is offered to the provider, a filter changes the message
-before it is sent and an action shows under the reply and runs. A builtin tool category unticked
-for the model, or the Builtin Tools capability as a whole, leaves those tools out of the chat. A
-model made in the editor is private to its maker until the editor shares it with a group, whose
-members then see it. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
+itself. A tool ticked for the model is offered to the provider, a knowledge base attached to it is
+searched when the model asks, a filter changes the message before it is sent and an action shows
+under the reply and runs. A builtin tool category unticked for the model, or the Builtin Tools
+capability as a whole, leaves those tools out of the chat. A model made in the editor is private
+to its maker until the editor shares it with a group, whose members then see it. The system prompt
+is covered by e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
 and starts a new model shared with everyone, every test fails. With only the access grants left
 out of the save, the group member never sees the model. In a backend copy that offers every
-builtin tool whatever the model says, both builtin tool tests fail.
+builtin tool whatever the model says, both builtin tool tests fail, and in one that ignores the
+knowledge attached to a model the knowledge test fails.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 
@@ -27,6 +30,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
@@ -334,6 +338,43 @@ def test_a_tool_ticked_in_the_editor_is_offered_with_the_chat(
 
     offered = {tool["function"]["name"] for tool in request.get("tools") or []}
     assert "lookup_locker" in offered, f"the model's tool was not offered: {sorted(offered)}"
+
+
+def test_a_knowledge_base_attached_in_the_editor_is_searched_for_the_chat(
+    page_for, builder, preset, upstream
+):
+    base_name = unique("Lighthouse log")
+    question = "who keeps the lighthouse?"
+    with (
+        builder.client() as client,
+        knowledge_base(client, name=base_name) as knowledge_id,
+    ):
+        add_text_file(client, knowledge_id, "keepers.txt", "The lighthouse keeper is Morag.")
+        page = page_for(builder)
+        editor = open_editor(page, preset)
+        editor.get_by_text("Select Knowledge", exact=True).click()
+        page.get_by_placeholder("Search", exact=True).last.fill(base_name)
+        page.get_by_role("button", name=base_name).click()
+        expect(editor.get_by_text(base_name)).to_be_visible()
+        save(editor)
+
+        open_chat_on(page, preset)
+        upstream.queue(
+            reply.tool_call(
+                "query_knowledge_files",
+                {"query": "lighthouse keeper"},
+                match=reply.answering(question),
+            ),
+            reply.text("Morag keeps it.", match=reply.answering(question)),
+        )
+        send(page, question)
+        expect_reply(page, "Morag keeps it.")
+
+    answered = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
+    offered = {tool["function"]["name"] for tool in answered[0].get("tools") or []}
+    assert "list_knowledge" in offered, f"the model's knowledge was not offered: {sorted(offered)}"
+    tool_results = [entry for entry in answered[-1]["messages"] if entry["role"] == "tool"]
+    assert "Morag" in json.dumps(tool_results), tool_results
 
 
 def test_a_filter_ticked_in_the_editor_runs_on_the_chat(page_for, admin, builder, preset, upstream):
