@@ -26,10 +26,12 @@ open). The Create skill command is sent as the skill authoring prompt on its own
 typed command on the next, so that turn rewrites an earlier user message.
 
 Discriminates: passes on dev 30f3f6a8f apart from those five, which fail there. In backend
-copies, a clock value added to the model's system prompt turned every other test red; earlier,
-on dev 176d31d1d, the tool list shuffled per request did too, and with no working directory in
-the tool description and the shell tools offered whether or not the shell is open, the two
-terminal tests passed.
+copies, a clock value added to the model's system prompt turned every other test red; with no
+stored system prompt handed to a timer or a report and the Create skill command left as typed,
+the timer, report and Create skill tests passed. Earlier, on dev 176d31d1d, the tool list
+shuffled per request turned the first tests red, and with no working directory in the tool
+description and the shell tools offered whether or not the shell is open, the two terminal
+tests passed.
 """
 
 from __future__ import annotations
@@ -574,7 +576,7 @@ def test_the_create_skill_command_keeps_the_prefix(terminal_skill, terminal_chat
 def test_a_workspace_tool_picked_before_the_first_turn_only_appends(
     page_for, cached_setup, admin, make_user, upstream
 ):
-    with python_tool(admin, TIDE_TOOL, name="Tide clock"):
+    with python_tool(admin, TIDE_TOOL, name="Tide clock") as tool_id:
         page = page_for(make_user())
         page.goto(f"/?models={cached_setup.id}")
         turn_on_tool(page, "Tide clock")
@@ -587,6 +589,12 @@ def test_a_workspace_tool_picked_before_the_first_turn_only_appends(
                 ("tide_time", {"harbour": "Portree"}), ("tide_time", {"harbour": "Oban"})
             ),
             reply.text("At noon in both."),
+        )
+        # the chat keeps its tool choice in a draft saved half a second after each send
+        page.wait_for_function(
+            "toolId => Object.keys(sessionStorage).some((key) =>"
+            " key.startsWith('chat-input-') && sessionStorage[key].includes(toolId))",
+            arg=tool_id,
         )
         page.reload()
         ask(page, upstream, "thanks", reply.text("Safe travels."))
