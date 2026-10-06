@@ -1,15 +1,16 @@
 """Journey: a model talking in a channel's threads, as the members reading along see it.
 
 A model mentioned from inside a thread answers in that thread, also when the admin set models to
-answer in the channel, and it is sent what was said in the thread before. A member with the
-thread open sees the answer arrive, and the channel itself only shows the parent's reply count.
-Replying to the model's answer with "Reply" asks it again without mentioning it. An answer the
-provider streams slowly shows its first words to another member before it is finished.
+answer in the channel, and it is sent what was said in the thread before. A member with the thread
+open sees the answer arrive, and the channel itself only shows the parent's reply count. Replying to
+the model's answer with "Reply" asks it again without mentioning it. An answer the provider streams
+slowly shows its first words to another member before it is finished.
 
-Discriminates: passes on dev ebc6add67; in a backend copy, answering a thread mention in the
-channel turns the thread mention test red, leaving the thread history out of the system message
-turns its history step red, ignoring the model behind a quoted message turns the reply test red,
-and storing the answer only once it is done turns the streaming test red.
+Discriminates: passes on dev ebc6add67 except the streaming test, which is red there (see its
+docstring); in a backend copy, answering a thread mention outside the thread turns the thread
+mention test red and ignoring the model behind a quoted message turns the reply test red, while a
+channel emitter that starts the message item a streamed piece belongs to turns the streaming test
+green.
 """
 
 from __future__ import annotations

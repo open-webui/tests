@@ -1,18 +1,18 @@
 """Journey: a thread as the members who read it at the same time see it.
 
-Three fresh accounts share a group channel. A reply one of them types in a thread shows up live
-in the open thread panel of another member, and a third member watching the channel sees the
-parent's reply count go up with each reply. Editing a reply marks it "(edited)" in the other
-member's open thread, and deleting one takes it out of that thread and lowers the count on the
-parent. When the author deletes the parent itself, the thread panel of a member reading it
-closes. A member who is elsewhere in the app gets a toast for a thread reply that opens the
-channel with that thread already open.
+Three fresh accounts share a group channel. A reply one of them types in a thread shows up live in
+the open thread panel of another member, and a third member watching the channel sees the parent's
+reply count go up with each reply. Editing a reply marks it "(edited)" in the other member's open
+thread, and deleting one takes it out of that thread and lowers the count on the parent. When the
+author deletes the parent itself, the thread panel of a member reading it closes. A member who is
+elsewhere in the app gets a toast for a thread reply that opens the channel with that thread already
+open.
 
-Discriminates: passes on dev ebc6add67; in a frontend copy, a thread panel that ignores new
-messages from the socket turns the live reply test red, a thread panel that ignores updates turns
-the edit step red, a channel view that ignores the parent's reply event turns the count steps
-red, a thread panel that stays open when its parent is deleted turns the parent test red and a
-toast that drops the thread from its link turns the toast test red.
+Discriminates: passes on dev ebc6add67; in a frontend copy, a thread panel that ignores new messages
+and a channel view that ignores the parent's reply event turn the live reply test red, a thread
+panel that ignores updates turns the edit test red, a thread panel and a channel view that both keep
+the thread open when its parent is deleted turn the parent test red, and a toast that drops the
+thread from its link turns the toast test red.
 """
 
 from __future__ import annotations

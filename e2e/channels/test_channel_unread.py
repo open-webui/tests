@@ -1,14 +1,16 @@
 """Journey: the unread count on a channel's sidebar entry, live and after a reload.
 
 A member who is in another channel sees the count on a group channel's entry go up with every
-message someone else posts there; their own messages, sent from another tab, do not count. The
-count reads the same after a reload, and opening the channel clears it for good. A reply in a
-thread is not counted, so the count does not change on a reload. Messages an outside service
-posts through a channel's webhook count for every member, the person who made the webhook too.
+message someone else posts there; their own messages, sent from another tab, do not count. The count
+reads the same after a reload, and opening the channel clears it for good. A reply in a thread is
+not counted, so the count does not change on a reload. Messages an outside service posts through a
+channel's webhook count for every member, the person who made the webhook too.
 
-Discriminates: passes on dev ebc6add67 except the two tests named below; in a frontend copy,
-counting the reader's own messages turns the own messages step red; in a backend copy, counting
-no unread messages turns the reload steps red.
+Discriminates: passes on dev ebc6add67 except the two tests named below, which are red there; in a
+frontend copy, counting the reader's own messages turns the first test red and leaving thread
+replies out of the live count turns the thread reply test green; in a backend copy, counting no
+unread messages turns the first test red and counting webhook posts for their maker turns the
+webhook test green.
 """
 
 from __future__ import annotations

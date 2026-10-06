@@ -1,14 +1,13 @@
 """Journey: images and files shared in a channel, as the other members and a model get them.
 
-A picture attached from the channel input shows as an image on the other member's screen, opens
-full size and downloads with the bytes that were uploaded. A text file shows as a file the other
-member opens to read. A picture shared in a thread reaches a model mentioned later in that
-thread, which answers there.
+A picture attached from the channel input shows as an image on the other member's screen, opens full
+size and downloads with the bytes that were uploaded. A text file shows as a file the other member
+opens to read. A picture shared in a thread reaches a model mentioned later in that thread, which
+answers there.
 
-Discriminates: passes on dev ebc6add67; in a frontend copy, rendering every attachment as a plain
-file turns the image test red, and a preview whose download fetches nothing turns its download
-step red; in a backend copy, leaving the thread's pictures out of the model's request turns the
-model test red.
+Discriminates: passes on dev ebc6add67; in a frontend copy, showing an image as a plain file turns
+the image test red and a file entry that opens nothing turns the text file test red; in a backend
+copy, leaving the thread's pictures out of the model's request turns the model test red.
 """
 
 from __future__ import annotations

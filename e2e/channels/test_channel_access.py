@@ -1,16 +1,16 @@
 """Journey: who may read and write in a channel, as the members find it on their screens.
 
-In a standard channel the admin opened, a member with a read grant reads what a member with a
-write grant posts, live, but their input is disabled and says why, their thread input says the
-same, and a message offers them no tools and no reaction to join. Someone added to a group
-channel while the app is open finds it in the sidebar without a reload, with the unread count
-of what is posted next. Someone removed while the channel is open stops getting its messages,
-while a message in another channel they share still arrives.
+In a standard channel the admin opened, a member with a read grant reads what a member with a write
+grant posts, live, but their input is disabled and says why, their thread input says the same, and a
+message offers them no tools and no reaction to join. Someone added to a group channel while the app
+is open finds it in the sidebar without a reload, with the unread count of what is posted next.
+Someone removed while the channel is open stops getting its messages, while a message in another
+channel they share still arrives.
 
-Discriminates: passes on dev ebc6add67; in a frontend copy, enabling the input whatever the
-write access turns the read-only test red; in a backend copy, sending a new member no
-`channel:created` event turns the added member test red and keeping a removed member in the
-channel's room turns the removed member test red.
+Discriminates: passes on dev ebc6add67; in a frontend copy, enabling the input whatever the write
+access turns the read-only test red; in a backend copy, giving new members no `channel:created`
+event and no room turns the added member test red and keeping a removed member in the channel's room
+turns the removed member test red.
 """
 
 from __future__ import annotations

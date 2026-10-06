@@ -16,8 +16,8 @@ Discriminates: passes on dev 30f3f6a8f; in a frontend copy, a create form that s
 turns the group test red, a direct message created without its picked person turns the direct
 message test red, an update that sends the old name turns the rename test red, a delete that skips
 its request turns the delete test red, and a webhook delete that skips its request turns the webhook
-test red; in a backend copy, showing the name a post was made under in place of the webhook's
-current one turns the renaming test red (checked on dev ebc6add67).
+test red; in a backend copy, listing every webhook post under a fixed name turns the renaming test
+red (checked on dev ebc6add67).
 """
 
 from __future__ import annotations
