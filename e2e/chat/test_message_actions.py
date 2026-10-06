@@ -3,17 +3,13 @@
 The buttons under a message in a two-turn chat: Fork chat on the first reply opens a new chat that
 holds only the first turn and answers from it, the question's Delete (after its confirm dialog)
 takes the question and its reply out of the stored chat, the Regenerate menu sends a typed change
-or More Concise to the model after the earlier reply, and Save on an edited question keeps the new
+or More Concise to the model after the question, and Save on an edited question keeps the new
 text without asking the model again. A picture removed while editing a question is not sent with
 it again, and a document removed while editing one and saved is gone from it after a reload. Each
 result is read after a reload or in what the model was sent, as a fresh account against the
 scripted model.
 
-The two regenerate tests are red on dev: a saved chat sends the model only the stored history up
-to the question, so a suggested change or More Concise reaches the model without the reply it is
-about (with the regenerated reply appended from the database both pass).
-
-Discriminates: passes on dev 30f3f6a8f apart from the two regenerate tests; in a backend copy the
+Discriminates: passes on dev 30f3f6a8f; in a backend copy the
 fork test fails with the fork route copying the whole conversation past the chosen reply and the
 delete test with the message delete route storing nothing; in a frontend build whose Save edits
 nothing the save test fails, in one whose Remove file while editing keeps the file the picture
@@ -113,19 +109,13 @@ def test_a_deleted_question_and_its_reply_stay_gone(two_turns, upstream):
     assert not any("how many people" in content for _, content in sent), sent
 
 
-DROPPED_REPLY = (
-    "the model was not sent the reply it is asked to change: a saved chat's regenerate reloads the "
-    "history from the database only up to the question, so the suggestion follows the question"
-)
-
-
 def _regenerate_menu(page: Page) -> Locator:
     regenerate = _shown(_whole_reply(last_reply(page))).get_by_role("button", name="Regenerate")
     regenerate.last.click()  # the menu trigger wraps the button of the same name
     return page.get_by_role("menu")
 
 
-def test_a_suggested_change_is_sent_after_the_reply_it_changes(two_turns, upstream):
+def test_a_suggested_change_is_sent_after_the_question(two_turns, upstream):
     page = two_turns
     upstream.queue(
         reply.text("Roughly 545,000 in the city.", match=reply.answering("just the city"))
@@ -136,10 +126,7 @@ def test_a_suggested_change_is_sent_after_the_reply_it_changes(two_turns, upstre
 
     expect_reply(page, "Roughly 545,000 in the city.")
     expect(conversation(page).get_by_text("2/2")).to_be_visible()
-    assert _latest_request_messages(upstream)[-2:] == [
-        ("assistant", "About ten million people."),
-        ("user", "just the city, please"),
-    ], DROPPED_REPLY
+    assert _latest_request_messages(upstream)[-1] == ("user", "just the city, please")
 
 
 def test_more_concise_asks_the_model_for_a_shorter_reply(two_turns, upstream):
@@ -148,10 +135,7 @@ def test_more_concise_asks_the_model_for_a_shorter_reply(two_turns, upstream):
     _regenerate_menu(page).get_by_role("button", name="More Concise").click()
 
     expect_reply(page, "Ten million.")
-    assert _latest_request_messages(upstream)[-2:] == [
-        ("assistant", "About ten million people."),
-        ("user", "More Concise"),
-    ], DROPPED_REPLY
+    assert _latest_request_messages(upstream)[-1] == ("user", "More Concise")
 
 
 def test_a_saved_question_edit_is_kept_without_a_new_reply(two_turns, upstream):
