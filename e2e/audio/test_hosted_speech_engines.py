@@ -5,7 +5,9 @@ instance of their own. The admin picks ElevenLabs for text-to-speech and fills i
 model; a user's Settings > Audio then offers ElevenLabs' own voices, and Read Aloud speaks a reply
 in the voice the user picked, with the admin's model, and plays it. The admin picks Deepgram for
 speech-to-text with its key and model; a user who set a Speech-to-Text Language dictates into the
-chat input and Deepgram's transcript lands there, asked for in that language. Twin, in the
+chat input and Deepgram's transcript lands there, asked for in that language. When Deepgram
+refuses the recording, the error the user sees should give Deepgram's reason; on dev ebc6add67 it
+gives only Deepgram's status ("401, message='Unauthorized'"), so that test is red. Twin, in the
 browser, of integration/audio/test_hosted_speech_engines.py.
 
 Discriminates: passes on the dev ebc6add67 build; in a backend copy whose `_tts_elevenlabs` sends
@@ -24,6 +26,7 @@ from harness.actors import admin_of, create_user
 from harness.audio_engine import AUDIO_CONFIG, TRANSCRIPT
 from harness.chat_history import seed_chat
 from harness.hosted_speech import serving_speech_hosts, speech_hosts_env
+from harness.listener import json_answer
 from utils.chat_ui import chat_input, conversation
 from utils.speech_audio import silent_wav
 
@@ -95,6 +98,14 @@ def users_audio_tab(page: Page) -> Locator:
     return tab
 
 
+def dictate(page: Page) -> None:
+    page.goto("/")
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_role("button", name="Voice Input").click()
+    expect(page.get_by_text("0:02", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Confirm recording").click()
+
+
 def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
     page_for, hosted, services
 ):
@@ -147,14 +158,29 @@ def test_deepgram_from_the_audio_tab_transcribes_dictation_in_the_users_language
     tab = users_audio_tab(page)
     tab.get_by_role("textbox", name="Speech-to-Text Language").fill("de")
     save(page, tab)
-    page.goto("/")
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="Voice Input").click()
-    expect(page.get_by_text("0:02", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Confirm recording").click()
+    dictate(page)
 
     expect(chat_input(page)).to_contain_text(TRANSCRIPT)
     expect(conversation(page).locator(".chat-user")).to_have_count(0)
     [request] = services.requests_to("/v1/listen")
     assert request.headers.get("Authorization") == f"Token {DEEPGRAM_KEY}"
     assert "model=nova-3" in request.path and "language=de" in request.path, request.path
+
+
+def test_a_dictation_deepgram_refuses_shows_deepgrams_reason(voice_page_for, hosted, services):
+    with admin_of(hosted).client() as client:
+        current = client.get(AUDIO_CONFIG[0]).json()
+        stt = {**current["stt"], "ENGINE": "deepgram", "DEEPGRAM_API_KEY": DEEPGRAM_KEY}
+        client.post(AUDIO_CONFIG[1], json={"tts": current["tts"], "stt": stt}).raise_for_status()
+    refusal = {"err_code": "INVALID_AUTH", "error": "Invalid credentials."}
+    services.route("POST", "/v1/listen", json_answer(refusal, 401))
+    page = voice_page_for(create_user(hosted))
+
+    dictate(page)
+
+    expect(page.get_by_text("401, message='Unauthorized'", exact=False).first).to_be_visible()
+    expect(
+        page.get_by_text("Invalid credentials.", exact=False),
+        "the error shown gives Deepgram's status but drops the reason Deepgram gave",
+    ).to_be_visible()
+    expect(chat_input(page)).to_have_text("")

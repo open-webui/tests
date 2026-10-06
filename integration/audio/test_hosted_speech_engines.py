@@ -6,10 +6,12 @@ proxy of `harness.hosted_speech`, which answers for those names. With ElevenLabs
 and model lists are ElevenLabs' own, a message read aloud is ElevenLabs' speech in the voice asked
 for with the admin's model and key, and a voice ElevenLabs does not list is refused before it is
 asked. With Deepgram picked, a recording comes back as Deepgram's transcript, sent with the admin's
-key and model and the language asked for, and an error Deepgram gives is passed on.
+key and model and the language asked for, and an error Deepgram gives is passed on. That last
+test is red on dev ebc6add67: the transcription keeps only Deepgram's status ("401, message=
+'Unauthorized'") and drops the reason Deepgram gives, which the error handler means to show.
 
-Discriminates: passes on dev ebc6add67; in a backend copy whose `_tts_elevenlabs` sends no
-`model_id`, whose ElevenLabs voice list is answered without asking ElevenLabs, or whose
+Discriminates: the other tests pass on dev ebc6add67; in a backend copy whose `_tts_elevenlabs`
+sends no `model_id`, whose ElevenLabs voice list is answered without asking ElevenLabs, or whose
 `_transcribe_deepgram` leaves out the language or the model, one test each turns red.
 """
 
@@ -147,4 +149,7 @@ def test_an_error_deepgram_gives_is_passed_on(hosted, services):
         transcribed = _transcribe(client)
 
     assert transcribed.status_code >= 400
-    assert "Invalid credentials." in transcribed.text, transcribed.text
+    # the failed response is released before its body is read, so only the status is left
+    assert "Invalid credentials." in transcribed.text, (
+        f"Deepgram's own error message never reaches the user: {transcribed.text}"
+    )

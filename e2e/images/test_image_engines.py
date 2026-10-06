@@ -243,8 +243,8 @@ def test_automatic1111_set_up_in_the_tab_draws_on_its_checkpoint_size_and_steps(
     [generation] = listener.requests_to("/sdapi/v1/txt2img")
     sent = generation.json()
     assert sent["prompt"] == "a lighthouse at dusk", sent
-    assert (sent["width"], sent["height"], sent["steps"]) == (640, 384, 12), sent
-    assert sent["cfg_scale"] == 5, sent
+    assert (sent["width"], sent["height"], sent.get("steps")) == (640, 384, 12), sent
+    assert sent.get("cfg_scale") == 5, sent
     expected_auth = "Basic " + base64.b64encode(b"painter:easel").decode()
     assert generation.headers.get("authorization") == expected_auth
 
@@ -351,7 +351,11 @@ def test_the_openai_size_version_and_extra_parameters_reach_the_engine(
     expect_stored_picture(page)
     [generation] = listener.requests_to("/images/generations")
     sent = generation.json()
-    assert (sent["model"], sent["size"], sent["quality"]) == ("gpt-image-1", "1024x1536", "high")
+    assert (sent["model"], sent["size"], sent.get("quality")) == (
+        "gpt-image-1",
+        "1024x1536",
+        "high",
+    )
     assert generation.path.endswith("?api-version=2025-04-01"), generation.path
 
 

@@ -3,7 +3,10 @@
 The admin points both directions at the engine the way the audio settings page saves them. A
 user's voice picker then lists the engine's own voices and models, reading a message aloud sends
 the engine the configured model, the chosen voice and the key, and a recording comes back as the
-engine's transcript. Putting the settings back leaves local Whisper selected as before.
+engine's transcript, and a transcription the engine refuses reports the engine's own reason.
+Putting the settings back leaves local Whisper selected as before. The refusal test is red on dev
+ebc6add67: the failed response is released before its body is read, so only the engine's status
+("429, message='Too Many Requests'") reaches the user, never the reason it gives.
 
 Discriminates: in a backend copy, `get_available_voices` answering the built-in OpenAI voices
 without asking a custom endpoint, `_tts_openai` leaving out the configured model and
@@ -27,6 +30,7 @@ from harness.audio_engine import (
     serve_audio_engine,
     using_audio_engine,
 )
+from harness.listener import json_answer
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -87,6 +91,21 @@ def test_a_recording_comes_back_as_the_engines_transcript(engine, make_user):
     sent = engine.transcription_requests()
     assert len(sent) == 1 and recording in sent[0].body
     assert b'name="model"' in sent[0].body and b"whisper-1" in sent[0].body
+
+
+def test_a_transcription_the_engine_refuses_reports_the_engines_reason(engine, make_user):
+    refusal = {"error": {"message": "Quota exceeded for whisper-1.", "type": "insufficient_quota"}}
+    engine.listener.route("POST", "/audio/transcriptions", json_answer(refusal, 429))
+    with make_user().client() as client:
+        transcribed = client.post(
+            "/api/v1/audio/transcriptions",
+            files={"file": ("recording.wav", _recording(), "audio/wav")},
+        )
+
+    assert transcribed.status_code >= 400
+    assert "Quota exceeded for whisper-1." in transcribed.text, (
+        f"the engine's own error message never reaches the user: {transcribed.text}"
+    )
 
 
 def test_putting_the_settings_back_keeps_local_whisper(admin, listener):
