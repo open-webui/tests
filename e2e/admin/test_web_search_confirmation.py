@@ -7,7 +7,7 @@ offered the search. With the switch off nobody is asked.
 
 Both answering tests fail on dev 30f3f6a8f: the dialog opens while the Integrations menu stays
 open behind it, and that menu's outside-click handler takes the first click on Cancel or Continue
-to close itself, so the dialog needs a second click.
+to close itself, so the dialog needs a second click (open-webui/open-webui#31963).
 
 Discriminates: on a frontend build of dev 30f3f6a8f that closes the Integrations menu as Web
 Search is picked, both answering tests pass; on that build asking even with the switch off, the
@@ -83,7 +83,7 @@ def answer_confirmation(page: Page, button: str) -> None:
     expect(
         confirmation(page),
         f"one click on {button} left the dialog open: the Integrations menu, still open behind "
-        "it, takes the click to close itself",
+        "it, takes the click to close itself (#31963)",
     ).to_have_count(0)
 
 

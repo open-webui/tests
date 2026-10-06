@@ -6,7 +6,7 @@ older ones. The browser's clock is fixed so the headings do not depend on when t
 
 One test is red on dev: a chat from the last day of the previous month is not filed under
 Yesterday on the first of the month, because Yesterday is only given when both days fall in the
-same month, so it lands under Previous 7 days.
+same month, so it lands under Previous 7 days (open-webui/open-webui#31964).
 
 Discriminates: passes on dev 30f3f6a8f apart from the month boundary test (the bug above), which
 passes in a frontend build giving Yesterday for the previous calendar day; in a backend copy whose
@@ -82,5 +82,5 @@ def test_the_last_day_of_last_month_is_yesterday_on_the_first(page_for, make_use
     expect(sidebar.get_by_role("button", name="Month end tally")).to_be_visible()
     assert _heading_above(sidebar, "Month end tally") == "Yesterday", (
         "a chat from the evening before is not filed under Yesterday on the first of the month: "
-        "Yesterday is only given when both days are in the same month"
+        "Yesterday is only given when both days are in the same month (#31964)"
     )

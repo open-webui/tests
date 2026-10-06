@@ -7,7 +7,8 @@ both, and the choice is kept when the list is opened again.
 
 The late answer tests are red on dev: the lists that search on the server add every answer that
 comes back to the list, also one to a search asked before the view was changed. Held until after
-the switch to Created by you, that answer puts the other admin's item back under Created by you.
+the switch to Created by you, that answer puts the other admin's item back under Created by you
+(open-webui/open-webui#31965).
 
 Discriminates: passes on dev 30f3f6a8f apart from the late answer tests (the bug above); the
 knowledge one passes in a frontend build whose list drops an answer to an older request. In a
@@ -31,7 +32,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 STALE_ANSWER = (
     "an answer to the search asked before the view changed was added to the list afterwards, "
-    "so the other account's item shows under Created by you"
+    "so the other account's item shows under Created by you (#31965)"
 )
 TOOL_SOURCE = 'class Tools:\n    def ping(self) -> str:\n        return "pong"\n'
 
