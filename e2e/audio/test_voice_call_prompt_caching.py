@@ -4,9 +4,11 @@ The Prompt Caching docs page says voice mode is usually fine for the provider's 
 the voice prompt is prepended to the system message once and stays the same while the call
 lasts. A person starts a call in a new chat on a model set up as the page's checklist says and
 speaks several turns; every request the provider gets carries the voice prompt and repeats the
-one before it byte for byte, only adding to the end.
+one before it byte for byte, only adding to the end. A call started in the middle of a typed chat
+is the one place the voice prompt arrives late: it lands in the system message of the first
+spoken turn and rewrites the prefix the typed turns built, as the page's table says.
 
-Discriminates: passes on dev 176d31d1d; in backend copies, a clock value added to the model's
+Discriminates: passes on dev 30f3f6a8f; in backend copies, a clock value added to the model's
 system prompt and the tool list shuffled per request each turn it red.
 """
 
@@ -16,11 +18,14 @@ import time
 
 import pytest
 
+from harness import upstream as reply
 from harness.prompt_caching import (
     assert_append_only,
     cache_optimal_model,
+    first_break,
     turn_off_memory_system_context,
 )
+from utils.cached_chat import ask, chat_requests
 from utils.voice_call import start_call, wait_for_transcriptions
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -65,3 +70,24 @@ def test_a_voice_call_only_appends(
         "user",
     ]
     assert_append_only(requests)
+
+
+def test_a_voice_call_started_in_a_typed_chat_rewrites_the_prefix(
+    voice_page_for, make_user, cached_setup, speech_engine, upstream
+):
+    page = voice_page_for(make_user())
+    page.goto(f"/?models={cached_setup.id}")
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    ask(page, upstream, "when is high tide?", reply.text("At noon."))
+    typed = chat_requests(upstream)
+    assert VOICE_PROMPT not in typed[0]["messages"][0]["content"]
+    assert_append_only(typed)
+
+    start_call(page)
+    wait_for_transcriptions(speech_engine, 1, timeout=60.0)
+    requests = answered_turns(upstream, len(typed) + 1)
+
+    assert VOICE_PROMPT in requests[-1]["messages"][0]["content"]
+    broken = first_break(requests)
+    assert broken is not None, "the voice prompt left the prefix append-only"
+    assert "messages[0] (system)" in broken, broken
