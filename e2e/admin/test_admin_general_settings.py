@@ -3,18 +3,20 @@
 The Features switches there decide whether Notes and Calendar are in a user's menu, whether the
 sidebar has Channels and Folders and whether Settings has the Personalization tab of Memories.
 Default Interface Settings sets the interface every account starts from, while an account's own
-choice still wins. A Response Watermark is appended to every reply a user copies. The Model
+choice still wins. Memory System Context switched off keeps a person's saved memories out of what
+the model is sent. A Response Watermark is appended to every reply a user copies. The Model
 Response Mode picked for channels decides whether a model mentioned there answers in a thread or in
 the channel itself.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form sends the stored
-settings back in place of the edited ones (switches, defaults and watermark), every "switched",
-"default" and "watermark" test fails; in a backend copy whose settings read lets the defaults
-win over the account's own, the "own setting" test fails.
+settings back in place of the edited ones, every test but the "own setting" one fails; in a backend
+copy whose settings read lets the defaults win over the account's own, the "own setting" test
+fails.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 import pytest
@@ -221,3 +223,29 @@ def test_the_model_response_mode_decides_where_a_model_answers_in_a_channel(
 
     assert answer["content"] == "About six nautical miles."
     assert answer.get("parent_id") == (message_id if mode == "Thread" else None)
+
+
+def test_memory_system_context_switched_off_keeps_memories_out_of_the_chat(
+    page_for, admin, make_user, upstream, preserve
+):
+    preserve("admin_config")
+    set_features(admin, ENABLE_MEMORIES=True, ENABLE_MEMORY_SYSTEM_CONTEXT=True)
+    memory = "Keeps two rowing boats at the north quay."
+    account = make_user()
+    with account.client() as client:
+        added = client.post("/api/v1/memories/add", json={"content": memory, "type": "user"})
+    added.raise_for_status()
+    page = page_for(account)
+    chat_once(page, upstream)
+    sent = next(filter(reply.answering(QUESTION), upstream.chat_requests()))
+    assert memory in json.dumps(sent["messages"])
+
+    settings = open_general_settings(page_for(admin))
+    set_switch(settings, "Memory System Context", turn_on=False)
+    save(settings)
+    upstream.reset()
+    page.goto("/")
+    chat_once(page, upstream)
+
+    sent = next(filter(reply.answering(QUESTION), upstream.chat_requests()))
+    assert memory not in json.dumps(sent["messages"])
