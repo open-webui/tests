@@ -6,14 +6,16 @@ unticking Web Search takes the Web Search toggle out of the chat. Web Search tic
 feature starts a new chat with it on. Advanced params reach the provider with the chat, a tag
 becomes a filter of the model selector and a prompt suggestion shows on the new chat and sends
 itself. A tool ticked for the model is offered to the provider, a filter changes the message
-before it is sent and an action shows under the reply and runs. A model made in the editor is
-private to its maker until the editor shares it with a group, whose members then see it. The
-system prompt is covered by e2e/workspace/test_workspace_presets.py.
+before it is sent and an action shows under the reply and runs. A builtin tool category unticked
+for the model, or the Builtin Tools capability as a whole, leaves those tools out of the chat. A
+model made in the editor is private to its maker until the editor shares it with a group, whose
+members then see it. The system prompt is covered by e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
 and starts a new model shared with everyone, every test fails. With only the access grants left
-out of the save, the group member never sees the model.
+out of the save, the group member never sees the model. In a backend copy that offers every
+builtin tool whatever the model says, both builtin tool tests fail.
 """
 
 from __future__ import annotations
@@ -223,6 +225,43 @@ def test_web_search_as_a_default_feature_is_on_in_a_new_chat(
     with page.expect_request(is_chat_request) as sent:
         send(page, "any news?")
     assert (sent.value.post_data_json.get("features") or {}).get("web_search") is True
+
+
+TIME_TOOLS = {"get_current_timestamp", "calculate_timestamp"}
+
+
+def offered_tool_names(page: Page, upstream, question: str) -> set[str]:
+    return {tool["function"]["name"] for tool in sent_request(page, upstream, question)["tools"]}
+
+
+def test_an_unticked_builtin_tool_is_left_out_of_the_chat(page_for, builder, preset, upstream):
+    page = page_for(builder)
+    open_chat_on(page, preset)
+    before = offered_tool_names(page, upstream, "what time is it?")
+    assert TIME_TOOLS | {"ask_user"} <= before, before
+
+    editor = open_editor(page, preset)
+    set_checkbox(editor, "Builtin Tools", "Time & Calculation", False)
+    save(editor)
+
+    open_chat_on(page, preset)
+    after = offered_tool_names(page, upstream, "what time is it now?")
+    assert not TIME_TOOLS & after, after
+    assert "ask_user" in after
+
+
+def test_unticking_the_builtin_tools_capability_offers_none_of_them(
+    page_for, builder, preset, upstream
+):
+    page = page_for(builder)
+    editor = open_editor(page, preset)
+    set_checkbox(editor, "Capabilities", "Builtin Tools", False)
+    save(editor)
+
+    open_chat_on(page, preset)
+    request = sent_request(page, upstream, "what time is it?")
+    offered = {tool["function"]["name"] for tool in request.get("tools") or []}
+    assert not (TIME_TOOLS | {"ask_user"}) & offered, offered
 
 
 def test_advanced_params_reach_the_provider(page_for, builder, preset, upstream):
