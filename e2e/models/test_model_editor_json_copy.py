@@ -2,12 +2,13 @@
 
 A builder opens one of their models in the workspace editor and presses Copy beside the JSON
 Preview heading: the page confirms "Copied to clipboard" and the clipboard holds the model's JSON.
-The copy is expected to be the JSON the preview shows, edited name included.
+The copy is the JSON the preview shows, edited name included. Copy used to put the editor's
+unedited starting state on the clipboard (capabilities empty, an edited name missing) while the
+preview showed the current form (open-webui/open-webui#31955), fixed in dev 106aae70e.
 
-Discriminates: in a frontend build without the Copy button the copy tests go red (no button).
-The two tests that compare the copy with the preview are red on the current build on purpose
-(open-webui/open-webui#31955): Copy puts the editor's unedited starting state on the clipboard
-(capabilities empty, an edited name missing) while the preview shows the current form.
+Discriminates: in a frontend build without the Copy button the copy tests go red (no button). The
+two tests that compare the copy with the preview pass on dev ebc6add67 and failed on dev 30f3f6a8f,
+before 106aae70e (the unedited starting state was copied).
 """
 
 from __future__ import annotations
