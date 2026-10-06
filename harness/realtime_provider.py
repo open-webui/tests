@@ -11,12 +11,12 @@ connection, in a `RealtimeCall` (`call.received(kind)`, `call.session`, `call.pa
 The fake hears what a test lines up with `fake.hears(transcript)`: once a fifth of a second of
 microphone audio arrived it reports speech and then that transcript, the way server-side voice
 detection and input transcription do; `fake.mishears()` lines up a turn whose transcription
-fails instead. Asked to respond to it, it hands the request to the chat
-model through the `generate_chat_completion` function, or with `answers=text` speaks that text
-itself. Asked to respond to a function result, it speaks the result's answer; asked for a call
-status, it speaks the status sentence; asked to read text (the realtime text-to-speech engine),
-it speaks that text. Speaking is a quarter second of silent 24 kHz PCM with
-its transcript, and `fake.spoken` lists every transcript spoken.
+fails instead. Asked to respond to it, it hands the request to the chat model through the
+`generate_chat_completion` function, or with `answers=text` speaks that text itself. Asked to
+respond to a function result, it speaks the result's answer; asked for a call status, it speaks
+the status sentence; asked to read text (the realtime text-to-speech engine), it speaks that
+text. Speaking sends `fake.speech` (a quarter second of silent 24 kHz PCM unless a test sets a
+longer one) with its transcript, and `fake.spoken` lists every transcript spoken.
 
 `fake.refuse_handshake = status` turns the next connections away with that HTTP status,
 `fake.refuse_session = True` answers the session setup with an error event and `call.drop()`
@@ -101,6 +101,7 @@ class FakeRealtime:
     spoken: list[str] = field(default_factory=list)
     refuse_handshake: int | None = None
     refuse_session: bool = False
+    speech: bytes = SPOKEN_PCM
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def hears(self, transcript: str, answers: str | None = None) -> None:
@@ -134,7 +135,7 @@ def _new_id(prefix: str) -> str:
 
 def _speak(fake: FakeRealtime, call: RealtimeCall, metadata: dict, text: str) -> None:
     response_id, item_id = _new_id("resp"), _new_id("item")
-    audio = base64.b64encode(SPOKEN_PCM).decode()
+    audio = base64.b64encode(fake.speech).decode()
     located = {"response_id": response_id, "item_id": item_id, "content_index": 0}
     call.send({"type": "response.created", "response": {"id": response_id, "metadata": metadata}})
     call.send({"type": "response.output_audio.delta", **located, "delta": audio})

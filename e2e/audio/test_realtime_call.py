@@ -6,7 +6,9 @@ which connects to the instance's realtime call and through it to the provider (h
 chat first tells the provider the conversation so far. What the provider transcribes lands in
 the chat as the user's message; a request it hands on goes to the chat's own model, whose answer
 shows in the chat as usual and is then spoken, its spoken transcript saved on that reply; an
-answer the voice model gives itself is saved as a reply of its own. Both survive a reload. While
+answer the voice model gives itself is saved as a reply of its own. Both survive a reload. A
+turn that cannot be transcribed is asked again and adds no message of the user, and stopping a
+spoken answer tells the provider where playback stopped and saves the answer as interrupted. While
 the chat model works the panel shows Thinking... and its Stop cancels the request and tells the
 provider so. Mute stops the microphone reaching the provider, Review in chat closes the panel
 with the call still on and Voice mode returns to it, End call closes the panel and the
@@ -19,7 +21,10 @@ saved turns the chat model test red, the voice model's own answer never added tu
 red, a mute that keeps sending audio, End call leaving the call connected, a failure leaving the
 panel open, an empty conversation sent to the provider, a panel Stop that does nothing and Voice
 mode refusing realtime calls on the browser's speech-to-text each turn their test red, while the
-panel test stays green. In another, closing the panel ending the call turns the review test red.
+panel test stays green. In another, closing the panel ending the call turns the review test red,
+a failed transcription left unanswered turns that test red and an interruption that never tells
+the provider where playback stopped turns the interrupt test red, while the chat model test stays
+green.
 """
 
 from __future__ import annotations
@@ -34,11 +39,13 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
-from harness.realtime_provider import serving_realtime_provider, using_realtime
+from harness.realtime_provider import SAMPLE_RATE, serving_realtime_provider, using_realtime
 from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+
+LONG_ANSWER_SECONDS = 6
 
 
 @pytest.fixture
@@ -333,3 +340,35 @@ def test_a_turn_that_cannot_be_transcribed_is_asked_again_with_no_message_of_the
     assert "I could not transcribe that. Please repeat it." in realtime.spoken[0]
     expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
     expect(conversation(page).locator(".chat-user")).to_have_count(0)
+
+
+def test_interrupting_the_spoken_answer_cuts_it_short_and_saves_it_as_interrupted(
+    voice_page_for, make_user, realtime
+):
+    realtime.speech = b"\x00\x00" * (SAMPLE_RATE * LONG_ANSWER_SECONDS)
+    greeting, answer = f"tell me a story {words()}", f"Once upon a tide {words()}."
+    realtime.hears(greeting, answers=answer)
+    caller = make_user()
+    page = voice_page_for(caller)
+    start_call(page)
+    expect(call_status(page, "Tap to interrupt")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+
+    page.get_by_role("button", name="Stop speaking").click()
+
+    expect(call_status(page, "Listening...")).to_be_visible()
+    call = realtime.calls[-1]
+    realtime.wait_for(lambda: call.received("conversation.item.truncate"), "the answer cut")
+    [cut] = call.received("conversation.item.truncate")
+    assert 0 <= cut["audio_end_ms"] < LONG_ANSWER_SECONDS * 1000
+    messages = wait_for_stored(
+        caller,
+        chat_id_of(page),
+        lambda stored: any(
+            entry.get("interrupted")
+            for message in stored
+            for entry in ((message.get("meta") or {}).get("voice") or {}).get("speech", [])
+        ),
+        "the answer marked as interrupted",
+    )
+    reply_message = next(message for message in messages if message["role"] == "assistant")
+    assert reply_message["content"] == answer

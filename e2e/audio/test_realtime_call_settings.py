@@ -10,7 +10,7 @@ Additional Parameters, and a reply read aloud is rendered with that prompt. Here
 `harness.realtime_provider`.
 
 Discriminates: passes on the dev ebc6add67 build; in a frontend copy, the audio settings saved
-without the voice call section turn the Realtime save test red, and saved without the speech
+without the voice call section turn both call mode tests red, and saved without the speech
 prompt template turn the speech engine test red.
 """
 
