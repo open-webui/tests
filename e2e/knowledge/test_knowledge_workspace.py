@@ -16,11 +16,15 @@ zip holds the base's files and their text. The base's search narrows the list to
 names, and a file removed from the base is no longer sent to a chat that attaches the base. The
 owner renames the base, shares it with a group read-only and then with write access, and a group
 member sees each change: the new name, the base marked read only with its controls locked, then
-editable. An
-account outside the group does not see it. Resetting the base empties it.
+editable. An account outside the group does not see it. Resetting the base empties it. Syncing a
+local directory into a base uploads it, and syncing it again after files changed on disk adds the
+new file, replaces the changed one and removes the deleted one, with a summary that counts each,
+so a chat that attaches the base is sent only the current text. With a Max Upload Size set, a file
+over it is refused with the limit named while the rest upload, and a directory upload names how
+many of its files failed.
 
-Chromium's directory picker cannot be driven by Playwright, so the folder upload test hides it
-and the page takes the file input it offers browsers without one.
+Chromium's directory picker cannot be driven by Playwright, so the folder upload and sync tests
+hide it and the page takes the file input it offers browsers without one.
 
 Discriminates: passes on dev 176d31d1d. In a frontend copy, uploading only the first of the
 chosen files fails the upload test, uploading a folder's files without their subfolder fails
@@ -35,7 +39,10 @@ the directory test, a web page route that returns no text fails the webpage test
 that leaves the files out of the zip fails the export test, a directory rename that is never
 stored fails the directory rename test, a file move that is never stored fails the file drag test,
 a directory move that is never stored fails the directory drag test and a directory delete that
-removes the files it was asked to keep fails the keep files test.
+removes the files it was asked to keep fails the keep files test. In a frontend copy of dev
+ebc6add67, a sync that skips removing stale files fails the sync test, an upload without its size
+check fails the size test and a directory upload that stops counting failed files fails the
+directory size test.
 """
 
 from __future__ import annotations
@@ -56,7 +63,7 @@ from harness.actors import Actor, admin_of
 from harness.chat import ask
 from harness.knowledge_bases import add_text_file
 from harness.listener import listening, text_answer
-from harness.web_retrieval import LOCAL_WEB_FETCH
+from harness.web_retrieval import LOCAL_WEB_FETCH, RETRIEVAL_CONFIG
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -204,6 +211,13 @@ def test_uploaded_files_and_pasted_text_are_listed_once_processed(page_for, cura
     ]
 
 
+def _without_directory_picker(page: Page) -> None:
+    # Playwright cannot drive Chromium's directory picker; the page then offers a file input
+    page.add_init_script(
+        "delete Window.prototype.showDirectoryPicker; delete window.showDirectoryPicker;"
+    )
+
+
 def test_an_uploaded_folder_keeps_its_subfolders(page_for, curator, tmp_path: Path):
     folder = tmp_path / "harbour"
     (folder / "moorings").mkdir(parents=True)
@@ -211,9 +225,7 @@ def test_an_uploaded_folder_keeps_its_subfolders(page_for, curator, tmp_path: Pa
     (folder / "moorings" / "berths.txt").write_text("Berth 9 is free.\n")
     knowledge_id = _create_base(curator, _unique("Harbour"))
     page = page_for(curator)
-    page.add_init_script(
-        "delete Window.prototype.showDirectoryPicker; delete window.showDirectoryPicker;"
-    )
+    _without_directory_picker(page)
     base = _open_base(page, knowledge_id)
 
     with page.expect_file_chooser() as chooser:
@@ -674,3 +686,105 @@ def test_resetting_the_base_empties_it(page_for, curator):
     expect(page.get_by_text("Knowledge base has been reset")).to_be_visible()
     expect(base.get_by_text("No content found")).to_be_visible()
     assert _stored_file_names(curator, knowledge_id) == []
+
+
+def _sync_directory(page: Page, base: Locator, folder: Path, file_count: int) -> None:
+    with page.expect_file_chooser() as chooser:
+        _add_content(page, base, "Sync directory")
+    chooser.value.set_files(str(folder))
+    confirming = page.get_by_role("dialog", name="Confirm your action")
+    expect(confirming).to_contain_text(f"{file_count} files selected.")
+    confirming.get_by_role("button", name="Confirm").click()
+
+
+def test_syncing_a_directory_mirrors_its_changes_into_the_base(
+    page_for, curator, upstream, tmp_path: Path
+):
+    folder = tmp_path / "harbour"
+    (folder / "moorings").mkdir(parents=True)
+    (folder / "tides.txt").write_text("High tide at 06:40.\n")
+    (folder / "fuel.txt").write_text("The fuel dock takes cards only.\n")
+    (folder / "moorings" / "berths.txt").write_text("Berth 9 is free.\n")
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    page = page_for(curator)
+    _without_directory_picker(page)
+    base = _open_base(page, knowledge_id)
+
+    _sync_directory(page, base, folder, 3)
+    expect(
+        page.get_by_text("Sync complete: 3 added, 0 modified, 0 deleted, 0 unmodified")
+    ).to_be_visible()
+    assert _stored_file_names(curator, knowledge_id) == ["berths.txt", "fuel.txt", "tides.txt"]
+
+    (folder / "tides.txt").write_text("High tide at 07:15.\n")
+    (folder / "fuel.txt").unlink()
+    (folder / "gate.txt").write_text("The gate code is 4242.\n")
+    _sync_directory(page, base, folder, 3)
+
+    expect(
+        page.get_by_text("Sync complete: 1 added, 1 modified, 1 deleted, 1 unmodified")
+    ).to_be_visible()
+    base.get_by_role("button", name="harbour").click()
+    expect(_file_row(base, "gate.txt")).to_be_visible()
+    expect(_file_row(base, "tides.txt")).to_have_count(1)
+    expect(_file_row(base, "fuel.txt")).to_have_count(0)
+    assert _stored_file_names(curator, knowledge_id) == ["berths.txt", "gate.txt", "tides.txt"]
+    sent = _sent_to_the_model(curator, upstream, knowledge_id, "when is high tide?")
+    assert "07:15" in sent and "4242" in sent, sent
+    assert "06:40" not in sent, "the base still holds the text the sync replaced"
+    assert "fuel dock" not in sent, "the base still holds a file deleted from the directory"
+
+
+@pytest.fixture
+def one_megabyte_uploads(admin, preserve):
+    """A Max Upload Size of 1 MB on the shared instance, restored afterwards."""
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client:
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"FILE_MAX_SIZE": 1})
+    assert saved.status_code == 200, saved.text
+
+
+LARGE_FILE = "x" * (2 * 1024 * 1024)
+
+
+def test_a_file_over_the_max_upload_size_is_refused_with_the_limit_named(
+    page_for, curator, one_megabyte_uploads
+):
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    page = page_for(curator)
+    base = _open_base(page, knowledge_id)
+
+    with page.expect_file_chooser() as chooser:
+        _add_content(page, base, "Upload files")
+    chooser.value.set_files(
+        [
+            {"name": "atlas.txt", "mimeType": "text/plain", "buffer": LARGE_FILE.encode()},
+            {"name": "tides.txt", "mimeType": "text/plain", "buffer": b"High tide at 06:40.\n"},
+        ]
+    )
+
+    expect(page.get_by_text("File size should not exceed 1 MB.")).to_be_visible()
+    expect(page.get_by_text("File added successfully.")).to_be_visible()
+    expect(_file_row(base, "tides.txt")).to_be_visible()
+    expect(_file_row(base, "atlas.txt")).to_have_count(0)
+    assert _stored_file_names(curator, knowledge_id) == ["tides.txt"]
+
+
+def test_a_directory_upload_reports_the_files_over_the_max_upload_size(
+    page_for, curator, one_megabyte_uploads, tmp_path: Path
+):
+    folder = tmp_path / "harbour"
+    folder.mkdir()
+    (folder / "atlas.txt").write_text(LARGE_FILE)
+    (folder / "tides.txt").write_text("High tide at 06:40.\n")
+    knowledge_id = _create_base(curator, _unique("Harbour"))
+    page = page_for(curator)
+    _without_directory_picker(page)
+    base = _open_base(page, knowledge_id)
+
+    with page.expect_file_chooser() as chooser:
+        _add_content(page, base, "Upload directory")
+    chooser.value.set_files(str(folder))
+
+    expect(page.get_by_text("Upload failed for 1 of 2 files.")).to_be_visible()
+    assert _stored_file_names(curator, knowledge_id) == ["tides.txt"]

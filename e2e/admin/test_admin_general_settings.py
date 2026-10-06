@@ -6,12 +6,14 @@ Default Interface Settings sets the interface every account starts from, while a
 choice still wins. Memory System Context switched off keeps a person's saved memories out of what
 the model is sent. A Response Watermark is appended to every reply a user copies. The Model
 Response Mode picked for channels decides whether a model mentioned there answers in a thread or in
-the channel itself.
+the channel itself. A Folder Max File Count refuses, in a folder's edit dialog, a folder given more
+files than it allows, with the limit named, while a folder within it saves its files.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form sends the stored
 settings back in place of the edited ones, every test but the "own setting" one fails; in a backend
 copy whose settings read lets the defaults win over the account's own, the "own setting" test
-fails.
+fails; in a frontend build of dev ebc6add67 whose folder dialog skips its file count check, the
+folder refusal test fails.
 """
 
 from __future__ import annotations
@@ -249,3 +251,82 @@ def test_memory_system_context_switched_off_keeps_memories_out_of_the_chat(
 
     sent = next(filter(reply.answering(QUESTION), upstream.chat_requests()))
     assert memory not in json.dumps(sent["messages"])
+
+
+def edit_folder_with_files(page: Page, folder_name: str, *names: str) -> Locator:
+    """Open the folder's edit dialog from the sidebar and upload `names` into it."""
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+    folders = sidebar.get_by_role("button", name="Folders", exact=True)
+    if folders.get_attribute("aria-expanded") != "true":
+        folders.click()
+    row = sidebar.get_by_role("button", name=folder_name, exact=True)
+    row.hover()
+    # the row's menu button carries only a tooltip
+    row.get_by_role("button").last.click()
+    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    dialog = page.get_by_role("dialog")
+    with page.expect_file_chooser() as chooser:
+        dialog.get_by_role("button", name="Upload Files").click()
+    chooser.value.set_files(
+        [{"name": name, "mimeType": "text/plain", "buffer": name.encode()} for name in names]
+    )
+    for name in names:
+        expect(dialog.get_by_text(name)).to_be_visible()
+    expect(dialog.get_by_text("Uploading")).to_have_count(0)
+    return dialog
+
+
+def save_folder_max_file_count(admin_page: Page, count: str) -> None:
+    settings = open_general_settings(admin_page)
+    set_switch(settings, "Folders", turn_on=True)
+    settings.get_by_text("Folder Max File Count", exact=True).locator(
+        "xpath=following-sibling::div//input"
+    ).fill(count)
+    save(settings)
+
+
+def folder_files(account, folder_id: str) -> list[str]:
+    with account.client() as client:
+        found = client.get(f"/api/v1/folders/{folder_id}")
+    found.raise_for_status()
+    return sorted(item.get("name") for item in (found.json()["data"] or {}).get("files") or [])
+
+
+def new_folder(account, name: str) -> str:
+    with account.client() as client:
+        created = client.post("/api/v1/folders/", json={"name": name})
+    created.raise_for_status()
+    return created.json()["id"]
+
+
+def test_a_folder_max_file_count_refuses_a_folder_with_more_files(
+    page_for, admin, make_user, preserve
+):
+    preserve("admin_config")
+    save_folder_max_file_count(page_for(admin), "1")
+    account = make_user()
+    folder_id = new_folder(account, "Harbour")
+    page = page_for(account)
+
+    dialog = edit_folder_with_files(page, "Harbour", "tides.txt", "berths.txt")
+    dialog.get_by_role("button", name="Save").click()
+
+    expect(page.get_by_text("Maximum number of files per folder is 1.")).to_be_visible()
+    expect(page.get_by_text("Folder updated successfully")).to_have_count(0)
+    assert folder_files(account, folder_id) == []
+
+
+def test_a_folder_within_the_max_file_count_saves_its_files(page_for, admin, make_user, preserve):
+    preserve("admin_config")
+    save_folder_max_file_count(page_for(admin), "2")
+    account = make_user()
+    folder_id = new_folder(account, "Harbour")
+    page = page_for(account)
+
+    dialog = edit_folder_with_files(page, "Harbour", "tides.txt", "berths.txt")
+    dialog.get_by_role("button", name="Save").click()
+
+    expect(page.get_by_text("Folder updated successfully")).to_be_visible()
+    assert folder_files(account, folder_id) == ["berths.txt", "tides.txt"]
