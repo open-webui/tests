@@ -3,7 +3,9 @@
 The Features switches there decide whether Notes and Calendar are in a user's menu, whether the
 sidebar has Channels and Folders and whether Settings has the Personalization tab of Memories.
 Default Interface Settings sets the interface every account starts from, while an account's own
-choice still wins. A Response Watermark is appended to every reply a user copies.
+choice still wins. A Response Watermark is appended to every reply a user copies. The Model
+Response Mode picked for channels decides whether a model mentioned there answers in a thread or in
+the channel itself.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form sends the stored
 settings back in place of the edited ones (switches, defaults and watermark), every "switched",
@@ -19,6 +21,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.channel_chat import enable_channels, mention, model_reply
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -197,3 +200,24 @@ def test_a_response_watermark_is_appended_to_a_copied_reply(
     copied = page.evaluate("navigator.clipboard.readText()")
     assert copied.startswith(ANSWER), copied
     assert copied.rstrip().endswith(watermark), copied
+
+
+@pytest.mark.parametrize(("mode", "other"), [("Thread", "channel"), ("Channel", "thread")])
+def test_the_model_response_mode_decides_where_a_model_answers_in_a_channel(
+    mode, other, page_for, admin, make_user, upstream, preserve
+):
+    preserve("admin_config")
+    with admin.client() as client:
+        enable_channels(client, reply_mode=other)
+    settings = open_general_settings(page_for(admin))
+    settings.get_by_role("combobox", name="Model Response Mode").select_option(label=mode)
+    save(settings)
+    question = "How far is it to the island?"
+    upstream.queue(reply.text("About six nautical miles.", match=reply.answering(question)))
+
+    with make_user(role="admin").client() as client:
+        channel_id, message_id = mention(client, reply.MOCK_MODEL_ID, question)
+        answer = model_reply(client, channel_id)
+
+    assert answer["content"] == "About six nautical miles."
+    assert answer.get("parent_id") == (message_id if mode == "Thread" else None)
