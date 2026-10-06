@@ -35,6 +35,7 @@ from harness.access import grant
 from harness.plugins import installed_function
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.tooltips import tooltip_button
+from utils.valves import customise, valve
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -128,17 +129,6 @@ GREETING_PIPE = source(
             return f"{self.valves.greeting}, {self.valves.rooms} rooms, {state}"
     """
 )
-
-
-def valve(dialog: Locator, title: str, description: str) -> Locator:
-    """One valve's row: its title, Default or Custom button, input and description."""
-    rows = dialog.locator("div").filter(has=dialog.page.get_by_text(title, exact=True))
-    return rows.filter(has=dialog.page.get_by_text(description, exact=True)).last
-
-
-def customise(row: Locator) -> None:
-    row.get_by_role("button", name="Default").click()
-    expect(row.get_by_role("button", name="Custom")).to_be_visible()
 
 
 def tool_results(upstream, question: str) -> list[str]:

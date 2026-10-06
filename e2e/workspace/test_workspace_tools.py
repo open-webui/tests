@@ -5,11 +5,14 @@ Integrations, and asks a question the scripted model answers by calling the tool
 function calling, the default). The tool runs on the server, the model is sent its result, and
 the reply shows the call; opening it shows what the tool returned. Import From Link fetches a
 tool's source from a URL into the editor, named after its file, and saving it stores that source.
+Source that does not parse is refused: the editor shows where it fails, stays open and stores
+nothing.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with `/api/v1/tools/create` storing
 the editor's source without its `specs` the model is never offered the tool. On dev 30f3f6a8f,
 with the link import answering a placeholder in place of the fetched source, the import test
-fails.
+fails. In a backend copy whose tool create stores the source without loading it, the syntax error
+test fails.
 """
 
 from __future__ import annotations
@@ -118,3 +121,32 @@ def test_a_tool_imported_from_a_link_opens_in_the_editor_and_saves_its_source(
         stored = client.get("/api/v1/tools/id/locker_desk").json()
     assert "def lookup_locker(self, number: int) -> str:" in stored["content"]
     assert [spec["name"] for spec in stored["specs"]] == ["lookup_locker"]
+
+
+MISSING_COLON = """class Tools:
+    def lookup_locker(self, number: int) -> str
+        return "never"
+"""
+
+
+def test_a_tool_that_does_not_parse_is_refused_with_the_error_shown(page_for, toolsmith):
+    name = f"Lockers {uuid.uuid4().hex[:6]}"
+    page = page_for(toolsmith)
+    page.goto("/workspace/tools/create")
+    editor = page.get_by_role("main")
+    editor.get_by_role("textbox", name="Tool Name").fill(name)
+    editor.get_by_role("textbox", name="Tool Description").fill("who holds which locker")
+    editor.locator(".cm-content").click()
+    page.keyboard.press("ControlOrMeta+A")
+    page.keyboard.insert_text(MISSING_COLON)
+    editor.get_by_role("button", name="Save & Create").click()
+    page.get_by_role("dialog", name="Confirm your action").get_by_role(
+        "button", name="Confirm"
+    ).click()
+
+    expect(page.get_by_text(re.compile(r"Cannot parse.*2:\d+"))).to_be_visible()
+    expect(page.get_by_text("Error creating tool")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/workspace/tools/create$"))
+    with toolsmith.client() as client:
+        stored = [tool["name"] for tool in client.get("/api/v1/tools/").json()]
+    assert name not in stored
