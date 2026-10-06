@@ -2,11 +2,15 @@
 
 `/?q=` sends its text as the first message at once, and with `submit=false` only puts it in the
 message box. `models=` opens the chat on several models, which all answer. `temporary-chat=true`
-starts a chat that is never stored. `tools=` turns a workspace tool on for the chat, so it is
-offered to the model, and `web-search=true` sends the message with web search on.
+starts a chat that is never stored. `tools=` (or its older name `tool-ids=`) turns a workspace
+tool on for the chat, so it is offered to the model, and `web-search=true` sends the message with
+web search on. `image-generation=true` sends it with image generation on, so the model is offered
+the image tool, which a chat opened without the parameter is not.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build that ignores the q, models,
-temporary-chat, tools and web-search parameters every test fails, each on its own parameter.
+temporary-chat, tools and web-search parameters every test fails, each on its own parameter; in
+one that reads `tool_ids` in place of `tool-ids` and turns image generation on exactly when the
+parameter is missing, the tool-ids and both image generation tests fail.
 """
 
 from __future__ import annotations
@@ -19,6 +23,8 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.channel_chat import serve_openai_images
+from harness.image_engines import IMAGES_CONFIG, save_image_settings
 from harness.python_tools import python_tool
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
@@ -122,6 +128,69 @@ def test_tools_turns_the_tool_on_for_the_chat(page_for, admin, make_user, upstre
 
     offered = {tool["function"]["name"] for tool in _request_for(upstream, question)["tools"]}
     assert "tide_times" in offered, sorted(offered)
+
+
+def test_tool_ids_turns_the_tool_on_like_tools(page_for, admin, make_user, upstream):
+    with python_tool(admin, TIDE_TOOL, name="Tide times") as tool_id:
+        page = page_for(make_user())
+        question = _question()
+        upstream.queue(reply.text("Noon.", match=reply.answering(question)))
+        _open(page, f"tool-ids={tool_id}")
+        send(page, question)
+        expect_reply(page, "Noon.")
+
+    offered = {tool["function"]["name"] for tool in _request_for(upstream, question)["tools"]}
+    assert "tide_times" in offered, sorted(offered)
+
+
+@pytest.fixture
+def image_generation_on(admin, preserve, listener) -> None:
+    preserve(IMAGES_CONFIG)
+    with admin.client() as client:
+        save_image_settings(client, **serve_openai_images(listener))
+
+
+def _chat_request_features(page: Page, question: str) -> dict:
+    def is_chat_request(request) -> bool:
+        return request.method == "POST" and request.url.endswith("/api/chat/completions")
+
+    with page.expect_request(is_chat_request) as sent:
+        send(page, question)
+    return sent.value.post_data_json.get("features") or {}
+
+
+def test_image_generation_true_offers_the_model_the_image_tool(
+    page_for, make_user, upstream, image_generation_on
+):
+    page = page_for(make_user())
+    question = _question()
+    upstream.queue(reply.text("Drawn.", match=reply.answering(question)))
+    _open(page, "image-generation=true")
+
+    features = _chat_request_features(page, question)
+    expect_reply(page, "Drawn.")
+
+    assert features.get("image_generation") is True
+    offered = {tool["function"]["name"] for tool in _request_for(upstream, question)["tools"]}
+    assert "generate_image" in offered, sorted(offered)
+
+
+def test_without_the_parameter_image_generation_stays_off(
+    page_for, make_user, upstream, image_generation_on
+):
+    page = page_for(make_user())
+    question = _question()
+    upstream.queue(reply.text("Not drawn.", match=reply.answering(question)))
+    _open(page, "")
+
+    features = _chat_request_features(page, question)
+    expect_reply(page, "Not drawn.")
+
+    assert features.get("image_generation") is False
+    offered = {
+        tool["function"]["name"] for tool in _request_for(upstream, question).get("tools") or []
+    }
+    assert "generate_image" not in offered, sorted(offered)
 
 
 @pytest.fixture

@@ -3,17 +3,21 @@
 The plus menu offers Attach Webpage; the modal takes one link per line, refuses text that is not
 an http(s) link, and the page behind each link is fetched by the server and shown in the composer
 as an attachment named by its link. The text of the page reaches the model with the next message,
-and a page the server cannot read is refused with a toast and leaves no attachment. Without the web
+and a page the server cannot read is refused with a toast and leaves no attachment. A link in the
+`load-url` parameter of a chat link is attached the same way when the chat opens. Without the web
 upload permission the menu entry does nothing for a user and still opens for an admin. The pages
 are a local service, on an instance that may fetch loopback addresses.
 
 Discriminates: passes on the 176d31d1d build; with the link validation removed the refused-text
 test goes red, with the de-duplication removed the several-links test does, with the handoff to
 the chat or the modal's close button removed the attachment, refusal and close tests do, and with
-the permission check removed from the menu entry the no-permission test does.
+the permission check removed from the menu entry the no-permission test does; in a build that
+ignores the `load-url` parameter its test goes red.
 """
 
 from __future__ import annotations
+
+from urllib.parse import quote
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -108,6 +112,22 @@ def test_the_attachment_stays_on_the_message_once_it_is_sent(page_for, fetching_
 
     expect_reply(page, "about tides")
     expect(page.get_by_text(link(pages, "/tides"))).to_be_visible()
+
+
+def test_a_link_in_the_load_url_parameter_is_attached_when_the_chat_opens(
+    page_for, fetching_instance, pages
+):
+    page = page_for(create_user(fetching_instance))
+    prompt = "what does the linked page say?"
+    fetching_instance.upstream.queue(reply.text("about tides", match=reply.answering(prompt)))
+
+    page.goto(f"/?load-url={quote(link(pages, '/tides'))}")
+
+    expect(page.get_by_text(link(pages, "/tides"))).to_be_visible(timeout=30_000)
+    send(page, prompt)
+    expect_reply(page, "about tides")
+    sent = str(fetching_instance.upstream.chat_requests()[-1]["messages"])
+    assert "High tide at the harbour is at noon" in sent
 
 
 def test_several_links_are_attached_one_per_line_and_repeats_once(
