@@ -104,11 +104,12 @@ def test_a_mentioned_member_elsewhere_gets_a_toast_that_opens_the_channel(people
 
     posted = _message(page, "can you bring the charts?")
     expect(posted.locator(".mention")).to_have_text(f"@{member.name}")
-    [stored] = _stored(sender, channel_id)
-    assert stored["content"].startswith(f"<@U:{member.id}|{member.name}>")
     expect(entry.get_by_title("Unread")).to_have_text("1")
     toast = member_page.get_by_text(f"{sender.name} (#{channel_name})")
     expect(toast).to_be_visible()
+    # the sender's own copy shows before the message is stored
+    [stored] = _stored(sender, channel_id)
+    assert stored["content"].startswith(f"<@U:{member.id}|{member.name}>")
     toast.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{channel_id}"))
     expect(_message(member_page, "can you bring the charts?")).to_be_visible()
