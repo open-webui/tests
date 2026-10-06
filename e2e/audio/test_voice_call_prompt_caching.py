@@ -8,8 +8,9 @@ one before it byte for byte, only adding to the end. A call started in the middl
 is the one place the voice prompt arrives late: it lands in the system message of the first
 spoken turn and rewrites the prefix the typed turns built, as the page's table says.
 
-Discriminates: passes on dev 30f3f6a8f; in backend copies, a clock value added to the model's
-system prompt and the tool list shuffled per request each turn it red.
+Discriminates: passes on dev 30f3f6a8f. In backend copies, a clock value added to the model's
+system prompt turned both tests red (the call started mid-chat because the typed turns before it
+stopped appending); on dev 176d31d1d the tool list shuffled per request turned the first red too.
 """
 
 from __future__ import annotations

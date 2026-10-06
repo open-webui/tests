@@ -22,7 +22,8 @@ message that carried it) and a skill shared with the person mid-chat (every read
 listed in the system message, whether or not it was attached).
 
 Discriminates: passes on dev 30f3f6a8f. In a backend copy with a clock value added to the
-model's system prompt the positive tests fail and every control still finds its break.
+model's system prompt every positive test failed, and so did the controls whose break falls after
+the system message, since the clock moved the first break into it; the other controls passed.
 """
 
 from __future__ import annotations
