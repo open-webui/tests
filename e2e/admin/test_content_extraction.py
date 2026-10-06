@@ -1,11 +1,13 @@
-"""Journey: Tika picked as the Content Extraction Engine in Admin Settings > Documents reads files.
+"""Journey: the Content Extraction Engine picked in Admin Settings > Documents reads the files.
 
 With Tika and its server URL saved, a document a user attaches to a chat is sent to the Tika
 server, at the endpoint of the Tika version picked, and the text Tika returns is what the model
-reads with the question. A plain text file is still read as it is, without Tika.
+reads with the question. A plain text file is still read as it is, without Tika. The External
+document loader gets the file with the admin's API key, the file's name and the admin's extra
+headers, and Docling gets it with its API key; the text each returns is what the model reads.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Documents form sends the stored
-engine, URL and version back in place of the edited ones, both Tika tests fail.
+engine settings back in place of the edited ones, the Tika, External and Docling tests fail.
 """
 
 from __future__ import annotations
@@ -37,20 +39,28 @@ def serve_tika(listener, version: str) -> str:
     return path
 
 
-def save_tika(page: Page, url: str, version: str) -> None:
+def pick_engine(page: Page, engine: str):
     page.goto("/admin/settings/documents")
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("tab", selected=True)).to_be_visible()
-    engine = settings.get_by_role("combobox").filter(
+    settings.get_by_role("combobox").filter(
         has=page.get_by_role("option", name="Tika", exact=True)
-    )
-    engine.select_option("tika")
+    ).select_option(engine)
+    return settings
+
+
+def save(page: Page, settings) -> None:
+    settings.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
+
+
+def save_tika(page: Page, url: str, version: str) -> None:
+    settings = pick_engine(page, "tika")
     settings.get_by_placeholder("Enter Tika Server URL").fill(url)
     settings.get_by_role("combobox").filter(
         has=page.get_by_role("option", name="Tika 4.x")
     ).select_option(version)
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save(page, settings)
 
 
 def ask_about(page: Page, upstream, name: str, mime_type: str, content: bytes) -> str:
@@ -93,3 +103,52 @@ def test_a_text_file_is_read_without_tika(page_for, make_user, upstream, listene
 
     assert note in sent
     assert listener.requests_to("/tika/text") == []
+
+
+def test_the_external_loader_gets_the_file_with_the_admins_key_and_headers(
+    page_for, make_user, upstream, listener, preserve
+):
+    preserve(RETRIEVAL_CONFIG)
+    listener.route("PUT", "/process", json_answer({"page_content": EXTRACTED, "metadata": {}}))
+    admin_page = page_for(make_user(role="admin"))
+    settings = pick_engine(admin_page, "external")
+    settings.get_by_placeholder("Enter External Document Loader URL").fill(listener.base_url)
+    settings.get_by_placeholder("Enter External Document Loader API Key").fill("loader-key-7")
+    settings.get_by_placeholder("Enter additional headers in JSON format").fill(
+        '{"X-Harbour": "north quay"}'
+    )
+    save(admin_page, settings)
+
+    sent = ask_about(
+        page_for(make_user()), upstream, "report.pdf", "application/pdf", b"%PDF-1.4 scanned"
+    )
+
+    assert EXTRACTED in sent
+    [loaded] = listener.requests_to("/process")
+    assert loaded.headers["Authorization"] == "Bearer loader-key-7"
+    assert loaded.headers["X-Harbour"] == "north quay"
+    assert loaded.headers["X-Filename"].endswith("report.pdf")
+
+
+def test_docling_converts_the_file_with_its_api_key(
+    page_for, make_user, upstream, listener, preserve
+):
+    preserve(RETRIEVAL_CONFIG)
+    listener.route(
+        "POST",
+        "/v1/convert/file",
+        json_answer({"status": "success", "document": {"md_content": EXTRACTED}}),
+    )
+    admin_page = page_for(make_user(role="admin"))
+    settings = pick_engine(admin_page, "docling")
+    settings.get_by_placeholder("Enter Docling Server URL").fill(listener.base_url)
+    settings.get_by_placeholder("Enter Docling API Key").fill("docling-key-3")
+    save(admin_page, settings)
+
+    sent = ask_about(
+        page_for(make_user()), upstream, "report.pdf", "application/pdf", b"%PDF-1.4 scanned"
+    )
+
+    assert EXTRACTED in sent
+    [converted] = listener.requests_to("/v1/convert/file")
+    assert converted.headers["X-Api-Key"] == "docling-key-3"
