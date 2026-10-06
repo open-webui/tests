@@ -8,10 +8,12 @@ the knowledge tools hand an attached file to the model whoever owns it. The fix 
 entries the caller may read before the model is used.
 
 The caller's browser tab answers the completion here (`harness.direct_connection`), plays the
-model calling `view_file` on someone else's file and reads what the server sends back. An
-action is shown the model it runs for, so it reports the knowledge left on it.
+model calling `view_file` on someone else's file and reads what the server sends back. The tab
+sends its lines one at a time, since the server can otherwise reorder them and drop the tool call
+(open-webui/open-webui#31953). An action is shown the model it runs for, so it reports the
+knowledge left on it.
 
-Discriminates: passes on dev ef67cc3fa; with the filtering removed from `_set_direct_model` the
+Discriminates: passes on dev ebc6add67; with the filtering removed from `_set_direct_model` the
 other account's file comes back through `view_file`, the system prompt names their file and
 collection, and the action sees them on the model.
 """
@@ -83,7 +85,7 @@ def _claiming(knowledge: dict) -> dict:
 def _view_file(knowledge: dict, file_id: str) -> tuple[dict, str]:
     """Have the tab's model call `view_file`; returns its first request and the tool result."""
     caller = knowledge["caller"]
-    with answering(caller) as tab, caller.client() as client:
+    with answering(caller, in_order=True) as tab, caller.client() as client:
         tab.stream(
             chunk_line(tool_call_delta("view_file", {"file_id": file_id})),
             chunk_line({}, "tool_calls"),
