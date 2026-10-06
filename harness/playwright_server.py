@@ -14,6 +14,7 @@ import socket
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -30,11 +31,17 @@ class BrowserServer:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
-def chromium_installed() -> bool:
+def _chromium_path() -> Path:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
-        return Path(playwright.chromium.executable_path).exists()
+        return Path(playwright.chromium.executable_path)
+
+
+def chromium_installed() -> bool:
+    # a thread of its own: the sync API refuses a thread whose event loop a browser test runs
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        return worker.submit(_chromium_path).result().exists()
 
 
 def _wait_for_port(process: subprocess.Popen, port: int) -> None:
