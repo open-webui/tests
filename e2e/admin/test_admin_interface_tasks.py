@@ -3,7 +3,8 @@
 Title Generation switched on there, with a prompt of the admin's own, sends that prompt with the
 first question to the model and titles the chat with its answer; switched off, the chat keeps
 its first message as the title and the model is never asked. Follow Up Generation switched on
-puts the model's suggested questions under the reply, and pressing one asks it. Autocomplete
+puts the model's suggested questions under the reply, and pressing one asks it. Tags Generation
+switched on files the chat under the model's tags, which its menu lists. Autocomplete
 Generation switched on lets a person who turns Prompt Autocompletion on in their own settings see
 the model's continuation of what they type, and Tab takes it into the message.
 
@@ -26,6 +27,7 @@ TITLE_PROMPT = "Write a newspaper headline for this exchange: {{MESSAGES:END:2}}
 HEADLINE_MARKER = "Write a newspaper headline"
 FOLLOW_UP_MARKER = "Suggest 3-5 relevant follow-up questions"
 AUTOCOMPLETE_MARKER = "You are an autocompletion system"
+TAGS_MARKER = "Generate 1-3 broad tags"
 QUESTION = "When does the ferry to Hallstatt leave?"
 ANSWER = "The first ferry leaves at seven."
 
@@ -167,3 +169,24 @@ def test_a_switched_on_autocomplete_suggests_a_continuation_that_tab_accepts(
         "The best time to visit Hallstatt is early in the autumn."
     )
     assert "Hallstatt" in str(requests_with(upstream, AUTOCOMPLETE_MARKER)[-1]["messages"])
+
+
+def test_a_switched_on_tags_generation_files_the_chat_under_the_models_tags(
+    page_for, admin, make_user, upstream, tasks_restored
+):
+    settings = open_interface_settings(page_for(admin))
+    set_switch(settings, "Tags Generation", turn_on=True)
+    save(settings)
+    page = page_for(make_user())
+    upstream.queue(
+        reply.text('{"tags": ["Ferries", "Lake travel"]}', match=reply.answering(TAGS_MARKER)),
+        reply.text(ANSWER, match=reply.answering(QUESTION)),
+    )
+
+    send(page, QUESTION)
+    expect_reply(page, ANSWER)
+    page.get_by_role("button", name="Chat actions").first.click()
+
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_text("Ferries", exact=True)).to_be_visible()
+    expect(menu.get_by_text("Lake travel", exact=True)).to_be_visible()

@@ -1,9 +1,9 @@
 """Journey: what an admin saves in Admin Settings > General changes what every user gets.
 
-The Features switches there decide whether Notes and Calendar are in a user's menu and whether
-the sidebar has Channels and Folders. Default Interface Settings sets the interface every account
-starts from, while an account's own choice still wins. A Response Watermark is appended to every
-reply a user copies.
+The Features switches there decide whether Notes and Calendar are in a user's menu, whether the
+sidebar has Channels and Folders and whether Settings has the Personalization tab of Memories.
+Default Interface Settings sets the interface every account starts from, while an account's own
+choice still wins. A Response Watermark is appended to every reply a user copies.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form sends the stored
 settings back in place of the edited ones (switches, defaults and watermark), every "switched",
@@ -79,11 +79,22 @@ def sidebar_section(name: str) -> Callable[[Page], Locator]:
     return locate
 
 
+def settings_tab(name: str) -> Callable[[Page], Locator]:
+    def locate(page: Page) -> Locator:
+        page.goto("/?settings=general")
+        dialog = page.get_by_role("dialog")
+        expect(dialog.get_by_role("tab").first).to_be_visible()
+        return dialog.get_by_role("tab", name=name, exact=True)
+
+    return locate
+
+
 FEATURES = {
     "Notes": ("ENABLE_NOTES", user_menu_link("Notes")),
     "Calendar": ("ENABLE_CALENDAR", user_menu_link("Calendar")),
     "Channels": ("ENABLE_CHANNELS", sidebar_section("Channels")),
     "Folders": ("ENABLE_FOLDERS", sidebar_section("Folders")),
+    "Memories": ("ENABLE_MEMORIES", settings_tab("Personalization")),
 }
 
 

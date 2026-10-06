@@ -4,18 +4,23 @@ Each row carries a switch that enables the model, and its More menu sets it as a
 new chats, pins it to everyone's sidebar, makes it private and hides it. A user who opens the app
 afterwards finds the model gone from the selector once it is switched off, made private or hidden,
 finds a new chat starting on it once it is a selected model, and finds it pinned in the sidebar
-once it is a pinned model.
+once it is a pinned model. Disable All in the Actions menu switches off only the models the search
+shows, and a model exported with Export and deleted comes back for users through Import.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose row actions save the model as
 it was (the enable switch skipping its toggle request, hide and privacy sending the stored meta
 and grants, the selected and pinned saves sending the previous lists), every "switched off",
-"private", "hidden", "selected" and "pinned" test fails.
+"private", "hidden", "selected" and "pinned" test fails. In one whose Disable All sends nothing,
+whose Export saves an empty list and whose Import sends an empty list, the Disable All and the
+export tests fail.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -29,25 +34,41 @@ MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
-@pytest.fixture
-def preset(admin, preserve):
-    """A public preset on the scripted model, under a name no other test uses."""
-    preserve(MODELS_CONFIG)
+def create_preset(admin, label: str) -> dict:
     suffix = uuid.uuid4().hex[:8]
     form = {
-        "id": f"atlas-{suffix}",
-        "name": f"Atlas {suffix}",
+        "id": f"{label.lower()}-{suffix}",
+        "name": f"{label} {suffix}",
         "base_model_id": "mock-model",
-        "meta": {},
+        "meta": {"description": f"{label} for the harbour"},
         "params": {},
         "access_grants": [EVERYONE_READS],
     }
     with admin.client() as client:
         created = client.post("/api/v1/models/create", json=form)
     assert created.status_code == 200, created.text
-    yield form
+    return form
+
+
+def delete_preset(admin, form: dict) -> None:
     with admin.client() as client:
         client.post("/api/v1/models/model/delete", json={"id": form["id"]})
+
+
+@pytest.fixture
+def preset(admin, preserve):
+    """A public preset on the scripted model, under a name no other test uses."""
+    preserve(MODELS_CONFIG)
+    form = create_preset(admin, "Atlas")
+    yield form
+    delete_preset(admin, form)
+
+
+@pytest.fixture
+def second_preset(admin):
+    form = create_preset(admin, "Boreas")
+    yield form
+    delete_preset(admin, form)
 
 
 def model_row(page: Page, name: str) -> Locator:
@@ -135,3 +156,53 @@ def test_a_pinned_model_shows_in_a_new_users_sidebar(page_for, admin, make_user,
     )
     expect(pinned).to_be_visible()
     expect(pinned).to_have_attribute("href", re.compile(f"model={preset['id']}"))
+
+
+def choose_action(page: Page, action: str) -> None:
+    settings = page.get_by_role("dialog")
+    settings.get_by_role("button", name="Actions").first.click()
+    page.get_by_role("menu").get_by_role("button", name=action, exact=True).click()
+
+
+def test_disable_all_switches_off_only_the_searched_models(
+    page_for, admin, make_user, preset, second_preset
+):
+    admin_page = page_for(admin)
+    row = model_row(admin_page, preset["name"])
+    choose_action(admin_page, "Disable All")
+    expect(row.get_by_role("switch")).to_have_attribute("aria-checked", "false")
+
+    page = page_for(make_user())
+
+    expect(offered_to(page, preset["name"])).to_have_count(0)
+    expect(offered_to(page, second_preset["name"])).to_have_count(1)
+
+
+def test_an_exported_model_comes_back_through_import(page_for, admin, make_user, preset):
+    admin_page = page_for(admin)
+    model_row(admin_page, preset["name"])
+    with admin_page.expect_download() as downloaded:
+        choose_action(admin_page, "Export")
+    exported = json.loads(Path(downloaded.value.path()).read_text())
+    [saved] = [entry for entry in exported if entry["id"] == preset["id"]]
+    delete_preset(admin, preset)
+
+    admin_page.goto("/admin/settings/models")
+    with admin_page.expect_file_chooser() as chooser:
+        choose_action(admin_page, "Import")
+    chooser.value.set_files(
+        files=[
+            {
+                "name": "models.json",
+                "mimeType": "application/json",
+                "buffer": json.dumps([saved]).encode(),
+            }
+        ]
+    )
+    expect(admin_page.get_by_text("Models imported successfully")).to_be_visible()
+
+    page = page_for(make_user())
+    expect(offered_to(page, preset["name"])).to_have_count(1)
+    with admin.client() as client:
+        restored = client.get("/api/v1/models/model", params={"id": preset["id"]}).json()
+    assert restored["meta"]["description"] == "Atlas for the harbour"
