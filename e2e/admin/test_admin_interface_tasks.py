@@ -1,18 +1,21 @@
 """Journey: the generation tasks an admin sets in Admin Settings > Interface shape the next chat.
 
-Title Generation switched on there, with a prompt of the admin's own, sends that prompt with the
-first question to the model and titles the chat with its answer; switched off, the chat keeps
-its first message as the title and the model is never asked. Follow Up Generation switched on
+A model picked as the External Task Model is the one that writes the title, its own system prompt
+included. Title Generation switched on there, with a prompt of the admin's own, sends that prompt
+with the first question to the model and titles the chat with its answer; switched off, the chat
+keeps its first message as the title and the model is never asked. Follow Up Generation switched on
 puts the model's suggested questions under the reply, and pressing one asks it. Tags Generation
-switched on files the chat under the model's tags, which its menu lists. Autocomplete
-Generation switched on lets a person who turns Prompt Autocompletion on in their own settings see
-the model's continuation of what they type, and Tab takes it into the message.
+switched on files the chat under the model's tags, which its menu lists. Autocomplete Generation
+switched on lets a person who turns Prompt Autocompletion on in their own settings see the model's
+continuation of what they type, and Tab takes it into the message.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Interface form sends the stored
 task settings back in place of the edited ones, every test fails.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -190,3 +193,46 @@ def test_a_switched_on_tags_generation_files_the_chat_under_the_models_tags(
     menu = page.get_by_role("menu")
     expect(menu.get_by_text("Ferries", exact=True)).to_be_visible()
     expect(menu.get_by_text("Lake travel", exact=True)).to_be_visible()
+
+
+@pytest.fixture
+def scribe(admin):
+    """A public preset with a system prompt of its own, to pick as the task model."""
+    form = {
+        "id": f"scribe-{uuid.uuid4().hex[:8]}",
+        "name": f"Scribe {uuid.uuid4().hex[:6]}",
+        "base_model_id": "mock-model",
+        "meta": {},
+        "params": {"system": "You are the harbour scribe."},
+        "access_grants": [{"principal_type": "user", "principal_id": "*", "permission": "read"}],
+    }
+    with admin.client() as client:
+        client.post("/api/v1/models/create", json=form).raise_for_status()
+    yield form
+    with admin.client() as client:
+        client.post("/api/v1/models/model/delete", json={"id": form["id"]})
+
+
+def test_the_external_task_model_writes_the_title(
+    page_for, admin, make_user, upstream, tasks_restored, scribe
+):
+    with admin.client() as client:
+        set_title_generation(client, turn_on=True)
+    settings = open_interface_settings(page_for(admin))
+    task_model = settings.get_by_text("External Task Model", exact=True)
+    task_model.locator("xpath=following-sibling::div//select").select_option(label=scribe["name"])
+    save(settings)
+    page = page_for(make_user())
+    upstream.queue(
+        reply.text('{"title": "Scribe Title"}', match=reply.answering("Generate a concise")),
+        reply.text(ANSWER, match=reply.answering(QUESTION)),
+    )
+
+    send(page, QUESTION)
+    expect_reply(page, ANSWER)
+    expect(sidebar(page).get_by_text("Scribe Title")).to_be_visible()
+
+    [title_request] = requests_with(upstream, "Generate a concise")
+    assert "You are the harbour scribe." in str(title_request["messages"])
+    [chat_request] = [body for body in upstream.chat_requests() if body.get("stream")]
+    assert "harbour scribe" not in str(chat_request["messages"])
