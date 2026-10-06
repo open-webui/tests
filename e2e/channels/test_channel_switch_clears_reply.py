@@ -14,6 +14,7 @@ the "Replying to" banner is still up in the second channel and the message sent 
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -60,6 +61,14 @@ def stored(account, channel_id: str) -> list[str]:
     return [message["content"] for message in listed.json()]
 
 
+def saved(account, channel_id: str, timeout: float = 10.0) -> list[str]:
+    """The channel's messages once one is saved; the page shows a sent message before that."""
+    deadline = time.monotonic() + timeout
+    while not (messages := stored(account, channel_id)) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    return messages
+
+
 def test_switching_channels_drops_the_pending_reply_and_a_message_sent_there_arrives(
     channels, page_for
 ):
@@ -85,5 +94,5 @@ def test_switching_channels_drops_the_pending_reply_and_a_message_sent_there_arr
     page.keyboard.type("hello from the second channel")
     page.keyboard.press("Enter")
     expect(page.get_by_text("hello from the second channel")).to_be_visible()
-    assert stored(reader, second) == ["hello from the second channel"]
+    assert saved(reader, second) == ["hello from the second channel"]
     assert stored(reader, first) == ["the boat leaves at nine"]
