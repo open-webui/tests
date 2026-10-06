@@ -7,7 +7,7 @@ Workspace Models the presets without the base models. Make Public on a private m
 back to the users' selector. Export in a row's More menu downloads that one model, not the list.
 Each test works as a fresh admin on presets of its own.
 
-Discriminates: passes on dev 176d31d1d; in a frontend copy, the clone entry opening the editor
+Discriminates: passes on dev ebc6add67; in a frontend copy, the clone entry opening the editor
 under the original name turns the clone test red, the Hidden and Workspace Models views listing
 every model turn the filter test red, Make Public saving the grants it had turns the republish test
 red (users still do not see the model) and Export saving an empty list turns the export test red.

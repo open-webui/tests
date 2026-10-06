@@ -9,7 +9,7 @@ its search narrows them, and a chat opened from it shows the conversation to the
 named in the edit dialog links to that group's editor. Each test works as a fresh admin on
 accounts of its own.
 
-Discriminates: passes on dev 176d31d1d; in a frontend copy, the preview modal dropping the groups
+Discriminates: passes on dev ebc6add67; in a frontend copy, the preview modal dropping the groups
 and models it loaded turns both preview tests red, the edit dialog saving the stored role turns the
 pending test red (the account stays in the chat), the chats modal sending no search query and
 linking every chat to the home page turns the chats tests red, and the group names in the edit
@@ -110,17 +110,21 @@ def _user_chats(page: Page, owner: Actor) -> Locator:
     return chats
 
 
-def test_the_preview_lists_the_groups_and_what_a_group_shares_with_its_member(
-    admin, admin_page, crew
-):
-    member, _, group_name, group_id = crew
+@pytest.fixture
+def shared_with_crew(admin, crew):
+    """A private model and a knowledge base shared with the crew's group, by name."""
+    _, _, _, group_id = crew
     suffix = uuid.uuid4().hex[:8]
-    model_name, knowledge_name = f"Lighthouse {suffix}", f"Charts {suffix}"
+    model_id, model_name, knowledge_name = (
+        f"lighthouse-{suffix}",
+        f"Lighthouse {suffix}",
+        f"Charts {suffix}",
+    )
     with admin.client() as client:
         model = client.post(
             "/api/v1/models/create",
             json={
-                "id": f"lighthouse-{suffix}",
+                "id": model_id,
                 "name": model_name,
                 "base_model_id": "mock-model",
                 "meta": {},
@@ -138,56 +142,43 @@ def test_the_preview_lists_the_groups_and_what_a_group_shares_with_its_member(
             },
         )
         assert knowledge.status_code == 200, knowledge.text
+    yield model_name, knowledge_name
+    with admin.client() as client:
+        client.post("/api/v1/models/model/delete", json={"id": model_id})
+        client.delete(f"/api/v1/knowledge/{knowledge.json()['id']}/delete")
 
-    try:
-        preview = _preview(admin_page, member)
 
-        expect(preview).to_contain_text(member.name)
-        expect(preview.get_by_text(group_name, exact=True)).to_be_visible()
-        expect(preview.get_by_text(model_name, exact=True)).to_be_visible()
-        expect(preview.get_by_text(knowledge_name, exact=True)).to_be_visible()
-    finally:
-        with admin.client() as client:
-            client.post("/api/v1/models/model/delete", json={"id": f"lighthouse-{suffix}"})
-            client.delete(f"/api/v1/knowledge/{knowledge.json()['id']}/delete")
+def test_the_preview_lists_the_groups_and_what_a_group_shares_with_its_member(
+    admin_page, crew, shared_with_crew
+):
+    member, _, group_name, _ = crew
+    model_name, knowledge_name = shared_with_crew
+
+    preview = _preview(admin_page, member)
+
+    expect(preview).to_contain_text(member.name)
+    expect(preview.get_by_text(group_name, exact=True)).to_be_visible()
+    expect(preview.get_by_text(model_name, exact=True)).to_be_visible()
+    expect(preview.get_by_text(knowledge_name, exact=True)).to_be_visible()
 
 
 def test_the_preview_of_an_account_outside_the_group_leaves_out_what_the_group_shares(
-    admin, admin_page, crew
+    admin_page, crew, shared_with_crew
 ):
-    member, outsider, group_name, group_id = crew
-    suffix = uuid.uuid4().hex[:8]
-    model_name = f"Lighthouse {suffix}"
-    with admin.client() as client:
-        model = client.post(
-            "/api/v1/models/create",
-            json={
-                "id": f"lighthouse-{suffix}",
-                "name": model_name,
-                "base_model_id": "mock-model",
-                "meta": {},
-                "params": {},
-                "access_grants": _group_grant(group_id),
-            },
-        )
-        assert model.status_code == 200, model.text
+    member, outsider, group_name, _ = crew
+    model_name, knowledge_name = shared_with_crew
+    # the member's preview shows the model, so its absence below means something
+    member_preview = _preview(admin_page, member)
+    expect(member_preview.get_by_text(model_name, exact=True)).to_be_visible()
+    member_preview.get_by_role("button").first.click()
+    expect(member_preview).to_be_hidden()
 
-    try:
-        # the member's preview proves the model shows up when it should
-        member_preview = _preview(admin_page, member)
-        expect(member_preview.get_by_text(model_name, exact=True)).to_be_visible()
-        member_preview.get_by_role("button").first.click()
-        expect(member_preview).to_be_hidden()
+    preview = _preview(admin_page, outsider)
 
-        preview = _preview(admin_page, outsider)
-
-        expect(preview).to_contain_text(outsider.name)
-        expect(preview.get_by_text("No knowledge bases accessible")).to_be_visible()
-        expect(preview.get_by_text(group_name, exact=True)).to_have_count(0)
-        expect(preview.get_by_text(model_name, exact=True)).to_have_count(0)
-    finally:
-        with admin.client() as client:
-            client.post("/api/v1/models/model/delete", json={"id": f"lighthouse-{suffix}"})
+    expect(preview).to_contain_text(outsider.name)
+    expect(preview.get_by_text(group_name, exact=True)).to_have_count(0)
+    expect(preview.get_by_text(model_name, exact=True)).to_have_count(0)
+    expect(preview.get_by_text(knowledge_name, exact=True)).to_have_count(0)
 
 
 def test_an_account_set_to_pending_meets_the_activation_screen_on_its_next_load(

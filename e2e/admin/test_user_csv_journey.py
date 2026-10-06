@@ -6,7 +6,7 @@ auth page with the password from the file: a user reaches the chat, a pending ac
 "Account Activation Pending" screen and the wrong password is refused. Each test works as a fresh
 admin on accounts of its own.
 
-Discriminates: passes on dev 176d31d1d; in a frontend copy, the import sending every row with the
+Discriminates: passes on dev ebc6add67; in a frontend copy, the import sending every row with the
 role `user` turns the roles check red (the admin and pending rows show "user"), and sending the
 email in the password column turns the sign-in check red (the file's password is refused).
 """
