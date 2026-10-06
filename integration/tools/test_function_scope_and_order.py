@@ -9,12 +9,10 @@ before the entry's name, and each answers with its own id; a switched-off pipe l
 Browser twins: e2e/admin/test_filter_functions.py, test_action_functions.py and
 test_pipe_functions.py.
 
-Discriminates: passes on dev ebc6add67. In a backend copy whose filter pipeline ignores a model's
-own filters the scope test fails, in one that sorts filters by id alone the filter order test
-fails, in one that hands every filter the default user valves the user valves test fails, in one
-that orders actions by id alone the action order test fails, in one whose model list keeps
-switched-off actions and pipes the two switch tests fail and in one whose model list skips
-manifolds the manifold test fails.
+Discriminates: passes on dev ebc6add67. One backend copy that ignores a model's own filters,
+sorts filters and actions by id alone, hands every filter the default user valves, looks up active
+functions without their switch, lists switched-off pipes and lists every manifold as one plain
+pipe turned each test red on its own edit.
 """
 
 from __future__ import annotations

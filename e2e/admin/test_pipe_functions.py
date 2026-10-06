@@ -1,14 +1,16 @@
 """Journey: pipes as models a person picks in the chat's model selector and talks to.
 
-A pipe an admin adds is private to admins until it is shared; then it shows in a person's model
-selector under its function's name, and the chat on it is answered by the pipe's code, which is
-handed the person's message. A manifold pipe lists one
+A pipe an admin adds shows in the admin's model selector under its function's name and stays
+private to admins until it is shared; then a person picks it by that name, and the chat on it is
+answered by the pipe's code, which is handed the person's message. A manifold pipe lists one
 model per entry of its `pipes`, each named with the class's `name` before the entry's name, and
-each answers as itself. A pipe switched off in Admin Panel > Functions leaves the selector.
+each answers as itself. A pipe switched off in Admin Panel > Functions leaves the selector. A
+pipe with user valves shows a Valves knob beside the message input, and the value a person saves
+there shapes the pipe's next answer.
 
-Discriminates: passes on dev ebc6add67. In a backend copy whose model list skips manifolds the
-manifold test fails, in one that hands the pipe an empty message list the pipe test fails, and
-in one whose model list keeps switched-off pipes the switch test fails.
+Discriminates: passes on dev ebc6add67. One backend copy listing a single pipe under its id,
+every manifold as one plain pipe and switched-off pipes as well, and handing every pipe the
+default user valves, turned each test red on its own edit.
 """
 
 from __future__ import annotations
@@ -25,6 +27,8 @@ from harness.actors import Actor
 from harness.python_tools import EVERYONE_READS
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
+from utils.tooltips import tooltip_button
+from utils.valves import customise, valve
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -42,6 +46,17 @@ MANIFOLD_PIPE = """class Pipe:
 
     def pipe(self, body: dict) -> str:
         return "Answered by " + body["model"]
+"""
+
+WELCOME_PIPE = """from pydantic import BaseModel, Field
+
+
+class Pipe:
+    class UserValves(BaseModel):
+        name: str = Field("traveller", description="What the pier calls you")
+
+    def pipe(self, body: dict, __user__: dict) -> str:
+        return f"Welcome aboard, {__user__['valves'].name}."
 """
 
 
@@ -90,9 +105,12 @@ def new_chat(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
 
 
-def test_a_pipe_shared_with_everyone_is_picked_by_its_name_and_answers(page_for, admin, make_user):
+def test_a_pipe_is_listed_by_its_name_private_until_shared_and_answers(page_for, admin, make_user):
     name = f"Pier office {uuid.uuid4().hex[:6]}"
     with named_function(admin, name, ECHO_PIPE) as pipe_id:
+        admin_page = page_for(admin)
+        new_chat(admin_page)
+        expect(model_options(admin_page, name)).to_have_count(1)
         page = page_for(make_user())
         new_chat(page)
         expect(model_options(page, name), "a new pipe is private to admins").to_have_count(0)
@@ -142,3 +160,30 @@ def test_a_pipe_switched_off_leaves_the_model_selector(page_for, admin, make_use
 
         new_chat(page)
         expect(model_options(page, name)).to_have_count(0)
+
+
+def test_a_pipes_user_valves_set_beside_the_message_input_shape_its_answer(
+    page_for, admin, make_user
+):
+    name = f"Pier welcome {uuid.uuid4().hex[:6]}"
+    with named_function(admin, name, WELCOME_PIPE) as pipe_id:
+        with shared_with_everyone(admin, {pipe_id: name}):
+            page = page_for(make_user())
+            new_chat(page)
+            select_model(page, name)
+            send(page, "hello?")
+            expect_reply(page, "Welcome aboard, traveller.")
+
+            composer = page.locator("form").filter(has=chat_input(page))
+            tooltip_button(composer, "Valves").click()
+            dialog = page.get_by_role("dialog").filter(has_text="Valves")
+            name_valve = valve(dialog, "Name", "What the pier calls you")
+            customise(name_valve)
+            name_valve.get_by_role("textbox").fill("Ada")
+            dialog.get_by_role("button", name="Save").click()
+            expect(page.get_by_text("Valves updated successfully")).to_be_visible()
+            page.keyboard.press("Escape")
+            expect(dialog).to_have_count(0)
+
+            send(page, "hello again?")
+            expect_reply(page, "Welcome aboard, Ada.")

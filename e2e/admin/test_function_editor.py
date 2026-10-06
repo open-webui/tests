@@ -7,10 +7,9 @@ as the functions docs describe; switched back on it answers with its old code. C
 saved without a mistake answers the next chat. Import From Link fetches a function's source into
 the editor, named after its file, and once saved and switched on it answers a chat.
 
-Discriminates: passes on dev ebc6add67. In a backend copy whose function create and update store
-the source without loading it, the two syntax error tests fail; in one whose update leaves the
-running module in place the edit test fails; in one whose link import answers a placeholder in
-place of the fetched source the import test fails.
+Discriminates: passes on dev ebc6add67. One backend copy whose function create and update store
+source that failed to load, whose update keeps the old source and running module and whose link
+import answers a placeholder pipe turned each test red on its own edit.
 """
 
 from __future__ import annotations

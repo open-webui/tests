@@ -12,10 +12,11 @@ The rewrite test is red on dev: the action's new content is stored on the reply,
 renders a reply from its `output` items, which the rewrite leaves alone, so the old text stays on
 screen live and after a reload.
 
-Discriminates: on dev ebc6add67 all pass but the rewrite test (the bug above). In a backend copy
-whose action route drops the event call's answer the dialog test fails, in one that orders
-actions by id alone the priority test fails, and in one whose model list keeps switched-off
-actions the switch test fails.
+Discriminates: on dev ebc6add67 all pass but the rewrite test (the bug above), which passes on a
+frontend build that writes the action's content into the reply's output as well. One backend copy
+whose action route hands the action no event caller, whose model list orders actions by id alone
+and whose active function lookup ignores the switch turned the dialog, priority and switch tests
+red, each on its own edit.
 """
 
 from __future__ import annotations

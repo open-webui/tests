@@ -11,7 +11,7 @@ nothing.
 Discriminates: passes on dev ac00d40e3; in a backend copy, with `/api/v1/tools/create` storing
 the editor's source without its `specs` the model is never offered the tool. On dev 30f3f6a8f,
 with the link import answering a placeholder in place of the fetched source, the import test
-fails. In a backend copy whose tool create stores the source without loading it, the syntax error
+fails. In a backend copy whose tool create stores source that failed to load, the syntax error
 test fails.
 """
 

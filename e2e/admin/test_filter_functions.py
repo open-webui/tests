@@ -5,11 +5,13 @@ until the admin switches Global on in its menu in Admin Panel > Functions; from 
 model is sent the change too. Two global filters that sign every reply sign it in the order of
 their `priority` valve, and an admin who raises one filter's priority in its Valves dialog flips
 the order on the next reply. A filter's user valve, set by each person in the chat's Controls
-under Valves > Functions, signs that person's replies and nobody else's.
+under Valves > Functions, signs that person's replies and nobody else's. A filter a person can
+switch on shows a chip in the message input once on, and the chip opens the filter's user valves,
+whose value then stamps the reply.
 
-Discriminates: passes on dev ebc6add67. In a backend copy whose filter pipeline ignores a model's
-own filters the scope test fails, in one that sorts filters by id alone the priority test fails,
-and in one that hands every filter the default user valves the user valves test fails.
+Discriminates: passes on dev ebc6add67. One backend copy whose filter pipeline ignores a model's
+own filters, sorts filters by id alone and hands every filter the default user valves turned each
+test red on its own edit.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, last_reply, send
+from utils.tooltips import tooltip_button
 from utils.valves import customise, valve
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -74,6 +77,27 @@ class Filter:
         for item in reply.get("output") or []:
             if item.get("type") == "message":
                 item["content"][-1]["text"] += signed
+        return body
+"""
+
+
+STAMPING_FILTER = """from pydantic import BaseModel, Field
+
+
+class Filter:
+    class UserValves(BaseModel):
+        stamp: str = Field("unstamped", description="Stamp on your replies")
+
+    def __init__(self):
+        self.toggle = True
+
+    def outlet(self, body: dict, __user__: dict) -> dict:
+        stamp = f" [{__user__['valves'].stamp}]"
+        reply = body["messages"][-1]
+        reply["content"] += stamp
+        for item in reply.get("output") or []:
+            if item.get("type") == "message":
+                item["content"][-1]["text"] += stamp
         return body
 """
 
@@ -215,3 +239,30 @@ def test_each_user_signs_their_replies_with_their_own_filter_user_valve(
         expect_signed_reply(
             second_page, upstream, "who signs mine now?", " [signed by the lighthouse keeper]"
         )
+
+
+def test_a_switched_on_filter_chip_opens_its_user_valves_and_they_stamp_the_reply(
+    page_for, admin, make_user, upstream
+):
+    with installed_function(admin, STAMPING_FILTER, is_global=True) as filter_id:
+        page = page_for(make_user())
+        expect(chat_input(page)).to_be_visible()
+        page.get_by_label("Integrations").click()
+        switch = page.get_by_role("menu").get_by_role("button", name=re.compile(filter_id))
+        switch.click()
+        expect(switch).to_have_attribute("aria-pressed", "true")
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
+
+        composer = page.locator("form").filter(has=chat_input(page))
+        tooltip_button(composer, filter_id).click()
+        dialog = page.get_by_role("dialog").filter(has_text="Valves")
+        stamp = valve(dialog, "Stamp", "Stamp on your replies")
+        customise(stamp)
+        stamp.get_by_role("textbox").fill("customs cleared")
+        dialog.get_by_role("button", name="Save").click()
+        expect(page.get_by_text("Valves updated successfully")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(dialog).to_have_count(0)
+
+        expect_signed_reply(page, upstream, "may I land the cargo?", " [customs cleared]")
