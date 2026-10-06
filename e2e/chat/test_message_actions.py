@@ -4,8 +4,9 @@ The buttons under a message in a two-turn chat: Fork chat on the first reply ope
 holds only the first turn and answers from it, the question's Delete (after its confirm dialog)
 takes the question and its reply out of the stored chat, the Regenerate menu sends a typed change
 or More Concise to the model after the earlier reply, and Save on an edited question keeps the new
-text without asking the model again. Each result is read after a reload or in what the model was
-sent, as a fresh account against the scripted model.
+text without asking the model again. A picture removed while editing a question is not sent with
+it again. Each result is read after a reload or in what the model was sent, as a fresh
+account against the scripted model.
 
 The two regenerate tests are red on dev: a saved chat sends the model only the stored history up
 to the question, so a suggested change or More Concise reaches the model without the reply it is
@@ -14,18 +15,20 @@ about (with the regenerated reply appended from the database both pass).
 Discriminates: passes on dev 30f3f6a8f apart from the two regenerate tests; in a backend copy the
 fork test fails with the fork route copying the whole conversation past the chosen reply and the
 delete test with the message delete route storing nothing; in a frontend build whose Save edits
-nothing the save test fails.
+nothing the save test fails, and in one whose Remove file while editing keeps the file the picture
+test fails.
 """
 
 from __future__ import annotations
 
+import base64
 import re
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import conversation, expect_reply, last_reply, replies, send
+from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -164,3 +167,47 @@ def test_a_saved_question_edit_is_kept_without_a_new_reply(two_turns, upstream):
     expect(conversation(page).get_by_text("And how many people live in Lisbon?")).to_be_visible()
     expect(conversation(page).get_by_text("2/2")).to_have_count(0)
     assert len(upstream.chat_requests()) == requests_before
+
+
+# a 2x2 red PNG
+RED_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5E"
+    "rkJggg=="
+)
+
+
+def _images_sent(upstream, question: str) -> int:
+    request = [body for body in upstream.chat_requests() if reply.answering(question)(body)][-1]
+    content = request["messages"][-1]["content"]
+    parts = content if isinstance(content, list) else []
+    return len([part for part in parts if part.get("type") == "image_url"])
+
+
+def test_a_picture_removed_while_editing_a_question_is_not_sent_again(
+    page_for, make_user, upstream
+):
+    page = page_for(make_user())
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_role("button", name="More", exact=True).last.click()
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("menu").get_by_role("button", name="Upload Files").click()
+    chooser.value.set_files({"name": "buoy.png", "mimeType": "image/png", "buffer": RED_PNG})
+    expect(page.get_by_role("button", name="Show image preview")).to_be_visible()
+    upstream.queue(
+        reply.text("A red buoy.", match=reply.answering("what colour is the buoy")),
+        reply.text("I cannot see one now.", match=reply.answering("what colour is the buoy")),
+    )
+    send(page, "what colour is the buoy?")
+    expect_reply(page, "A red buoy.")
+    assert _images_sent(upstream, "what colour is the buoy") == 1
+
+    question = _shown(_questions(page).last)
+    question.get_by_role("button", name="Edit").click()
+    remove = question.get_by_role("button", name="Remove file")
+    remove.focus()
+    remove.click()
+    expect(remove).to_have_count(0)
+    question.get_by_role("button", name="Send").click()
+
+    expect_reply(page, "I cannot see one now.")
+    assert _images_sent(upstream, "what colour is the buoy") == 0
