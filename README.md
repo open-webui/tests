@@ -9,7 +9,7 @@ External regression suite for [Open WebUI](https://github.com/open-webui/open-we
 | **Unit** | `unit/` | backend modules imported from the checkout, or its source audited | the backend checkout |
 | **Frontend** | `frontend/` | `src/lib` modules imported into vitest | the checkout's `node_modules` |
 
-Upstream refactors its internals daily and changes its API and UI rarely, so a bug is pinned as far out as it can be seen: over HTTP when the symptom shows there, in the browser as well when it shows in the UI, and in `unit/` only when neither can see it. [`docs/regression-test-contract.md`](docs/regression-test-contract.md) has the rules; read it before adding or repairing a test.
+Upstream refactors its internals daily and changes its API and UI rarely, so a bug is pinned as far out as it can be seen: over HTTP when the symptom shows there and in the browser as well when it shows in the UI. No new unit tests are added; the ones in `unit/` stay until a twin further out replaces them. [`docs/regression-test-contract.md`](docs/regression-test-contract.md) has the rules; read it before adding or repairing a test.
 
 ---
 

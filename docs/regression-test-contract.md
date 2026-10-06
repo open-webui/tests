@@ -10,7 +10,7 @@ Regression tests for Open WebUI at three distances from the product. `integratio
 
 1. If the symptom shows over HTTP (a status code, a response body, what a later GET returns, what the model provider or an outside service was sent, a server log line), write an integration test.
 2. If it also shows in the UI, or only there, add a browser test as well. Duplication across the two is fine.
-3. When neither can see it (a pure function with no route to it, event-loop timing, a static guard over the source or packaging), write a unit test by the rules in "Unit tests that survive refactors".
+3. No new unit tests. When neither integration nor e2e can see a bug, it gets no new test; existing unit tests stay until an integration or e2e twin replaces them.
 
 Once an integration twin covers a unit test's narrow layer, delete the unit test: two copies of one guard double the repair work and add no coverage.
 
