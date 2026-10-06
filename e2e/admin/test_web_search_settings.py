@@ -3,9 +3,11 @@
 With web search on an external engine, the admin saves a result count and a domain filter list
 in the Web Search tab. When the model searches during a user's chat, the engine is asked for that
 many results, and the hits the model is given back are only the ones from the listed domains.
+SearXNG picked as the engine, with a query URL and a language, is asked the model's query in that
+language, and its results are what the model reads.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Web Search form sends the stored
-settings back in place of the edited ones, both tests fail.
+settings back in place of the edited ones, every test fails.
 """
 
 from __future__ import annotations
@@ -100,3 +102,40 @@ def test_the_model_gets_only_the_hits_from_the_listed_domains(
     )
     assert "harbour.example/ferry" in tool_results
     assert "elsewhere.example" not in tool_results
+
+
+def test_searxng_is_asked_the_query_in_the_saved_language(
+    page_for, admin, make_user, upstream, engine
+):
+    engine.route(
+        "GET",
+        "/searxng",
+        json_answer(
+            {
+                "results": [
+                    {
+                        "url": "https://harbour.example/ferry",
+                        "title": "Ferry",
+                        "content": "Die Faehre faehrt um zwoelf.",
+                        "score": 1.0,
+                    }
+                ]
+            }
+        ),
+    )
+    admin_page = page_for(admin)
+    settings = web_search_tab(admin_page)
+    settings.get_by_role("combobox").filter(
+        has=admin_page.get_by_role("option", name="searxng", exact=True)
+    ).select_option("searxng")
+    settings.get_by_placeholder("Enter Searxng Query URL").fill(f"{engine.base_url}/searxng")
+    settings.get_by_placeholder("Enter Searxng search language").fill("de")
+    settings.get_by_placeholder("Search Result Count").fill("1")
+    save(admin_page, settings)
+
+    requests = search_in_a_chat(page_for(make_user()), upstream)
+
+    [search] = engine.requests_to("/searxng")
+    assert "q=harbour+ferry" in search.path or "q=harbour%20ferry" in search.path, search.path
+    assert "language=de" in search.path
+    assert "Die Faehre" in json.dumps(requests[-1]["messages"])
