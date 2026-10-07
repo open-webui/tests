@@ -416,6 +416,7 @@ def test_an_arena_model_added_in_the_settings_answers_through_its_model_and_name
     expect(arena.get_by_text(contender, exact=True)).to_be_visible()
     arena.get_by_role("combobox").filter(has_text="Public").select_option("public")
     arena.get_by_role("button", name="Save", exact=True).click()
+    expect(arena).to_be_hidden()
     expect(settings.get_by_text(name)).to_be_visible()
     settings.get_by_role("button", name="Save", exact=True).click()
     expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
