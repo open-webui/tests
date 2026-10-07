@@ -48,6 +48,7 @@ import json
 import shutil
 import socket
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -103,7 +104,9 @@ def _c_ares_resolves(name: str) -> bool:
         finally:
             await resolver.close()
 
-    return asyncio.run(resolve())
+    # a thread of its own, since the calling test may already run inside an event loop
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, resolve()).result()
 
 
 @pytest.fixture(scope="module")
