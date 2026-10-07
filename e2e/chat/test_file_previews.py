@@ -3,16 +3,16 @@
 A file attached in the composer, and the same file on the sent message, opens a dialog with its
 name, its size and the text the server read out of it. Its Preview tab shows a CSV as a table of
 its rows, each sheet of a spreadsheet on a tab of its own, a Word document as its rendered page and
-Markdown with its formatting. A PDF shows its extracted text; the Preview tab's PDF viewer needs a
-newer Chromium than the suite's, so it is not driven here. An attached picture opens full size from
-the sent message and downloads as the bytes that were uploaded. Switching a long document to Using
-Entire Document in its dialog sends the model the whole text where focused retrieval sends a few
-pieces of it.
+Markdown with its formatting. A PDF shows its extracted text; the Preview tab's PDF viewer says
+"Failed to load PDF." in the suite's Chromium 131 for any PDF, so it is not driven here. An
+attached picture opens full size from the sent message and downloads as the bytes that were
+uploaded. Switching a long document to Using Entire Document in its dialog sends the model the
+whole text where focused retrieval sends a few pieces of it.
 
-Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows no
-extracted text, renders no CSV or spreadsheet table, never loads a Word document, never renders
-Markdown, never opens the picture preview and ignores the Using Entire Document switch, every test
-fails.
+Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows
+"No content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never
+loads a Word document, shows Markdown as plain text and ignores the Using Entire Document switch,
+and whose picture preview never opens, every test fails.
 """
 
 from __future__ import annotations

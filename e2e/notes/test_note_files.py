@@ -13,10 +13,10 @@ step only lets through files the asker owns or reaches through a knowledge base,
 shared chat or a model, never through a note. That test stays red until the note grants count.
 
 Discriminates: passes on the dev ebc6add67 build except the reader's chat test. In a frontend
-build whose note upload never stores the file, whose chip dismiss button shows for a reader and
-does nothing for a writer, whose note upload skips the size check and whose note paste skips
-image compression, every other test fails; in a backend copy whose note chat leaves out the note's
-files the owner's chat test fails.
+build whose file dialog shows "No content" for the text, whose note chip offers its remove button
+to a reader and never saves a writer's removal, whose note upload skips the size check and whose
+note paste skips image compression, every test but the owner's chat and the uncompressed paste
+fails; in a backend copy whose note chat leaves out the note's files the owner's chat test fails.
 """
 
 from __future__ import annotations

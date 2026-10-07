@@ -6,8 +6,8 @@ it only when Compress Images in Channels is on as well; with that switch off the
 picture at its own size. The size is read from the picture the other member is shown.
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose channel input ignores
-the person's compression settings, the compressed case fails; one whose paste handler drops
-pictures fails both cases.
+the person's compression settings the compressed case fails, and in one that compresses whenever
+Image Compression is on, Compress Images in Channels or not, the other case fails.
 """
 
 from __future__ import annotations
