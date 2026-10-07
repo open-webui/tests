@@ -134,7 +134,7 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `upstream` | its scripted model provider, reset per test: `queue(reply.text(...), reply.tool_call(...), reply.error(...))`, `chat_requests()` |
 | `admin` / `user` / `make_user()` | accounts, each with its own token and client |
 | `preserve(...)` | restores the global settings a test changes |
-| `instance_with({...})` | a further instance for settings that only exist as environment variables |
+| `instance_with({...})` | a further instance for settings that only exist as environment variables; `.restart()` stops it and starts it again on the same address and data |
 | `package_instance_with({...})` | the same, kept for a whole test package whose modules share the env set |
 | `refuses_unknown_names` | skips a c-ares test of a name that does not resolve where the machine's DNS server keeps c-ares from refusing one at once |
 | `listener` | a local HTTP service for the instance to call, recording what it gets |
