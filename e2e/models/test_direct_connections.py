@@ -5,7 +5,14 @@ Settings > Connections. The page itself lists that endpoint's models in the mode
 sends the chat to it: the instance's own provider is never called. With the admin switch off
 the Connections tab is gone and the saved endpoint's models drop out of the selector.
 
-Discriminates: in a frontend build, skipping the direct connections in the model list fetch turns
+The dialog's Verify Connection button asks the provider from the browser and shows its answer,
+its Advanced section sets a prefix, a model allowlist and tags that shape the selector, and a
+key edited in a saved connection's settings is the one the next chat carries.
+
+Discriminates: in a frontend build, showing a refusing provider's message as a network problem
+turns the verify test red, ignoring the prefix, the allowlist or the tags of a direct connection
+turns the advanced settings test red, leaving the edited key out of the saved connection turns the
+key edit test red, skipping the direct connections in the model list fetch turns
 the chat test and the switch-off test red, dropping the tab's forwarding of the provider's stream
 turns the chat test red alone, and showing the tab and the connections whatever the admin switch
 says (and listing a connection whatever its own switch says) turns the three switch tests red.
@@ -159,3 +166,115 @@ def test_a_connection_switched_off_in_its_own_settings_lists_no_models(
     # the instance's own model shows the list has loaded
     expect(model_options(page, "mock-model")).to_have_count(1)
     expect(model_options(page, direct_model_id)).to_have_count(0)
+
+
+def fill_new_connection(page, url: str, key: str):
+    page.get_by_role("button", name="Add Connection").click()
+    form = add_connection_form(page)
+    form.get_by_role("combobox", name="URL").fill(url)
+    form.get_by_role("textbox", name="API Key").fill(key)
+    return form
+
+
+def test_verify_connection_shows_the_provider_answer_to_the_browser_request(
+    page_for, make_user, admin, preserve, listener, direct_model_id
+):
+    set_direct_connections(admin, preserve, True)
+    provider = serve(listener, direct_model_id)
+    page = page_for(make_user())
+    tab = open_personal_connections(page)
+    form = fill_new_connection(page, provider.base_url, "sk-verify-key")
+
+    form.get_by_role("button", name="Verify Connection").click()
+    expect(page.get_by_text("Server connection verified")).to_be_visible()
+    [request] = provider.models_requests()
+    assert request.headers["Authorization"] == "Bearer sk-verify-key"
+
+    provider.refuse(401, "the key sk-verify-key is not welcome here")
+    form.get_by_role("button", name="Verify Connection").click()
+    expect(page.get_by_text("OpenAI: the key sk-verify-key is not welcome here")).to_be_visible()
+    expect(tab.get_by_placeholder("API Base URL")).to_have_count(0)
+
+
+def test_prefix_allowlist_and_tag_shape_the_models_a_direct_connection_lists(
+    page_for, make_user, admin, preserve, listener, upstream, direct_model_id
+):
+    set_direct_connections(admin, preserve, True)
+    other_id = f"unlisted-{uuid.uuid4().hex[:6]}"
+    prefix, tag = f"mine{uuid.uuid4().hex[:4]}", f"garage{uuid.uuid4().hex[:4]}"
+    provider = serve(listener, direct_model_id, other_id)
+    provider.reply_with("answered under a prefix")
+    page = page_for(make_user())
+    open_personal_connections(page)
+    form = fill_new_connection(page, provider.base_url, "sk-own-key")
+
+    form.get_by_role("button", name="Advanced").click()
+    form.get_by_role("textbox", name="Prefix ID").fill(prefix)
+    form.get_by_role("textbox", name="Add a model ID").fill(direct_model_id)
+    form.get_by_role("button", name="Add", exact=True).click()
+    form.get_by_placeholder("Add a tag...").fill(tag)
+    form.get_by_placeholder("Add a tag...").press("Enter")
+    expect(form.get_by_text(tag, exact=True)).to_be_visible()
+    with page.expect_response(lambda response: "/user/settings/update" in response.url):
+        form.get_by_role("button", name="Save").click()
+    expect(form).to_be_hidden()
+    page.get_by_role("dialog").get_by_role("button", name="Back").click()
+    # the selector reads the tags of its models once, when the page loads
+    page.reload()
+    expect(chat_input(page)).to_be_visible()
+
+    listed = f"{prefix}.{direct_model_id}"
+
+    def own_model(value: str):
+        # with an allowlist the option shows the bare id as its name, the prefix is in its value
+        return model_options(page, direct_model_id).and_(page.locator(f'[data-value="{value}"]'))
+
+    expect(own_model(listed)).to_have_count(1)
+    expect(own_model(direct_model_id)).to_have_count(0)
+    expect(model_options(page, other_id)).to_have_count(0)
+    page.get_by_role("button", name="All", exact=True).click()
+    page.get_by_role("button", name="Direct", exact=True).click()
+    expect(own_model(listed)).to_have_count(1)
+    expect(model_options(page, "mock-model")).to_have_count(0)
+    expect(page.get_by_role("button", name="Direct", exact=True)).to_have_count(1)
+    page.get_by_role("button", name="Direct", exact=True).click()
+    page.get_by_role("button", name=tag, exact=True).click()
+    expect(own_model(listed)).to_have_count(1)
+    expect(model_options(page, "mock-model")).to_have_count(0)
+
+    own_model(listed).click()
+    prompt = f"Say something, {uuid.uuid4().hex[:6]}."
+    send(page, prompt)
+    expect_reply(page, "answered under a prefix")
+    [request] = provider.chat_requests()
+    assert request.json()["model"] == direct_model_id, "the prefix was sent to the provider"
+    assert upstream.chat_requests() == []
+
+
+def test_a_key_edited_in_a_saved_connections_settings_is_sent_with_the_next_chat(
+    page_for, make_user, admin, preserve, listener, upstream, direct_model_id
+):
+    set_direct_connections(admin, preserve, True)
+    provider = serve(listener, direct_model_id)
+    provider.reply_with("answered with the new key")
+    account = make_user()
+    save_connections(account, provider.base_url, key="sk-old-key")
+    page = page_for(account)
+    tab = open_personal_connections(page)
+
+    tab.get_by_role("button", name="Open modal to configure connection").click()
+    editing = page.get_by_role("dialog").filter(
+        has=page.get_by_role("heading", name="Edit Connection")
+    )
+    editing.get_by_role("textbox", name="API Key").fill("sk-new-key")
+    with page.expect_response(lambda response: "/user/settings/update" in response.url):
+        editing.get_by_role("button", name="Save").click()
+    expect(editing).to_be_hidden()
+    page.get_by_role("dialog").get_by_role("button", name="Back").click()
+
+    select_model(page, direct_model_id)
+    send(page, f"Say something, {uuid.uuid4().hex[:6]}.")
+    expect_reply(page, "answered with the new key")
+    [request] = provider.chat_requests()
+    assert request.headers["Authorization"] == "Bearer sk-new-key"
+    assert upstream.chat_requests() == []
