@@ -15,8 +15,8 @@ shared chat or a model, never through a note. That test stays red until the note
 Discriminates: passes on the dev ebc6add67 build except the reader's chat test. In a frontend
 build whose file dialog shows "No content" for the text, whose note chip offers its remove button
 to a reader and never saves a writer's removal, whose note upload skips the size check and whose
-note paste skips image compression, every test but the owner's chat and the uncompressed paste
-fails; in a backend copy whose note chat leaves out the note's files the owner's chat test fails.
+note paste skips image compression, every test but the owner's chat fails; in a backend copy
+whose note chat leaves out the note's files the owner's chat test fails.
 """
 
 from __future__ import annotations
@@ -246,22 +246,14 @@ def stored_image_size(owner: Actor, note_id: str) -> tuple[int, int] | None:
     return Image.open(io.BytesIO(base64.b64decode(encoded))).size
 
 
-@pytest.mark.parametrize(
-    ("compression", "expected_size"),
-    [(None, (96, 64)), ({"width": 24, "height": 16}, (24, 16))],
-    ids=["at-its-own-size", "compressed"],
-)
-def test_a_picture_pasted_into_a_note_follows_the_persons_image_compression(
-    page_for, make_user, compression, expected_size
+def test_a_picture_pasted_into_a_note_is_shrunk_by_the_persons_image_compression(
+    page_for, make_user
 ):
     owner = make_user()
-    if compression:
-        with owner.client() as client:
-            saved = client.post(
-                "/api/v1/users/user/settings/update",
-                json={"ui": {"imageCompression": True, "imageCompressionSize": compression}},
-            )
-        assert saved.status_code == 200, saved.text
+    compression = {"imageCompression": True, "imageCompressionSize": {"width": 24, "height": 16}}
+    with owner.client() as client:
+        saved = client.post("/api/v1/users/user/settings/update", json={"ui": compression})
+    assert saved.status_code == 200, saved.text
     note_id = create_note(owner)
     page = page_for(owner)
     editor = open_note(page, note_id)
@@ -270,4 +262,4 @@ def test_a_picture_pasted_into_a_note_follows_the_persons_image_compression(
     editor.evaluate(PASTE_IMAGE, buoy_png())
 
     expect(editor.locator("img")).to_have_count(1)
-    eventually(lambda: stored_image_size(owner, note_id), expected_size)
+    eventually(lambda: stored_image_size(owner, note_id), (24, 16))

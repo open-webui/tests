@@ -6,15 +6,17 @@ reports split input and output per model and per user (both usage namings, a rep
 adds no tokens), the daily series puts each reply on its day and fills the empty days, a window
 that starts after the oldest reply drops it from every report, the message list filters by model,
 user and chat, the model drill-down lists, orders and pages the chats inside a window, the model
-overview counts the chats' tags and the rated thumbs per day, and a plain user is refused every
+overview counts the chats' tags and the rated thumbs per day and a plain user is refused every
 route.
 
 Discriminates: passes on dev ebc6add67; in a backend copy, with the input and output token columns
 swapped the token test fails, with the daily series not filling empty days the daily test fails,
 with the model chats route ignoring the start date the drill-down window test fails, with the tag
 counts doubled the overview tag test fails, with the lost count of the feedback history dropped
-both overview history tests fail, and with the daily route open to verified users the refusal test
-fails for that route only.
+both overview history tests fail and with the daily route open to verified users the refusal test
+fails for that route only. With every route open to verified users each refusal case fails, and
+with the summary ignoring the start date, the chat id filter answering nothing, ordering by user
+name dropped and paging ignoring `skip`, the window, message filter, ordering and paging tests fail.
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ token usage, and two of the chats carry a tag. Narrowed to that user's group, th
 seven days or thirty depending on the period picked, the Daily Messages chart shows each model's
 count for the day the pointer is on, the last 24 hours switch it to Hourly Messages, the tokens
 figure opens the input and output split, the model table sorts by tokens and gives each model's
-share of the messages, and a model's row opens an overview with its chats' tags and a chat list
+share of the messages and a model's row opens an overview with its chats' tags and a chat list
 that keeps to the period picked.
 
 Discriminates: passes on dev ebc6add67. In a frontend build whose chart tooltip leaves out the

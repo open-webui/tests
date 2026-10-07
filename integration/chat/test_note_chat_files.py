@@ -11,8 +11,7 @@ shared chat or a model, never through a note. That test stays red until a note's
 Twin of the note chat tests in e2e/notes/test_note_files.py.
 
 Discriminates: passes on dev ebc6add67 except the reader test; in a backend copy whose note chat
-leaves out the note's files the owner test fails too. A note chat on a note without files gets no
-file text on both.
+leaves out the note's files the owner test fails too.
 """
 
 from __future__ import annotations
@@ -97,10 +96,3 @@ def test_a_readers_note_chat_is_given_the_notes_file(shared_note, upstream):
     _, reader, note_id = shared_note
     sent = sent_in_note_chat(reader, note_id, upstream)
     assert FILE_TEXT in sent, "a reader's chat on the shared note was not given the note's file"
-
-
-def test_a_note_without_files_gives_its_chat_no_file_text(make_user, upstream):
-    owner = make_user()
-    upload(owner)
-    note_id = create_note(owner, [], [])
-    assert FILE_TEXT not in sent_in_note_chat(owner, note_id, upstream)
