@@ -14,8 +14,9 @@
 Discriminates: in a backend copy that dropped the reminder choice on save the reopened editor went
 back to 10 minutes before and the None event raised a toast; with the reminder alert never sent
 the toast test went red; with the update ignoring a removed repeat the event kept repeating, and
-with delete leaving the event in place the series test went red. The zone, colour and week-view
-tests watch the frontend only.
+with delete leaving the event in place the series test went red. In a frontend copy with the
+event chip's time written in UTC, the chip coloured without its calendar's colour and the week
+view's hours taken from the following day, the zone, colour and week-view tests went red.
 """
 
 from __future__ import annotations
