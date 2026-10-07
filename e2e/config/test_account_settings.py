@@ -4,15 +4,20 @@ A name and a Bio saved in the account tab show where people see them after a rel
 the user menu and in Admin Panel > Users, the Bio on the profile card that opens from the avatar
 in that list. With the admin's API Keys switch on and the default permission for API Keys on, the
 tab offers a key: one created there answers `/api/models` over HTTP, and once it is deleted in
-the tab the same key is refused. With the admin switch off, or the permission off, the tab offers
-no API keys section at all. A photo uploaded there is the profile picture everybody is served,
-and Remove puts the default picture back.
+the tab the same key is refused. Copy API Key puts exactly the key shown on the clipboard, and
+Create new key in the key's menu replaces it: the new key works and the old one is refused. With
+the admin switch off, or the permission off, the tab offers no API keys section at all. A photo
+uploaded there is the profile picture everybody is served, and Remove puts the default picture back.
+A picture of the initials is redrawn when the name changes later.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, the save leaving the name out of the
 profile it sends turns the name test red, leaving the Bio out turns the Bio test red, the delete
 confirmation not calling the delete route turns the key test red (the key still works), and
 `canUseApiKeys` ignoring the permission turns the permission case of the section test red. A save
-that sends the stored profile picture in place of the chosen one turns the photo test red.
+that sends the stored profile picture in place of the chosen one turns the photo test red. On
+dev ebc6add67, a frontend copy whose Copy API Key copies the session token turns the copy test
+red, one whose Create new key only closes the menu turns the replacement test red, and one whose
+save keeps the picture when the name changes turns the initials test red.
 """
 
 from __future__ import annotations
@@ -142,6 +147,44 @@ def test_an_api_key_created_in_the_account_settings_works_until_it_is_deleted(
     assert _models_status(key, keys_allowed.base_url) == 401
 
 
+def _created_key(page: Page, secrets: Locator) -> str:
+    secrets.get_by_role("button", name="Show", exact=True).click()
+    secrets.get_by_role("button", name="Create new secret key").click()
+    expect(page.get_by_text("API Key created.")).to_be_visible()
+    return secrets.get_by_role("textbox").input_value()
+
+
+def test_copy_api_key_puts_the_shown_key_on_the_clipboard(page_for, keys_allowed):
+    page = page_for(keys_allowed)
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    settings = _account_settings(page)
+    secrets = settings.locator("section").filter(has_text="API keys")
+    key = _created_key(page, secrets)
+
+    secrets.get_by_role("button", name="Copy API Key").click()
+
+    copied = page.evaluate("navigator.clipboard.readText()")
+    assert copied == key
+    assert _models_status(copied, keys_allowed.base_url) == 200
+
+
+def test_create_new_key_replaces_the_key_and_the_old_one_stops_working(page_for, keys_allowed):
+    page = page_for(keys_allowed)
+    settings = _account_settings(page)
+    secrets = settings.locator("section").filter(has_text="API keys")
+    old_key = _created_key(page, secrets)
+    key_field = secrets.get_by_role("textbox")
+
+    secrets.get_by_role("button", name="More").last.click()
+    page.get_by_role("button", name="Create new key").click()
+
+    expect(key_field).not_to_have_value(old_key)
+    new_key = key_field.input_value()
+    assert new_key.startswith("sk-")
+    assert _models_status(new_key, keys_allowed.base_url) == 200
+    assert _models_status(old_key, keys_allowed.base_url) == 401
+
+
 def test_the_account_settings_offer_api_keys_while_the_switch_and_the_permission_are_on(
     page_for, keys_allowed
 ):
@@ -200,3 +243,31 @@ def test_an_uploaded_photo_is_the_profile_picture_others_are_served(page_for, ma
     _save(page, settings)
 
     assert _profile_image_type(admin, account) == "image/png"
+
+
+def _profile_image(viewer: Actor, account: Actor) -> bytes:
+    with viewer.client() as client:
+        served = client.get(f"/api/v1/users/{account.id}/profile/image")
+    assert served.status_code == 200, served.text
+    return served.content
+
+
+def test_an_initials_picture_follows_a_later_change_of_name(page_for, make_user, admin):
+    account = make_user(name="Ada Lovelace")
+    default_picture = _profile_image(admin, account)
+    page = page_for(account)
+    settings = _account_settings(page)
+    settings.get_by_role("button", name="Initials", exact=True).click()
+    _save(page, settings)
+    initials_picture = _profile_image(admin, account)
+    assert initials_picture != default_picture
+
+    page.reload()
+    settings = _account_settings(page)
+    settings.get_by_role("textbox", name="Name").fill("Grace Hopper")
+    _save(page, settings)
+
+    renamed_picture = _profile_image(admin, account)
+    assert renamed_picture not in (default_picture, initials_picture), (
+        "the initials picture kept the old name's initials"
+    )
