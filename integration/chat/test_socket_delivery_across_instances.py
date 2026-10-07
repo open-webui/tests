@@ -63,6 +63,7 @@ from typing import Iterator
 
 import pytest
 import redis
+import socketio
 
 from harness import backends
 from harness import upstream as reply
@@ -1258,7 +1259,10 @@ def registered_tab(account: Actor) -> Iterator[SocketSession]:
     chat_id, _ = _stored_chat(account)
     for _ in range(ATTEMPTS_AFTER_A_LOSS):
         with connected(account) as tab:
-            tab.call("events:chat", {"chat_id": chat_id, "data": {"type": "last_read_at"}})
+            try:
+                tab.call("events:chat", {"chat_id": chat_id, "data": {"type": "last_read_at"}})
+            except socketio.exceptions.TimeoutError:
+                continue
             if _quietly_waits_for(tab, chat_id, "chat:list") is not None:
                 yield tab
                 return
