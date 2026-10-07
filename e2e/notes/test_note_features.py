@@ -12,7 +12,8 @@ search (open-webui/open-webui#30968, issue #30967).
 
 The writer test is red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server handles the
 editor's live updates concurrently, so an update that arrives early can cancel the save of a later
-one and store its older text last, and the note keeps missing the last characters typed.
+one and store its older text last, and the note keeps missing the last characters typed
+(open-webui/open-webui#31585, fix PR #31596 open).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the note editor ignoring the model's edit event, the editor staying editable for a reader,

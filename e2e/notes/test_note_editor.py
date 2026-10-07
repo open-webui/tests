@@ -12,7 +12,8 @@ typing. The undo and redo buttons in the header take back and bring back what wa
 
 The two typed-markdown tests are red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server
 handles the editor's live updates concurrently, so an update that arrives early can cancel the save
-of a later one and store its older text last, and the note keeps missing the last characters typed.
+of a later one and store its older text last, and the note keeps missing the last characters typed
+(open-webui/open-webui#31585, fix PR #31596 open).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: each toolbar button toggling another mark or block, the Formatting switch inverted, the

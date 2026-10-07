@@ -1,18 +1,18 @@
 """Journey: an admin builds and reads a group hierarchy in Admin Panel > Users > Groups.
 
 The list shows a subgroup under its parent as a tree: an arrow collapses and expands a parent's
-subgroups, and a search for a path such as "Parent / Child" or for a child alone keeps the
-parents of the match in view. In the group editor's General tab the Parent group dropdown sets
-a parent (or No parent) and offers no group from the group's own branch; the New Group dialog
-has the same dropdown. Dragging a group onto another makes it a subgroup and dragging it onto
-Move to top level takes it out. The Users tab splits Direct members from Inherited members with
-the subgroup each comes through and the counts, and the Permissions tab notes that parent
-permissions are inherited and marks the ones that remain enabled. Deleting a parent names where
-its subgroups go and they show at that level afterwards. The Default models field names where
-inherited defaults come from and sets a group's own. In their own browser, a subgroup member
-finds a model shared only with the parent group in the model selector, starts a new chat on the
-parent's default model, and an open tab gains the shared model when the member joins the
-subgroup, without a reload. Each test works as a fresh admin on groups of its own.
+subgroups, and a search for a path such as "Parent / Child" or for a child alone keeps the parents
+of the match in view. In the group editor's General tab the Parent group dropdown sets a parent (or
+No parent) and offers no group from the group's own branch; the New Group dialog has the same
+dropdown. Dragging a group onto another makes it a subgroup and dragging it onto Move to top level
+takes it out. The Users tab's Direct / Inherited menu splits the group's own members from inherited
+ones with the subgroup each comes through, and the Permissions tab notes that parent permissions are
+inherited and marks the ones that remain enabled. Deleting a parent names where its subgroups go and
+they show at that level afterwards. The Default models field names where inherited defaults come
+from and sets a group's own. In their own browser, a subgroup member finds a model shared only with
+the parent group in the model selector, starts a new chat on the parent's default model, and an open
+tab gains the shared model when the member joins the subgroup, without a reload. Each test works as
+a fresh admin on groups of its own.
 
 Discriminates: passes on dev b859124f9; in a frontend copy, the list ignoring parents (every
 group top-level), the Parent group dropdown offering the group's own branch, the permissions
@@ -324,15 +324,15 @@ def test_the_users_tab_splits_direct_members_from_inherited_ones_with_their_subg
         "aria-checked", "false"
     )
 
-    editing.get_by_role("button", name="Inherited members").click()
-    expect(editing.get_by_text("Direct: 1 · Inherited: 2 · Total: 3")).to_be_visible()
-    middle_entry = editing.get_by_text(from_middle.name).locator("xpath=../..")
-    expect(middle_entry).to_contain_text(f"Inherited via Top {suffix} / Middle {suffix}")
-    leaf_entry = editing.get_by_text(from_leaf.name).locator("xpath=../..")
-    expect(leaf_entry).to_contain_text(
-        f"Inherited via Top {suffix} / Middle {suffix} / Leaf {suffix}"
-    )
-    expect(editing.get_by_text(direct.name)).to_have_count(0)
+    # since 71167131d the two lists are picked from a Direct / Inherited menu
+    editing.get_by_role("button", name="Direct", exact=True).click()
+    admin_page.get_by_role("button", name="Inherited", exact=True).click()
+    inherited = editing.get_by_role("table")
+    middle_row = inherited.get_by_role("row").filter(has_text=from_middle.name)
+    expect(middle_row).to_contain_text(f"Top {suffix} / Middle {suffix}")
+    leaf_row = inherited.get_by_role("row").filter(has_text=from_leaf.name)
+    expect(leaf_row).to_contain_text(f"Top {suffix} / Middle {suffix} / Leaf {suffix}")
+    expect(inherited.get_by_text(direct.name)).to_have_count(0)
 
 
 def test_the_permissions_tab_notes_inheritance_and_marks_what_a_parent_keeps_enabled(
