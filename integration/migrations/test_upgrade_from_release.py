@@ -1,15 +1,17 @@
 """Journey: data written by earlier releases survives starting the checkout on it.
 
 Each data set under `upgrade_data/` was made by booting a release (the last patch of the three
-most recent minor lines) and filling it through its own API: four accounts, a group, a chat with
-a regenerated reply, a tool call and an attached file, a chat the server streamed itself, folders,
+most recent minor lines) and filling it through its own API: four accounts, a group with a
+permission of its own, a chat with a regenerated reply, a tool call and an attached file, a chat
+the server streamed itself, one it answered from a knowledge base with its citation, folders,
 a shared chat, a note, a knowledge base with a file, a model preset, prompts, a tool, a filter
 function with valves, memories, a channel with a thread and a reaction, feedback and settings
-changed from their defaults. Its manifest records what was made and for whom. The checkout boots
-on a copy of it, running every migration since that release, and each account signs in with its
-old password and finds its data intact, while access grants still apply to the right accounts.
-The Postgres data sets restore a `pg_dump` into an embedded server first.
-`scripts/seed_upgrade_data.py` regenerates the data sets.
+changed from their defaults, a default model among them. Its manifest records what was made and
+for whom. The checkout boots on a copy of it (`harness.upgraded_release`), running every migration
+since that release, and each account signs in with its old password and finds its data intact,
+while access grants still apply to the right accounts. The Postgres data sets restore a `pg_dump`
+into an embedded server first. `scripts/seed_upgrade_data.py` regenerates the data sets; the
+browser twin, `e2e/migrations/test_upgrade_from_release.py`, opens the same data in the app.
 
 Discriminates: passes on dev ac00d40e3 for all six data sets; with the copy step of
 `3ff2c63645b8` (config reshape) skipping the `ui.` keys in a copy of it, both v0.9.6 sets fail
@@ -23,18 +25,14 @@ in).
 
 from __future__ import annotations
 
-import contextlib
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Iterator
 
 import httpx
 import pytest
 
-from harness import upstream as upstream_module
 from harness.access import grant
 from harness.knowledge_bases import knowledge_base
-from harness.prepared_data import RunningBackend, release_data, serving
+from harness.upgraded_release import Upgraded, data_set_params, upgraded_release
 
 pytestmark = [
     pytest.mark.journey,
@@ -43,76 +41,12 @@ pytestmark = [
     pytest.mark.requires_source,
 ]
 
-DATA_SETS = Path(__file__).parent / "upgrade_data"
 
-
-def _data_set_params() -> list:
-    params = []
-    for manifest in sorted(DATA_SETS.glob("*.json")):
-        name = manifest.stem
-        marks = [pytest.mark.requires_postgres] if name.endswith("-postgres") else []
-        params.append(pytest.param(name, marks=marks, id=name))
-    return params
-
-
-@dataclass
-class Upgraded:
-    backend: RunningBackend
-    manifest: dict
-    tokens: dict[str, str] = field(default_factory=dict)
-
-    def sign_in(self, who: str) -> httpx.Response:
-        account = self.manifest["accounts"][who]
-        return httpx.post(
-            f"{self.backend.base_url}/api/v1/auths/signin",
-            json={"email": account["email"], "password": account["password"]},
-            timeout=60.0,
-        )
-
-    def client(self, who: str) -> httpx.Client:
-        if who not in self.tokens:
-            signed_in = self.sign_in(who)
-            assert signed_in.status_code == 200, f"{who} cannot sign in: {signed_in.text}"
-            self.tokens[who] = signed_in.json()["token"]
-        return self.backend.client(self.tokens[who])
-
-    def get(self, who: str, path: str, **options) -> httpx.Response:
-        with self.client(who) as client:
-            return client.get(path, **options)
-
-
-@pytest.fixture(scope="module", params=_data_set_params())
+@pytest.fixture(scope="module", params=data_set_params())
 def upgraded(request, tmp_path_factory) -> Iterator[Upgraded]:
     name = request.param
-    root = tmp_path_factory.mktemp(name)
-    with contextlib.ExitStack() as stack:
-        release = stack.enter_context(release_data(DATA_SETS / f"{name}.tar.gz", root))
-        provider, shutdown = upstream_module.serve()
-        stack.callback(shutdown)
-        settings = {
-            "WEBUI_AUTH": "true",
-            "RAG_EMBEDDING_ENGINE": "openai",
-            "RAG_OPENAI_API_BASE_URL": provider.base_url,
-            "RAG_OPENAI_API_KEY": "sk-mock",
-            **release.settings,
-        }
-        backend = stack.enter_context(serving(release.data_dir, settings))
-        upgraded = Upgraded(backend, release.manifest)
-        _point_embeddings_at(upgraded, provider.base_url)
-        yield upgraded
-
-
-def _point_embeddings_at(upgraded: Upgraded, base_url: str) -> None:
-    """The embedding endpoint saved at seeding time is gone; the admin points it at this one."""
-    with upgraded.client("admin") as client:
-        current = client.get("/api/v1/retrieval/embedding")
-        current.raise_for_status()
-        form = {
-            **current.json(),
-            "RAG_EMBEDDING_ENGINE": "openai",
-            "openai_config": {"url": base_url, "key": "sk-mock"},
-        }
-        client.post("/api/v1/retrieval/embedding/update", json=form).raise_for_status()
+    with upgraded_release(name, tmp_path_factory.mktemp(name)) as release:
+        yield release
 
 
 def _refused(response: httpx.Response) -> bool:
@@ -228,7 +162,7 @@ def _messages(chat: dict) -> dict:
     }
 
 
-@pytest.mark.parametrize("which", ["branched", "live", "archived"])
+@pytest.mark.parametrize("which", ["branched", "live", "cited", "archived"])
 def test_each_chat_opens_with_every_message_and_branch(upgraded, which):
     expected = upgraded.manifest["chats"][which]
     opened = upgraded.get("alice", f"/api/v1/chats/{expected['id']}")

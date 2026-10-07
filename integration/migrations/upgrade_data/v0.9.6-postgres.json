@@ -1,44 +1,49 @@
 {
   "release": "v0.9.6",
   "engine": "postgres",
-  "data_dir": "/tmp/seed-v0.9.6-wu4y83jd/data",
+  "data_dir": "/tmp/seed-v0.9.6-wtbjsq1t/data",
   "accounts": {
     "admin": {
       "name": "Ada Admin",
       "email": "admin@example.com",
       "password": "admin-pass-1",
-      "id": "80d80055-1e5a-45cb-8f31-f19fddaa5d24",
+      "id": "7b397ba4-8c13-4bee-83bb-45fd386d2449",
       "role": "admin"
     },
     "alice": {
       "name": "Alice Author",
       "email": "alice@example.com",
       "password": "alice-pass-1",
-      "id": "5d51d5a0-be36-48fb-92e3-07976995874f",
+      "id": "4ffa8c89-b40f-436b-9336-cf8822edb6ab",
       "role": "user"
     },
     "bob": {
       "name": "Bob Reader",
       "email": "bob@example.com",
       "password": "bob-pass-1",
-      "id": "baaff868-81c5-4188-b2cc-06e39e16513b",
+      "id": "30ddd733-56d8-46d6-9109-7d1080f90d5b",
       "role": "user"
     },
     "carol": {
       "name": "Carol Outsider",
       "email": "carol@example.com",
       "password": "carol-pass-1",
-      "id": "22db8b74-62dc-4b2b-946c-57e41538b2c2",
+      "id": "1d32791e-46c2-4345-b0ac-8cf3a97fee3f",
       "role": "user"
     }
   },
   "group": {
-    "id": "1f603e34-3a4a-447f-b970-457597c2b231",
+    "id": "05f0b78e-5412-4c7f-92fe-028d8e53db98",
     "name": "Research",
     "members": [
       "alice",
       "bob"
-    ]
+    ],
+    "permissions": {
+      "workspace": {
+        "models": true
+      }
+    }
   },
   "settings": {
     "admin": {
@@ -63,6 +68,11 @@
       "theme": "dark",
       "chatBubble": false,
       "notesSeen": 3
+    },
+    "bob_ui": {
+      "models": [
+        "research-assistant"
+      ]
     }
   },
   "prompts": {
@@ -106,9 +116,9 @@
     ]
   },
   "knowledge": {
-    "id": "981ceb99-1193-4d46-8fd9-232c50395191",
+    "id": "285217af-de56-404e-aa91-90ca982c3167",
     "name": "Handbook",
-    "file_id": "501b9d89-52ac-4995-9948-a7ed72a43349",
+    "file_id": "06c4cee9-711c-4119-ae8f-03967b9fc8ce",
     "filename": "handbook.txt",
     "text": "The upgrade handbook says the lighthouse key hangs behind the blue door.",
     "readers": [
@@ -118,17 +128,17 @@
   },
   "folders": {
     "parent": {
-      "id": "cf0e2691-9e02-43ca-b36c-f4779a912e1f",
+      "id": "7214f07b-1ea7-493b-abab-7ef0c79cba17",
       "name": "Trips"
     },
     "child": {
-      "id": "b780d0f6-5b0d-479f-9185-27af2930deae",
+      "id": "e874f573-87c8-418c-a57f-01b36279ebc4",
       "name": "Vienna"
     }
   },
   "chats": {
     "branched": {
-      "id": "a84c76ce-61a4-4571-be5b-983391d3cbed",
+      "id": "8744d23a-d0ab-4aee-a0eb-4bda19ce3823",
       "title": "Packing for Vienna",
       "current_id": "a2-0000-4000-8000-000000000000",
       "messages": {
@@ -170,64 +180,90 @@
           "content": "A light jacket."
         }
       },
-      "folder_id": "b780d0f6-5b0d-479f-9185-27af2930deae",
-      "share_id": "ca570ad3-3b83-4451-9ce7-2fef605938c2"
+      "folder_id": "e874f573-87c8-418c-a57f-01b36279ebc4",
+      "share_id": "b3910c2c-3f1c-4c09-bf87-797e4a46f298"
     },
     "live": {
-      "id": "759c7ee0-19dc-4f91-996a-3338a0a034a8",
+      "id": "d324ffb7-d8d9-4a85-b01e-ae3616f597b0",
       "title": "Schnitzel questions",
-      "current_id": "06817110-6b16-42ff-b20c-99e847b8f4bc",
-      "reply_id": "35956b46-13f0-484d-ac88-66b97bf38feb",
+      "current_id": "664e0fc5-247d-4b98-9fd7-3c4b6c173657",
       "messages": {
-        "b8439b84-3926-4f25-b78d-d90f76ef4291": {
+        "179b6916-febb-4fea-bbfd-bca22ab7269b": {
           "parent": null,
           "children": [
-            "35956b46-13f0-484d-ac88-66b97bf38feb"
+            "97cdc2a1-dfe1-4a06-892d-a83fec0f6276"
           ],
           "role": "user",
           "content": "What is a Schnitzel?"
         },
-        "35956b46-13f0-484d-ac88-66b97bf38feb": {
-          "parent": "b8439b84-3926-4f25-b78d-d90f76ef4291",
+        "97cdc2a1-dfe1-4a06-892d-a83fec0f6276": {
+          "parent": "179b6916-febb-4fea-bbfd-bca22ab7269b",
           "children": [
-            "1882472e-ebc4-4d02-a797-ec1bc07f6826"
+            "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d"
           ],
           "role": "assistant",
           "content": "Schnitzel is a breaded cutlet."
         },
-        "1882472e-ebc4-4d02-a797-ec1bc07f6826": {
-          "parent": "35956b46-13f0-484d-ac88-66b97bf38feb",
+        "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d": {
+          "parent": "97cdc2a1-dfe1-4a06-892d-a83fec0f6276",
           "children": [
-            "06817110-6b16-42ff-b20c-99e847b8f4bc"
+            "664e0fc5-247d-4b98-9fd7-3c4b6c173657"
           ],
           "role": "user",
           "content": "How do I eat it?"
         },
-        "06817110-6b16-42ff-b20c-99e847b8f4bc": {
-          "parent": "1882472e-ebc4-4d02-a797-ec1bc07f6826",
+        "664e0fc5-247d-4b98-9fd7-3c4b6c173657": {
+          "parent": "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d",
           "children": [],
           "role": "assistant",
           "content": "Try it with lemon."
         }
-      }
+      },
+      "reply_id": "97cdc2a1-dfe1-4a06-892d-a83fec0f6276"
+    },
+    "cited": {
+      "id": "7e8c92b8-085b-42ea-be38-b834dcc38025",
+      "title": "Lighthouse key",
+      "current_id": "26231b9c-d668-4279-9547-ef56a158fc68",
+      "messages": {
+        "c8e4b895-1b6f-49d4-a42f-77a6ca2c3543": {
+          "parent": null,
+          "children": [
+            "26231b9c-d668-4279-9547-ef56a158fc68"
+          ],
+          "role": "user",
+          "content": "Where does the lighthouse key hang?"
+        },
+        "26231b9c-d668-4279-9547-ef56a158fc68": {
+          "parent": "c8e4b895-1b6f-49d4-a42f-77a6ca2c3543",
+          "children": [],
+          "role": "assistant",
+          "content": "Behind the blue door [1]."
+        }
+      },
+      "question": "Where does the lighthouse key hang?",
+      "answer": "Behind the blue door [1].",
+      "cited": [
+        "Handbook"
+      ]
     },
     "archived": {
-      "id": "0ecafb5a-95af-4e4c-a7ea-454c022c720c",
+      "id": "661105de-100d-468a-b906-8c2c4a200f07",
       "title": "Old plans"
     }
   },
   "chat_file": {
-    "id": "4627ef5c-7d21-4d4a-9aae-3c1f836c34c4",
+    "id": "121cdfec-c25b-4735-9b0f-64117a54f0a9",
     "filename": "packing.txt",
     "text": "Packing list: umbrella, passport, a very old map of Vienna."
   },
   "feedback": {
-    "id": "ba392966-c877-4e59-982b-3a5f7ab84ee7",
+    "id": "5cc751dc-f7c2-4b76-b573-7f6eb21d8c3a",
     "reason": "Accurate",
     "rating": 1
   },
   "note": {
-    "id": "f2c8637d-3934-4f29-98b4-b97f4a80f520",
+    "id": "31343645-0293-4a58-8a10-f3eb5653de35",
     "title": "Groceries",
     "md": "# Groceries\n\n- apples\n- *dark* chocolate",
     "writers": [
@@ -242,18 +278,18 @@
     ]
   },
   "channel": {
-    "id": "241fa008-c9b3-4817-8e92-8813dffca12e",
+    "id": "b919b19f-d698-41c7-b883-e62ca23f238f",
     "name": "lighthouse",
     "readers": [
       "alice",
       "bob"
     ],
     "message": {
-      "id": "78e4f78b-2d97-482f-b189-4df71fbcc367",
+      "id": "e74e424b-2b3d-4bd6-89ca-8fc21ab6fa3d",
       "content": "Who has the lighthouse key?"
     },
     "reply": {
-      "id": "a3fbf447-f483-4897-9fe4-749160565088",
+      "id": "5ab37ddf-7742-405f-b863-17ec6e376ef5",
       "content": "Behind the blue door."
     },
     "reaction": "thumbsup"

@@ -90,6 +90,9 @@ class Filter:
         return body
 '''
 
+# what the group's members may do beyond the defaults
+GROUP_PERMISSIONS = {"workspace": {"models": True}}
+
 KNOWLEDGE_TEXT = "The upgrade handbook says the lighthouse key hangs behind the blue door."
 CHAT_FILE_TEXT = "Packing list: umbrella, passport, a very old map of Vienna."
 
@@ -220,10 +223,22 @@ class Seeder:
                 ),
                 "adding group members",
             )
+            _ensure(
+                client.post(
+                    f"/api/v1/groups/id/{group['id']}/update",
+                    json={
+                        "name": "Research",
+                        "description": "People who read the handbook",
+                        "permissions": GROUP_PERMISSIONS,
+                    },
+                ),
+                "giving the group its permissions",
+            )
         self.manifest["group"] = {
             "id": group["id"],
             "name": "Research",
             "members": ["alice", "bob"],
+            "permissions": GROUP_PERMISSIONS,
         }
 
     def settings(self) -> None:
@@ -261,6 +276,12 @@ class Seeder:
                 client.post("/api/v1/users/user/settings/update", json=user_settings),
                 "saving alice's settings",
             )
+        with self.client("bob") as client:
+            bob_settings = {"ui": {"models": ["research-assistant"]}}
+            _ensure(
+                client.post("/api/v1/users/user/settings/update", json=bob_settings),
+                "saving bob's default model",
+            )
         self.manifest["settings"] = {
             "admin": {
                 "DEFAULT_USER_ROLE": "user",
@@ -271,6 +292,7 @@ class Seeder:
             "permissions": {"chat.delete": False, "workspace.prompts": True},
             "banner": banner,
             "alice_ui": user_settings["ui"],
+            "bob_ui": bob_settings["ui"],
         }
 
     def workspace(self) -> None:
@@ -445,6 +467,7 @@ class Seeder:
                 "granting bob the shared chat",
             )
             live = self._live_chat(client)
+            cited = self._cited_chat(client)
             archived = _ensure(
                 client.post(
                     "/api/v1/chats/new",
@@ -475,6 +498,7 @@ class Seeder:
         self.manifest["chats"] = {
             "branched": {**branched, "folder_id": subfolder["id"], "share_id": shared["share_id"]},
             "live": live,
+            "cited": cited,
             "archived": {"id": archived["id"], "title": "Old plans"},
         }
         self.manifest["chat_file"] = {
@@ -591,16 +615,38 @@ class Seeder:
             history=history,
         )
         wait_for_reply(client, second)
-        client.post(
-            f"/api/v1/chats/{first.chat_id}", json={"chat": {"title": "Schnitzel questions"}}
+        stored = self._titled(client, first.chat_id, "Schnitzel questions")
+        return {**stored, "reply_id": first.assistant_message_id}
+
+    def _cited_chat(self, client: httpx.Client) -> dict:
+        """A chat the server answered with the knowledge base attached, citing its file."""
+        question = "Where does the lighthouse key hang?"
+        answer = "Behind the blue door [1]."
+        answers_the_chat = upstream_module.answering(question)
+        self.provider.queue(
+            upstream_module.text(
+                answer, match=lambda body: bool(body.get("stream")) and answers_the_chat(body)
+            )
         )
-        stored = _ensure(client.get(f"/api/v1/chats/{first.chat_id}"), "reading the live chat")
+        knowledge = self.manifest["knowledge"]
+        attached = {"type": "collection", "id": knowledge["id"], "name": knowledge["name"]}
+        turn = send_message(client, question, chat_files=[attached])
+        reply = wait_for_reply(client, turn)
+        cited = {source["source"].get("name") for source in reply.get("sources") or []}
+        if knowledge["filename"] not in cited and knowledge["name"] not in cited:
+            raise SystemExit(f"the reply cites nothing from the knowledge base: {reply}")
+        stored = self._titled(client, turn.chat_id, "Lighthouse key")
+        return {**stored, "question": question, "answer": answer, "cited": sorted(cited)}
+
+    def _titled(self, client: httpx.Client, chat_id: str, title: str) -> dict:
+        """Name a chat the server wrote and record it as stored."""
+        client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"title": title}})
+        stored = _ensure(client.get(f"/api/v1/chats/{chat_id}"), f"reading the chat {title}")
         messages = stored["chat"]["history"]["messages"]
         return {
-            "id": first.chat_id,
+            "id": chat_id,
             "title": stored["title"],
             "current_id": stored["chat"]["history"]["currentId"],
-            "reply_id": first.assistant_message_id,
             "messages": {
                 message_id: {
                     "parent": message.get("parentId"),
