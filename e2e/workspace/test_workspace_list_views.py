@@ -5,15 +5,15 @@ search: All, Created by you and Shared with you. Two admins each own one item na
 either of them, Created by you lists only their own, Shared with you only the other's and All
 both, and the choice is kept when the list is opened again.
 
-The late answer tests are red on dev: the lists that search on the server add every answer that
-comes back to the list, also one to a search asked before the view was changed. Held until after
-the switch to Created by you, that answer puts the other admin's item back under Created by you
-(open-webui/open-webui#31965).
+An answer to a search asked before the view was changed is dropped. The lists that search on the
+server used to add every answer that came back, so one held until after the switch to Created by
+you put the other admin's item back under Created by you (open-webui/open-webui#31965), fixed in
+dev 4b9d31b39.
 
-Discriminates: passes on dev 30f3f6a8f apart from the late answer tests (the bug above); the
-knowledge one passes in a frontend build whose list drops an answer to an older request. In a
-backend copy whose lists ignore the view asked for every view menu test but the tools one fails,
-and the tools one, whose list filters in the page, fails in a frontend build that ignores the view.
+Discriminates: passes on dev 1711059db; the late answer tests fail on dev 77febc65d, before
+4b9d31b39. In a backend copy whose lists ignore the view asked for every view menu test but the
+tools one fails, and the tools one, whose list filters in the page, fails in a frontend build that
+ignores the view.
 """
 
 from __future__ import annotations

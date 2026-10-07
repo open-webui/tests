@@ -27,11 +27,11 @@ wiping the authenticator, the matching tests go red. In a frontend build where s
 field and its error, Enter does nothing, the QR code is 480 pixels wide and "Back to sign in" does
 nothing, the switching, keyboard, phone and too-many-codes tests go red.
 
-The two tests of new codes from Settings > Account fail on dev b859124f9
-(open-webui/open-webui#31954): the change signs the account out, the browser's socket reconnects
-with the ended session and the app sends it to the sign-in page within a second, so the codes, shown
-nowhere else, are gone before anyone can save them (after generating, the old codes no longer work
-either).
+The two tests of new codes from Settings > Account used to fail (open-webui/open-webui#31954): the
+change signs the account out, the browser's socket reconnected with the ended session and the app
+sent it to the sign-in page within a second, so the codes, shown nowhere else, were gone before
+anyone could save them. Fixed in dev 5b0f53e82; both pass on dev 1711059db and fail on dev
+4b9d31b39, before it.
 """
 
 from __future__ import annotations

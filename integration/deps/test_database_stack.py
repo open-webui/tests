@@ -21,11 +21,10 @@ event hook on the sync and the async engine sets each new connection's PRAGMAs, 
 journal mode `DATABASE_ENABLE_SQLITE_WAL` chooses, which the database file keeps.
 
 `DATABASE_SCHEMA` gives SQLAlchemy's `MetaData` a schema, so every query names its tables as
-`<schema>.<table>`. The Alembic migrations take no notice of it and create the tables in the
-connection's default schema, so a fresh Postgres install with `DATABASE_SCHEMA` set stops at boot
-looking for `<schema>.config`; it works only when the connection's `search_path` happens to put
-that schema first. That test stays red until the migrations honour the setting (fix PR
-#31533 open).
+`<schema>.<table>`, and the Alembic migrations create the tables in that schema too. They used to
+take no notice of it and create them in the connection's default schema, so a fresh Postgres
+install with `DATABASE_SCHEMA` set stopped at boot looking for `<schema>.config` (PR
+open-webui/open-webui#31533, closed), fixed in dev 65f44053d.
 
 Discriminates: passes on dev ef67cc3fa; in a backend copy with `aiosqlite.Connection.commit`
 made a no-op every write is lost, down to the admin account the boot signs up, so both SQLite
@@ -36,8 +35,8 @@ codec that loses nulls stops the first sign-up, so the chat test cannot be singl
 user search without its `offset`
 (every page the first) fails the search test, each on both databases, `like` in place of `ilike`
 fails it on Postgres (Open WebUI's own SQLite `like` folds case anyway), and the connect hooks
-left unregistered fail the WAL case. The schema test passes in a copy that puts `DATABASE_SCHEMA`
-on the connection's `search_path`.
+left unregistered fail the WAL case. The schema test passes on dev 1711059db and fails on dev
+56b6b660a, before 65f44053d.
 """
 
 from __future__ import annotations
