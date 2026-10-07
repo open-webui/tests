@@ -14,6 +14,7 @@ message); where the metadata update leaves the command as it was, the freed-comm
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Callable, Iterator
 
 import pytest
@@ -26,8 +27,15 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
 
 
+@dataclass
+class Writers:
+    first: Actor
+    second: Actor
+    save: Callable[[Actor, str, str], dict]
+
+
 @pytest.fixture
-def writers(admin, make_user) -> Iterator[Callable[[Actor, str, str], dict]]:
+def writers(admin, make_user) -> Iterator[Writers]:
     """Two accounts that may write prompts; `save(account, command, content)` posts a prompt."""
     first, second = make_user(), make_user()
     make_group(admin, [first, second], {"workspace": {"prompts": True}})
@@ -41,8 +49,7 @@ def writers(admin, make_user) -> Iterator[Callable[[Actor, str, str], dict]]:
             created.append((account, response.json()["id"]))
         return {"status": response.status_code, "body": response.json()}
 
-    save.accounts = (first, second)  # type: ignore[attr-defined]
-    yield save
+    yield Writers(first, second, save)
     for account, prompt_id in created:
         with account.client() as client:
             client.delete(f"/api/v1/prompts/id/{prompt_id}/delete")
@@ -60,11 +67,11 @@ def _command_of(account: Actor, prompt_id: str) -> str:
 
 
 def test_a_second_prompt_with_the_same_command_is_refused_and_the_first_keeps_its_text(writers):
-    first, _ = writers.accounts
+    first, save = writers.first, writers.save
     command = f"taken-{uuid.uuid4().hex[:8]}"
-    assert writers(first, command, "The first text.")["status"] == 200
+    assert save(first, command, "The first text.")["status"] == 200
 
-    again = writers(first, command, "The second text.")
+    again = save(first, command, "The second text.")
 
     assert again["status"] == 400
     assert again["body"]["detail"] == TAKEN
@@ -72,12 +79,12 @@ def test_a_second_prompt_with_the_same_command_is_refused_and_the_first_keeps_it
 
 
 def test_another_accounts_private_prompt_still_holds_its_command(writers):
-    first, second = writers.accounts
+    first, second, save = writers.first, writers.second, writers.save
     command = f"private-{uuid.uuid4().hex[:8]}"
-    assert writers(first, command, "Mine alone.")["status"] == 200
+    assert save(first, command, "Mine alone.")["status"] == 200
     assert _texts(second, command) == []
 
-    refused = writers(second, command, "Taking it over.")
+    refused = save(second, command, "Taking it over.")
 
     assert refused["status"] == 400
     assert refused["body"]["detail"] == TAKEN
@@ -87,11 +94,11 @@ def test_another_accounts_private_prompt_still_holds_its_command(writers):
 
 @pytest.mark.parametrize("route", ["update/meta", "update"])
 def test_renaming_a_command_to_a_taken_one_is_refused_and_keeps_the_old_command(writers, route):
-    first, _ = writers.accounts
+    first, save = writers.first, writers.save
     suffix = uuid.uuid4().hex[:8]
     held, moving = f"held-{suffix}", f"moving-{suffix}"
-    writers(first, held, "Held text.")
-    prompt_id = writers(first, moving, "Moving text.")["body"]["id"]
+    save(first, held, "Held text.")
+    prompt_id = save(first, moving, "Moving text.")["body"]["id"]
     form = {"name": "Renamed", "command": held}
     if route == "update":
         form["content"] = "Moving text."
@@ -106,16 +113,16 @@ def test_renaming_a_command_to_a_taken_one_is_refused_and_keeps_the_old_command(
 
 
 def test_a_command_freed_by_a_rename_can_be_created_again(writers):
-    first, second = writers.accounts
+    first, second, save = writers.first, writers.second, writers.save
     suffix = uuid.uuid4().hex[:8]
     old, new = f"old-{suffix}", f"new-{suffix}"
-    prompt_id = writers(first, old, "Original.")["body"]["id"]
+    prompt_id = save(first, old, "Original.")["body"]["id"]
     with first.client() as client:
         renamed = client.post(
             f"/api/v1/prompts/id/{prompt_id}/update/meta", json={"name": "Renamed", "command": new}
         )
     assert renamed.status_code == 200, renamed.text
 
-    assert writers(second, old, "Reused.")["status"] == 200
-    assert writers(second, new, "Too late.")["status"] == 400
+    assert save(second, old, "Reused.")["status"] == 200
+    assert save(second, new, "Too late.")["status"] == 400
     assert _texts(second, old) == ["Reused."]

@@ -158,10 +158,9 @@ def test_a_typed_command_keeps_its_letters_case_and_underscores(page_for, author
     expect(page.get_by_role("main").get_by_text(f"Brief {command}")).to_be_visible()
 
     with account.client() as client:
-        stored = [
-            p for p in client.get("/api/v1/prompts/").json() if p["name"] == f"Brief {command}"
-        ]
-    assert [p["command"] for p in stored] == [command]
+        listed = client.get("/api/v1/prompts/").json()
+    stored = [prompt for prompt in listed if prompt["name"] == f"Brief {command}"]
+    assert [prompt["command"] for prompt in stored] == [command]
     menu = _slash_menu(page, command.lower())
     menu.get_by_role("button", name=command).click()
     expect(chat_input(page)).to_have_text("Brief the team.")

@@ -183,9 +183,12 @@ def test_a_prompt_shared_with_a_group_in_the_access_dialog_is_offered_until_the_
     expect(_inserted_text(member_page, command)).to_have_text("Brief the crew.")
     expect(_offered(_slash_menu(stranger_page, command), command)).to_have_count(0)
 
-    dialog.get_by_text(group_name).locator("xpath=ancestor::div[3]").get_by_role(
-        "button"
-    ).last.click()
+    group_row = (
+        dialog.locator("div")
+        .filter(has_text=group_name)
+        .filter(has=page.get_by_label("Access level"))
+    )
+    group_row.last.get_by_role("button").last.click()  # the row's remove button has no label
     expect(dialog.get_by_text(group_name)).to_have_count(0)
     expect(page.get_by_text("Saved").first).to_be_visible()
 
