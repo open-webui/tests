@@ -16,7 +16,10 @@ fails instead. Asked to respond to it, it hands the request to the chat model th
 respond to a function result, it speaks the result's answer; asked for a call status, it speaks
 the status sentence; asked to read text (the realtime text-to-speech engine), it speaks that
 text. Speaking sends `fake.speech` (a quarter second of silent 24 kHz PCM unless a test sets a
-longer one) with its transcript, and `fake.spoken` lists every transcript spoken.
+longer one) with its transcript, and `fake.spoken` lists every transcript spoken. A turn lined up
+with `gesture=name` (and `answers=text`) plays that gesture through the avatar's `play_animation`
+function while speaking the text; the gesture's result lands in `call.gesture_results`, and
+asked to go on after it the fake speaks the result's `effect`.
 
 `fake.refuse_handshake = status` turns the next connections away with that HTTP status,
 `fake.refuse_session = True` answers the session setup with an error event and `call.drop()`
@@ -63,6 +66,8 @@ class Turn:
     transcript: str
     answer: str | None  # None hands the request to the chat model
     fails: bool = False
+    gesture: str | None = None
+    gestured: bool = False
 
 
 @dataclass
@@ -75,6 +80,7 @@ class RealtimeCall:
     heard_bytes: int = 0
     inputs: dict[str, Turn] = field(default_factory=dict)
     results: dict[str, str] = field(default_factory=dict)
+    gesture_results: list[dict] = field(default_factory=list)
 
     def received(self, kind: str) -> list[dict]:
         return [event for event in list(self.events) if event.get("type") == kind]
@@ -104,9 +110,11 @@ class FakeRealtime:
     speech: bytes = SPOKEN_PCM
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def hears(self, transcript: str, answers: str | None = None) -> None:
+    def hears(
+        self, transcript: str, answers: str | None = None, gesture: str | None = None
+    ) -> None:
         with self.lock:
-            self.turns.append(Turn(transcript, answers))
+            self.turns.append(Turn(transcript, answers, gesture=gesture))
 
     def mishears(self) -> None:
         """The next turn's transcription fails."""
@@ -164,6 +172,39 @@ def _delegate(call: RealtimeCall, metadata: dict, request: str) -> None:
     call.send({"type": "response.done", "response": done})
 
 
+def _gesture_and_speak(fake: FakeRealtime, call: RealtimeCall, metadata: dict, turn: Turn) -> None:
+    """One response that plays `turn.gesture` through `play_animation` while speaking the answer."""
+    response_id = _new_id("resp")
+    item = {
+        "id": _new_id("item"),
+        "type": "function_call",
+        "status": "completed",
+        "name": "play_animation",
+        "call_id": _new_id("call"),
+        "arguments": json.dumps({"name": turn.gesture}),
+    }
+    turn.gestured = True
+    call.send({"type": "response.created", "response": {"id": response_id, "metadata": metadata}})
+    call.send({"type": "response.output_item.done", "response_id": response_id, "item": item})
+    item_id = _new_id("item")
+    located = {"response_id": response_id, "item_id": item_id, "content_index": 0}
+    call.send(
+        {
+            "type": "response.output_audio.delta",
+            **located,
+            "delta": base64.b64encode(fake.speech).decode(),
+        }
+    )
+    call.send(
+        {"type": "response.output_audio_transcript.done", **located, "transcript": turn.answer}
+    )
+    call.send({"type": "response.output_audio.done", **located})
+    with fake.lock:
+        fake.spoken.append(turn.answer)
+    done = {"id": response_id, "status": "completed", "metadata": metadata}
+    call.send({"type": "response.done", "response": done})
+
+
 def _hear(fake: FakeRealtime, call: RealtimeCall, audio: str) -> None:
     call.heard_bytes += len(base64.b64decode(audio))
     if call.heard_bytes < HEARING_BYTES:
@@ -193,7 +234,11 @@ def _respond(fake: FakeRealtime, call: RealtimeCall, response: dict) -> None:
     metadata = response.get("metadata") or {}
     if "input_item_id" in metadata:
         turn = call.inputs[metadata["input_item_id"]]
-        if turn.answer is None:
+        if turn.gesture and not turn.gestured:
+            _gesture_and_speak(fake, call, metadata, turn)
+        elif turn.gesture:
+            _speak(fake, call, metadata, call.gesture_results[-1]["effect"])
+        elif turn.answer is None:
             _delegate(call, metadata, turn.transcript)
         else:
             _speak(fake, call, metadata, turn.answer)
@@ -224,7 +269,11 @@ def _answer(fake: FakeRealtime, call: RealtimeCall, event: dict) -> None:
         _respond(fake, call, event.get("response") or {})
     elif kind == "conversation.item.create" and event["item"]["type"] == "function_call_output":
         item = event["item"]
-        call.results[item["call_id"]] = json.loads(item["output"]).get("answer", "")
+        output = json.loads(item["output"])
+        if "effect" in output:
+            call.gesture_results.append(output)
+        else:
+            call.results[item["call_id"]] = output.get("answer", "")
 
 
 @contextlib.contextmanager

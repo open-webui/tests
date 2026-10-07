@@ -5,7 +5,11 @@ which connects to the instance's realtime call and through it to the provider (h
 `harness.realtime_provider`, heard through Chromium's fake microphone). Since 4f1f38541 the
 panel is the Voice call overlay with a voice orb and a status line (Connecting..., Listening,
 Speaking, Microphone off, Call disconnected). A call in an existing chat first tells the
-provider the conversation so far. What the provider transcribes lands in the chat as the user's
+provider the conversation so far, since d989375b4 as one snapshot of the chat (each assistant
+reply marked with its message id and state) that a later snapshot replaces whenever the chat
+changes, so a message typed while the call panel is hidden reaches the provider too; and a
+question typed after the call tells the chat model what the voice said, as a historical voice
+transcript. What the provider transcribes lands in the chat as the user's
 message; a request it hands on goes to the chat's own model, whose answer shows in the chat as
 usual and is then spoken, its spoken transcript saved on that reply; an answer the voice model
 gives itself is saved as a reply of its own. Both survive a reload. A turn that cannot be
@@ -29,7 +33,10 @@ that never tells the provider where playback stopped turns the interrupt test re
 that does nothing turns the dropped call test red. In a third, a microphone never switched on
 for the call turns the panel test red. On dev 0f5a58f5f a spoken answer never saved turned the
 chat model test red, the voice model's own answer never added turned that test red and an empty
-conversation sent to the provider turned that test red; 4f1f38541 left those paths alone.
+conversation sent to the provider turned that test red; 4f1f38541 left those paths alone. On
+the dev d989375b4 build the snapshot and typed question tests pass; a frontend copy of it that
+never resends the snapshot turns the typed during the call test red, and a backend copy that
+ignores the voice record of earlier messages turns the typed after the call test red.
 """
 
 from __future__ import annotations
@@ -45,7 +52,7 @@ from harness import upstream as reply
 from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
 from harness.realtime_provider import SAMPLE_RATE, serving_realtime_provider, using_realtime
-from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -88,6 +95,16 @@ def wait_for_stored(actor, chat_id: str, condition, what: str) -> list[dict]:
             return messages
         time.sleep(0.2)
     raise AssertionError(f"the chat never stored {what}: {stored_messages(actor, chat_id)}")
+
+
+def item_text(item: dict) -> str:
+    return "".join(part.get("text", "") for part in item.get("content", []))
+
+
+def snapshot_messages(item: dict) -> list[dict]:
+    """The chat messages a chat snapshot carries after its preamble line."""
+    text = item_text(item)
+    return json.loads(text[text.index("\n") + 1 :])
 
 
 def call_overlay(page: Page):
@@ -261,11 +278,45 @@ def test_a_call_in_an_existing_chat_tells_the_provider_the_conversation(
 
     call = realtime.wait_for_call()
     realtime.wait_for(lambda: call.received("conversation.item.create"), "the conversation")
-    told = [event["item"] for event in call.received("conversation.item.create")]
-    assert [(item["role"], item["content"][0]["text"]) for item in told] == [
-        ("user", question),
-        ("assistant", answer),
-    ]
+    [snapshot] = [event["item"] for event in call.received("conversation.item.create")]
+    assert (snapshot["id"], snapshot["role"]) == ("chat_context_1", "system")
+    told = snapshot_messages(snapshot)
+    assert [message["role"] for message in told] == ["user", "assistant"]
+    assert told[0]["content"] == question
+    assert told[1]["content"].startswith("[Chat model; message_id=")
+    assert told[1]["content"].endswith(f"; state=completed]\n{answer}")
+
+
+def test_a_message_typed_during_the_call_replaces_the_providers_snapshot_of_the_chat(
+    voice_page_for, make_user, realtime, upstream
+):
+    question, answer = f"is the ferry late {words()}", f"The ferry is on time {words()}."
+    upstream.queue(reply.text(answer, match=reply.answering(question)))
+    page = voice_page_for(make_user())
+    start_call(page)
+    call = realtime.wait_for_call()
+    expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    # the call panel covers the chat input until it is hidden
+    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
+
+    send(page, question)
+
+    expect_reply(page, answer)
+    assert not call.ended.is_set(), "typing in the chat ended the call"
+    realtime.wait_for(
+        lambda: any(
+            answer in item_text(event["item"])
+            for event in call.received("conversation.item.create")
+        ),
+        "the answer in a chat snapshot",
+    )
+    snapshots = [event["item"] for event in call.received("conversation.item.create")]
+    replaced = [event["item_id"] for event in call.received("conversation.item.delete")]
+    ids = [item["id"] for item in snapshots]
+    assert ids == [f"chat_context_{number}" for number in range(1, len(ids) + 1)]
+    # each snapshot first deletes the one before it
+    assert len(ids) >= 2 and replaced[: len(ids) - 1] == ids[:-1]
+    assert snapshot_messages(snapshots[-1])[0] == {"role": "user", "content": question}
 
 
 def test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back(
@@ -387,3 +438,34 @@ def test_interrupting_the_spoken_answer_cuts_it_short_and_saves_it_as_interrupte
     )
     reply_message = next(message for message in messages if message["role"] == "assistant")
     assert reply_message["content"] == answer
+
+
+def test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_said(
+    voice_page_for, make_user, realtime, upstream
+):
+    greeting, answer = f"good morning {words()}", f"Morning, the tide is high {words()}."
+    question = f"and when does it turn {words()}"
+    realtime.hears(greeting, answers=answer)
+    caller = make_user()
+    page = voice_page_for(caller)
+    start_call(page)
+    expect_reply(page, answer)
+    wait_for_stored(
+        caller,
+        chat_id_of(page),
+        lambda stored: any(answer in spoken_of(message) for message in stored),
+        "the spoken answer",
+    )
+    page.get_by_role("button", name="End call").click()
+    upstream.queue(reply.text("At noon.", match=reply.answering(question)))
+
+    send(page, question)
+
+    expect_reply(page, "At noon.")
+    request = next(filter(reply.answering(question), upstream.chat_requests()))
+    assistant_turns = [
+        entry["content"] for entry in request["messages"] if entry["role"] == "assistant"
+    ]
+    assert assistant_turns == [
+        f"[Historical voice assistant transcript; not current task status]\n{answer}"
+    ]

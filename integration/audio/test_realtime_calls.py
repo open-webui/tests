@@ -7,12 +7,19 @@ transcription model and prompt (a model's own voice replacing the admin's) and t
 microphone, the earlier conversation and function results go to the provider, and its speech,
 transcripts and function calls come back. Here the provider is `harness.realtime_provider`.
 Every refusal and provider failure ends the call with a message the browser shows, never the
-provider's own error text.
+provider's own error text. Since d989375b4 the conversation goes over as a snapshot of the chat
+(`bridge.context`, a system item each later snapshot deletes and replaces, at most 64000
+characters), and a model with an avatar offers its named gestures through `play_animation`: a
+gesture's result (`bridge.animation.result`, unavailable whatever the browser says for a gesture
+the model does not have) goes to the provider as a function output and `bridge.animation.respond`
+asks it to go on, with the chat model still at hand.
 
 Discriminates: in a backend copy, the session voice ignoring the model's own voice turns the
 model voice test red, the `bridge.result` command no longer passed on as a function output turns
 the relay test red, the call permission check removed turns the permission test red, and a
-provider error passed on verbatim turns the provider error tests red.
+provider error passed on verbatim turns the provider error tests red. On d989375b4, gestures never
+offered turn the gesture tests red, the old snapshot never deleted turns the replace test red and
+the browser's word taken for a gesture the model does not have turns its case red.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ from harness.realtime_provider import (
     using_realtime,
 )
 from harness.upstream import MOCK_MODEL_ID
+from harness.voice_avatars import animation, avatar, upload
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -76,6 +84,12 @@ def refusal(actor, model_id: str = MOCK_MODEL_ID, chat_id: str | None = None) ->
         return call_error(session)
 
 
+def snapshot_messages(item: dict) -> list[dict]:
+    """The chat messages a `bridge.context` snapshot item carries after its preamble."""
+    text = item["content"][0]["text"]
+    return json.loads(text[text.index("\n") + 1 :])
+
+
 @pytest.fixture
 def model_with_voice(admin):
     model_id = f"voiced-{uuid.uuid4().hex[:8]}"
@@ -84,6 +98,36 @@ def model_with_voice(admin):
         "base_model_id": MOCK_MODEL_ID,
         "name": "Voiced model",
         "meta": {"voice": {"voice": "cedar"}},
+        "params": {},
+        "access_grants": [EVERYONE_READS],
+    }
+    with admin.client() as client:
+        created = client.post("/api/v1/models/create", json=form)
+        assert created.status_code == 200, created.text
+        client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+    yield model_id
+    with admin.client() as client:
+        client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+@pytest.fixture
+def model_with_gestures(admin):
+    """A model everyone reads whose avatar has a wave and a nod gesture."""
+    model_id = f"gesturing-{uuid.uuid4().hex[:8]}"
+    gestures = [
+        {
+            "name": name,
+            "description": description,
+            "file_id": upload(admin, f"{name}.vrma", animation()),
+        }
+        for name, description in (("wave", "Wave when greeting."), ("nod", "Nod to agree."))
+    ]
+    voice_avatar = {"file_id": upload(admin, "pilot.vrm", avatar()), "gestures": gestures}
+    form = {
+        "id": model_id,
+        "base_model_id": MOCK_MODEL_ID,
+        "name": "Gesturing model",
+        "meta": {"voice_avatar": voice_avatar},
         "params": {},
         "access_grants": [EVERYONE_READS],
     }
@@ -227,7 +271,7 @@ def test_the_call_relays_speech_function_calls_and_results(realtime, make_user):
             {"role": "user", "content": "hello harbour"},
             {"role": "assistant", "content": "hello sailor"},
         ]
-        session.send(json.dumps({"type": "bridge.history", "messages": earlier}))
+        session.send(json.dumps({"type": "bridge.context", "messages": earlier}))
         session.send(json.dumps({"type": "input_audio_buffer.append", "audio": spoken_audio()}))
         heard = next_event(session, "conversation.item.input_audio_transcription.completed")
         session.send(json.dumps({"type": "bridge.respond", "item_id": heard["item_id"]}))
@@ -249,19 +293,14 @@ def test_the_call_relays_speech_function_calls_and_results(realtime, make_user):
     assert spoken["transcript"] == "High tide is at six."
     call = realtime.calls[0]
     history = [event["item"] for event in call.received("conversation.item.create")]
-    assert history[:2] == [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": "hello harbour"}],
-        },
-        {
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "output_text", "text": "hello sailor"}],
-        },
-    ]
-    function_output = history[2]
+    snapshot = history[0]
+    assert (snapshot["id"], snapshot["type"], snapshot["role"]) == (
+        "chat_context_1",
+        "message",
+        "system",
+    )
+    assert snapshot_messages(snapshot) == earlier
+    function_output = history[1]
     assert (function_output["type"], function_output["call_id"]) == (
         "function_call_output",
         delegated["call_id"],
@@ -306,8 +345,24 @@ def test_the_browser_only_hears_response_conversation_and_input_events(realtime,
             },
             "Unknown or resolved function call",
         ),
+        ({"type": "bridge.history", "messages": []}, "Unsupported call command"),
+        (
+            {"type": "bridge.animation.result", "call_id": "call_unknown", "status": "started"},
+            "Invalid animation result",
+        ),
+        (
+            {"type": "bridge.animation.respond", "response_id": "resp_unknown"},
+            "Animation response is not ready",
+        ),
     ],
-    ids=["session-update", "unheard-input", "unknown-function-call"],
+    ids=[
+        "session-update",
+        "unheard-input",
+        "unknown-function-call",
+        "old-history-command",
+        "unknown-gesture-call",
+        "unknown-gesture-response",
+    ],
 )
 def test_a_command_the_call_does_not_allow_ends_it(realtime, make_user, command, message):
     with open_call(make_user()) as session:
@@ -426,3 +481,89 @@ def test_incomplete_provider_settings_end_the_call(admin, provider, make_user, s
     with admin.client() as client, using_realtime(client, provider, **setting):
         assert refusal(make_user()) == message
     assert provider.calls == []
+
+
+def test_each_chat_snapshot_replaces_the_one_before(realtime, make_user):
+    first = [{"role": "user", "content": "where is the pier"}]
+    second = [*first, {"role": "assistant", "content": "The pier is north."}]
+    with open_call(make_user()) as session:
+        next_event(session, "bridge.ready")
+        session.send(json.dumps({"type": "bridge.context", "messages": first}))
+        session.send(json.dumps({"type": "bridge.context", "messages": second}))
+        session.send(json.dumps({"type": "bridge.ping"}))
+        next_event(session, "bridge.pong")
+
+    call = realtime.calls[0]
+    realtime.wait_for(lambda: len(call.received("conversation.item.create")) == 2, "two snapshots")
+    created = [event["item"] for event in call.received("conversation.item.create")]
+    assert [item["id"] for item in created] == ["chat_context_1", "chat_context_2"]
+    assert [snapshot_messages(item) for item in created] == [first, second]
+    assert call.received("conversation.item.delete") == [
+        {"type": "conversation.item.delete", "item_id": "chat_context_1"}
+    ]
+
+
+def test_a_chat_snapshot_over_its_budget_ends_the_call(realtime, make_user):
+    long_messages = [{"role": "user", "content": "x" * 30000} for _ in range(3)]
+    with open_call(make_user()) as session:
+        next_event(session, "bridge.ready")
+        session.send(json.dumps({"type": "bridge.context", "messages": long_messages}))
+        ended_with = call_error(session)
+
+    assert ended_with == "Call history is too large"
+    assert realtime.calls[0].received("conversation.item.create") == []
+
+
+def test_a_model_without_an_avatar_offers_no_gestures(realtime, make_user):
+    with open_call(make_user()) as session:
+        next_event(session, "bridge.ready")
+
+    session_settings = realtime.calls[0].session
+    assert [tool["name"] for tool in session_settings["tools"]] == ["generate_chat_completion"]
+    assert "avatar" not in session_settings["instructions"]
+
+
+def test_a_models_gestures_are_offered_to_the_voice_model(realtime, model_with_gestures, make_user):
+    with open_call(make_user(), model_with_gestures) as session:
+        next_event(session, "bridge.ready")
+
+    session_settings = realtime.calls[0].session
+    tools = {tool["name"]: tool for tool in session_settings["tools"]}
+    assert list(tools) == ["generate_chat_completion", "play_animation"]
+    assert tools["play_animation"]["parameters"]["properties"]["name"]["enum"] == ["wave", "nod"]
+    assert "Wave when greeting." in tools["play_animation"]["description"]
+    assert session_settings["instructions"].startswith(DEFAULT_PROMPT_START)
+    assert "Your avatar is your visible presence in this call." in session_settings["instructions"]
+
+
+@pytest.mark.parametrize(
+    ("gesture", "reported"),
+    [("wave", "started"), ("cartwheel", "unavailable")],
+    ids=["configured-gesture", "unknown-gesture"],
+)
+def test_a_gesture_result_reaches_the_provider_which_is_then_asked_to_go_on(
+    realtime, model_with_gestures, make_user, gesture, reported
+):
+    realtime.hears("wave at me", answers="Waving now.", gesture=gesture)
+    with open_call(make_user(), model_with_gestures) as session:
+        next_event(session, "bridge.ready")
+        session.send(json.dumps({"type": "input_audio_buffer.append", "audio": spoken_audio()}))
+        heard = next_event(session, "conversation.item.input_audio_transcription.completed")
+        session.send(json.dumps({"type": "bridge.respond", "item_id": heard["item_id"]}))
+        played = next_event(session, "response.output_item.done")
+        result = {"type": "bridge.animation.result", "call_id": played["item"]["call_id"]}
+        session.send(json.dumps({**result, "status": "started"}))
+        done = next_event(session, "response.done")
+        respond = {"type": "bridge.animation.respond", "response_id": done["response"]["id"]}
+        session.send(json.dumps(respond))
+        follow_up = next_event(session, "response.output_audio_transcript.done")
+
+    assert played["item"]["name"] == "play_animation"
+    assert played["animation_valid"] is (gesture == "wave")
+    call = realtime.calls[0]
+    [output] = call.gesture_results
+    assert output["status"] == reported
+    assert follow_up["transcript"] == output["effect"]
+    asked = call.received("response.create")[-1]["response"]
+    assert asked["metadata"] == {"input_item_id": heard["item_id"]}
+    assert [tool["name"] for tool in asked["tools"]] == ["generate_chat_completion"]

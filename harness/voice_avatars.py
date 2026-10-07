@@ -6,7 +6,8 @@ its feet with every bone the three-vrm loader requires, the `aa` (mouth) and `bl
 and an embedded buffer; its keywords leave bones or expressions out, embed a texture, point the
 buffer at a URL or write the 0.x layout. `animation()` writes a VRMA, the same rig under
 `VRMC_vrm_animation` with one clip that turns the head and both upper arms over `seconds`.
-`glb(document, binary)` wraps any glTF JSON for a hand-made broken file. `upload(actor, name,
+`glb(document, binary)` wraps any glTF JSON for a hand-made broken file and `grown_to(content,
+size)` pads a file's binary chunk out to `size` bytes for the size limits. `upload(actor, name,
 content)` uploads one as the model editor does (unprocessed) and returns its file id.
 """
 
@@ -66,6 +67,17 @@ def glb(document: dict, binary: bytes = b"\x00" * 4) -> bytes:
         + struct.pack("<2I", len(binary), BINARY_CHUNK)
         + binary
     )
+
+
+def grown_to(content: bytes, size: int) -> bytes:
+    """`content` with its binary chunk grown to `size` bytes in all, its headers kept consistent."""
+    extra = size - len(content)
+    grown = bytearray(content + b"\x00" * extra)
+    struct.pack_into("<I", grown, 8, size)
+    (json_size,) = struct.unpack_from("<I", grown, 12)
+    (binary_size,) = struct.unpack_from("<I", grown, 20 + json_size)
+    struct.pack_into("<I", grown, 20 + json_size, binary_size + extra)
+    return bytes(grown)
 
 
 def _rig_nodes() -> tuple[list[dict], dict[str, int]]:

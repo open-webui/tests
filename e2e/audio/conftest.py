@@ -69,12 +69,15 @@ def speaking_browser(
 def voice_page_for(
     speaking_browser: Browser, config: AppConfig, request: pytest.FixtureRequest
 ) -> Generator[Callable[[Actor], Page], None, None]:
-    """`voice_page_for(actor)`: a signed-in page whose microphone plays `SPOKEN_TURN`."""
+    """`voice_page_for(actor)`: a signed-in page whose microphone plays `SPOKEN_TURN`.
+
+    Further keywords go to the browser context, such as `reduced_motion="reduce"`.
+    """
     opened = []
 
-    def open_page(actor: Actor) -> Page:
+    def open_page(actor: Actor, **context_options) -> Page:
         _dismiss_first_run_modals(actor)
-        browser_context = _new_context(speaking_browser, config, actor.base_url)
+        browser_context = _new_context(speaking_browser, config, actor.base_url, **context_options)
         browser_context.grant_permissions(["microphone"])
         opened.append(browser_context)
         return _signed_in_page(browser_context, actor.token)

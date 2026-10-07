@@ -2,18 +2,20 @@
 
 Since d989375b4 the model editor has a Voice avatar row (Default orb or Custom avatar) while
 realtime calls are on or the model already has one. Configure opens Avatar setup: Upload VRM
-takes a .vrm or .glb up to 25 MiB and shows it in a live preview (Loading avatar... until it is
-ready, then Idle, Listening and Speaking to try), warning when the avatar has no mouth or blink
-expression; a file that is no VRM, or one the browser's VRM loader refuses, shows why and cannot
-be applied. State animations take a VRMA clip each for idle, listening and speaking, and Named
-gestures a lowercase name, a description and a clip, previewed on the avatar; Apply is held
-back until every gesture has all three. Apply and Save & Update upload the files and store their
-ids under the model's `voice_avatar`; Use orb removes the avatar on the next save and Cancel
-leaves it as it was. Files come from `harness.voice_avatars`.
+takes a .vrm or .glb up to 25 MiB (anything else is turned away at once) and shows it in a live
+preview (Loading avatar... until it is ready, then Idle, Listening and Speaking to try), warning
+when the avatar has no mouth or blink expression; a file that is no VRM, or one the browser's
+VRM loader refuses, shows why and cannot be applied. State animations take a VRMA clip each for
+idle, listening and speaking, and Named gestures a lowercase name, a description and a clip,
+previewed on the avatar; Apply is held back until every gesture has all three. Apply and Save &
+Update upload the files and store their ids under the model's `voice_avatar`; Use orb removes
+the avatar on the next save and Cancel leaves it as it was. Files come from
+`harness.voice_avatars`.
 
-Discriminates: passes on the dev d989375b4 build; in a frontend copy of it whose save leaves the
-avatar out of the model the upload, gesture and Use orb tests turn red, and in one whose setup
-applies a file the preview could not load the refused file test turns red.
+Discriminates: passes on the dev d989375b4 build. In a frontend copy of it whose save leaves the
+avatar as loaded the upload, clips and gesture and Use orb tests turn red, and in one whose
+Apply ignores what the preview found the refused avatar and lowercase name tests turn red; one
+that never shows the expression warnings or accepts any gesture name turns those tests red.
 """
 
 from __future__ import annotations
@@ -25,7 +27,14 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.realtime_provider import serving_realtime_provider, using_realtime
 from harness.upstream import MOCK_MODEL_ID
-from harness.voice_avatars import SERVER_CHECKED_BONES, animation, avatar, glb, upload
+from harness.voice_avatars import (
+    SERVER_CHECKED_BONES,
+    animation,
+    avatar,
+    glb,
+    grown_to,
+    upload,
+)
 from utils.model_editor import open_editor, save
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -175,11 +184,18 @@ def test_an_avatar_the_preview_cannot_load_shows_why_and_cannot_be_applied(
     expect(setup.get_by_role("button", name="Speaking", exact=True)).to_be_disabled()
 
 
-def test_a_file_that_is_no_vrm_by_name_is_turned_away(page_for, admin, realtime_on, model):
+@pytest.mark.parametrize(
+    ("name", "size"),
+    [("pilot.png", 0), ("big.vrm", 25 * 1024 * 1024 + 4)],
+    ids=["png", "over-25-mib"],
+)
+def test_a_file_of_the_wrong_kind_or_size_is_turned_away(
+    page_for, admin, realtime_on, model, name, size
+):
     create(admin, model)
     setup = open_setup(open_editor(page_for(admin), model))
 
-    choose_avatar(setup, avatar(), "pilot.png")
+    choose_avatar(setup, grown_to(avatar(), size) if size else avatar(), name)
 
     expect(setup.get_by_role("alert")).to_have_text("Choose a VRM file, up to 25 MiB.")
     expect(setup.get_by_label("Avatar preview")).to_have_count(0)

@@ -19,13 +19,12 @@ red; with the update no longer carrying the stored avatar over, the keep test tu
 from __future__ import annotations
 
 import io
-import struct
 import uuid
 
 import pytest
 
 from harness.upstream import MOCK_MODEL_ID
-from harness.voice_avatars import RIG, animation, avatar, upload
+from harness.voice_avatars import RIG, animation, avatar, grown_to, upload
 
 Image = pytest.importorskip("PIL.Image")
 
@@ -38,17 +37,6 @@ def _png(width: int, height: int) -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (width, height), (20, 90, 160)).save(buffer, format="PNG")
     return buffer.getvalue()
-
-
-def _padded(content: bytes, size: int) -> bytes:
-    """`content` with its binary chunk grown to `size` bytes in all, headers kept consistent."""
-    extra = size - len(content)
-    grown = bytearray(content + b"\x00" * extra)
-    struct.pack_into("<I", grown, 8, size)
-    (json_size,) = struct.unpack_from("<I", grown, 12)
-    (binary_size,) = struct.unpack_from("<I", grown, 20 + json_size)
-    struct.pack_into("<I", grown, 20 + json_size, binary_size + extra)
-    return bytes(grown)
 
 
 def model_form(model_id: str, voice_avatar, **fields) -> dict:
@@ -184,7 +172,7 @@ def test_legacy_movement_settings_are_dropped_on_save(builder):
             avatar(texture=_png(8, 8), texture_type="image/gif"),
             "Embed PNG, JPEG or WebP textures in the VRM file.",
         ),
-        ("big.vrm", _padded(avatar(), 25 * AVATAR_MIB + 4), "Avatar must be at most 25 MiB."),
+        ("big.vrm", grown_to(avatar(), 25 * AVATAR_MIB + 4), "Avatar must be at most 25 MiB."),
         ("clip.vrm", animation(), "Avatar is missing its hips bone. Upload a rigged VRM file."),
     ],
     ids=[
@@ -213,7 +201,7 @@ def test_a_file_that_is_no_usable_avatar_is_refused_on_save(builder, name, conte
         ("long.vrma", animation(seconds=61), "Use a body animation between 0 and 60 seconds."),
         (
             "big.vrma",
-            _padded(animation(), 10 * AVATAR_MIB + 4),
+            grown_to(animation(), 10 * AVATAR_MIB + 4),
             "Animation must be at most 10 MiB.",
         ),
     ],
