@@ -55,8 +55,8 @@ def paste_html(page: Page, html: str) -> None:
     page.evaluate(PASTE, html)
 
 
-def sent_text(upstream) -> str:
-    [request] = upstream.chat_requests()
+def sent_text(upstream, words: str) -> str:
+    [request] = [body for body in upstream.chat_requests() if reply.answering(words)(body)]
     [message] = [entry for entry in request["messages"] if entry["role"] == "user"]
     return message["content"]
 
@@ -66,7 +66,7 @@ def paste_and_send(page: Page, upstream, html: str, words: str) -> str:
     paste_html(page, html)
     page.keyboard.press("Enter")
     expect_reply(page, "Noted.")
-    return sent_text(upstream)
+    return sent_text(upstream, words)
 
 
 def test_a_pasted_email_with_nested_tables_is_sent_once(page_for, make_user, upstream):
