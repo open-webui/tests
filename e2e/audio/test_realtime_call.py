@@ -10,21 +10,23 @@ answer the voice model gives itself is saved as a reply of its own. Both survive
 turn that cannot be transcribed is asked again and adds no message of the user, and stopping a
 spoken answer tells the provider where playback stopped and saves the answer as interrupted. While
 the chat model works the panel shows Thinking... and its Stop cancels the request and tells the
-provider so. Mute stops the microphone reaching the provider, Review in chat closes the panel
-with the call still on and Voice mode returns to it, End call closes the panel and the
+provider so. Mute stops the microphone reaching the provider, hiding the side panel keeps the
+call on and the voice button, reading Return to call while it runs, brings it back (since
+fa4c7fe5e there is no Review in chat button for this), End call closes the panel and the
 provider's session, and a provider that refuses or drops the call shows its message and closes
 the panel. Realtime calls open on the browser's speech-to-text engine too, which the standard
 call refuses, and without the call permission there is no Voice mode at all.
 
-Discriminates: passes on the dev ebc6add67 build. In one frontend copy a spoken answer never
+Discriminates: passes on the dev 0f5a58f5f build. In one frontend copy a spoken answer never
 saved turns the chat model test red, the voice model's own answer never added turns that test
 red, a mute that keeps sending audio, End call leaving the call connected, a failure leaving the
 panel open, an empty conversation sent to the provider, a panel Stop that does nothing and Voice
 mode refusing realtime calls on the browser's speech-to-text each turn their test red, while the
-panel test stays green. In another, closing the panel ending the call turns the review test red,
+panel test stays green. In another, closing the panel ending the call turns the return test red,
 a failed transcription left unanswered turns that test red and an interruption that never tells
 the provider where playback stopped turns the interrupt test red, while the chat model test stays
-green.
+green. In a third, a voice button that still reads Voice mode and starts a new call while one
+runs turns the return test red.
 """
 
 from __future__ import annotations
@@ -253,7 +255,7 @@ def test_a_call_in_an_existing_chat_tells_the_provider_the_conversation(
     ]
 
 
-def test_review_in_chat_keeps_the_call_and_voice_mode_returns_to_it(
+def test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back(
     voice_page_for, make_user, realtime
 ):
     page = voice_page_for(make_user())
@@ -261,11 +263,13 @@ def test_review_in_chat_keeps_the_call_and_voice_mode_returns_to_it(
     call = realtime.wait_for_call()
     expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
 
-    page.get_by_role("button", name="Review in chat").click()
+    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
 
     expect(page.get_by_role("button", name="End call")).to_have_count(0)
-    assert not call.ended.wait(1), "reviewing in chat ended the call"
-    start_call(page)
+    assert not call.ended.wait(1), "hiding the call panel ended the call"
+    expect(page.get_by_role("button", name="Voice mode")).to_have_count(0)
+    page.get_by_role("button", name="Return to call").click()
+    expect(page.get_by_role("button", name="End call")).to_be_visible()
     expect(call_status(page, "Listening...")).to_be_visible()
     assert len(realtime.calls) == 1, "returning to the call opened a new one"
 
