@@ -3,7 +3,9 @@
 A fenced block in a reply shows its language above the code, highlights the code by that language
 and offers Collapse, Copy and Save (plus Preview on HTML and SVG). A `mermaid` fence draws a
 diagram instead of showing its source, and falls back to the source with an error when the
-diagram does not parse. Running a Python block is legacy and not covered. The artifacts pane
+diagram does not parse. A Python block offers Run only while the admin's Code Execution is on and
+no other language offers it (running it is legacy and not covered), and in a long block the
+language label and the buttons stay in view while its middle is read. The artifacts pane
 opened by an HTML block is covered in test_artifacts_pane_after_delete.py. A fence made of
 tildes is a code block like a backtick one (open-webui/open-webui#31543, issue #31542). Saving
 an edited block keeps its dollar signs as typed, in a reply with output items and in one with
@@ -14,7 +16,10 @@ Discriminates: passes on the 176d31d1d build; with the language label, the highl
 clipboard write, the collapse toggle, the save handler, the preview button or the mermaid
 render removed, the matching test goes red. With the check that only backtick fences are code
 blocks restored (the a5bc78300 mutation build), the tilde-fence test finds one plain line.
-With `99f1eaa3f` reverted (the 015dbc861 mutation build) both dollar sign tests go red.
+With `99f1eaa3f` reverted (the 015dbc861 mutation build) both dollar sign tests go red. On dev
+ebc6add67, in its mutation build (the `rendering-front` copy: Run shown whatever the switch and
+the buttons no longer sticky) the Code Execution off test and the long block test go red, the
+Run-while-on test stays green.
 """
 
 from __future__ import annotations
@@ -298,3 +303,65 @@ def test_preview_opens_the_html_block_in_the_artifacts_pane(page_for, make_user,
     button(box, "Preview").click()
 
     expect(pane.frame_locator("iframe").locator("h1")).to_have_text("hello preview")
+
+
+CODE_EXECUTION_CONFIG = ("/api/v1/configs/code_execution", "/api/v1/configs/code_execution")
+
+
+def set_code_execution(admin, enabled: bool) -> None:
+    with admin.client() as client:
+        current = client.get(CODE_EXECUTION_CONFIG[0]).json()
+        saved = client.post(
+            CODE_EXECUTION_CONFIG[1], json={**current, "ENABLE_CODE_EXECUTION": enabled}
+        )
+    saved.raise_for_status()
+
+
+PYTHON_AND_SCRIPT = fenced("python", "print('hi')") + "\n\n" + fenced("javascript", "alert(1);")
+
+
+def test_only_python_blocks_offer_run_while_code_execution_is_on(
+    page_for, make_user, upstream, admin, preserve
+):
+    preserve(CODE_EXECUTION_CONFIG)
+    set_code_execution(admin, True)
+    page = page_for(make_user())
+
+    box = ask_for(page, upstream, PYTHON_AND_SCRIPT, "show me two scripts")
+
+    expect(button(box, "Copy")).to_have_count(2)
+    expect(button(box, "Run")).to_have_count(1)
+    python_block = box.locator(".language-python").locator("xpath=..")
+    expect(button(python_block, "Run")).to_be_visible()
+
+
+def test_no_block_offers_run_once_code_execution_is_off(
+    page_for, make_user, upstream, admin, preserve
+):
+    preserve(CODE_EXECUTION_CONFIG)
+    set_code_execution(admin, False)
+    page = page_for(make_user())
+
+    box = ask_for(page, upstream, PYTHON_AND_SCRIPT, "show me two scripts")
+
+    expect(button(box, "Copy")).to_have_count(2)
+    expect(button(box, "Collapse")).to_have_count(2)
+    expect(button(box, "Run")).to_have_count(0)
+
+
+LONG_SCRIPT = "\n".join(f"step_{number} = {number}" for number in range(1, 151))
+
+
+def test_a_long_blocks_copy_button_stays_in_view_while_its_middle_is_read(
+    page_for, make_user, upstream
+):
+    page = page_for(make_user())
+    box = ask_for(page, upstream, fenced("python", LONG_SCRIPT), "show me a long script")
+    middle_line = editor_lines(box).filter(has_text="step_100 = 100")
+
+    middle_line.scroll_into_view_if_needed()
+
+    expect(middle_line).to_be_in_viewport()
+    expect(box.get_by_text("step_1 = 1", exact=True)).not_to_be_in_viewport()
+    expect(button(box, "Copy")).to_be_in_viewport()
+    expect(box.get_by_text("python", exact=True)).to_be_in_viewport()
