@@ -4,16 +4,17 @@ A fresh admin has two presets on the scripted model: the harbour master, with a 
 filter, an action and a knowledge base attached and a prompt suggestion of its own, and the ferry
 clerk with none of them. A chat on the harbour master offers its tool, runs its filter on the
 message, shows its action under the reply, offers its knowledge and shows its suggestion on the new
-chat. Switching the same chat to the ferry clerk, or starting one on it, carries none of that over:
-the clerk is offered no harbour tool and no harbour knowledge, its messages go out unfiltered, its
-replies carry no action and its new chat shows the instance's default suggestions. Attaching each
-of them in the editor is covered in e2e/models/test_model_editor.py.
+chat. Switching the same chat to the ferry clerk, or a new chat started from it, carries none of
+that over: the clerk is offered no harbour tool and no harbour knowledge, its messages go out
+unfiltered, its replies carry no action and its new chat shows the instance's default suggestions.
+Attaching each of them in the editor is covered in e2e/models/test_model_editor.py.
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose chat keeps the chosen
-tools when the model changes the tool test fails, and in one whose new chat shows the suggestions
-of any model that has some the suggestion test fails. In a backend copy that runs the filters,
-lists the actions and searches the knowledge of every model for each of them, the filter, action
-and knowledge tests fail.
+tools when the model changes both tool and filter tests fail, and in one whose new chat shows the
+suggestions of any model that has some the suggestion test fails. In a backend copy that runs
+every active filter on every model both tool and filter tests fail, in one that lists every active
+action on every model the action test fails and in one where a model without knowledge borrows
+the last model's the knowledge test fails.
 """
 
 from __future__ import annotations
@@ -136,17 +137,21 @@ def test_the_tool_and_filter_do_not_follow_the_chat_to_another_model(page_for, h
     assert on_clerk["messages"][-1]["content"] == "who holds locker 8?"
 
 
-def test_a_new_chat_on_another_model_carries_no_tool_or_filter(page_for, harbour, upstream):
+def test_a_new_chat_switched_to_another_model_carries_no_tool_or_filter(
+    page_for, harbour, upstream
+):
     builder, models = harbour
     page = page_for(builder)
     open_chat_on(page, models.master)
     sent_request(page, upstream, "who holds locker 7?")
 
-    open_chat_on(page, models.clerk)
+    page.get_by_role("link", name="New Chat").first.click()
+    expect(replies(page)).to_have_count(0)
+    switch_model(page, models.master, models.clerk)
     on_clerk = sent_request(page, upstream, "who holds locker 9?")
 
     assert "lookup_locker" not in offered_tool_names(on_clerk)
-    assert on_clerk["messages"][-1]["content"] == "who holds locker 9?"
+    assert on_clerk["messages"] == [{"role": "user", "content": "who holds locker 9?"}]
 
 
 def test_the_action_shows_only_under_the_models_own_replies(page_for, harbour, upstream):
