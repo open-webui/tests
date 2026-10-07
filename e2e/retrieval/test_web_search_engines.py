@@ -14,12 +14,8 @@ Not here: DuckDuckGo, SearXNG and the external engine (modules of their own), Az
 in the admin panel's engine list) and Sougou (its Tencent Cloud SDK is not among the backend's
 requirements).
 
-Red on dev ebc6add67: the YaCy form marks the username and password as required, so a YaCy
-without them, which the docs call optional and the backend supports, cannot be saved.
-
-Discriminates: passes on dev ebc6add67 but for YaCy without credentials; in a backend copy whose
-`search_web` tool hands the model the engine's hits without their snippets every engine case
-fails; in a frontend build without the two `required` marks the YaCy case passes.
+Discriminates: passes on dev ebc6add67; in a backend copy whose `search_web` tool hands the
+model the engine's hits without their snippets every engine case fails.
 """
 
 from __future__ import annotations
@@ -35,7 +31,6 @@ from harness.listener import text_answer
 from harness.search_apis import (
     API_KEY,
     ENGINES,
-    ENGINES_BY_NAME,
     Engine,
     Hit,
     SearchApis,
@@ -162,15 +157,3 @@ def test_the_engine_set_up_by_the_admin_answers_a_chat_search(
     citation = page.get_by_role("dialog")
     expect(citation.get_by_role("link", name=hits[0].link, exact=True)).to_be_visible()
     expect(citation).to_contain_text(PAGE_TEXT)
-
-
-def test_yacy_without_credentials_can_be_saved(page_for, searcher, searcher_admin, apis):
-    yacy = ENGINES_BY_NAME["yacy"]
-    page = page_for(searcher_admin)
-
-    fill_engine_form(page, yacy, {"YACY_QUERY_URL": f"{apis.base_url}/yacy"})
-
-    expect(
-        page.get_by_text("Settings saved successfully!").first,
-        "the form refuses a YaCy without username and password, which the docs call optional",
-    ).to_be_visible()

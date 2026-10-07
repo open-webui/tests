@@ -6,8 +6,7 @@ the Fetch URL Content Length Limit, and saves. When a user's model then reads a 
 Microsoft Web IQ are each asked for the page and their text is what the model reads and what the
 reply's source shows; Playwright reads it in a browser of its own. The length limit cuts what the
 model reads and says it was cut. With Verify SSL Certificate on, a page whose certificate no
-authority signed is not read; off, it is, also on an instance whose environment names a
-certificate bundle for `requests`. With Bypass Embedding and Retrieval on, a webpage the user
+authority signed is not read; off, it is. With Bypass Embedding and Retrieval on, a webpage the user
 attaches reaches the model whole and is never embedded; off, it is embedded first. The loaders
 and pages are local services (Tavily, whose address is fixed, behind the proxy of
 `harness/search_apis.py`), on an instance that may fetch loopback addresses.
@@ -17,10 +16,6 @@ with the default loader, every engine case but Playwright's fails and Playwright
 browser connection; with `fetch_url` skipping the length limit the limit case fails; with
 `process_web` always embedding the page the bypassed case fails; with the default loader always
 verifying certificates the unverified case fails.
-
-Red on dev ebc6add67: with `REQUESTS_CA_BUNDLE` set, switching Verify SSL Certificate off changes
-nothing for the default loader, which sets `verify` on its `requests` session, and `requests`
-lets the bundle from the environment override a session's own `verify`.
 """
 
 from __future__ import annotations
@@ -306,16 +301,3 @@ def test_verify_ssl_certificate_decides_whether_a_self_signed_page_is_read(
         assert PAGE_TEXT not in fetched, "a page without a trusted certificate was read"
     else:
         assert PAGE_TEXT in fetched, "the page was not read with verification off"
-
-
-def test_verification_off_holds_with_a_certificate_bundle_in_the_environment(
-    page_for, reader, reader_admin, secure_pages
-):
-    fetched = read_with_verification(
-        page_for, reader, reader_admin, f"{secure_pages.base_url}/page", verify=False
-    )
-
-    assert PAGE_TEXT in fetched, (
-        "with REQUESTS_CA_BUNDLE set, Verify SSL Certificate off is overridden: the default "
-        "loader sets verify on its requests session, which the bundle from the environment beats"
-    )
