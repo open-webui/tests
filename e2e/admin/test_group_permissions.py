@@ -9,15 +9,23 @@ the defaults withdraw; Notes under Features reaches a member of a granting group
 other group leaves it off. A group cannot take away what the defaults give: switching Allow File
 Upload off notes that the default stays enabled, and the member still attaches a file.
 
-Changes reach a member's open tab without a reload: Knowledge Access switched on puts Workspace
-in their sidebar and switched off takes it away again, and unticking them in the Users tab takes
-both the group's permission and a model shared only with the group out of the open tab. Default
-models set in the group's General tab start the member's next new chat on that model.
+Changes reach a member's open tab without a reload, as the groups docs promise: Knowledge Access
+switched on puts Workspace in their user menu and switched off takes it away again (and a reload
+agrees), Reset to Defaults takes back what the group granted, and unticking them in the Users tab
+takes both the group's permission and a model shared only with the group out of the open tab.
+Default models set in the group's General tab start the member's next new chat on that model.
+The sidebar's Workspace entry does not follow: it stays missing until a reload, so that test is
+red on dev.
 
-Discriminates: passes on dev ebc6add67; in a backend copy, groups combining to the later group's
-value turns the two-group and file upload tests red, and no access refresh being sent to the
-members turns the three open-tab tests red; in a frontend copy whose access refresh leaves the
-user and config as they were, the same three go red while the other tests pass.
+Discriminates: passes on dev ebc6add67 except the sidebar test, which a frontend copy whose
+sidebar re-checks its entries when the account changes turns green. In a backend copy, groups
+combining to the later group's value turns the two-group and file upload tests red; group
+permissions left out of the account's permissions turns the four section tests, the open-tab
+Workspace tests and the reset test red; no access refresh sent to the members turns the open-tab,
+reset and default model tests red. In a frontend copy whose access refresh leaves the account and
+config as they were, the open-tab, reset and default model tests go red, and without the "will
+remain enabled" note the file upload test does; Reset to Defaults keeping the switches as they
+were turns the reset test red.
 """
 
 from __future__ import annotations
@@ -259,13 +267,38 @@ def test_an_open_tab_gains_and_loses_the_workspace_as_the_group_changes(
     set_defaults(workspace=NO_WORKSPACE)
     member = make_user()
     group = make_named_group([member])
-    workspace = user_menu_entry(ready(page_for(member)), "Workspace")
+    member_page = page_for(member)
+    workspace = user_menu_entry(member_page, "Workspace")
     expect(workspace).to_have_count(0)
 
     save_group_switches(admin_page, group, {"Knowledge Access": True})
     expect(workspace).to_be_visible()
 
     save_group_switches(admin_page, group, {"Knowledge Access": False})
+    expect(workspace).to_have_count(0)
+    member_page.reload()
+    expect(user_menu_entry(member_page, "Workspace")).to_have_count(0)
+
+
+def test_reset_to_defaults_takes_back_what_the_group_granted(
+    admin_page, page_for, make_user, set_defaults, make_named_group
+):
+    set_defaults(workspace=NO_WORKSPACE)
+    member = make_user()
+    group = make_named_group([member], workspace={"knowledge": True})
+    workspace = user_menu_entry(ready(page_for(member)), "Workspace")
+    expect(workspace).to_be_visible()
+
+    editing = open_group(admin_page, group, "Permissions")
+    editing.get_by_role("button", name="Reset to Defaults").click()
+    admin_page.get_by_role("dialog").filter(has_text="Reset to Defaults").get_by_role(
+        "button", name="Confirm"
+    ).click()
+    expect(editing.get_by_role("switch", name="Knowledge Access")).to_have_attribute(
+        "aria-checked", "false"
+    )
+    save_group(admin_page, editing)
+
     expect(workspace).to_have_count(0)
 
 

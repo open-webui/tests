@@ -11,8 +11,11 @@ permissions or members tells each affected member's open tab to reload its acces
 that leaves the permissions as they were tells nobody.
 
 Discriminates: in a backend copy, `combine_permissions` letting the later group's value win (in
-place of the most permissive one) turns the two-group and switched-off tests red, and
-`refresh_group_sessions` doing nothing turns the open-tab tests red.
+place of the most permissive one) turns both two-group tests and the switched-off test red;
+leaving group permissions out of `get_permissions` and `has_permission` turns the two-group tests
+and the server check red; `refresh_group_sessions` doing nothing turns the two notice tests red;
+`has_permission` falling back to the built-in defaults in place of the saved ones turns the
+default-off test red, and refreshing members on every group edit turns the unchanged-edit test red.
 """
 
 from __future__ import annotations
