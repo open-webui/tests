@@ -3,7 +3,8 @@
 The instance runs in its own process on a free port against a scratch data directory, with the
 mock upstream as its only model provider, so a test can read its log, measure its process and
 script every model reply. When the checkout has a built frontend it is served too, which is
-what the browser suite drives.
+what the browser suite drives. `restart()` stops the server and starts it again on the same
+address, data and settings, as a redeploy does under a page that stays open.
 """
 
 from __future__ import annotations
@@ -17,9 +18,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import httpx
 import pytest
@@ -123,6 +124,8 @@ class LaunchedInstance:
     serves_frontend: bool
     database_url: str = ""
     redis_url: str = ""
+    stop_server: Callable[[], None] | None = field(default=None, repr=False)
+    start_server: Callable[[], int] | None = field(default=None, repr=False)
 
     def client(self, token: str | None = None) -> httpx.Client:
         return httpx.Client(
@@ -130,6 +133,18 @@ class LaunchedInstance:
             headers={"Authorization": f"Bearer {token or self.admin_token}"},
             timeout=120.0,
         )
+
+    def restart(self) -> None:
+        """Stop the server (SIGTERM, as a redeploy does) and start it again, healthy."""
+        self.stop()
+        self.start()
+
+    def stop(self) -> None:
+        self.stop_server()
+
+    def start(self) -> None:
+        """Start the stopped server again on the same port, data and settings."""
+        self.pid = self.start_server()
 
     def log_size(self) -> int:
         return self.log_path.stat().st_size
@@ -214,16 +229,24 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
         }
     )
     log_path = scratch / "server.log"
-    # an undrained pipe wedges the child once startup output fills it
-    with open(log_path, "w", encoding="utf-8") as log_file:
-        proc = subprocess.Popen(
-            [sys.executable, "-c", LAUNCHER, str(backend), str(port)],
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+    log_path.touch()
+    processes: list[subprocess.Popen] = []
+
+    def start() -> int:
+        # an undrained pipe wedges the child once startup output fills it
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            process = subprocess.Popen(
+                [sys.executable, "-c", LAUNCHER, str(backend), str(port)],
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        processes.append(process)
+        _wait_for_health(process, base_url, log_path)
+        return process.pid
+
     try:
-        _wait_for_health(proc, base_url, log_path)
+        start()
         if env["WEBUI_AUTH"].lower() == "false":
             # the web client's empty sign-in, which makes the first visitor the admin
             signup = httpx.post(
@@ -248,7 +271,7 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             pytest.fail(f"admin signup failed: HTTP {signup.status_code} {signup.text}")
         yield LaunchedInstance(
             base_url=base_url,
-            pid=proc.pid,
+            pid=processes[-1].pid,
             log_path=log_path,
             data_dir=scratch / "data",
             admin_token=signup.json()["token"],
@@ -256,19 +279,26 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             serves_frontend=build is not None,
             database_url=env["DATABASE_URL"],
             redis_url=env["REDIS_URL"],
+            stop_server=lambda: _stop_process(processes[-1]),
+            start_server=start,
         )
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        for process in processes:
+            _stop_process(process)
         keep_logs_in = os.getenv("OPEN_WEBUI_LOG_DIR")
         if keep_logs_in:
             Path(keep_logs_in).mkdir(parents=True, exist_ok=True)
             shutil.copy(log_path, Path(keep_logs_in) / f"server-{port}.log")
         shutil.rmtree(scratch, ignore_errors=True)
         services.close()
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
 
 
 def _wait_for_health(proc: subprocess.Popen, base_url: str, log_path: Path) -> None:

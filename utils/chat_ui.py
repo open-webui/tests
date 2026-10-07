@@ -36,3 +36,13 @@ def expect_reply(page: Page, text: str) -> None:
 
 def stop_button(page: Page) -> Locator:
     return page.get_by_role("button", name="Stop")
+
+
+def regenerate_buttons(page: Page) -> Locator:
+    """The Regenerate button under each finished reply."""
+    return conversation(page).get_by_label("Regenerate", exact=True)
+
+
+def typing_cursor(reply: Locator) -> Locator:
+    """The blinking cursor a reply shows while it is still being written."""
+    return reply.locator(".animate-pulse")

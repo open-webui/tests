@@ -2,8 +2,9 @@
 
 `reset(mode)` sets the fallback every reply uses (`ok`, `stream` or `error`). `queue(...)` lines
 up scripted replies (text, reasoning, tool calls, usage, an HTTP error, a slow stream, a late
-start) that the next chat completions consume in order; a reply with `match` only answers a
-request it accepts, so a title or follow-up task cannot eat the reply meant for the chat.
+start, a stream the provider drops halfway) that the next chat completions consume in order; a
+reply with `match` only answers a request it accepts, so a title or follow-up task cannot eat the
+reply meant for the chat.
 `requests` holds what Open WebUI actually sent, which is how a test sees the payload it built.
 """
 
@@ -30,6 +31,7 @@ class Reply:
     error_message: str = "upstream failed"
     chunk_delay: float = 0.0
     delay: float = 0.0  # seconds before the reply starts, headers included
+    hang_up_after: int | None = None  # pieces streamed before the connection drops unfinished
     match: Callable[[dict], bool] | None = None
 
 
@@ -184,7 +186,10 @@ def _handler(upstream: MockUpstream):
                 self._send_json(reply.status, {"error": {"message": reply.error_message}})
             elif stream:
                 self._start_stream()
-                for delta, finish_reason in _deltas(reply):
+                for sent, (delta, finish_reason) in enumerate(_deltas(reply)):
+                    if reply.hang_up_after is not None and sent > reply.hang_up_after:
+                        self.close_connection = True  # no closing chunk: a provider gone down
+                        return
                     self._event(
                         _chunk(delta, finish_reason, reply.usage if finish_reason else None)
                     )

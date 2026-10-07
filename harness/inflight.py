@@ -30,3 +30,12 @@ def start_slow_reply(
             raise AssertionError("the provider never received the slow reply's request")
         time.sleep(0.05)
     return turn
+
+
+def wait_until_no_reply_runs(client: httpx.Client, chat_id: str, timeout: float = 30.0) -> None:
+    """Return once the server runs no reply for the chat any more."""
+    deadline = time.monotonic() + timeout
+    while client.get(f"/api/tasks/chat/{chat_id}").json()["task_ids"]:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"a reply in chat {chat_id} was still running after {timeout}s")
+        time.sleep(0.1)
