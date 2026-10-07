@@ -329,7 +329,8 @@ def test_stopping_the_reply_leaves_the_background_subagent_running_and_its_repor
     )
     page = page_for(make_user())
     send(page, prompt)
-    expect(stop_button(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    expect(dispatched_row(page, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    expect(stop_button(page)).to_be_visible()
 
     stop_button(page).click()
 
