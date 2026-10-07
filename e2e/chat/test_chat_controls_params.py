@@ -14,11 +14,15 @@ every chat that sets none of its own; a value set in the chat's Controls wins ov
 chat value switched back to Default leaves the account's value in force, as on a chat that never
 changed it.
 
-Discriminates: passes on dev 30f3f6a8f; in a backend copy that drops the parameters a chat sends
-with its messages every test but the leak and system prompt ones fails. On a frontend build that
-sends the account's saved parameters without the chat's own, every chat-value test fails; on one
-that loads the chat's stored parameters as empty, the reload, sidebar and system prompt tests
-fail; on one that sends a chat's stop words as typed, the sampling test fails.
+The switched-back test is red on dev ebc6add67: Default stores the chat's value as null, and that
+null replaces the account's value in the request, so no temperature is sent at all.
+
+Discriminates: every other test passes on dev ebc6add67. On a build that sends only the account's
+parameters every chat-value test fails (and the switched-back test passes); on one that ignores a
+loaded chat's stored parameters the reload, sidebar and system prompt tests fail; on one that
+sends the stop field as one word the sampling test fails. In a backend copy that keeps custom
+values as text both custom parameter tests fail, and one that drops the parameters from a saved
+account setting fails the three account tests.
 """
 
 from __future__ import annotations

@@ -7,10 +7,10 @@ Skills each open a list with a search box that narrows it by name or description
 nothing matches; a tool picked from the narrowed list is offered to the model with the next
 message.
 
-Discriminates: passes on dev 30f3f6a8f; on a frontend build whose Integrations menu ignores the
-user's web search permission the withdrawn test fails, on one that ignores the model's
-capabilities the capability test fails, and on one whose tool and skill search boxes filter
-nothing the search tests fail.
+Discriminates: passes on dev ebc6add67. On a build whose Web Search item ignores the permission
+and the model's capabilities the withdrawn and capability tests fail; on one that never offers Web
+Search the offered and admin tests fail; on one whose tool and skill search boxes filter nothing
+both search tests fail; on one where a picked tool stays off the picked tool test fails.
 """
 
 from __future__ import annotations

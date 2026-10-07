@@ -6,18 +6,20 @@ and stays removed after a reload. The Default permissions an admin keeps under A
 Controls (Allow Chat Valves, Allow Chat System Prompt and Allow Chat Params) each take one section
 from a user's Controls when switched off, leaving the others, while an admin keeps all three.
 
-Discriminates: passes on dev 30f3f6a8f; on a frontend build whose Controls ignore the chat
-permissions every "withdrawn" test fails, and on one whose Files section keeps a removed file
-(or does not save the removal) the removal tests fail.
+Discriminates: passes on dev ebc6add67. On a build whose Controls ignore the three permissions
+each "withdrawn" case fails; on one whose Files section keeps a removed file both removal tests
+fail; on one whose Controls never save the reload test fails; on one whose Controls show no
+section the offered, admin and listed tests fail.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
+from typing import Callable
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Response, expect
 
 from harness import upstream as reply
 from utils.cached_chat import attach
@@ -25,6 +27,7 @@ from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
+CHAT_ROUTE = re.compile(r"/api/v1/chats/[0-9a-f-]{36}$")
 SECTIONS = ["Valves", "System Prompt", "Advanced Params"]
 SWITCHES = {
     "Valves": "Allow Chat Valves",
@@ -55,6 +58,16 @@ def remove_listed_file(panel: Locator, name: str) -> None:
     listed.get_by_role("button", name="Remove File", exact=True).click()
 
 
+def any_chat_saved(response: Response) -> bool:
+    return response.request.method == "POST" and bool(CHAT_ROUTE.search(response.url))
+
+
+def chat_saved(page: Page) -> Callable[[Response], bool]:
+    """Matches the Controls saving the open chat."""
+    chat_url = page.url.replace("/c/", "/api/v1/chats/")
+    return lambda response: response.request.method == "POST" and response.url == chat_url
+
+
 def ask(page: Page, upstream) -> str:
     """Sends a fresh question and returns everything the provider was sent for it."""
     question = f"what do my notes say? {uuid.uuid4().hex[:6]}"
@@ -73,7 +86,9 @@ def chat_with_a_file(page_for, make_user, upstream) -> Page:
     page = page_for(make_user())
     attach(page, "harbour.txt", "The harbour notes mention cormorants.")
     expect(page.locator("form").get_by_text("harbour.txt")).to_be_visible()
-    assert "cormorants" in ask(page, upstream)
+    # the Controls save the new chat once after its first reply; a later save must not race it
+    with page.expect_response(any_chat_saved):
+        assert "cormorants" in ask(page, upstream)
     expect(page).to_have_url(re.compile(r"/c/"))
     return page
 
@@ -100,7 +115,7 @@ def test_a_file_removed_under_files_is_no_longer_sent(chat_with_a_file, upstream
 def test_a_file_removed_under_files_stays_removed_after_a_reload(chat_with_a_file, upstream):
     page = chat_with_a_file
     panel = open_controls(page)
-    with page.expect_response(lambda response: re.search(r"/api/v1/chats/[^/]+$", response.url)):
+    with page.expect_response(chat_saved(page)):
         remove_listed_file(panel, "harbour.txt")
 
     page.reload()

@@ -29,7 +29,11 @@ backend copy whose chat update drops the title, whose pin or archive toggle stor
 clone stores a chat without the conversation or whose delete route answers without deleting, the
 matching menu test goes red and no other; on a backend whose search matches neither titles nor
 message text, whose filters are ignored or that searches every account's chats,
-the title, snippet, filter and other-account tests go red.
+the title, snippet, filter and other-account tests go red. The filter suggestion and paging tests
+pass on dev ebc6add67; on a build without the shared: option, the Untagged entry, Enter handling
+and result paging the matching test each fails, on one offering only true for pinned: the pinned
+false test fails, and in a backend copy ignoring shared: or matching any of several tags the
+shared and two tag tests fail.
 """
 
 from __future__ import annotations

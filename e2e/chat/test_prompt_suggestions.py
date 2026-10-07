@@ -7,9 +7,10 @@ prompt with the word Prompt beneath and sends that prompt when pressed. A model 
 of its own shows those in place of the defaults, and the defaults return once the plain model is
 picked again. A browser in a language the admin gave suggestions of their own sees those.
 
-Discriminates: passes on dev 30f3f6a8f; on a frontend build whose suggestion list ignores the
-typed text the narrowing tests fail, on one that shows the defaults whatever the model the model
-test fails, and on one that ignores the localized suggestions the language test fails.
+Discriminates: passes on dev ebc6add67. On a build whose suggestions ignore the typed text both
+narrowing tests fail, one that ignores the model's own suggestions fails the model test, one that
+ignores the localized suggestions fails the language test and one that drops the Prompt label
+fails the untitled test.
 """
 
 from __future__ import annotations
