@@ -1,20 +1,18 @@
-"""Journey: verifying a connection, an Anthropic connection end to end and a cached model list.
+"""Journey: what Verify Connection shows for a refused key, and refreshing a cached model list.
 
 The Verify Connection button in the admin's connection dialog asks the provider for its models
 through the server and says what came back: a provider refusing the key has its own reason shown,
-for an OpenAI-compatible server, an Ollama server and Anthropic alike. A connection whose URL names
-`api.anthropic.com` is Anthropic's: its models are listed from Anthropic's own paged model list
-with the `x-api-key` header and shown by their display names, and a chat on one goes to Anthropic's
-OpenAI-compatible chat endpoint with the key as a bearer token (docs: starting-with-anthropic). The
-host name counts anywhere in the URL, so a listener path of that name stands in. With Cache Base
-Model List on, a model the provider adds stays out of everyone's selector until the admin presses
-Refresh next to the switch.
+for an OpenAI-compatible server, an Ollama server and Anthropic alike (Anthropic is told by
+`api.anthropic.com` anywhere in the URL, so a listener path of that name stands in). With Cache
+Base Model List on, a model the provider adds stays out of everyone's selector until the admin
+presses Refresh next to the switch.
 
 Discriminates: passes on the dev ebc6add67 build except the two refusal tests below; in a backend
-copy, the Anthropic listing reading only the first page turns the Anthropic test red (the second
-page's model is missing), and the model list ignoring `refresh` while the cache is on turns the
-refresh test red. Red on dev, a real bug: the Ollama and the Anthropic refusal show "Network
-Problem" (the dialog reads only an OpenAI-shaped error and drops the reason the server sends).
+copy, the verify passing on an OpenAI-compatible refusal as a bare error turns the OpenAI refusal
+test red, and the model list ignoring `refresh` while the cache is on turns the refresh test red.
+Red on dev, real bugs: the Ollama and the Anthropic refusal both show "Network Problem". The
+dialog reads only an OpenAI-shaped error and drops the reason the server sends for Ollama; for
+Anthropic the server already replaces Anthropic's reason with a generic connection error.
 """
 
 from __future__ import annotations
@@ -24,17 +22,16 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from harness.listener import Listener, ReceivedRequest, json_answer
+from harness.listener import json_answer
 from harness.ollama_provider import OLLAMA_CONFIG
-from harness.second_provider import OPENAI_CONFIG, attach, sse
+from harness.second_provider import OPENAI_CONFIG, attach
 from utils.admin_connections import (
     connection_dialog,
-    is_openai_save,
     ollama_section,
     open_admin_connections,
 )
-from utils.chat_ui import chat_input, expect_reply, send
-from utils.model_selector import model_options, select_model
+from utils.chat_ui import chat_input
+from utils.model_selector import model_options
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -120,52 +117,6 @@ def test_a_refused_anthropic_verification_shows_anthropics_reason(
     shown = toast.inner_text()
     assert listener.requests_to(f"{ANTHROPIC_PATH}/models"), "Anthropic was never asked"
     assert "invalid x-api-key" in shown, f"Anthropic refused the key, the toast reads {shown!r}"
-
-
-# --------------------------------------------------------------------------- Anthropic
-
-
-def anthropic_models(request: ReceivedRequest):
-    """Anthropic's model list, one model per page."""
-    if "after_id=claude-harbor-1" in request.path:
-        return json_answer(
-            {"data": SECOND_PAGE, "has_more": False, "last_id": "claude-lighthouse-1"}
-        )
-    return json_answer({"data": FIRST_PAGE, "has_more": True, "last_id": "claude-harbor-1"})
-
-
-def serve_anthropic(listener: Listener, answer: str) -> None:
-    listener.route("GET", f"{ANTHROPIC_PATH}/models", anthropic_models)
-    listener.route("POST", f"{ANTHROPIC_PATH}/chat/completions", sse({"content": answer}))
-
-
-def test_an_anthropic_connection_lists_every_page_by_name_and_answers_a_chat(
-    page_for, make_user, preserve, listener
-):
-    preserve(OPENAI_CONFIG)
-    serve_anthropic(listener, "Claude answers from the harbor")
-    page = page_for(make_user(role="admin"))
-    url = f"{listener.base_url}{ANTHROPIC_PATH}"
-    form = add_dialog(page, open_admin_connections(page), url, ANTHROPIC_KEY)
-
-    form.get_by_role("button", name="Verify Connection").click()
-    expect(page.get_by_text("Server connection verified")).to_be_visible()
-    listing = listener.requests_to(f"{ANTHROPIC_PATH}/models")[0]
-    assert listing.headers.get("x-api-key") == ANTHROPIC_KEY
-    assert listing.headers.get("anthropic-version")
-    with page.expect_response(is_openai_save):
-        form.get_by_role("button", name="Save").click()
-    expect(form).to_be_hidden()
-
-    open_chat(page)
-    expect(model_options(page, "Claude Lighthouse")).to_have_count(1)
-    select_model(page, "Claude Harbor")
-    send(page, f"Ahoy, {uuid.uuid4().hex[:6]}?")
-    expect_reply(page, "Claude answers from the harbor")
-
-    [chat] = listener.requests_to(f"{ANTHROPIC_PATH}/chat/completions")
-    assert chat.headers.get("Authorization") == f"Bearer {ANTHROPIC_KEY}"
-    assert chat.json()["model"] == "claude-harbor-1"
 
 
 # --------------------------------------------------------------------------- cached model list

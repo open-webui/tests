@@ -9,7 +9,8 @@ once the admin switches the first off. A connection switched off while a user ch
 next message with "Model not found" and leaves the selector. A provider that cannot be reached
 leaves the rest of the list alone and its model's chat shows the connection error. A prefix the
 admin changes renames the model, and the provider still gets the bare id. An Ollama connection's
-allowlist set in its settings keeps only that model, and deleting the connection takes it away.
+allowlist set in its settings keeps only that model, deleting the connection takes it away and
+switching it off in its row takes its models out of a user's selector until it is switched on.
 Every provider is a local stand-in, and every test puts the connection settings back afterwards.
 
 Twin of integration/models/test_connection_routing.py.
@@ -18,7 +19,8 @@ Discriminates: passes on the dev ebc6add67 build; in a backend copy, models no l
 their connection's tags and type turns the filter test red, the merge letting the last connection
 win a shared name turns the shared-name test red, the prefix kept on the model id sent upstream
 turns both prefix tests red, the OpenAI listing ignoring `enable` turns the switch-off tests red,
-and the Ollama listing ignoring `model_ids` turns the Ollama allowlist test red.
+and the Ollama listing ignoring `model_ids` or `enable` turns the Ollama allowlist or the Ollama
+switch test red.
 """
 
 from __future__ import annotations
@@ -60,11 +62,13 @@ def prefix() -> str:
 def publish(admin, *model_ids: str) -> None:
     """Make the models readable by every account, as the admin's visibility toggle does."""
     with admin.client() as client:
-        client.get("/api/models", params={"refresh": True}).raise_for_status()
+        listed = client.get("/api/models", params={"refresh": True})
+        listed.raise_for_status()
+        names = {model["id"]: model["name"] for model in listed.json()["data"]}
         for model_id in model_ids:
             shared = client.post(
                 "/api/v1/models/model/access/update",
-                json={"id": model_id, "name": model_id, "access_grants": [EVERYONE_READS]},
+                json={"id": model_id, "name": names[model_id], "access_grants": [EVERYONE_READS]},
             )
             assert shared.status_code == 200, shared.text
 
@@ -330,3 +334,33 @@ def test_an_ollama_allowlist_keeps_one_model_and_deleting_the_connection_removes
 
     open_chat(page)
     expect(model_options(page, f"{prefix}.qwen3:latest")).to_have_count(0)
+
+
+def test_an_ollama_connection_switched_off_in_its_row_leaves_a_users_selector_and_returns(
+    page_for, make_user, admin, preserve, listener, prefix
+):
+    preserve(OLLAMA_CONFIG)
+    serve_ollama(listener, "llama3:latest")
+    with admin.client() as client:
+        connect_ollama(client, listener, prefix_id=prefix)
+    publish(admin, f"{prefix}.llama3:latest")
+    page = page_for(make_user())
+    open_chat(page)
+    expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(1)
+
+    admin_page = page_for(make_user(role="admin"))
+    settings = open_admin_connections(admin_page)
+    switch = connection_row(settings, OLLAMA_URL_PLACEHOLDER, listener.base_url).get_by_role(
+        "switch"
+    )
+    with admin_page.expect_response(is_ollama_save):
+        switch.click()
+    expect(switch).not_to_be_checked()
+    open_chat(page)
+    expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(0)
+
+    with admin_page.expect_response(is_ollama_save):
+        switch.click()
+    expect(switch).to_be_checked()
+    open_chat(page)
+    expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(1)
