@@ -5,12 +5,14 @@ editor's history without going live: the `/` menu still inserts the old text unt
 is set as production from the history. A prompt switched off in the workspace list leaves the
 `/` menu and returns when switched back on. A prompt shared with a group is offered to its
 members, who see it read-only in the editor, while an account outside the group is only offered
-what was made public.
+what was made public. A prompt shared with a group in the editor's Access dialog is offered to the
+group's member and not to an outsider, and taking the group out of that dialog withdraws it.
 
 Discriminates: passes on the 176d31d1d build. In a backend copy where saving a version ignores
 `is_production`, the draft test goes red (the draft goes live at once); where the prompt list
 ignores `is_active`, the switched-off prompt stays offered; where the prompt list skips the
-read-grant check, the stranger is offered the group's prompt.
+read-grant check, the stranger is offered the group's prompt; where the access update route
+stores no grants, both sharing tests go red (the member is never offered the prompt).
 """
 
 from __future__ import annotations
@@ -152,3 +154,39 @@ def test_a_prompt_shared_with_a_group_reaches_only_its_members(
     stranger_menu = _slash_menu(page_for(stranger), prefix)
     expect(_offered(stranger_menu, public)).to_be_visible()
     expect(_offered(stranger_menu, shared)).to_have_count(0)
+
+
+def test_a_prompt_shared_with_a_group_in_the_access_dialog_is_offered_until_the_group_is_removed(
+    page_for, librarian, admin, make_user
+):
+    account, add = librarian
+    member, stranger = make_user(), make_user()
+    group_id = make_group(admin, [member], PROMPT_USER)
+    with admin.client() as client:
+        group_name = client.get(f"/api/v1/groups/id/{group_id}").json()["name"]
+    command = f"crew{uuid.uuid4().hex[:8]}"
+    prompt_id = add(command, "Brief the crew.")
+
+    page = page_for(account)
+    page.goto(f"/workspace/prompts/{prompt_id}")
+    page.get_by_role("main").get_by_role("button", name="Access").click()
+    dialog = page.get_by_role("dialog").filter(has_text="Access Control")
+    dialog.get_by_role("button", name="Add Access").click()
+    picker = page.get_by_role("dialog").filter(has_text="Add Access").last
+    picker.get_by_placeholder("Search").fill(group_name)
+    picker.get_by_role("button", name=group_name).click()
+    picker.get_by_role("button", name="Add", exact=True).click()
+    expect(page.get_by_text("Saved").first).to_be_visible()
+    expect(dialog.get_by_text(group_name)).to_be_visible()
+
+    member_page, stranger_page = page_for(member), page_for(stranger)
+    expect(_inserted_text(member_page, command)).to_have_text("Brief the crew.")
+    expect(_offered(_slash_menu(stranger_page, command), command)).to_have_count(0)
+
+    dialog.get_by_text(group_name).locator("xpath=ancestor::div[3]").get_by_role(
+        "button"
+    ).last.click()
+    expect(dialog.get_by_text(group_name)).to_have_count(0)
+    expect(page.get_by_text("Saved").first).to_be_visible()
+
+    expect(_offered(_slash_menu(member_page, command), command)).to_have_count(0)
