@@ -7,7 +7,8 @@ menu and through the search dialog's `tag:` filter, which lists the chats carryi
 chat carries a tag the input stops suggesting it.
 
 The suggestion test is red on dev: the suggestion list sits outside the menu, so the menu's
-outside-click handler closes the menu on the pick and the tag is never added.
+outside-click handler closes the menu on the pick and the tag is never added
+(open-webui/open-webui#32014).
 
 Discriminates: the other three pass on dev ebc6add67; in a frontend copy whose tag input skips
 its add request and whose tag chip skips its delete request, every test fails.
@@ -147,7 +148,8 @@ def test_a_tag_the_account_already_uses_is_suggested_and_added_to_a_second_chat(
     menu = open_actions_menu(page, second_id)
     expect(
         tag_chip(menu, tag),
-        "picking the suggestion closed the menu before the tag was added",
+        "picking the suggestion closed the menu before the tag was added "
+        "(open-webui/open-webui#32014)",
     ).to_be_visible()
 
     dialog = search_tag(page, tag)

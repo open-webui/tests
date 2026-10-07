@@ -15,7 +15,7 @@ agrees), Reset to Defaults takes back what the group granted, and unticking them
 takes both the group's permission and a model shared only with the group out of the open tab.
 Default models set in the group's General tab start the member's next new chat on that model.
 The sidebar's Workspace entry does not follow: it stays missing until a reload, so that test is
-red on dev.
+red on dev (open-webui/open-webui#32020).
 
 Discriminates: passes on dev ebc6add67 except the sidebar test, which a frontend copy whose
 sidebar re-checks its entries when the account changes turns green. In a backend copy, groups
@@ -315,7 +315,10 @@ def test_the_sidebar_gains_the_workspace_entry_without_a_reload(
 
     expect(user_menu_entry(member_page, "Workspace")).to_be_visible()
     member_page.keyboard.press("Escape")
-    stale = "the user menu offers Workspace at once, the sidebar only after a reload"
+    stale = (
+        "the user menu offers Workspace at once, the sidebar only after a reload "
+        "(open-webui/open-webui#32020)"
+    )
     expect(sidebar_entry(member_page, "Workspace"), stale).to_be_visible()
 
 

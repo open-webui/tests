@@ -13,9 +13,10 @@ model from the selector.
 
 Two tests stay red on dev ebc6add67. The CSV export reads each rating's chat from the rating data,
 where it is never stored (the chat sits in the rating's meta), so its chat_id column is always
-empty. Rating the reply of a comparison that is not the selected one selects it first, which
-rebuilds the reply and closes the rating form it just opened, so the rating is saved without the
-form for a score, a reason, a comment or tags.
+empty (open-webui/open-webui#32021). Rating the reply of a comparison that is not the selected one
+selects it first, which rebuilds the reply and closes the rating form it just opened, so the
+rating is saved without the form for a score, a reason, a comment or tags
+(open-webui/open-webui#32022).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, sorting the leaderboard the other
 way round turns the ranking test red, swapping its won and lost columns turns the counts test
@@ -298,7 +299,8 @@ def test_rating_the_first_reply_of_a_comparison_opens_the_rating_form(
 
     expect(
         conversation(page).get_by_text("How would you rate this response?"),
-        "rating the reply that is not the selected one saves it and drops its rating form",
+        "rating the reply that is not the selected one saves it and drops its rating form "
+        "(open-webui/open-webui#32022)",
     ).to_be_visible()
 
 
@@ -379,7 +381,8 @@ def test_the_csv_export_lists_each_rating_with_its_chat(duel, admin, page_for):
     assert (row["user_id"], row["model_id"], row["rating"]) == (rater.id, first_id, "1")
     assert row["sibling_model_ids"] == second_id
     assert row["chat_id"] == chat["id"], (
-        "the CSV export reads the chat from the rating data and leaves it out"
+        "the CSV export reads the chat from the rating data and leaves it out "
+        "(open-webui/open-webui#32021)"
     )
 
 

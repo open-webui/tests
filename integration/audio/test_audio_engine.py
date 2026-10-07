@@ -6,7 +6,8 @@ the engine the configured model, the chosen voice and the key, and a recording c
 engine's transcript, and a transcription the engine refuses reports the engine's own reason.
 Putting the settings back leaves local Whisper selected as before. The refusal test is red on dev
 ebc6add67: the failed response is released before its body is read, so only the engine's status
-("429, message='Too Many Requests'") reaches the user, never the reason it gives.
+("429, message='Too Many Requests'") reaches the user, never the reason it gives
+(open-webui/open-webui#32009).
 
 Discriminates: in a backend copy, `get_available_voices` answering the built-in OpenAI voices
 without asking a custom endpoint, `_tts_openai` leaving out the configured model and
@@ -104,7 +105,8 @@ def test_a_transcription_the_engine_refuses_reports_the_engines_reason(engine, m
 
     assert transcribed.status_code >= 400
     assert "Quota exceeded for whisper-1." in transcribed.text, (
-        f"the engine's own error message never reaches the user: {transcribed.text}"
+        "the engine's own error message never reaches the user (open-webui/open-webui#32009): "
+        f"{transcribed.text}"
     )
 
 

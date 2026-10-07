@@ -11,7 +11,8 @@ backend copy that sends a new channel message to no one live the sending test go
 frontend build whose channel messages ignore a swipe the swipe test fails at the quote as well.
 
 The swipe test is red on dev ebc6add67: the same swipe also reaches the sidebar's swipe-to-open
-gesture, so the drawer slides open over the channel and covers the quoted message.
+gesture, so the drawer slides open over the channel and covers the quoted message
+(open-webui/open-webui#32016).
 """
 
 from __future__ import annotations
@@ -100,5 +101,8 @@ def test_a_swipe_on_a_message_quotes_it_and_leaves_the_drawer_shut(page_for, mem
 
     replying = phone.get_by_text(f"Replying to {at_desk.name}")
     expect(replying).to_be_visible()
-    expect_off_screen(sidebar(phone).get_by_role("link", name="New Chat"))
+    expect_off_screen(
+        sidebar(phone).get_by_role("link", name="New Chat"),
+        "the swipe to reply also opened the sidebar (open-webui/open-webui#32016)",
+    )
     expect_on_screen(replying)

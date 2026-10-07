@@ -20,7 +20,7 @@ the skip link pointing nowhere the skip link test.
 
 The settings focus test is red on dev ebc6add67: Settings opened from the user menu hand the focus
 back on closing to the menu's Settings entry, which is gone by then, so the focus falls to the page
-itself and the next Tab starts over at the top of the page.
+itself and the next Tab starts over at the top of the page (open-webui/open-webui#32017).
 """
 
 from __future__ import annotations
@@ -233,7 +233,8 @@ def test_closing_settings_opened_from_the_user_menu_keeps_the_keyboard_focus(key
     expect(settings).to_be_hidden()
 
     assert focused(keyboard_page) != "the page itself", (
-        "closing Settings dropped the keyboard focus onto the page itself"
+        "closing Settings dropped the keyboard focus onto the page itself "
+        "(open-webui/open-webui#32017)"
     )
 
 

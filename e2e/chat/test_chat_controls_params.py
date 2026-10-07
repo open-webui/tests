@@ -15,7 +15,8 @@ chat value switched back to Default leaves the account's value in force, as on a
 changed it.
 
 The switched-back test is red on dev ebc6add67: Default stores the chat's value as null, and that
-null replaces the account's value in the request, so no temperature is sent at all.
+null replaces the account's value in the request, so no temperature is sent at all
+(open-webui/open-webui#32013).
 
 Discriminates: every other test passes on dev ebc6add67. On a build that sends only the account's
 parameters every chat-value test fails (and the switched-back test passes); on one that ignores a
@@ -270,5 +271,6 @@ def test_a_chat_value_switched_back_to_default_leaves_the_accounts_one(
     request = _ask(page, upstream)
 
     assert request.get("temperature") == 0.6, (
-        "Temperature reads Default in the chat's Controls, yet the account's saved 0.6 was not sent"
+        "Temperature reads Default in the chat's Controls, yet the account's saved 0.6 was not "
+        "sent (open-webui/open-webui#32013)"
     )

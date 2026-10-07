@@ -17,7 +17,7 @@ checked.
 
 Five tests stay red, on what the page does not name as a breaker. Two rewrite the tool list at
 the very start of the prefix: opening a folder in the terminal's file browser moves the working
-directory written into the run_command tool's description (open-webui/open-webui#31589), and a
+directory written into the run_command tool's description (open-webui/open-webui#32026), and a
 reload with the terminal's shell open closes it, which drops the two user shell tools
 (open-webui/open-webui#31590, fix PR #31602 open). Two rewrite the system message: the turn a
 timer or a background sub-agent's report starts is sent the chat's finished system prompt with
@@ -226,7 +226,7 @@ def test_opening_a_folder_in_the_terminal_file_browser_keeps_the_prefix(terminal
     requests = chat_requests(upstream)
     broken = first_break(requests)
     assert broken is None, (
-        "#31589: opening a folder in the terminal's file browser rewrote the run_command tool "
+        "#32026: opening a folder in the terminal's file browser rewrote the run_command tool "
         f"definition, which carries the folder, at the start of the cached prefix: {broken}"
     )
 

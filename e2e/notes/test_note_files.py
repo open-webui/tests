@@ -10,7 +10,8 @@ person's Image Compression asks for.
 A reader's chat on the note is not given the note's file (docs: "Attached files feed the note's
 chat", and read access is enough to open one): the file belongs to the owner and the retrieval
 step only lets through files the asker owns or reaches through a knowledge base, a channel, a
-shared chat or a model, never through a note. That test stays red until the note grants count.
+shared chat or a model, never through a note. That test stays red until the note grants count
+(open-webui/open-webui#32011).
 
 Discriminates: passes on the dev ebc6add67 build except the reader's chat test. In a frontend
 build whose file dialog shows "No content" for the text, whose note chip offers its remove button
@@ -196,7 +197,8 @@ def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, u
     )
 
     assert FILE_TEXT in json.dumps(request["messages"]), (
-        "a reader's chat on the shared note was not given the note's file; the owner's is"
+        "a reader's chat on the shared note was not given the note's file; the owner's is "
+        "(open-webui/open-webui#32011)"
     )
 
 

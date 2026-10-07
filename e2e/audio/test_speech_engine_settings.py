@@ -11,7 +11,7 @@ speech-to-text model is the one the engine is asked for; a voice the user picked
 the admin changes the default voice; and a user who picks the Web API as their own Speech-to-Text
 Engine dictates in the browser without the engine being called. The Response Splitting select
 should be named for a screen reader as its markup asks; on dev ebc6add67 the shared select
-component drops the name it is given, so that test is red.
+component drops the name it is given, so that test is red (open-webui/open-webui#32010).
 
 Discriminates: passes on the dev ebc6add67 build; in a frontend copy, the admin tab leaving the
 Azure Endpoint URL out of its save turns both Azure tests red, leaving out the Mistral API Base
@@ -316,7 +316,7 @@ def test_the_response_splitting_select_has_the_name_it_is_given(admin_page):
             "combobox", name="Select how to split message text for TTS requests", exact=True
         ),
         "the Response Splitting select has no accessible name: the select component replaces "
-        "the aria-label it is passed with its own empty one",
+        "the aria-label it is passed with its own empty one (open-webui/open-webui#32010)",
     ).to_be_visible()
 
 

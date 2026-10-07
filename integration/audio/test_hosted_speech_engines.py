@@ -8,7 +8,8 @@ for with the admin's model and key, and a voice ElevenLabs does not list is refu
 asked. With Deepgram picked, a recording comes back as Deepgram's transcript, sent with the admin's
 key and model and the language asked for, and an error Deepgram gives is passed on. That last
 test is red on dev ebc6add67: the transcription keeps only Deepgram's status ("401, message=
-'Unauthorized'") and drops the reason Deepgram gives, which the error handler means to show.
+'Unauthorized'") and drops the reason Deepgram gives, which the error handler means to show
+(open-webui/open-webui#32009).
 
 Discriminates: the other tests pass on dev ebc6add67; in a backend copy whose `_tts_elevenlabs`
 asks for the admin's voice in place of the one asked for the speech test fails, and in one whose
@@ -151,5 +152,6 @@ def test_an_error_deepgram_gives_is_passed_on(hosted, services):
     assert transcribed.status_code >= 400
     # the failed response is released before its body is read, so only the status is left
     assert "Invalid credentials." in transcribed.text, (
-        f"Deepgram's own error message never reaches the user: {transcribed.text}"
+        "Deepgram's own error message never reaches the user (open-webui/open-webui#32009): "
+        f"{transcribed.text}"
     )

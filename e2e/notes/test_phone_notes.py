@@ -11,7 +11,8 @@ a frontend build whose phone layout is 480 pixels wide (wider than the screen, s
 right fall off it) the menu test goes red too.
 
 The Download choices test is red on dev ebc6add67: on a screen this narrow the choices open beside
-the menu, past the left edge of the screen, with their names cut off.
+the menu, past the left edge of the screen, with their names cut off
+(open-webui/open-webui#32015).
 """
 
 from __future__ import annotations
@@ -135,4 +136,7 @@ def test_the_download_choices_of_the_note_menu_fit_the_screen(phone):
     choices = phone.get_by_role("menu").last.get_by_role("button")
     expect(choices.first).to_be_visible()
     for index in range(choices.count()):
-        expect_on_screen(choices.nth(index))
+        expect_on_screen(
+            choices.nth(index),
+            "the Download choices open past the edge of the screen (open-webui/open-webui#32015)",
+        )

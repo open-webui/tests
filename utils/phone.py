@@ -80,9 +80,9 @@ def _wait_until(locator: Locator, check: str, failure: str) -> None:
         raise AssertionError(f"{failure}: {locator} is {locator.evaluate(WHERE)}") from None
 
 
-def expect_on_screen(locator: Locator) -> None:
+def expect_on_screen(locator: Locator, failure: str = "not on the screen or covered") -> None:
     expect(locator).to_be_visible()
-    _wait_until(locator, ON_SCREEN, "not on the screen or covered")
+    _wait_until(locator, ON_SCREEN, failure)
 
 
 def expect_reachable(locator: Locator) -> None:
@@ -93,10 +93,10 @@ def expect_reachable(locator: Locator) -> None:
     assert locked is None, f"{locator} only shows by scrolling what a finger cannot: {locked}"
 
 
-def expect_off_screen(locator: Locator) -> None:
+def expect_off_screen(locator: Locator, failure: str = "still on the screen") -> None:
     if locator.count() == 0 or not locator.is_visible():
         return
-    _wait_until(locator, OFF_SCREEN, "still on the screen")
+    _wait_until(locator, OFF_SCREEN, failure)
 
 
 def tap_on_screen(locator: Locator) -> None:

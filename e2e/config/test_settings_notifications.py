@@ -7,7 +7,7 @@ it on gets only the toast. Clicking the toast opens the chat whose reply finishe
 button dismisses it without leaving the page. The toast plays the notification sound until the user
 switches Notification Sound off. A user whose browser denies the permission is told so and the
 setting stays off; on dev the switch itself still flips on, so that test stays red until the switch
-follows the refusal.
+follows the refusal (open-webui/open-webui#32024).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, showing the finished-reply
 notification without reading `notificationEnabled` turns the second account's check red; on
@@ -116,8 +116,8 @@ def test_a_denied_permission_keeps_browser_notifications_off(page_for, make_user
     with account.client() as client:
         stored = client.get("/api/v1/users/user/settings").json()["ui"]
     assert stored.get("notificationEnabled") is not True
-    # red on dev: the switch flips itself on though the setting stayed off
-    expect(switch).to_have_attribute("aria-checked", "false")
+    flipped_on = "the switch flipped on though the setting stayed off (open-webui/open-webui#32024)"
+    expect(switch, flipped_on).to_have_attribute("aria-checked", "false")
 
 
 def test_clicking_the_toast_opens_the_chat_whose_reply_finished(page_for, make_user, upstream):

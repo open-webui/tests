@@ -27,7 +27,8 @@ tests go red. In a backend copy whose model create drops `params` the model sele
 and in one that leaves the chat's files out of the request the file test.
 
 The two Download choices tests are red on dev ebc6add67: on a screen this narrow the choices open
-beside the menu, past the left edge of the screen, with their names cut off.
+beside the menu, past the left edge of the screen, with their names cut off
+(open-webui/open-webui#32015).
 """
 
 from __future__ import annotations
@@ -57,6 +58,8 @@ from utils.phone import (
 )
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+
+CUT_OFF = "the Download choices open past the edge of the screen (open-webui/open-webui#32015)"
 
 # a 2x2 red PNG
 RED_PNG = base64.b64decode(
@@ -379,7 +382,7 @@ def test_the_download_choices_of_the_chat_menu_fit_the_screen(phone, upstream):
     download.dispatch_event("click")
 
     for choice in ("Export chat (.json)", "Plain text (.txt)", "PDF document (.pdf)"):
-        expect_on_screen(phone.get_by_role("button", name=choice))
+        expect_on_screen(phone.get_by_role("button", name=choice), CUT_OFF)
 
 
 def open_chat_row_menu(page_for, make_user, upstream) -> tuple[Page, Locator]:
@@ -412,4 +415,4 @@ def test_the_download_choices_of_a_chat_rows_menu_fit_the_screen(page_for, make_
     download.dispatch_event("click")
 
     for choice in ("Export chat (.json)", "Plain text (.txt)", "PDF document (.pdf)"):
-        expect_on_screen(page.get_by_role("button", name=choice))
+        expect_on_screen(page.get_by_role("button", name=choice), CUT_OFF)

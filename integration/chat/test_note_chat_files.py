@@ -7,7 +7,8 @@ each of them opens the note's chat and asks; the test reads what the provider wa
 
 The reader's chat is not given the file: the note adds its files to the request, but the retrieval
 step lets through only files the asker owns or reaches through a knowledge base, a channel, a
-shared chat or a model, never through a note. That test stays red until a note's grant counts.
+shared chat or a model, never through a note. That test stays red until a note's grant counts
+(open-webui/open-webui#32011).
 Twin of the note chat tests in e2e/notes/test_note_files.py.
 
 Discriminates: passes on dev ebc6add67 except the reader test; in a backend copy whose note chat
@@ -95,4 +96,7 @@ def test_the_owners_note_chat_is_given_the_notes_file(shared_note, upstream):
 def test_a_readers_note_chat_is_given_the_notes_file(shared_note, upstream):
     _, reader, note_id = shared_note
     sent = sent_in_note_chat(reader, note_id, upstream)
-    assert FILE_TEXT in sent, "a reader's chat on the shared note was not given the note's file"
+    assert FILE_TEXT in sent, (
+        "a reader's chat on the shared note was not given the note's file "
+        "(open-webui/open-webui#32011)"
+    )

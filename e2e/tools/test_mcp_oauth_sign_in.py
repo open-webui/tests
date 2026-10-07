@@ -12,7 +12,8 @@ also fetches the authorize URL itself before sending the browser there.
 
 Red on dev ebc6add67: choosing OAuth 2.1 in the dialog leaves its check button labelled and
 tooltipped "Verify Connection". f822605b3 meant it to read "Check OAuth Discovery", but the label
-is computed by a function the template calls without naming the auth type, so it never updates.
+is computed by a function the template calls without naming the auth type, so it never updates
+(open-webui/open-webui#32012).
 
 Discriminates: on dev ebc6add67, in a backend copy that never stores the token from the sign-in
 callback every sign-in test fails (the server never shows as connected); with the stored token
@@ -177,5 +178,6 @@ def test_the_check_is_named_for_oauth_discovery_once_oauth_is_chosen(page_for, m
     choose_auth(form, "OAuth 2.1")
 
     expect(form.get_by_text("Not Registered")).to_be_visible()
-    expect(form.get_by_role("button", name="Check OAuth Discovery")).to_be_visible()
-    expect(form.get_by_role("button", name="Verify Connection")).to_have_count(0)
+    still_verify = "the check stays labelled Verify Connection (open-webui/open-webui#32012)"
+    expect(form.get_by_role("button", name="Check OAuth Discovery"), still_verify).to_be_visible()
+    expect(form.get_by_role("button", name="Verify Connection"), still_verify).to_have_count(0)

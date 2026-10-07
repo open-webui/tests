@@ -4,7 +4,8 @@ With title generation off, a new chat takes its first message as its title. A pl
 becomes the title as typed. A message that starts with a skill picked from the `$` menu should be
 titled the way the message reads, but the sidebar shows the mention's raw markup, such as
 `<$skill-id|Skill name> what now?`, because the fallback title is the stored message text and
-the mention is only resolved where the message itself is drawn. That test is red on purpose.
+the mention is only resolved where the message itself is drawn. That test is red on purpose
+(open-webui/open-webui#32019).
 
 Discriminates: the plain message test passes on the dev ebc6add67 build and turns red in a
 backend copy whose fallback title is a fixed "Untitled"; the mention test fails on that build
@@ -82,4 +83,5 @@ def test_a_first_message_with_a_skill_mention_is_titled_without_its_markup(
 
     title = _sidebar_titles(page).filter(has_text=question)
     expect(title).to_have_count(1)
-    expect(title, "the chat title shows the mention's raw markup").not_to_contain_text("<$")
+    raw_markup = "the chat title shows the mention's raw markup (open-webui/open-webui#32019)"
+    expect(title, raw_markup).not_to_contain_text("<$")

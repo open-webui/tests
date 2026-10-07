@@ -10,7 +10,7 @@ in Admin Panel > Functions leaves the reply.
 
 The rewrite test is red on dev: the action's new content is stored on the reply, but the page
 renders a reply from its `output` items, which the rewrite leaves alone, so the old text stays on
-screen live and after a reload.
+screen live and after a reload (open-webui/open-webui#32023).
 
 Discriminates: on dev ebc6add67 all pass but the rewrite test (the bug above), which passes on a
 frontend build that writes the action's content into the reply's output as well. One backend copy
@@ -125,7 +125,10 @@ def test_a_global_action_rewrites_the_reply_it_was_pressed_on(page_for, admin, m
         [rewrite] = ran.value.json()["messages"]
         assert rewrite["content"] == "Fair copy: The ferry leaves at noon."
 
-        shown = "the page keeps showing the reply's output, not the action's rewrite"
+        shown = (
+            "the page keeps showing the reply's output, not the action's rewrite "
+            "(open-webui/open-webui#32023)"
+        )
         expect(last_reply(page), shown).to_contain_text("Fair copy: The ferry leaves at noon.")
         page.reload()
         expect(last_reply(page), shown).to_contain_text("Fair copy: The ferry leaves at noon.")
