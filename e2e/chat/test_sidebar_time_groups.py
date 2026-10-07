@@ -4,13 +4,13 @@ Each chat sits under the heading for when it was last updated, newest first: Tod
 Previous 7 days, Previous 30 days, then the month for earlier chats of this year and the year for
 older ones. The browser's clock is fixed so the headings do not depend on when the test runs.
 
-One test is red on dev: a chat from the last day of the previous month is not filed under
-Yesterday on the first of the month, because Yesterday is only given when both days fall in the
-same month, so it lands under Previous 7 days (open-webui/open-webui#31964).
+A chat from the last day of the previous month used to land under Previous 7 days on the first of
+the month, because Yesterday was only given when both days fell in the same month
+(open-webui/open-webui#31964), fixed in dev 507989044.
 
-Discriminates: passes on dev 30f3f6a8f apart from the month boundary test (the bug above), which
-passes in a frontend build giving Yesterday for the previous calendar day; in a backend copy whose
-chat import stamps every chat with the time of the import the grouping test fails.
+Discriminates: passes on dev f6cbeb1a1; the month boundary test fails on dev 806644fcb, before
+507989044. In a backend copy whose chat import stamps every chat with the time of the import the
+grouping test fails.
 """
 
 from __future__ import annotations

@@ -5,13 +5,14 @@ input's Integrations menu is asked first, with that text. Cancel leaves Web Sear
 next question reaches the model without the search tool; Continue turns it on, so the model is
 offered the search. With the switch off nobody is asked.
 
-Both answering tests fail on dev 30f3f6a8f: the dialog opens while the Integrations menu stays
-open behind it, and that menu's outside-click handler takes the first click on Cancel or Continue
-to close itself, so the dialog needs a second click (open-webui/open-webui#31963).
+Both answering tests used to fail: the dialog opened while the Integrations menu stayed open
+behind it, and that menu's outside-click handler took the first click on Cancel or Continue to
+close itself, so the dialog needed a second click (open-webui/open-webui#31963), fixed in dev
+806644fcb.
 
-Discriminates: on a frontend build of dev 30f3f6a8f that closes the Integrations menu as Web
-Search is picked, both answering tests pass; on that build asking even with the switch off, the
-"unasked" test fails.
+Discriminates: passes on dev f6cbeb1a1; both answering tests fail on dev 6defd4a94, before
+806644fcb. On a frontend build of dev 30f3f6a8f that closes the Integrations menu as Web Search is
+picked and asks even with the switch off, the "unasked" test fails.
 """
 
 from __future__ import annotations
