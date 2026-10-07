@@ -4,12 +4,19 @@ Ctrl stands in for Cmd on Linux. In an answered chat: Ctrl+Shift+O starts a new 
 opens and closes the sidebar, Ctrl+R in the message box regenerates the last reply, Ctrl+Shift+C
 copies it, Ctrl+Shift+Backspace deletes the chat after its confirm dialog, Ctrl+Shift+M opens the
 model selector, Ctrl+. the settings, Ctrl+/ the shortcut list and Ctrl+Shift+' a temporary chat.
-With Keyboard Shortcuts switched off in the settings the sidebar, model selector and new chat
-shortcuts do nothing.
+Shift+Escape puts the focus back in the message box, Escape there stops a reply still streaming
+and keeps what came so far, and ArrowUp in the empty message box opens the last question for
+editing. Bound to keys of the account's choosing, the unassigned Navigate to previous and next
+chat step through the sidebar's chats and Toggle Controls opens and closes the Controls panel.
+With Keyboard Shortcuts switched off in the settings the sidebar, model selector and new
+chat shortcuts do nothing.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose keydown handler ignores every
 chord but Ctrl+K every test but the switched-off one fails, and in a backend copy whose settings
-update drops the switch that one fails.
+update drops the switch that one fails. In a frontend build of ebc6add67 whose
+message box ignores Escape and ArrowUp, and whose Shift+Escape focuses nothing, the three message
+box tests fail; in one whose chat navigation and Toggle Controls shortcuts do nothing, the two
+bound shortcut tests fail.
 """
 
 from __future__ import annotations
@@ -20,7 +27,16 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, conversation, expect_reply, replies, send
+from harness.chat import ask
+from utils.chat_ui import (
+    chat_input,
+    conversation,
+    expect_reply,
+    last_reply,
+    replies,
+    send,
+    stop_button,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -138,3 +154,86 @@ def test_no_shortcut_answers_with_keyboard_shortcuts_switched_off(page_for, acco
     expect(page.get_by_placeholder("Search a model")).to_have_count(0)
     expect(page).to_have_url(re.compile(r"/c/"))
     expect(replies(page)).to_have_count(1)
+
+
+def test_shift_escape_puts_the_focus_back_in_the_message_box(answered):
+    expect(chat_input(answered)).not_to_be_focused()
+
+    answered.keyboard.press("Shift+Escape")
+
+    expect(chat_input(answered)).to_be_focused()
+
+
+def test_escape_in_the_message_box_stops_a_streaming_reply(page_for, account, upstream):
+    page = page_for(account)
+    pieces = [f"step{number} " for number in range(1, 61)]
+    upstream.queue(reply.text(pieces, chunk_delay=0.2, match=reply.answering("count the steps")))
+    send(page, "count the steps")
+    expect(last_reply(page)).to_contain_text("step3")
+    expect(chat_input(page)).to_be_focused()
+
+    page.keyboard.press("Escape")
+
+    expect(stop_button(page)).to_have_count(0)
+    shown = last_reply(page).inner_text()
+    page.wait_for_timeout(1500)  # a reply still streaming would grow by several steps here
+    assert last_reply(page).inner_text() == shown
+    assert "step60" not in shown, shown
+
+
+def test_arrow_up_in_the_empty_message_box_edits_the_last_question(answered):
+    answered.keyboard.press("Shift+Escape")
+    expect(chat_input(answered)).to_be_focused()
+
+    answered.keyboard.press("ArrowUp")
+
+    editor = conversation(answered).locator(".chat-user").last.locator("textarea")
+    expect(editor).to_be_focused()
+    expect(editor).to_have_value(QUESTION)
+
+
+def bind(account, bindings: dict[str, str]) -> None:
+    with account.client() as client:
+        saved = client.post("/api/v1/users/user/settings/update", json={"keybindings": bindings})
+    assert saved.status_code == 200, saved.text
+
+
+def test_bound_chat_navigation_steps_through_the_sidebars_chats(page_for, account, upstream):
+    bind(account, {"navigateChatUp": "Cmd+Shift+U", "navigateChatDown": "Cmd+Shift+J"})
+    upstream.queue(
+        reply.text("The older answer.", match=reply.answering("older question")),
+        reply.text("The newer answer.", match=reply.answering("newer question")),
+    )
+    with account.client() as client:
+        older, _ = ask(client, "older question")
+        newer, _ = ask(client, "newer question")
+    answers = {older.chat_id: "The older answer.", newer.chat_id: "The newer answer."}
+    page = page_for(account)
+    # two chats made within one second may be listed either way round
+    chat_links = page.locator('a[href^="/c/"]')
+    expect(chat_links).to_have_count(2)
+    top_id, below_id = [link.get_attribute("href").removeprefix("/c/") for link in chat_links.all()]
+    page.goto(f"/c/{top_id}")
+    expect_reply(page, answers[top_id])
+
+    page.keyboard.press("Control+Shift+J")
+    expect(page).to_have_url(re.compile(below_id))
+    expect_reply(page, answers[below_id])
+
+    page.keyboard.press("Control+Shift+U")
+    expect(page).to_have_url(re.compile(top_id))
+    expect_reply(page, answers[top_id])
+
+
+def test_bound_toggle_controls_opens_and_closes_the_controls_panel(page_for, account):
+    bind(account, {"toggleControls": "Cmd+Shift+Y"})
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+    advanced_params = page.get_by_role("button", name="Advanced Params")
+    expect(advanced_params).to_have_count(0)
+
+    page.keyboard.press("Control+Shift+Y")
+    expect(advanced_params).to_be_visible()
+
+    page.keyboard.press("Control+Shift+Y")
+    expect(advanced_params).to_be_hidden()
