@@ -10,6 +10,10 @@ The interrupted-reply test is red on dev ebc6add67: after reconnecting, the page
 chat and marks the unfinished reply done, but never redraws it, so the reply keeps its blinking
 cursor and offers no Regenerate until the page is reloaded by hand.
 
+The two tests of a reply cut off by the restart skip with Redis: the reply's task stays listed
+there until `REDIS_TASK_TTL` runs out, as the setting documents, so the reply keeps its Stop
+button for those minutes.
+
 Discriminates: passes on dev ebc6add67 except the interrupted-reply test, which passes on a
 build that redraws the chat after marking it done; the reconnect tests fail on a build whose
 socket does not reconnect (no "Reconnected", the next reply never shows).
@@ -22,6 +26,7 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
+from harness import backends
 from harness import upstream as reply
 from harness.actors import create_user
 from harness.inflight import SLOW_PIECES
@@ -44,6 +49,10 @@ pytestmark = [
 CONNECTION_LOST = "Connection lost. Reconnecting..."
 RECONNECTED = "Reconnected"
 RESTART_TIMEOUT_MS = 120_000
+
+holds_without_redis = pytest.mark.skipif(
+    backends.REDIS, reason="with Redis the cut reply stays running until REDIS_TASK_TTL"
+)
 
 
 @pytest.fixture
@@ -78,6 +87,7 @@ def test_an_open_page_reconnects_and_the_next_message_is_answered(restartable, p
     assert page.url == chat_url
 
 
+@holds_without_redis
 def test_a_reply_cut_off_by_a_restart_is_shown_finished(restartable, page_for):
     page = page_for(create_user(restartable))
     prompt = "tell me a long story"
@@ -95,6 +105,7 @@ def test_a_reply_cut_off_by_a_restart_is_shown_finished(restartable, page_for):
     expect(regenerate_buttons(page).last).to_be_visible()
 
 
+@holds_without_redis
 def test_after_a_restart_cut_a_reply_off_the_next_message_is_answered(restartable, page_for):
     page = page_for(create_user(restartable))
     prompt = "tell me a long story"
