@@ -9,6 +9,12 @@ new chat. Another account's matching chat never appears. The menu on a result re
 clones, archives and deletes the chat (after a confirm dialog), and each change is read back after a
 reload or over the API as the owner.
 
+Clicking into the search box suggests all five filters (`tag:`, `folder:`, `pinned:`, `shared:` and
+`archived:`); a filter picked there, by click or by Enter, offers its values, `true` and `false` or
+the account's tags with Untagged for `tag:none`, and each narrows the results to the chats it
+describes. Two `tag:` words list only the chats carrying both. More matches than one page of sixty
+load as the result list is scrolled to its end.
+
 Two tests pin fixed bugs: Enter on a highlighted chat closed the dialog without opening the chat
 (#31003, fixed by PR #31004), and a new conversation started from the dialog dropped the text after
 an `&` because the query went into the page address unencoded (#31469, fixed by PR #31592).
@@ -476,3 +482,167 @@ def test_a_chat_deleted_from_the_dialog_after_its_confirmation_is_gone_for_good(
 
     expect(dialog.get_by_text("No results found")).to_be_visible()
     assert stored_chat_status(account, chat_id) != 200, "the deleted chat can still be read"
+
+
+# --------------------------------------------------------------------------- filter suggestions
+
+
+def suggested(dialog: Locator, name: str) -> Locator:
+    return dialog.get_by_role("button", name=name)
+
+
+def test_the_search_box_suggests_every_filter(page_for, make_user):
+    page = page_for(make_user())
+    dialog = open_from_shortcut(page)
+
+    search_box(dialog).click()
+
+    for name in ["tag:", "folder:", "pinned:", "shared:", "archived:"]:
+        expect(suggested(dialog, name)).to_be_visible()
+
+
+def pick_filter(dialog: Locator, word: str, option: str, value: str) -> None:
+    """Types `word` and the start of a filter, then picks it and its value from the suggestions."""
+    type_query(dialog, f"{word} {option[:3]}")
+    suggested(dialog, option).click()
+    dialog.get_by_role("button").filter(has_text=re.compile(rf"^\s*{value}")).first.click()
+
+
+def test_shared_true_picked_from_the_suggestions_lists_only_the_shared_chats(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        shared_id = import_chat(client, f"Shared {word}")
+        import_chat(client, f"Private {word}")
+        post(client, f"/api/v1/chats/{shared_id}/share")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    pick_filter(dialog, word, "shared:", "true")
+
+    expect(search_box(dialog)).to_have_value(f"{word} shared:true ")
+    expect(result(dialog, f"Shared {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_shared_false_leaves_the_shared_chats_out(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        shared_id = import_chat(client, f"Shared {word}")
+        import_chat(client, f"Private {word}")
+        post(client, f"/api/v1/chats/{shared_id}/share")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    search_box(dialog).fill(f"{word} shared:false")
+
+    expect(result(dialog, f"Private {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_pinned_false_picked_from_the_suggestions_leaves_the_pinned_chats_out(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        import_chat(client, f"Pinned {word}", pinned=True)
+        import_chat(client, f"Unpinned {word}")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    pick_filter(dialog, word, "pinned:", "false")
+
+    expect(search_box(dialog)).to_have_value(f"{word} pinned:false ")
+    expect(result(dialog, f"Unpinned {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_the_untagged_suggestion_lists_only_the_chats_without_tags(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        tagged_id = import_chat(client, f"Tagged {word}")
+        import_chat(client, f"Bare {word}")
+        post(client, f"/api/v1/chats/{tagged_id}/tags", name=f"Road {word}")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    type_query(dialog, f"{word} tag:")
+    dialog.get_by_role("button").filter(has_text="Untagged").click()
+
+    expect(search_box(dialog)).to_have_value(f"{word} tag:none ")
+    expect(result(dialog, f"Bare {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_two_tags_list_only_the_chats_carrying_both(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        both_id = import_chat(client, f"Both {word}")
+        one_id = import_chat(client, f"One {word}")
+        for chat_id in (both_id, one_id):
+            post(client, f"/api/v1/chats/{chat_id}/tags", name=f"coast{word}")
+        post(client, f"/api/v1/chats/{both_id}/tags", name=f"walks{word}")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    search_box(dialog).fill(f"tag:coast{word}")
+    expect(results(dialog)).to_have_count(2)
+
+    search_box(dialog).fill(f"tag:coast{word} tag:walks{word}")
+
+    expect(result(dialog, f"Both {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+def test_enter_completes_the_highlighted_filter_and_its_value(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        import_chat(client, f"Archived {word}", archived=True)
+        import_chat(client, f"Current {word}")
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    type_query(dialog, "arch")
+    page.keyboard.press("Enter")
+    expect(search_box(dialog)).to_have_value("archived:")
+    page.keyboard.press("Enter")
+
+    expect(search_box(dialog)).to_have_value("archived:true ")
+    search_box(dialog).press_sequentially(word)
+    expect(result(dialog, f"Archived {word}")).to_be_visible()
+    expect(results(dialog)).to_have_count(1)
+
+
+# --------------------------------------------------------------------------- paging
+
+PAGE_SIZE = 60
+
+
+def test_more_matches_than_a_page_load_as_the_results_are_scrolled(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        entries = [
+            {
+                "chat": {"title": f"Log {index:03d} {word}", "models": []},
+                "created_at": LONG_AGO + index,
+                "updated_at": LONG_AGO + index,
+            }
+            for index in range(PAGE_SIZE + 5)
+        ]
+        imported = client.post("/api/v1/chats/import", json={"chats": entries})
+        assert imported.status_code == 200, imported.text
+
+    page = page_for(account)
+    dialog = open_from_shortcut(page)
+    search_box(dialog).fill(word)
+    expect(results(dialog)).to_have_count(PAGE_SIZE)
+    expect(result(dialog, f"Log 000 {word}")).to_have_count(0)
+
+    results(dialog).last.scroll_into_view_if_needed()
+
+    expect(results(dialog)).to_have_count(PAGE_SIZE + 5)
+    expect(result(dialog, f"Log 000 {word}")).to_be_visible()
