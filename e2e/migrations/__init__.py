@@ -1,1 +1,1 @@
-"""Browser tests: what the pages show after the boot repaired old stored settings."""
+"""Browser tests: what the pages show after an upgrade or the boot's repair of old stored data."""
