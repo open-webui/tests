@@ -12,12 +12,12 @@ parameters go out alongside what the chat's own Controls set. A user without the
 or Advanced Params permission gets no button and the defaults still apply.
 
 Four red tests pin picks the user can no longer see or clear. Saving Settings > General throws
-every pick away. A pick of a control the admin later removed fails every message on that model
-("Model control thinking: the selected option is no longer available."), and the menu no longer
-lists the control to reset it. A pick made before the admin withdrew Chat Controls or Advanced
-Params gets every message to any model refused ("You cannot change model parameters."): the
-button is gone and the server drops the account's parameter settings, so the pick cannot be
-cleared.
+every pick away (open-webui/open-webui#31997). A pick of a control the admin later removed fails
+every message on that model ("Model control thinking: the selected option is no longer
+available."), and the menu no longer lists the control to reset it (open-webui/open-webui#31996).
+A pick made before the admin withdrew Chat Controls or Advanced Params gets every message to any
+model refused ("You cannot change model parameters."): the button is gone and the server drops
+the account's parameter settings, so the pick cannot be cleared (open-webui/open-webui#31995).
 
 Discriminates: passes on the dev ebc6add67 build except the four red tests. In a frontend build
 whose chat sends no picks, whose menu shows for every model and to every account and whose
@@ -359,7 +359,8 @@ def test_saving_general_settings_keeps_the_picks(page_for, make_user, tuned, ups
         stored = client.get("/api/v1/users/user/settings").json()
     picks = stored["ui"].get("params", {}).get("model_controls")
     assert picks == {tuned["id"]: {"thinking": "high"}}, (
-        "saving Settings > General threw away the account's model control picks"
+        "saving Settings > General threw away the account's model control picks "
+        "(open-webui/open-webui#31997)"
     )
     assert _ask(page, upstream).get("reasoning_effort") == "high"
 
@@ -396,7 +397,8 @@ def test_a_pick_of_a_removed_control_does_not_block_the_model(
         upstream,
         "still there?",
         "Still here.",
-        "a pick of a removed control fails every message on the model, and nothing clears it",
+        "a pick of a removed control fails every message on the model, and nothing clears it "
+        "(open-webui/open-webui#31996)",
     )
 
 
@@ -417,5 +419,6 @@ def test_a_pick_made_before_the_permission_was_withdrawn_does_not_block_chats(
         upstream,
         "can I still chat?",
         "You can.",
-        "a pick kept from before the permission was withdrawn refuses every message to any model",
+        "a pick kept from before the permission was withdrawn refuses every message to any model "
+        "(open-webui/open-webui#31995)",
     )

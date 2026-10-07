@@ -11,9 +11,9 @@ and an action on one server leaves the other alone.
 Two tests stay red on dev until the dialog is fixed. A create whose stream reports download
 progress (Ollama pulls a base it does not have first) shows no progress: the progress block reads
 `createModelTag`, a variable the dialog lost in 419005a57, and throws "createModelTag is not
-defined". A create Ollama refuses outright (a 400 such as "neither 'from' or 'files' was
-specified") shows nothing at all: the dialog only reads a response that succeeded, clears the form
-and gives no error.
+defined" (open-webui/open-webui#32001). A create Ollama refuses outright (a 400 such as "neither
+'from' or 'files' was specified") shows nothing at all: the dialog only reads a response that
+succeeded, clears the form and gives no error (open-webui/open-webui#32002).
 
 Discriminates: passes on dev ebc6add67 apart from the two red tests; in frontend copies, with the
 pasted command no longer trimmed the pull test fails, with the picker's choice not passed on the
@@ -46,6 +46,9 @@ PULLED_MODEL = "qwen3:0.6b"
 DOWNLOADED = f"Model '{PULLED_MODEL}' has been successfully downloaded."
 TAG_PLACEHOLDER = "Enter model tag (e.g. mistral:7b)"
 NEW_MODEL_PLACEHOLDER = "Enter model tag (e.g. my-modelfile)"
+NO_CREATE_PROGRESS = (
+    'the create showed no progress: "createModelTag is not defined" (open-webui/open-webui#32001)'
+)
 
 
 def _connect(client, *urls: str) -> None:
@@ -249,8 +252,8 @@ def test_a_create_that_pulls_its_base_shows_the_download_progress(
 
     create(dialog, "tiny", {"from": "tinyllama:latest"})
 
-    expect(dialog.get_by_text("40%")).to_be_visible()
-    expect(dialog.get_by_text("sha256:0f1e2d")).to_be_visible()
+    expect(dialog.get_by_text("40%"), NO_CREATE_PROGRESS).to_be_visible()
+    expect(dialog.get_by_text("sha256:0f1e2d"), NO_CREATE_PROGRESS).to_be_visible()
 
 
 def test_a_recipe_that_is_not_json_is_refused_before_ollama_is_asked(page_for, operator, ollama):
@@ -272,7 +275,10 @@ def test_a_create_ollama_refuses_shows_its_error(page_for, operator, ollama, lis
 
     create(dialog, "orphan", {"system": "Answer in one line."})
 
-    expect(page.get_by_text(refusal)).to_be_visible()
+    expect(
+        page.get_by_text(refusal),
+        "a refused create cleared the form and showed no error (open-webui/open-webui#32002)",
+    ).to_be_visible()
 
 
 def test_the_picked_server_is_the_one_managed(page_for, operator, two_servers):

@@ -13,7 +13,8 @@ are only fetchable on an instance booted with local fetching allowed. Editing a 
 sends the next reply to the new one, a removed target leaves the list and is not called, and
 Make Default moves the model's `notify` tool to that target. A target for failed chats is called
 when a reply fails, as the notifications docs promise; on dev a provider error that ends a reply
-announces nothing, so that test stays red until the failure is published.
+announces nothing, so that test stays red until the failure is published
+(open-webui/open-webui#32003).
 
 Discriminates: passes on dev a5bc78300, and the chat link test fails on dev 176d31d1d, before PR
 #31572; in frontend copies of 176d31d1d, with the target save sending no URL the save test fails,
@@ -411,7 +412,9 @@ def test_a_target_for_failed_chats_hears_of_a_reply_that_failed(
     expect(page.get_by_text("the provider is down")).to_be_visible()
 
     # the docs promise chat.failed for a failed response; on dev only a finished one is announced
-    assert _wait_for(lambda: hook.requests_to("/hook")), "the failed reply called nothing"
+    assert _wait_for(lambda: hook.requests_to("/hook")), (
+        "the failed reply called nothing (open-webui/open-webui#32003)"
+    )
     body = hook.requests_to("/hook")[0].json()
     assert body["action"] == "chat_failed" and "the provider is down" in body["message"]
     assert hook.requests_to("/always") == []

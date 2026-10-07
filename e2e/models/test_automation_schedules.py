@@ -18,12 +18,14 @@ Bugs, both red on dev ebc6add67:
   local time, so in a browser whose day differs from UTC's the dialog starts on the wrong day
   (yesterday east of UTC, where Create is refused as "Scheduled time must be in the future", and
   tomorrow west of it, where the run comes a day late). The browser's zone is picked from the
-  clock so the two days always differ. `test_the_once_schedule_starts_on_the_browsers_own_day`.
+  clock so the two days always differ. `test_the_once_schedule_starts_on_the_browsers_own_day`,
+  issue open-webui/open-webui#31999.
 * The Edit dialog reads a stored rule into the menu's fields and builds it again on Save, which
   keeps only frequency, interval, days and time. A rule that ends, after a number of runs
   (`COUNT` with its `DTSTART`, as an API client or the model's automation tool may save one) or
   on a date (`UNTIL`, typed as a Custom rule), loses its end when the automation is only renamed,
-  and then runs forever. `test_renaming_an_automation_keeps_the_end_of_its_schedule`.
+  and then runs forever. `test_renaming_an_automation_keeps_the_end_of_its_schedule`, issue
+  open-webui/open-webui#32000.
 
 Discriminates: passes on dev ebc6add67 apart from the two bugs. In a frontend copy building every
 weekly rule without its days the weekly create and rename cases go red, and with the Once date
@@ -226,7 +228,8 @@ def test_the_once_schedule_starts_on_the_browsers_own_day(page_for, scheduler):
 
     expect(
         page.locator('input[type="date"]'),
-        "the Once date starts on today's date in UTC, not the browser's own day",
+        "the Once date starts on today's date in UTC, not the browser's own day "
+        "(open-webui/open-webui#31999)",
     ).to_have_value(local_today.isoformat())
 
 
@@ -444,5 +447,6 @@ def test_renaming_an_automation_keeps_the_end_of_its_schedule(page_for, schedule
     rule = ENDING[label]
     saved = rename_in_the_edit_dialog(page_for, scheduler, rule)
     assert saved == rule, (
-        f"renaming the automation rewrote its schedule {rule!r} as {saved!r}: it no longer ends"
+        f"renaming the automation rewrote its schedule {rule!r} as {saved!r}: it no longer ends "
+        "(open-webui/open-webui#32000)"
     )

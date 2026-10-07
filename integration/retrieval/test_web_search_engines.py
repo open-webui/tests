@@ -14,8 +14,8 @@ filters on its side, and the docs say the list is not applied to Jina, so neithe
 case.
 
 Red on dev ebc6add67, each naming the engine: Kagi applies the filter to its parsed results, which
-have no `get`, so a filtered search fails; Perplexity Search is handed the filter list and never
-applies it.
+have no `get`, so a filtered search fails (open-webui/open-webui#32004); Perplexity Search is
+handed the filter list and never applies it (open-webui/open-webui#32005).
 
 Discriminates: passes on dev ebc6add67 for every other engine; in a backend copy whose `search_web`
 tool hands the model the engine's hits without their snippets, every engine case fails, and with
@@ -52,6 +52,10 @@ WITH_WEB_SEARCH = {"features": {"web_search": True}}
 HARBOUR = Hit("https://harbour.example/ferry", "Ferry times", "The ferry leaves at noon.")
 ELSEWHERE = Hit("https://elsewhere.example/ferry", "Other ferries", "Another ferry at one.")
 NO_FILTER_CASE = {"exa", "jina"}  # Exa filters on its side; the docs exempt Jina
+OPEN_FILTER_ISSUES = {
+    "kagi": " (open-webui/open-webui#32004)",
+    "perplexity_search": " (open-webui/open-webui#32005)",
+}
 
 
 @pytest.fixture(scope="module")
@@ -108,7 +112,10 @@ def test_a_blocked_domain_is_kept_from_the_model(engine, searching, searching_ad
 
     found = search(searching, "ferry filtered")
 
-    assert isinstance(found, list), f"{engine.name} failed with the domain filter on: {found}"
+    issue = OPEN_FILTER_ISSUES.get(engine.name, "")
+    assert isinstance(found, list), (
+        f"{engine.name} failed with the domain filter on{issue}: {found}"
+    )
     links = [hit["link"] for hit in found]
-    assert ELSEWHERE.link not in links, f"{engine.name} ignored the domain filter list"
+    assert ELSEWHERE.link not in links, f"{engine.name} ignored the domain filter list{issue}"
     assert HARBOUR.link in links

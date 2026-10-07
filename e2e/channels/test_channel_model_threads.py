@@ -149,7 +149,8 @@ def test_replying_to_the_models_answer_asks_it_again(people, page_for, upstream)
 def test_a_slowly_streamed_answer_shows_its_first_words_to_another_member(
     admin, people, page_for, upstream
 ):
-    """Red on dev ebc6add67: a channel answer only shows once the model is done.
+    """Red on dev ebc6add67: a channel answer only shows once the model is done, issue
+    open-webui/open-webui#31998.
 
     The docs say a channel reply streams as the model writes it. The pipeline now sends each
     piece as a delta of an output item it never announced, and the channel's emitter, which
@@ -168,6 +169,7 @@ def test_a_slowly_streamed_answer_shows_its_first_words_to_another_member(
     answer = member_page.locator("[id^='message-']").filter(has_text="The forecast says").first
     expect(answer).to_be_visible(timeout=30_000)
     assert "rain on sunday" not in answer.inner_text(), (
-        "the answer stayed empty until the model was done: the channel never streams it"
+        "the answer stayed empty until the model was done: the channel never streams it "
+        "(open-webui/open-webui#31998)"
     )
     expect(answer).to_contain_text("and rain on sunday")

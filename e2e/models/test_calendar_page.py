@@ -14,10 +14,11 @@
   calendar is shared with it.
 * Saving a later occurrence of a repeating event moved the whole series to that day, issue
   #30970, fixed by PR #30971.
-* An event created from the header after 23:00 is saved ending a day late. The editor starts from
-  now until an hour later, which ends on the next day, and since PR #31303 (6fdbe3ab6) the end
-  keeps that one day offset from whatever day is typed, though the editor shows no end date. The
-  other editor tests open it at noon, so they do not depend on when they run.
+* An event created from the header after 23:00 is saved ending a day late, issue
+  open-webui/open-webui#31994. The editor starts from now until an hour later, which ends on the
+  next day, and since PR #31303 (6fdbe3ab6) the end keeps that one day offset from whatever day
+  is typed, though the editor shows no end date. The other editor tests open it at noon, so they
+  do not depend on when they run.
 
 Discriminates: in a frontend build with the editor dropping the location on create, the all-day
 start taken from the time field, the edit saving the old title, the delete never sent, a clicked
@@ -26,7 +27,7 @@ week, the page no longer sending the browser's zone and the sidebar toggle ignor
 test went red and the rest stayed green; in a backend copy with the calendar tool reading times
 as UTC the model's event test went red, and with calendars listed to their owners only the
 sharing test went red at the reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
-The late evening test is red on dev ebc6add67 (the bug above).
+The late evening test is red on dev ebc6add67 (open-webui/open-webui#31994).
 """
 
 from __future__ import annotations
@@ -202,7 +203,7 @@ def test_an_event_created_late_in_the_evening_ends_on_its_own_day(page_for, make
     saved = _saved(owner, title)
     assert saved["end_at"] == to_ns(_this_month(21, 11, 45)), (
         "an event created after 23:00 was saved ending a day late, the day after the one typed: "
-        "the editor's default end on the next day keeps its offset (6fdbe3ab6, PR #31303)"
+        "the editor's default end on the next day keeps its offset (open-webui/open-webui#31994)"
     )
     assert _days_showing(page, title) == [21]
 
