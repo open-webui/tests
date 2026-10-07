@@ -10,6 +10,10 @@ whose title matches, and a note attached to a chat from the composer reaches the
 composer's note picker keeps a note shared read-only in its list when a name is typed into its
 search (open-webui/open-webui#30968, issue #30967).
 
+The writer test is red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server handles the
+editor's live updates concurrently, so an update that arrives early can cancel the save of a later
+one and store its older text last, and the note keeps missing the last characters typed.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the note editor ignoring the model's edit event, the editor staying editable for a reader,
 the editor not leaving a note it cannot load, the downloads writing the HTML, the Notes page

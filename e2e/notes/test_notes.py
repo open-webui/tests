@@ -5,6 +5,10 @@ The editor sends what is typed over the note's live document and the server stor
 second later, so the test waits for the stored note before reloading. The reloaded editor shows
 the title and the text, and a note deleted from the list is gone from it after a reload too.
 
+The writing test is red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server handles the
+editor's live updates concurrently, so an update that arrives early can cancel the save of a later
+one and store its older text last, and the note keeps missing the last characters typed.
+
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the live document's save handler
 not writing the note the wait for the stored text times out, and with
 `DELETE /api/v1/notes/{id}/delete` answering true without deleting the note stays in the list.

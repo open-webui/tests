@@ -13,6 +13,10 @@ Write, changes the level or removes them, or makes the note public; each change 
 and the other account then meets the note read-only, editable or not at all. Without the sharing
 permission the panel has no access list.
 
+The table-cell download test is red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server
+handles the editor's live updates concurrently, so an update that arrives early can cancel the save
+of a later one and store its older text last, and the note keeps missing the last characters typed.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the copied link pointing at the Notes page (editor and list), the clipboard's plain text
 getting the HTML, the plain-text download writing the HTML, the upload not saving the note's

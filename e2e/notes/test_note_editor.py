@@ -10,6 +10,10 @@ asks the model for a title, which fills the field and is stored. Under the title
 when it was created ("Today at" and the time) and a word and character count that follows the
 typing. The undo and redo buttons in the header take back and bring back what was typed.
 
+The two typed-markdown tests are red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a58f5f: the server
+handles the editor's live updates concurrently, so an update that arrives early can cancel the save
+of a later one and store its older text last, and the note keeps missing the last characters typed.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: each toolbar button toggling another mark or block, the Formatting switch inverted, the
 generated title dropped, the word count stuck at zero, the created label losing its "Today at"

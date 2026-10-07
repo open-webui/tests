@@ -17,6 +17,11 @@ provider's session, and a provider that refuses or drops the call shows its mess
 the panel. Realtime calls open on the browser's speech-to-text engine too, which the standard
 call refuses, and without the call permission there is no Voice mode at all.
 
+The stop test is red now and then with Postgres and Redis on dev 0f5a58f5f: the panel offers Stop as
+soon as the request to the chat model starts, but a press before the server has accepted that
+request is dropped without a word and the chat model answers on. The slower backends widen that
+moment enough for the test's press to land in it.
+
 Discriminates: passes on the dev 0f5a58f5f build. In one frontend copy a spoken answer never
 saved turns the chat model test red, the voice model's own answer never added turns that test
 red, a mute that keeps sending audio, End call leaving the call connected, a failure leaving the
