@@ -37,12 +37,3 @@ def connection_dialog(page: Page, heading: str) -> Locator:
     dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=heading))
     expect(dialog).to_be_visible()
     return dialog
-
-
-def ollama_section(page: Page, settings: Locator) -> Locator:
-    """The Ollama part of the page, switched on."""
-    switch = settings.get_by_role("switch", name="Ollama API")
-    if not switch.is_checked():
-        with page.expect_response(is_ollama_save):
-            switch.click()
-    return settings.get_by_text("Manage Ollama API Connections").locator("xpath=..")

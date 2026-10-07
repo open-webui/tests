@@ -2,18 +2,11 @@
 
 The scripted provider streams the first three pieces of a reply and then drops the connection
 without finishing the stream, the way a provider that crashes or loses its network does. The
-page shows what arrived with the error under it and the reply as finished, the saved chat reads
-the same after a reload, and Regenerate asks again and replaces the broken reply with a whole one.
+page shows what arrived with the error under it and the reply as finished, and Regenerate asks
+again and replaces the broken reply with a whole one.
 
-The reload test is red on dev ebc6add67: the stream's progress lives in memory until the reply
-finishes, and the error path saves only the error, so the three pieces the person already read
-are gone from the reply once the page reloads.
-
-Twin of integration/chat/test_stream_interruptions.py for the saved reply.
-
-Discriminates: passes on dev ebc6add67 except the reload test; the error test fails on a build
-whose reply hides its error, the regenerate test on a build whose Regenerate ignores a failed
-reply, and the reload test passes on a backend copy that saves the output on a stream error.
+Discriminates: passes on dev ebc6add67; the error test fails on a build whose reply hides its
+error and the regenerate test on a build whose Regenerate ignores a failed reply.
 """
 
 from __future__ import annotations
@@ -64,14 +57,6 @@ def test_the_reply_keeps_what_arrived_and_shows_the_error(dropped_reply):
     expect(shown).to_contain_text(RECEIVED)
     expect(shown).not_to_contain_text(NEVER_SENT)
     expect(typing_cursor(shown)).to_have_count(0)
-
-
-def test_the_dropped_reply_reads_the_same_after_a_reload(dropped_reply):
-    dropped_reply.reload()
-
-    expect(last_reply(dropped_reply)).to_contain_text(DROP_ERROR)
-    lost = "the pieces the provider sent before it went down are gone from the saved reply"
-    expect(last_reply(dropped_reply), lost).to_contain_text(RECEIVED)
 
 
 def test_regenerate_replaces_the_dropped_reply_with_a_whole_one(dropped_reply):

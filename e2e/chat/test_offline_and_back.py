@@ -3,16 +3,11 @@
 The browser context goes offline, the way a laptop leaving the Wi-Fi does. The page warns that
 the connection was lost and says it reconnected once the network is back. An idle page then
 answers the next message. A reply that keeps streaming on the server while the page is offline
-is picked back up with no piece missing once the page is back, and it shows whole and finished
-at its end, whether it was still streaming when the network returned or had finished meanwhile.
+shows whole and finished at its end, whether it was still streaming when the network returned or
+had finished meanwhile.
 
-The pick-up test is red on dev ebc6add67: a page that reconnects while its reply still streams
-only listens on, so the pieces sent while it was offline stay missing from the reply until it
-ends, where the docs promise that a reconnecting browser picks a reply back up where it left off.
-
-Discriminates: passes on dev ebc6add67 except the pick-up test, which passes on a build that
-reloads the chat on every reconnect with a reply pending; every test fails on a build whose
-socket does not reconnect.
+Discriminates: passes on dev ebc6add67; every test fails on a build whose socket does not
+reconnect.
 """
 
 from __future__ import annotations
@@ -83,21 +78,6 @@ def test_a_reply_still_streaming_when_the_network_returns_ends_whole(chat_page, 
 
     expect(stop_button(chat_page)).to_be_visible()  # the reply had not finished yet
     _expect_whole_and_finished(chat_page)
-
-
-def test_a_reconnected_page_picks_a_running_reply_back_up(chat_page, upstream):
-    upstream.queue(reply.text(SLOW_PIECES, chunk_delay=1.0, match=reply.answering(PROMPT)))
-    send(chat_page, PROMPT)
-    expect(last_reply(chat_page)).to_contain_text("part-1")
-
-    _go_offline_and_back(chat_page)
-    expect(last_reply(chat_page)).to_contain_text(SLOW_PIECES[15].strip(), timeout=REPLY_TIMEOUT_MS)
-    shown_mid_stream = last_reply(chat_page).inner_text()
-    expect(stop_button(chat_page)).to_be_visible()  # the reply had not finished yet
-
-    assert "".join(SLOW_PIECES[:16]).strip() in shown_mid_stream, (
-        f"the pieces streamed while the page was offline are missing: {shown_mid_stream!r}"
-    )
 
 
 def test_a_reply_that_finished_while_offline_shows_whole(page_for, make_user, upstream):

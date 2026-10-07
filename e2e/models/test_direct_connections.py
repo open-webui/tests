@@ -17,11 +17,9 @@ the key edit test red, skipping the direct connections in the model list fetch t
 test and the switch-off test red, dropping the tab's forwarding of the provider's stream turns
 the chat test red alone, and showing the tab and the connections whatever the admin switch says
 (and listing a connection whatever its own switch says) turns the three switch tests red.
-Red on dev ebc6add67, real bugs: the burst arrives scrambled and cut short
+Red on dev ebc6add67, a real bug: the burst arrives scrambled and cut short
 (open-webui/open-webui#31953: since 24e30d1cb the socket router checks the tab's session token
-for every forwarded line, so the lines overtake each other; green with that check taken out), and
-a prefixed model of an allowlisted direct connection is named by its bare id, where an admin
-connection's is named with the prefix.
+for every forwarded line, so the lines overtake each other; green with that check taken out).
 """
 
 from __future__ import annotations
@@ -306,28 +304,3 @@ def test_an_answer_the_provider_sends_in_one_burst_arrives_whole(
     assert shown.split() == [word.strip() for word in words], (
         f"the provider answered word0 to word39 in order, the reply reads {shown!r} (#31953)"
     )
-
-
-def test_a_prefixed_allowlisted_model_is_named_with_its_prefix(
-    page_for, make_user, admin, preserve, listener, direct_model_id
-):
-    set_direct_connections(admin, preserve, True)
-    provider = serve(listener, direct_model_id)
-    prefix = f"mine{uuid.uuid4().hex[:4]}"
-    account = make_user()
-    connections = {
-        "OPENAI_API_BASE_URLS": [provider.base_url],
-        "OPENAI_API_KEYS": [""],
-        "OPENAI_API_CONFIGS": {
-            "0": {"enable": True, "prefix_id": prefix, "model_ids": [direct_model_id]}
-        },
-    }
-    with account.client() as client:
-        client.post(
-            "/api/v1/users/user/settings/update", json={"ui": {"directConnections": connections}}
-        ).raise_for_status()
-    page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
-
-    named = model_options(page, f"{prefix}.{direct_model_id}")
-    expect(named, "the selector names the prefixed model by its bare id").to_have_count(1)

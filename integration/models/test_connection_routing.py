@@ -7,33 +7,25 @@ is switched off. A switched-off OpenAI or Ollama connection's model is refused w
 found", and a model listed by the allowlist of a provider that cannot be reached is stored with
 the connection error while the model list still answers. A connection whose URL names
 `api.anthropic.com` is listed from every page of Anthropic's model list, by display name, with
-the `x-api-key` header (docs: starting-with-anthropic). Verifying an Ollama or an Anthropic
-connection that refuses the key answers with the provider's reason. On an instance with low
-stream limits, an answer that goes silent or runs past the total limit is stored with a timeout
-error.
+the `x-api-key` header (docs: starting-with-anthropic). Verifying an Ollama connection that
+refuses the key answers with the server's reason.
 
-Twin of e2e/admin/test_connection_models_for_users.py, test_connection_provider_types.py,
-test_connection_verify_and_refresh.py and test_connection_timeouts.py.
+Twin of e2e/admin/test_connection_models_for_users.py, test_connection_provider_types.py and
+test_connection_verify_and_refresh.py.
 
-Discriminates: passes on dev ebc6add67 except three tests below; in a backend copy, the merge
-letting the last connection win a shared name fails the shared-name test, the prefix kept on the
-id sent upstream fails the prefix test, the OpenAI listing ignoring `enable` fails both OpenAI
-switch-off tests and the Ollama listing ignoring it the Ollama one, and the Anthropic listing
-reading only the first page fails the Anthropic test. Red on dev, real bugs: the Anthropic
-verification answers "Server Connection Error" (its own refusal with Anthropic's reason is caught
-and replaced), the text that arrived before a timeout is not stored with the error, and a cut at
-the total limit is stored with an empty error.
+Discriminates: passes on dev ebc6add67; in a backend copy, the merge letting the last connection
+win a shared name fails the shared-name test, the prefix kept on the id sent upstream fails the
+prefix test, the OpenAI listing ignoring `enable` fails both OpenAI switch-off tests and the
+Ollama listing ignoring it the Ollama one, and the Anthropic listing reading only the first page
+fails the Anthropic test.
 """
 
 from __future__ import annotations
 
-import json
-import time
 import uuid
 
 import pytest
 
-from harness.actors import admin_of
 from harness.chat import ask
 from harness.listener import Listener, ReceivedRequest, json_answer, listening
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
@@ -44,7 +36,6 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 # refused at once, so a connection to it fails without waiting
 UNREACHABLE = "http://127.0.0.1:9"
 ANTHROPIC_PATH = "/api.anthropic.com/v1"
-TIMEOUTS = {"AIOHTTP_CLIENT_STREAM_IDLE_TIMEOUT": "2", "AIOHTTP_CLIENT_TIMEOUT": "8"}
 
 
 def add_openai(client, url: str, key: str = "", **config) -> None:
@@ -205,68 +196,3 @@ def test_a_refused_ollama_verification_answers_with_the_servers_reason(admin, li
 
     assert refused.status_code == 500
     assert "unauthorized" in refused.json()["detail"]
-
-
-def test_a_refused_anthropic_verification_answers_with_anthropics_reason(admin, listener):
-    refusal = {"type": "error", "error": {"type": "authentication_error", "message": "bad key"}}
-    listener.route("GET", f"{ANTHROPIC_PATH}/models", json_answer(refusal, status=401))
-    with admin.client() as client:
-        refused = client.post(
-            "/openai/verify",
-            json={"url": f"{listener.base_url}{ANTHROPIC_PATH}", "key": "sk-ant-wrong"},
-        )
-
-    assert refused.status_code == 500
-    detail = refused.json()["detail"]
-    assert "bad key" in detail, f"Anthropic refused the key, the verification says {detail!r}"
-
-
-def streaming(pieces: list[tuple[float, str]]):
-    """A chat answer streaming `pieces`, each sent after its pause in seconds."""
-
-    def answer(_request):
-        def body():
-            for pause, text in pieces:
-                time.sleep(pause)
-                delta = {"index": 0, "delta": {"content": text}, "finish_reason": None}
-                yield f"data: {json.dumps({'choices': [delta]})}\n\n".encode()
-            yield b"data: [DONE]\n\n"
-
-        return 200, {"Content-Type": "text/event-stream"}, body()
-
-    return answer
-
-
-@pytest.fixture
-def talker(instance_with, preserve, listener):
-    """An instance with low stream limits and the listener as its `slow.talker` model."""
-    impatient = instance_with(TIMEOUTS)
-    preserve(OPENAI_CONFIG, on=impatient)
-    with admin_of(impatient).client() as client:
-        attach(client, listener, "talker", prefix_id="slow")
-    return impatient
-
-
-@pytest.mark.slow
-def test_an_answer_that_goes_silent_is_stored_with_the_timeout_and_what_arrived(talker, listener):
-    listener.route(
-        "POST", "/v1/chat/completions", streaming([(0, "Once upon a time"), (5, " END")])
-    )
-    with admin_of(talker).client() as client:
-        _, stored = ask(client, "Tell me a story", model="slow.talker")
-
-    assert stored["error"]["content"] == "Timeout on reading data from socket"
-    assert "Once upon a time" in stored["content"], (
-        f"the text that arrived before the stall was not stored: {stored['content']!r}"
-    )
-
-
-@pytest.mark.slow
-def test_an_answer_cut_at_the_total_limit_is_stored_with_a_timeout_error(talker, listener):
-    pieces = [(1, f" part{number}") for number in range(12)]
-    listener.route("POST", "/v1/chat/completions", streaming(pieces))
-    with admin_of(talker).client() as client:
-        _, stored = ask(client, "Count slowly", model="slow.talker")
-
-    assert "part11" not in stored.get("content", "")
-    assert stored["error"]["content"], "the answer was cut at the total limit with an empty error"

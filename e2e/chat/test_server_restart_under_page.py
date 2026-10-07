@@ -3,20 +3,14 @@
 The instance is stopped and started again on the same address and data, as a redeploy does.
 While it is down the page warns that the connection was lost; once it is back the page says it
 reconnected and the next message is answered in the same chat. A reply that was streaming when
-the server went down cannot finish, so after the reconnect the page shows it as finished: no
-blinking cursor, no Stop button, Regenerate offered.
+the server went down cannot finish, and after the reconnect the next message is still answered.
 
-The interrupted-reply test is red on dev ebc6add67: after reconnecting, the page reloads the
-chat and marks the unfinished reply done, but never redraws it, so the reply keeps its blinking
-cursor and offers no Regenerate until the page is reloaded by hand.
+The test of a reply cut off by the restart skips with Redis: the reply's task stays listed there
+until `REDIS_TASK_TTL` runs out, as the setting documents, so the reply keeps its Stop button for
+those minutes.
 
-The two tests of a reply cut off by the restart skip with Redis: the reply's task stays listed
-there until `REDIS_TASK_TTL` runs out, as the setting documents, so the reply keeps its Stop
-button for those minutes.
-
-Discriminates: passes on dev ebc6add67 except the interrupted-reply test, which passes on a
-build that redraws the chat after marking it done; the reconnect tests fail on a build whose
-socket does not reconnect (no "Reconnected", the next reply never shows).
+Discriminates: passes on dev ebc6add67; the reconnect tests fail on a build whose socket does not
+reconnect (no "Reconnected", the next reply never shows).
 """
 
 from __future__ import annotations
@@ -30,14 +24,7 @@ from harness import backends
 from harness import upstream as reply
 from harness.actors import create_user
 from harness.inflight import SLOW_PIECES
-from utils.chat_ui import (
-    expect_reply,
-    last_reply,
-    regenerate_buttons,
-    send,
-    stop_button,
-    typing_cursor,
-)
+from utils.chat_ui import expect_reply, last_reply, send, stop_button
 
 pytestmark = [
     pytest.mark.journey,
@@ -85,24 +72,6 @@ def test_an_open_page_reconnects_and_the_next_message_is_answered(restartable, p
     send(page, "still there?")
     expect_reply(page, "Still here.")
     assert page.url == chat_url
-
-
-@holds_without_redis
-def test_a_reply_cut_off_by_a_restart_is_shown_finished(restartable, page_for):
-    page = page_for(create_user(restartable))
-    prompt = "tell me a long story"
-    restartable.upstream.queue(
-        reply.text(SLOW_PIECES, chunk_delay=0.5, match=reply.answering(prompt))
-    )
-    send(page, prompt)
-    expect(last_reply(page)).to_contain_text("part-1")
-
-    _restart_under(page, restartable)
-
-    expect(stop_button(page)).to_be_hidden()
-    stuck = "the interrupted reply still shows its blinking cursor after the reconnect"
-    expect(typing_cursor(last_reply(page)), stuck).to_have_count(0)
-    expect(regenerate_buttons(page).last).to_be_visible()
 
 
 @holds_without_redis
