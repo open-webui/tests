@@ -1,4 +1,4 @@
-"""Journey: Anthropic and Azure OpenAI connections, from the admin's dialog to a user's answer.
+"""Journey: connection types and API types, from the admin's dialog to a user's answer.
 
 A connection whose URL names `api.anthropic.com` is Anthropic's: Verify and the model list read
 Anthropic's own paged model list with the `x-api-key` header, the models show by their display
@@ -7,13 +7,15 @@ token (docs: starting-with-anthropic). The host name counts anywhere in the URL,
 of that name stands in. An Azure OpenAI connection (Provider under Advanced) is verified against
 `/openai/models` with the `api-key` header and the API version, refuses to save without a
 deployment name, and sends a chat to that deployment's URL with the API version (docs:
-starting-with-openai-compatible, Azure OpenAI). An Ollama model listed under its prefix answers a
-user's chat, and the Ollama server gets the bare name.
+starting-with-openai-compatible, Azure OpenAI). The API Type switch sends a user's chat to the
+provider's Responses API, and switched back to Chat Completions, to its chat endpoint. An Ollama
+model listed under its prefix answers a user's chat, and the Ollama server gets the bare name.
 
 Discriminates: passes on the dev ebc6add67 build; in a backend copy, the Anthropic listing
 reading only the first page turns the Anthropic test red (the second page's model is missing),
-the Azure deployment URL left unrewritten turns the Azure test red and the Ollama prefix kept on
-the name sent upstream turns the Ollama test red.
+the Azure deployment URL left unrewritten turns the Azure test red, the chat ignoring `api_type`
+turns the API type test red and the Ollama prefix kept on the name sent upstream turns the Ollama
+test red.
 """
 
 from __future__ import annotations
@@ -23,10 +25,17 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import responses_provider as responses_api
 from harness.listener import ReceivedRequest, json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, chat_stream, connect_ollama, serve_ollama
 from harness.second_provider import OPENAI_CONFIG, sse
-from utils.admin_connections import connection_dialog, is_openai_save, open_admin_connections
+from utils.admin_connections import (
+    OPENAI_URL_PLACEHOLDER,
+    connection_dialog,
+    connection_row,
+    is_openai_save,
+    open_admin_connections,
+)
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 from utils.tooltips import tooltip_button
@@ -181,3 +190,52 @@ def test_an_ollama_model_under_its_prefix_answers_a_users_chat(
 
     [chat] = server.sent("/api/chat")
     assert chat["model"] == "llama3:latest"
+
+
+# --------------------------------------------------------------------------- Responses API
+
+
+def test_the_api_type_decides_whether_a_users_chat_goes_to_responses_or_chat_completions(
+    page_for, make_user, admin, preserve, listener
+):
+    preserve(OPENAI_CONFIG)
+    prefix = f"resp{uuid.uuid4().hex[:6]}"
+    url = f"{listener.base_url}/v1"
+    listener.route("GET", "/v1/models", json_answer({"data": [{"id": "keeper"}]}))
+    listener.route(
+        "POST",
+        "/v1/responses",
+        responses_api.events_stream(
+            *responses_api.message("answered through Responses"), responses_api.completed()
+        ),
+    )
+    listener.route("POST", "/v1/chat/completions", sse({"content": "answered through Chat"}))
+    admin_page = page_for(make_user(role="admin"))
+    form = add_dialog(admin_page, url, "sk-responses")
+    form.get_by_role("button", name="API Type").click()
+    expect(form.get_by_role("button", name="API Type")).to_have_text("Responses")
+    form.get_by_role("button", name="Advanced").click()
+    form.get_by_role("textbox", name="Prefix ID").fill(prefix)
+    with admin_page.expect_response(is_openai_save):
+        form.get_by_role("button", name="Save").click()
+    expect(form).to_be_hidden()
+    publish(admin, f"{prefix}.keeper")
+    page = page_for(make_user())
+
+    ask(page, f"{prefix}.keeper", "answered through Responses")
+    [sent] = listener.requests_to("/v1/responses")
+    assert sent.json()["model"] == "keeper"
+    assert listener.requests_to("/v1/chat/completions") == []
+
+    settings = open_admin_connections(admin_page)
+    tooltip_button(connection_row(settings, OPENAI_URL_PLACEHOLDER, url), "Configure").click()
+    editing = connection_dialog(admin_page, "Edit Connection")
+    expect(editing.get_by_role("button", name="API Type")).to_have_text("Responses")
+    editing.get_by_role("button", name="API Type").click()
+    expect(editing.get_by_role("button", name="API Type")).to_have_text("Chat Completions")
+    with admin_page.expect_response(is_openai_save):
+        editing.get_by_role("button", name="Save").click()
+    expect(editing).to_be_hidden()
+
+    ask(page, f"{prefix}.keeper", "answered through Chat")
+    assert len(listener.requests_to("/v1/responses")) == 1
