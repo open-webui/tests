@@ -28,7 +28,7 @@ from harness.group_tree import group_of
 from harness.listener import json_answer
 from harness.mcp_server import TOOL_SERVERS
 from harness.openapi_server import authorization, calls_to, openapi_connection, serve_openapi
-from utils.chat_ui import conversation, expect_reply, send
+from utils.chat_ui import expect_reply, send
 from utils.tool_servers import (
     choose_auth,
     connection_form,
@@ -40,6 +40,7 @@ from utils.tool_servers import (
     pick_tool,
     save,
     share_with_group,
+    tool_output,
     verify,
 )
 from utils.tooltips import tooltip_button
@@ -115,8 +116,7 @@ def test_a_server_the_admin_adds_is_called_in_chat_with_its_auth(
     pick_tool(page, server_name)
     ask_for_the_tides(page, upstream)
 
-    conversation(page).get_by_text("View Result from get_tides").click()
-    expect(conversation(page).get_by_text("18:31")).to_be_visible()
+    expect(tool_output(page, "get_tides")).to_contain_text("18:31")
     [call] = calls_to(listener, "get_tides")
     expected = {
         "None": None,

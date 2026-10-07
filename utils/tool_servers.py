@@ -6,7 +6,7 @@ import re
 
 from playwright.sync_api import Locator, Page, expect
 
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, conversation
 from utils.tooltips import tooltip_button
 
 
@@ -99,3 +99,9 @@ def pick_tool(page: Page, name: str) -> None:
     menu.get_by_role("button", name=name).click()
     expect(menu.get_by_role("button", name=name)).to_have_attribute("aria-pressed", "true")
     page.keyboard.press("Escape")
+
+
+def tool_output(page: Page, call_name: str) -> Locator:
+    """Open the reply's call of `call_name` and return its Output section."""
+    conversation(page).get_by_text(f"View Result from {call_name}").click()
+    return conversation(page).get_by_text("Output", exact=True).last.locator("..")

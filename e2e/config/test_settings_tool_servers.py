@@ -28,8 +28,8 @@ from harness import upstream as reply
 from harness.instance import free_port
 from harness.listener import ReceivedRequest, json_answer
 from harness.openapi_server import authorization
-from utils.chat_ui import chat_input, conversation, expect_reply, send
-from utils.tool_servers import choose_auth, verify
+from utils.chat_ui import chat_input, expect_reply, send
+from utils.tool_servers import choose_auth, tool_output, verify
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -201,8 +201,7 @@ def test_the_browser_calls_the_added_tool_server_for_the_model(
     send(page, question)
     expect_reply(page, "Low water at dusk.")
 
-    conversation(page).get_by_text("View Result from get_tides").click()
-    expect(conversation(page).get_by_text("18:31")).to_be_visible()
+    expect(tool_output(page, "get_tides")).to_contain_text("18:31")
     [call] = [entry for entry in listener.requests_to("/tides") if entry.method == "GET"]
     assert authorization(call) == (f"Bearer {key}" if key else None)
 
