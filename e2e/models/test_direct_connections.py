@@ -7,15 +7,21 @@ the Connections tab is gone and the saved endpoint's models drop out of the sele
 
 The dialog's Verify Connection button asks the provider from the browser and shows its answer,
 its Advanced section sets a prefix, a model allowlist and tags that shape the selector, and a
-key edited in a saved connection's settings is the one the next chat carries.
+key edited in a saved connection's settings is the one the next chat carries. The provider paces
+its answer, except in the burst test, which sends forty pieces at once.
 
 Discriminates: in a frontend build, showing a refusing provider's message as a network problem
 turns the verify test red, ignoring the prefix, the allowlist or the tags of a direct connection
-turns the advanced settings test red, leaving the edited key out of the saved connection turns the
-key edit test red, skipping the direct connections in the model list fetch turns
-the chat test and the switch-off test red, dropping the tab's forwarding of the provider's stream
-turns the chat test red alone, and showing the tab and the connections whatever the admin switch
-says (and listing a connection whatever its own switch says) turns the three switch tests red.
+turns the advanced settings test red, leaving the edited key out of the saved connection turns
+the key edit test red, skipping the direct connections in the model list fetch turns the chat
+test and the switch-off test red, dropping the tab's forwarding of the provider's stream turns
+the chat test red alone, and showing the tab and the connections whatever the admin switch says
+(and listing a connection whatever its own switch says) turns the three switch tests red.
+Red on dev ebc6add67, real bugs: the burst arrives scrambled and cut short
+(open-webui/open-webui#31953: since 24e30d1cb the socket router checks the tab's session token
+for every forwarded line, so the lines overtake each other; green with that check taken out), and
+a prefixed model of an allowlisted direct connection is named by its bare id, where an admin
+connection's is named with the prefix.
 """
 
 from __future__ import annotations
@@ -27,7 +33,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.browser_provider import serve
-from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send, stop_button
 from utils.model_selector import model_options, select_model
 from utils.personal_connections import add_connection_form, open_personal_connections
 
@@ -278,3 +284,50 @@ def test_a_key_edited_in_a_saved_connections_settings_is_sent_with_the_next_chat
     [request] = provider.chat_requests()
     assert request.headers["Authorization"] == "Bearer sk-new-key"
     assert upstream.chat_requests() == []
+
+
+def test_an_answer_the_provider_sends_in_one_burst_arrives_whole(
+    page_for, make_user, admin, preserve, listener, direct_model_id
+):
+    set_direct_connections(admin, preserve, True)
+    provider = serve(listener, direct_model_id)
+    words = [f" word{number}" for number in range(40)]
+    provider.reply_in_one_burst(*words)
+    account = make_user()
+    save_connections(account, provider.base_url)
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+
+    select_model(page, direct_model_id)
+    send(page, f"Count to forty, {uuid.uuid4().hex[:6]}.")
+    expect(stop_button(page)).to_be_hidden(timeout=30_000)
+
+    shown = last_reply(page).inner_text()
+    assert shown.split() == [word.strip() for word in words], (
+        f"the provider answered word0 to word39 in order, the reply reads {shown!r} (#31953)"
+    )
+
+
+def test_a_prefixed_allowlisted_model_is_named_with_its_prefix(
+    page_for, make_user, admin, preserve, listener, direct_model_id
+):
+    set_direct_connections(admin, preserve, True)
+    provider = serve(listener, direct_model_id)
+    prefix = f"mine{uuid.uuid4().hex[:4]}"
+    account = make_user()
+    connections = {
+        "OPENAI_API_BASE_URLS": [provider.base_url],
+        "OPENAI_API_KEYS": [""],
+        "OPENAI_API_CONFIGS": {
+            "0": {"enable": True, "prefix_id": prefix, "model_ids": [direct_model_id]}
+        },
+    }
+    with account.client() as client:
+        client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"directConnections": connections}}
+        ).raise_for_status()
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+
+    named = model_options(page, f"{prefix}.{direct_model_id}")
+    expect(named, "the selector names the prefixed model by its bare id").to_have_count(1)

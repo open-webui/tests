@@ -7,7 +7,8 @@ CORS preflight as well as the calls. `serve(listener, model_id)` routes `/v1/mod
 `provider.chat_requests()` are what the browser sent, headers included. Further model ids after
 the first are listed too, and `provider.refuse(status, message)` makes the model list answer that
 status with an OpenAI-shaped error body, the way a provider refuses a wrong key. A chat answer
-is streamed one event at a time with short gaps.
+is streamed one event at a time with short gaps, since the server reorders a burst of relayed
+lines; `provider.reply_in_one_burst(*pieces)` writes a many-piece answer all at once instead.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ class BrowserProvider:
     other_model_ids: tuple[str, ...] = ()
     text: str = "hello from the browser side"
     refusal: tuple[int, str] | None = None
+    burst: tuple[str, ...] = ()
 
     @property
     def base_url(self) -> str:
@@ -40,6 +42,10 @@ class BrowserProvider:
 
     def reply_with(self, text: str) -> None:
         self.text = text
+
+    def reply_in_one_burst(self, *pieces: str) -> None:
+        """Answer the next chats with one delta per piece, all written at once."""
+        self.burst = pieces
 
     def refuse(self, status: int, message: str) -> None:
         self.refusal = (status, message)
@@ -62,18 +68,22 @@ class BrowserProvider:
         return status, {**headers, **CORS}, body
 
     def _chat(self, _request: ReceivedRequest) -> Answer:
-        delta = {"index": 0, "delta": {"role": "assistant", "content": self.text}}
-        stop = {"index": 0, "delta": {}, "finish_reason": "stop"}
+        deltas = [{"content": piece} for piece in self.burst or (self.text,)]
+        deltas[0]["role"] = "assistant"
+        choices = [{"index": 0, "delta": delta} for delta in deltas]
+        choices.append({"index": 0, "delta": {}, "finish_reason": "stop"})
         events = [
             f"data: {json.dumps({'object': 'chat.completion.chunk', 'choices': [choice]})}\n\n"
-            for choice in (delta, stop)
+            for choice in choices
         ] + ["data: [DONE]\n\n"]
         headers = {"Content-Type": "text/event-stream", **CORS}
+        if self.burst:
+            return 200, headers, "".join(events).encode()
         return 200, headers, _paced(events)
 
 
 def _paced(events: list[str]) -> Iterator[bytes]:
-    # the page relays each line over a socket and the server may reorder a burst, so space them out
+    # the page relays each line over its socket and the server may reorder a burst
     for event in events:
         yield event.encode()
         time.sleep(0.15)
