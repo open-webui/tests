@@ -13,7 +13,9 @@ actor, the new account as subject and its role.
 A target subscribed to `chat.finished` is called when a reply finishes: an `away` one only once
 the user has not been active for three minutes (every request with the user's token counts as
 activity, so the test sets the stored time back while a slow reply streams), an `always` one at
-once, one not subscribed to the event never.
+once, one not subscribed to the event never. A target subscribed to `chat.failed` is called when
+a reply fails, as the notifications docs promise; on dev a provider error that ends a reply
+announces nothing, so that test stays red until the failure is published.
 
 Discriminates: in a backend copy, `_check_notifications_access` skipping the switch turns the
 switched-off test red (HTTP 200) and skipping the permission turns the permission test red,
@@ -22,7 +24,7 @@ switched-off test red (HTTP 200) and skipping the permission turns the permissio
 `user.updated` in place of `user.created` turns the event delivery test red,
 `dispatch_notification_event` skipping every `away` target turns the idle-user test red (nothing
 is called) and ignoring a target's events turns the unsubscribed test red (the other target is
-called).
+called); publishing `chat.failed` where a chat ends in an error turns the failed-reply test green.
 """
 
 from __future__ import annotations
@@ -31,8 +33,10 @@ import time
 
 import pytest
 
+from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.backends import write_rows
+from harness.chat import send_message, wait_for_reply
 from harness.inflight import start_slow_reply
 from harness.listener import json_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
@@ -282,3 +286,26 @@ def test_a_target_not_subscribed_to_the_event_is_not_called(allowed_notification
         "the subscribed target was not called"
     )
     assert listener.requests_to("/other") == []
+
+
+def test_a_reply_that_fails_calls_a_target_for_failed_chats(allowed_notifications, listener):
+    account = create_user(allowed_notifications)
+    _add_targets(
+        account,
+        {
+            "id": "other",
+            "config": {"url": f"{listener.base_url}/other"},
+            "events": ["chat.failed"],
+            "delivery": "always",
+        },
+    )
+    allowed_notifications.upstream.queue(reply.error(500, "the provider is down"))
+
+    with account.client() as client:
+        turn = send_message(client, "say the codeword")
+        failed = wait_for_reply(client, turn)
+
+    assert "the provider is down" in str(failed.get("error"))
+    assert _wait_for(lambda: listener.requests_to("/other")), "the failed reply called nothing"
+    body = listener.requests_to("/other")[0].json()
+    assert body["action"] == "chat_failed" and "the provider is down" in body["message"]

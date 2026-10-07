@@ -9,7 +9,11 @@ not offered and nothing is called. An admin adds an event webhook under Admin Se
 and a new account then reaches its URL as a `user.created` event until it is switched off. The chat
 link a finished reply sends must open that chat; it was rewritten from `/c/<id>` to `/<id>`, which
 the frontend has no route for (404), until PR #31572 (open-webui/open-webui#31565). Loopback URLs
-are only fetchable on an instance booted with local fetching allowed.
+are only fetchable on an instance booted with local fetching allowed. Editing a target's URL
+sends the next reply to the new one, a removed target leaves the list and is not called, and
+Make Default moves the model's `notify` tool to that target. A target for failed chats is called
+when a reply fails, as the notifications docs promise; on dev a provider error that ends a reply
+announces nothing, so that test stays red until the failure is published.
 
 Discriminates: passes on dev a5bc78300, and the chat link test fails on dev 176d31d1d, before PR
 #31572; in frontend copies of 176d31d1d, with the target save sending no URL the save test fails,
@@ -18,7 +22,10 @@ switched-off target test fails, with the section shown whatever the admin's swit
 switch test fails and with the event webhook form always saving every event the two admin tests
 fail; in a backend copy, with the away check skipped the on-the-page test fails (the away target is
 called), with the enabled check skipped the switched-off target test fails and with the admin
-switch ignored the switched-off test fails.
+switch ignored the switched-off test fails; on ebc6add67, in a frontend copy, with the edit form
+saving no URL the edit test fails, with Remove deleting nothing the removal test fails and with
+Make Default calling nothing the default test fails; in a backend copy that publishes
+`chat.failed` when a reply ends in an error the failed-chat test passes.
 """
 
 from __future__ import annotations
@@ -335,3 +342,105 @@ def test_an_event_webhook_switched_off_in_the_list_is_not_called(
 
     assert _wait_for(lambda: hook.requests_to("/events")), "the enabled webhook was not called"
     assert [call.json()["subject"]["id"] for call in hook.requests_to("/events")] == [second.id]
+
+
+def _target_row(settings, target_id: str):
+    return settings.get_by_text(target_id, exact=True).locator(
+        "xpath=ancestor::div[.//button[@role='switch']][1]"
+    )
+
+
+def test_editing_a_target_sends_the_next_reply_to_its_new_url(
+    fetching_instance, user_webhooks, hook, page_for
+):
+    account = create_user(fetching_instance)
+    _add_target(account, "ops", f"{hook.base_url}/hook", delivery="always")
+    page = page_for(account)
+    settings = _open_notifications(page)
+
+    _target_row(settings, "ops").get_by_role("button", name="Edit").click()
+    form = page.get_by_role("dialog").last
+    form.get_by_placeholder("Keep current webhook URL").fill(f"{hook.base_url}/always")
+    form.get_by_role("button", name="Save", exact=True).click()
+
+    expect(page.get_by_text(SAVED)).to_be_visible()
+    expect(_target_row(settings, "ops")).to_contain_text("/...ways")
+    page.keyboard.press("Escape")
+    _reply_to(page, fetching_instance, "say the codeword", "the codeword is plover")
+    assert _wait_for(lambda: hook.requests_to("/always")), "the edited URL was not called"
+    assert hook.requests_to("/hook") == []
+
+
+def test_a_removed_target_leaves_the_list_and_is_not_called(
+    fetching_instance, user_webhooks, hook, page_for
+):
+    account = create_user(fetching_instance)
+    _add_target(account, "gone", f"{hook.base_url}/off", delivery="always")
+    _add_target(account, "always", f"{hook.base_url}/always", delivery="always")
+    page = page_for(account)
+    settings = _open_notifications(page)
+
+    _target_row(settings, "gone").get_by_role("button", name="Remove").click()
+
+    expect(settings.get_by_text("gone", exact=True)).to_have_count(0)
+    assert [target["id"] for target in _stored_targets(account)] == ["always"]
+    page.keyboard.press("Escape")
+    _reply_to(page, fetching_instance, "say the codeword", "the codeword is curlew")
+    assert _wait_for(lambda: hook.requests_to("/always")), "the remaining target was not called"
+    assert hook.requests_to("/off") == []
+
+
+def test_a_target_for_failed_chats_hears_of_a_reply_that_failed(
+    fetching_instance, user_webhooks, hook, page_for
+):
+    account = create_user(fetching_instance)
+    _add_target(
+        account, "failures", f"{hook.base_url}/hook", events=["chat.failed"], delivery="always"
+    )
+    _add_target(account, "always", f"{hook.base_url}/always", delivery="always")
+    page = page_for(account)
+    settings = _open_notifications(page)
+    expect(_target_row(settings, "failures")).to_contain_text("Chat failed")
+    page.keyboard.press("Escape")
+
+    prompt = "say the codeword"
+    fetching_instance.upstream.queue(
+        reply.error(500, "the provider is down", match=reply.answering(prompt))
+    )
+    send(page, prompt)
+    expect(page.get_by_text("the provider is down")).to_be_visible()
+
+    # the docs promise chat.failed for a failed response; on dev only a finished one is announced
+    assert _wait_for(lambda: hook.requests_to("/hook")), "the failed reply called nothing"
+    body = hook.requests_to("/hook")[0].json()
+    assert body["action"] == "chat_failed" and "the provider is down" in body["message"]
+    assert hook.requests_to("/always") == []
+
+
+def test_make_default_sends_the_models_notification_to_that_target(
+    fetching_instance, user_webhooks, hook, page_for
+):
+    account = create_user(fetching_instance)
+    _add_target(account, "first", f"{hook.base_url}/hook", events=[])
+    _add_target(account, "pager", f"{hook.base_url}/always", events=[])
+    page = page_for(account)
+    settings = _open_notifications(page)
+    expect(_target_row(settings, "first")).to_contain_text("Default")
+
+    _target_row(settings, "pager").get_by_role("button", name="Make Default").click()
+
+    expect(_target_row(settings, "pager").get_by_text("Default", exact=True)).to_be_visible()
+    expect(
+        _target_row(settings, "first").get_by_role("button", name="Make Default")
+    ).to_be_visible()
+    page.keyboard.press("Escape")
+    prompt = "ping me when the kettle is on"
+    fetching_instance.upstream.queue(
+        reply.tool_call("notify", {"message": "kettle is on"}, match=reply.answering(prompt)),
+        reply.text("I sent it."),
+    )
+    send(page, prompt)
+    expect_reply(page, "I sent it.")
+    assert _wait_for(lambda: hook.requests_to("/always")), "the default target was not called"
+    assert hook.requests_to("/always")[0].json()["message"] == "kettle is on"
+    assert hook.requests_to("/hook") == []
