@@ -6,7 +6,8 @@ and stops again when the block ends. With `media=True` it also offers `snapshot`
 with `SNAPSHOT_PNG` as an image, and `chime`, answering with `CHIME_WAV` as audio; with
 `failing=True`, `capsize`, which fails with `CAPSIZE_ERROR`; with `slow=True`, `ponder`, which
 answers `PONDERED` after the number of seconds it is asked to wait. `tls=True` serves it over
-HTTPS with a self-signed certificate.
+HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
+plain 401, the way a server keyed by an API key answers (no OAuth metadata).
 `mcp_connection(...)` is the admin's connection to it without auth; save it through
 `TOOL_SERVERS` after `preserve(TOOL_SERVERS)`. Given FastMCP's `auth` settings and a
 `token_verifier`, the SDK guards it the way a real OAuth-protected MCP server is guarded: a
@@ -55,6 +56,20 @@ def _silence_wav() -> bytes:
 CHIME_WAV = _silence_wav()
 
 
+def _requiring_bearer(app, bearer_key: str):
+    expected = f"Bearer {bearer_key}".encode()
+
+    async def guarded(scope, receive, send) -> None:
+        if scope["type"] == "http" and dict(scope["headers"]).get(b"authorization") != expected:
+            start = {"type": "http.response.start", "status": 401, "headers": []}
+            await send(start)
+            await send({"type": "http.response.body", "body": b"missing or wrong key"})
+            return
+        await app(scope, receive, send)
+
+    return guarded
+
+
 def _echo_server(
     media: bool = False, failing: bool = False, slow: bool = False, **auth: Any
 ) -> FastMCP:
@@ -99,11 +114,14 @@ def serving_mcp(
     tls: bool = False,
     host: str = "127.0.0.1",
     name: str | None = None,
+    bearer_key: str | None = None,
     **auth: Any,
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to FastMCP."""
     port = port or free_port()
     app = _echo_server(media, failing, slow, **auth).streamable_http_app()
+    if bearer_key:
+        app = _requiring_bearer(app, bearer_key)
     with tempfile.TemporaryDirectory(prefix="owui-mcp-") as certificates:
         certificate = {}
         if tls:
