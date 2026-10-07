@@ -173,7 +173,9 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
     expect(editor).not_to_contain_text(selected)
     expect(editor).to_contain_text(kept)
     _wait_until_stored(author, note_id, rewritten)
-    assert _stored_markdown(author, note_id).strip() == f"{kept}\n{rewritten}"
+    # the open editor may already have re-saved the edit with a hard line break
+    stored = _stored_markdown(author, note_id).strip()
+    assert [line.rstrip() for line in stored.splitlines()] == [kept, rewritten]
     first_request = _requests_answering(upstream, REWRITE_PROMPT)[0]
     assert f"{SELECTION_MARKER}\n{selected}" in str(first_request["messages"][-1]["content"])
 
