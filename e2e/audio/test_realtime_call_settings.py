@@ -9,9 +9,12 @@ engine OpenAI Realtime fills in its own voice and model, offers a Prompt Templat
 Additional Parameters, and a reply read aloud is rendered with that prompt. Here the provider is
 `harness.realtime_provider`.
 
-Discriminates: passes on the dev ebc6add67 build; in a frontend copy, the audio settings saved
-without the voice call section turn both call mode tests red, and saved without the speech
-prompt template turn the speech engine test red.
+A realtime call's overlay reads Listening since 4f1f38541; the standard call's still reads
+Listening....
+
+Discriminates: passes on the dev 4f1f38541 build; in a frontend copy of it, the audio settings
+saved without the voice call section turn both call mode tests red. On dev ebc6add67 the
+settings saved without the speech prompt template turned the speech engine test red.
 """
 
 from __future__ import annotations
@@ -124,7 +127,7 @@ def test_realtime_call_mode_saves_its_provider_and_a_users_call_uses_it(
 
     page = voice_page_for(make_user())
     start_call(page)
-    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
     call = provider.wait_for_call()
     assert call.path == f"/v1/realtime?model={VOICE_MODEL}"
     assert call.headers["authorization"] == f"Bearer {API_KEY}"

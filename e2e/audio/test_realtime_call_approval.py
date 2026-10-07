@@ -2,14 +2,14 @@
 
 With tool permissions on and the composer set to Ask for approval, a realtime call hands a spoken
 question to the chat model, which calls a tool. The approval card shows in the chat as for a
-typed message, the call panel shows Waiting for approval and the voice provider is asked to tell
-the user to review it in chat. Allowing the call in the chat runs the tool, the model's answer
-shows and is then spoken, and the panel goes back to listening. Here the provider is
+typed message and the voice provider is asked to tell the user to review it in chat. Allowing the
+call in the chat runs the tool, the model's answer shows and is then spoken, and the call goes
+back to Listening. Since 4f1f38541 the call overlay has no Waiting for approval status, so the
+spoken request is the call's only sign of the approval. Here the provider is
 `harness.realtime_provider`.
 
-Discriminates: passes on the dev ebc6add67 build; fails on a frontend copy whose call never
-treats a tool call waiting for approval as an approval (no approval status is spoken and the
-panel keeps showing Thinking...).
+Discriminates: passes on the dev 4f1f38541 build; fails on a frontend copy of it whose call never
+asks the provider to speak the approval status.
 """
 
 from __future__ import annotations
@@ -72,7 +72,6 @@ def test_a_spoken_request_waits_for_the_approval_in_chat_and_is_then_answered(
 
     allow = conversation(page).get_by_role("button", name="Allow", exact=True)
     expect(allow).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
-    expect(call_status(page, "Waiting for approval")).to_be_visible()
     realtime.wait_for(lambda: realtime.spoken, "a spoken status")
     assert REVIEW_IN_CHAT in realtime.spoken[0]
 
@@ -80,4 +79,4 @@ def test_a_spoken_request_waits_for_the_approval_in_chat_and_is_then_answered(
 
     expect_reply(page, answer)
     realtime.wait_for(lambda: answer in realtime.spoken, "the answer spoken")
-    expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
