@@ -9,9 +9,16 @@ and the owner as well.
 
 Here a tab sends bursts of edits without waiting for the server, each carrying the full text so
 far, on several notes at once; once the save delay has passed every note must hold the last text.
+On Postgres the instance gets the pool the scaling docs suggest to start from
+(`DATABASE_POOL_SIZE=15`, `DATABASE_POOL_MAX_OVERFLOW=20`) and the notes get their bursts one at a
+time: with the default pool even one note's burst runs out of connections and the server answers
+503, and several notes at once outrun the suggested pool too.
 
 Discriminates: fails on dev 176d31d1d (some notes keep an older edit's text); passes once the
-newest edit's save is the one that stays scheduled.
+newest edit's save is the one that stays scheduled. On dev f6cbeb1a1 7 or 8 of the 8 notes keep an
+older text on Postgres and Redis, and 11 to 22 of the 48 on SQLite; with PR #31596's per-note
+ordering applied in a backend copy both tests pass on both, the SQLite writer's only once the wait
+was raised from 8 to 30 seconds, as the ordered edits take longer to work through.
 """
 
 from __future__ import annotations
@@ -21,17 +28,33 @@ import uuid
 
 import pytest
 
+from harness import backends
+from harness.actors import create_user
 from harness.socket_client import connected, note_edit
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
-NOTES_PER_ROUND = 6
+# one note at a time on Postgres, where most notes fall behind anyway
+NOTES_PER_ROUND = 1 if backends.DATABASE == "postgres" else 6
 ROUNDS = 8
 EDITS_PER_NOTE = 50
 EDIT_SPACING = 0.002
-# the server saves half a second after the last edit
-SAVE_WAIT = 8.0
+# the server saves half a second after the last edit, once it has worked through the burst
+SAVE_WAIT = 30.0
 SENTENCE = "packing list with sunscreen and a hat for the trip"
+# the pool the scaling docs suggest to start from; unset, Postgres gets SQLAlchemy's 5 + 10, which
+# even one note's burst runs out of
+POSTGRES_POOL = {"DATABASE_POOL_SIZE": "15", "DATABASE_POOL_MAX_OVERFLOW": "20"}
+
+
+@pytest.fixture
+def make_user(request: pytest.FixtureRequest):
+    """Accounts on the shared instance, or on Postgres on one with the pool the docs suggest."""
+    if backends.DATABASE == "postgres":
+        target = request.getfixturevalue("instance_with")(POSTGRES_POOL)
+    else:
+        target = request.getfixturevalue("instance")
+    return lambda: create_user(target)
 
 
 def _create_note(owner, grants: list[dict]) -> str:
