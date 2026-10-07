@@ -3,11 +3,16 @@
 The first account on an instance becomes its admin and switches self-service sign-up off. With
 sign-up switched back on, a later account gets the default user role, `pending` unless the admin
 changed it, and a pending account can see its own session but is refused on every user route
-until an admin lets it in. With sign-up off the form is refused and no account appears, while an
-admin can still add accounts of any role from the admin panel.
+until an admin lets it in; with the default role `admin` a sign-up is an admin straight away. An
+address without a dot in its domain is refused and creates nothing, except one at `localhost`.
+With sign-up off the form is refused and no account appears, while an admin can still add
+accounts of any role from the admin panel.
 
 Discriminates: fails with the `ui.enable_signup` check in the signup route removed (a sign-up
-with sign-up off is answered 200 and the account exists).
+with sign-up off is answered 200 and the account exists). On dev ebc6add67, a backend copy whose
+admin settings refuse the default role `admin` turns the admin role test red, one whose address
+check accepts a domain without a dot turns the undotted test red and one whose address check
+refuses `localhost` turns the localhost test red.
 """
 
 from __future__ import annotations
@@ -133,3 +138,31 @@ def test_an_email_already_taken_cannot_sign_up_again(instance, make_user, signup
     existing = make_user()
 
     assert sign_up(instance, existing.email.upper()).status_code == 400
+
+
+def test_a_sign_up_with_the_admin_default_role_is_an_admin(instance, admin, signup_open):
+    save_admin_config(admin, DEFAULT_USER_ROLE="admin")
+
+    signed_up = sign_up(instance)
+
+    assert signed_up.status_code == 200, signed_up.text
+    assert signed_up.json()["role"] == "admin"
+    with instance.client(signed_up.json()["token"]) as client:
+        assert client.get("/api/v1/users/").status_code == 200
+
+
+def test_an_address_without_a_dot_in_its_domain_is_refused(instance, admin, signup_open):
+    email = f"undotted-{uuid.uuid4().hex[:8]}@harbour"
+
+    refused = sign_up(instance, email)
+
+    assert refused.status_code == 400, refused.text
+    assert "email format" in refused.json()["detail"]
+    with admin.client() as client:
+        assert client.get("/api/v1/users/", params={"query": email}).json()["users"] == []
+
+
+def test_an_address_at_localhost_signs_up(instance, signup_open):
+    signed_up = sign_up(instance, f"harbour-{uuid.uuid4().hex[:8]}@localhost")
+
+    assert signed_up.status_code == 200, signed_up.text

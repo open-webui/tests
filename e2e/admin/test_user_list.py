@@ -6,14 +6,19 @@ and the promoted account opens the admin panel. Deleting an account from its row
 list and its sign-in is refused. The search box narrows the list by name or email, and the Name
 and Email column headers sort what is left, flipping direction on a second click. "Sign out all
 devices" in the edit dialog, after a confirmation that says API keys stay active, ends every
-session of that account. Each test works as a fresh admin on accounts of its own.
+session of that account. Add User with the role Admin creates an account that signs in through
+the auth page and opens the admin panel, while an email already registered is refused in the
+dialog, which stays open, and no second account appears. Each test works as a fresh admin on
+accounts of its own.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the edit dialog sending the stored
 role and no password turns the edit test red (the role stays user), the delete confirmation doing
 nothing turns the delete test red (the row stays) and the Email header sorting by name turns the
 sort test red; in a backend copy, the user search matching emails alone turns the search test red
 (the name finds nobody), and the sessions route of the users router returning without revoking
-turns the sign-out test red (the account's browser stays in the chat).
+turns the sign-out test red (the account's browser stays in the chat). On dev ebc6add67, a
+frontend copy whose Add User form always sends the role `user` turns the added admin test red, and
+one whose form drops the server's error turns the duplicate test red.
 
 The header test fails on dev a5bc78300 (open-webui/open-webui#31581): the sorted column's
 `aria-sort`, added by #27501 to tell screen readers the sort, keeps the value it had on load,
@@ -206,3 +211,50 @@ def test_sign_out_all_devices_ends_the_accounts_sessions(admin_page, make_user, 
     expect(accounts_page).to_have_url(re.compile(r"/auth"))
     with account.client() as client:
         assert client.get("/api/v1/auths/").status_code == 401
+
+
+def _add_user(
+    page: Page, users: Locator, name: str, email: str, password: str, role: str
+) -> Locator:
+    users.get_by_role("button", name="Add User").click()
+    form = page.get_by_role("dialog").filter(has_text="Add User")
+    form.get_by_role("combobox", name="Role").select_option(value=role)
+    form.get_by_role("textbox", name="Name").fill(name)
+    form.get_by_role("textbox", name="Email").fill(email)
+    form.get_by_role("textbox", name="Enter Your Password").fill(password)
+    form.get_by_role("button", name="Save").click()
+    return form
+
+
+def test_an_account_added_as_admin_signs_in_and_opens_the_admin_panel(admin_page, page, instance):
+    suffix = uuid.uuid4().hex[:8]
+    email, password = f"added-admin-{suffix}@example.com", "added-admin-pw-1"
+    users = _user_list(admin_page)
+
+    form = _add_user(admin_page, users, f"Added Admin {suffix}", email, password, "admin")
+    expect(form).to_be_hidden()
+    _search(users, email)
+    expect(_row(users, email).get_by_role("button", name="Change User Role")).to_have_text("admin")
+
+    _sign_in(page, email, password)
+    expect(chat_input(page)).to_be_visible()
+    added_users = _user_list(page)
+    _search(added_users, email)
+    expect(_row(added_users, email)).to_be_visible()
+
+
+def test_adding_an_email_already_registered_says_so_and_keeps_the_dialog_open(
+    admin_page, make_user, admin
+):
+    existing = make_user()
+    users = _user_list(admin_page)
+
+    form = _add_user(
+        admin_page, users, "Second Comer", existing.email.upper(), "second-pw-123", "user"
+    )
+
+    expect(admin_page.get_by_text("This email is already registered")).to_be_visible()
+    expect(form).to_be_visible()
+    with admin.client() as client:
+        found = client.get("/api/v1/users/", params={"query": existing.email}).json()["users"]
+    assert [account["email"] for account in found] == [existing.email]
