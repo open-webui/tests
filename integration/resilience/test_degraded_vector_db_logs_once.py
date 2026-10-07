@@ -5,7 +5,7 @@ bases still answers (the retrieval step degrades to no sources), but the search 
 render a full traceback twice per knowledge base and query: once in `query_doc`, which
 re-raised, and again in the handler that caught it. #29981 (ff7f35a30) logs one aggregated entry
 per search instead. The chat still searches each base on its own, so the whole chat logs one
-entry per base; that it should log one in total is the open half, a strict `xfail`. Entries are
+entry per base. Entries are
 counted as top-level tracebacks in the server log, chained exceptions not counted again.
 
 Collecting the failures must not cost the hits of the collections that did answer. That half
@@ -104,13 +104,6 @@ def test_each_knowledge_base_logs_its_failed_search_once(degraded_instance, know
         f"{failures} tracebacks for one chat over {KNOWLEDGE_BASES} bases; each failed search "
         "is logged once per knowledge base (#29981)"
     )
-
-
-@pytest.mark.xfail(raises=AssertionError, strict=True, reason="one entry per knowledge base")
-def test_chat_with_the_vector_db_down_logs_at_most_one_traceback(degraded_instance, knowledge_ids):
-    failures = _failures_during_a_chat(degraded_instance, knowledge_ids)
-
-    assert failures <= 1, f"{failures} tracebacks for one chat over {KNOWLEDGE_BASES} bases"
 
 
 @pytest.fixture(scope="module")

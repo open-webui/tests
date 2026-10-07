@@ -11,8 +11,8 @@ references, so a deepcopy or a structural rebuild creeping in fails immediately:
   item, its content list and the touched part are new objects, the rest is the same objects
   (that the input is left unchanged is pinned in `unit/chat/test_stream_event_handling.py`).
 
-Stays a unit test: `integration/footprint/test_streaming_cost_stays_linear.py` sees the same
-contract from outside, but only as a cost ratio that another copy on the path already breaks.
+Stays a unit test: from outside the contract shows only as a cost ratio, which other per-delta
+copies on the path already break.
 
 Unpinned: read on upstream dev at v0.11.3 (a253bf0c3), where both hold. Unmarked: nothing
 to pin.
