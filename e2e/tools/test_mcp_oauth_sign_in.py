@@ -14,10 +14,12 @@ Red on dev ebc6add67: choosing OAuth 2.1 in the dialog leaves its check button l
 tooltipped "Verify Connection". f822605b3 meant it to read "Check OAuth Discovery", but the label
 is computed by a function the template calls without naming the auth type, so it never updates.
 
-Discriminates: in a backend copy that never stores the token from the sign-in callback, every
-test fails (the server never shows as connected); with the stored token ignored when a chat calls
-the server, the reuse test fails (the call reaches the server without a token); with the OAuth
-session delete answering success without deleting, the sign-out test fails (no new sign-in).
+Discriminates: on dev ebc6add67, in a backend copy that never stores the token from the sign-in
+callback every sign-in test fails (the server never shows as connected); with the stored token
+dropped once a chat call has used it the reuse test fails (the second chat needs a new sign-in);
+with the OAuth session delete answering success without deleting the sign-out test fails. In a
+frontend build whose dialog saves no access grants the admin's test fails, and in one whose check
+button label follows the auth type the label test passes.
 """
 
 from __future__ import annotations

@@ -8,11 +8,13 @@ admin's key or the person's own session token, as the dialog's Auth says. A serv
 switches off or deletes is gone from the people's Tools; one shared with a group is offered to its
 members only. integration/tools/test_openapi_tool_server.py covers what a call sends and returns.
 
-Discriminates: in a backend copy whose tools list skips the connection access check, the group
-test fails (the outsider is offered the server); with the enable check dropped from the spec fetch
-the switched-off test fails; with the session branch of the tool server headers sending the
-connection key, the session case fails. In a frontend build whose dialog leaves the access grants
-out of the saved connection, every chat test fails (the server stays the admin's).
+Discriminates: on dev ebc6add67, in a backend copy whose tools list skips the connection access
+check the group test fails (the outsider is offered the server); with the enable check dropped
+from the spec fetch the switched-off test fails; with the session branch of the tool server
+headers sending the connection key the session case fails; with the check sending no key the
+verify test fails. In a frontend build whose dialog saves no access grants every chat test and the
+group test fail (the server stays the admins'), and in one whose delete keeps the connection in the
+saved list the deleted test fails.
 """
 
 from __future__ import annotations

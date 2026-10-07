@@ -7,9 +7,10 @@ calls its `echo` tool, named after the connection, and the reply shows what the 
 server keyed by an API key is reached with the key the admin typed, and the check refuses a wrong
 one. Sign-in with OAuth 2.1 is in test_mcp_oauth_sign_in.py.
 
-Discriminates: in a backend copy whose MCP connect leaves the bearer header out, the bearer case
-and the key check fail; with the MCP branch of the chat's tool resolution skipped, both chat cases
-fail (the model is offered no `echo`).
+Discriminates: on dev ebc6add67, in a backend copy whose MCP check answers success without
+connecting the key check fails; with the MCP branch of the chat's tool resolution skipped both chat
+cases fail (the model is offered no `echo`), as they do in a frontend build whose dialog saves no
+access grants.
 """
 
 from __future__ import annotations

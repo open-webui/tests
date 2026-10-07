@@ -6,8 +6,8 @@ An OpenAPI operation that answers 500 shows the status and the server's words. A
 would take a minute is cut off at `AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER` and the reply arrives
 within it. integration/tools/test_mcp_tool_call_timeout.py pins the limits over HTTP.
 
-Discriminates: in a backend copy whose MCP tool call swallows the tool's error into an empty
-result, the MCP failure test fails; with the status dropped from a failed OpenAPI call, the
+Discriminates: on dev ebc6add67, in a backend copy whose MCP tool call turns the tool's error into
+an empty result, the MCP failure test fails; with the status dropped from a failed OpenAPI call, the
 OpenAPI test fails; with the MCP call's time limit removed, the hung call is still running when
 the test gives up and the timeout test fails.
 """
