@@ -1,12 +1,12 @@
 """Journey: an admin manages the models of Ollama servers from Admin Settings > Models > Manage.
 
-The Manage dialog of the models page lists every Ollama connection in a picker and works on the
-one picked: it pulls a model with a progress bar (a pasted `ollama pull ...` command pulls the
-bare tag), updates every model the server has, deletes a model after a confirmation and creates
-one from a JSON recipe. Each action is checked on both sides: what the admin sees (the progress,
-the toasts, the lists and the chat's model selector) and what the Ollama stand-in was sent.
-Errors from the server reach the admin as a toast, and an action on one server leaves the other
-alone.
+The Manage dialog of the models page lists every Ollama connection in a picker and works on the one
+picked: it pulls a model with a progress bar (a pasted `ollama pull ...` command pulls the bare tag,
+a tag already downloading is not pulled twice), updates every model the server has (and stops when
+cancelled), deletes a model after a confirmation and creates one from a JSON recipe. Each action is
+checked on both sides: what the admin sees (the progress, the toasts, the lists and the chat's model
+selector) and what the Ollama stand-in was sent. Errors from the server reach the admin as a toast,
+and an action on one server leaves the other alone.
 
 Two tests stay red on dev until the dialog is fixed. A create whose stream reports download
 progress (Ollama pulls a base it does not have first) shows no progress: the progress block reads
@@ -15,11 +15,14 @@ defined". A create Ollama refuses outright (a 400 such as "neither 'from' or 'fi
 specified") shows nothing at all: the dialog only reads a response that succeeded, clears the form
 and gives no error.
 
-Discriminates: passes on dev ebc6add67; in a frontend copy, with the pasted command no longer
-trimmed the pull test fails, with the picker's choice not passed on the second-server test fails
-(the first server is asked), with the progress lines ignored the pull and create progress tests
-fail, with the confirmation skipped the delete test fails and with stream errors swallowed the
-pull error test fails.
+Discriminates: passes on dev ebc6add67 apart from the two red tests; in frontend copies, with the
+pasted command no longer trimmed the pull test fails, with the picker's choice not passed on the
+second-server and unreachable-server tests fail, with stream errors ignored the pull error test
+fails, with Update All stopping after the first model the update test fails, with its Cancel doing
+nothing the cancel test fails, with the queue check dropped the already-downloading test fails,
+with the confirmation skipped the delete test fails, with the recipe sent without its name the
+create test fails and with a recipe that is not JSON sent as empty the JSON test fails; with the
+progress block reading the typed name and a refused create shown as an error, both red tests pass.
 """
 
 from __future__ import annotations
@@ -90,6 +93,11 @@ def two_servers(admin, preserve, listener):
 
 def manage_dialog(page: Page) -> Locator:
     page.goto("/admin/settings/models")
+    return choose_manage(page)
+
+
+def choose_manage(page: Page) -> Locator:
+    """Opens the Manage dialog from the models page already showing, without a reload."""
     page.get_by_role("dialog").get_by_role("button", name="Actions").first.click()
     page.get_by_role("menu").get_by_role("button", name="Manage", exact=True).click()
     return page.get_by_role("dialog").filter(has_text="Manage Models")
@@ -149,7 +157,8 @@ def test_a_pull_ollama_refuses_shows_its_error(page_for, operator, ollama, liste
     pull(dialog, "nonexistent:latest")
 
     expect(page.get_by_text(refusal)).to_be_visible()
-    expect(page.get_by_text("has been successfully downloaded")).to_have_count(0)
+    expect(page.get_by_text("Download canceled")).to_be_visible()
+    assert page.get_by_text("has been successfully downloaded").count() == 0
     assert ollama.models == [BASE_MODEL]
 
 
@@ -162,6 +171,38 @@ def test_update_all_models_pulls_every_model_the_server_has(page_for, operator, 
 
     expect(page.get_by_text("All models are up to date")).to_be_visible()
     assert [sent["name"] for sent in ollama.sent("/api/pull")] == [BASE_MODEL, "mistral:7b"]
+
+
+def test_cancelling_update_all_models_stops_after_the_model_in_flight(page_for, operator, ollama):
+    ollama.models.append("mistral:7b")
+    ollama.hold_pulls()
+    page = page_for(operator)
+    dialog = open_manage_models(page)
+
+    tooltip_button(dialog, "Update All Models").click()
+    expect(dialog.get_by_text(f'Updating "{BASE_MODEL}" (50%)')).to_be_visible()
+    tooltip_button(dialog, "Cancel").click()
+
+    expect(page.get_by_text("Model update cancelled")).to_be_visible()
+    expect(dialog.get_by_text("Updating")).to_have_count(0)
+    assert [sent["name"] for sent in ollama.sent("/api/pull")] == [BASE_MODEL]
+
+
+def test_a_tag_already_downloading_is_not_pulled_twice(page_for, operator, ollama):
+    ollama.hold_pulls()
+    page = page_for(operator)
+    dialog = open_manage_models(page)
+    pull(dialog, PULLED_MODEL)
+    expect(dialog.get_by_text("50%")).to_be_visible()
+
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    dialog = choose_manage(page)
+    pull(dialog, PULLED_MODEL)
+
+    queued = f"Model '{PULLED_MODEL}' is already in queue for downloading."
+    expect(page.get_by_text(queued)).to_be_visible()
+    assert len(ollama.sent("/api/pull")) == 1
 
 
 def test_deleting_a_model_asks_first_and_removes_it_everywhere(page_for, operator, ollama):
