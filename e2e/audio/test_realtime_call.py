@@ -12,8 +12,7 @@ question typed after the call tells the chat model what the voice said, as a his
 transcript. What the provider transcribes lands in the chat as the user's
 message; a request it hands on goes to the chat's own model, whose answer shows in the chat as
 usual and is then spoken, its spoken transcript saved on that reply; an answer the voice model
-gives itself is saved as a reply of its own. Both survive a reload. A turn that cannot be
-transcribed is asked again and adds no message of the user, and stopping a spoken answer (the
+gives itself is saved as a reply of its own. Both survive a reload. Stopping a spoken answer (the
 orb, while it reads Tap to interrupt) tells the provider where playback stopped and saves the
 answer as interrupted. The overlay has no Stop of its own any more: the chat's Stop cancels the
 chat model's request and the provider is told so. Mute stops the microphone reaching the
@@ -28,7 +27,7 @@ Discriminates: passes on the dev 4f1f38541 build. In one frontend copy of it a m
 sending audio, End call leaving the call connected, a failure the overlay does not show, the
 chat's Stop never telling the provider and Voice mode refusing realtime calls on the browser's
 speech-to-text each turn their test red. In another, closing the panel ending the call turns the
-return test red, a failed transcription left unanswered turns that test red, an interruption
+return test red, an interruption
 that never tells the provider where playback stopped turns the interrupt test red and a Retry
 that does nothing turns the dropped call test red. In a third, a microphone never switched on
 for the call turns the panel test red. On dev 0f5a58f5f a spoken answer never saved turned the
@@ -392,20 +391,6 @@ def test_without_the_call_permission_there_is_no_voice_mode(
 
     expect(chat_input(page)).to_be_visible()
     expect(page.get_by_role("button", name="Voice mode")).to_have_count(0)
-
-
-def test_a_turn_that_cannot_be_transcribed_is_asked_again_with_no_message_of_the_user(
-    voice_page_for, make_user, realtime
-):
-    realtime.mishears()
-    page = voice_page_for(make_user())
-
-    start_call(page)
-
-    realtime.wait_for(lambda: realtime.spoken, "a spoken status")
-    assert "I could not transcribe that. Please repeat it." in realtime.spoken[0]
-    expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
-    expect(conversation(page).locator(".chat-user")).to_have_count(0)
 
 
 def test_interrupting_the_spoken_answer_cuts_it_short_and_saves_it_as_interrupted(

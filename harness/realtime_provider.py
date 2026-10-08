@@ -10,9 +10,12 @@ connection, in a `RealtimeCall` (`call.received(kind)`, `call.session`, `call.pa
 
 The fake hears what a test lines up with `fake.hears(transcript)`: once a fifth of a second of
 microphone audio arrived it reports speech and then that transcript, the way server-side voice
-detection and input transcription do; `fake.mishears()` lines up a turn whose transcription
-fails instead. Asked to respond to it, it hands the request to the chat model through the
-`generate_chat_completion` function, or with `answers=text` speaks that text itself. Asked to
+detection and input transcription do (`fake.hears("")`, a segment with no words in it);
+`fake.mishears()` lines up a turn whose transcription fails instead, and
+`fake.hears_over(first, second, answers)` speech that runs on into a second segment before the
+first one's transcript arrives, the second ending only once the event it returns is set. Asked
+to respond to it, it hands the request to the chat model through the `generate_chat_completion`
+function, or with `answers=text` speaks that text itself. Asked to
 respond to a function result, it speaks the result's answer; asked for a call status, it speaks
 the status sentence; asked to read text (the realtime text-to-speech engine), it speaks that
 text. Speaking sends `fake.speech` (a quarter second of silent 24 kHz PCM unless a test sets a
@@ -70,6 +73,8 @@ class Turn:
     fails: bool = False
     gesture: str | None = None
     gestured: bool = False
+    then: Turn | None = None  # a segment begun before this one's transcript arrives
+    release: threading.Event | None = None  # ends `then`
 
 
 @dataclass
@@ -122,6 +127,14 @@ class FakeRealtime:
         """The next turn's transcription fails."""
         with self.lock:
             self.turns.append(Turn("", None, fails=True))
+
+    def hears_over(self, first: str, second: str, answers: tuple[str, str]) -> threading.Event:
+        """Speech in two segments, the second begun before the first one's transcript arrives."""
+        release = threading.Event()
+        later = Turn(second, answers[1])
+        with self.lock:
+            self.turns.append(Turn(first, answers[0], then=later, release=release))
+        return release
 
     def wait_for(self, condition: Callable[[], bool], what: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
@@ -223,14 +236,38 @@ def _hear(fake: FakeRealtime, call: RealtimeCall, audio: str) -> None:
         failed = {"type": "conversation.item.input_audio_transcription.failed", "item_id": item_id}
         call.send({**failed, "content_index": 0, "error": {"message": "inaudible"}})
         return
+    if turn.then:
+        _speak_on(call, item_id, turn)
+        return
+    _transcribed(call, item_id, turn.transcript)
+
+
+def _transcribed(call: RealtimeCall, item_id: str, transcript: str) -> None:
     call.send(
         {
             "type": "conversation.item.input_audio_transcription.completed",
             "item_id": item_id,
             "content_index": 0,
-            "transcript": turn.transcript,
+            "transcript": transcript,
         }
     )
+
+
+def _speak_on(call: RealtimeCall, item_id: str, turn: Turn) -> None:
+    """Start `turn.then` before `turn`'s transcript arrives; end it once `turn.release` is set."""
+    later_id = _new_id("item")
+    call.inputs[later_id] = turn.then
+    call.send({"type": "input_audio_buffer.speech_stopped", "item_id": item_id})
+    call.send({"type": "input_audio_buffer.speech_started", "item_id": later_id})
+    _transcribed(call, item_id, turn.transcript)
+
+    def finish() -> None:
+        turn.release.wait(30)
+        with contextlib.suppress(ConnectionClosed):
+            call.send({"type": "input_audio_buffer.speech_stopped", "item_id": later_id})
+            _transcribed(call, later_id, turn.then.transcript)
+
+    threading.Thread(target=finish, daemon=True).start()
 
 
 def _respond(fake: FakeRealtime, call: RealtimeCall, response: dict) -> None:
