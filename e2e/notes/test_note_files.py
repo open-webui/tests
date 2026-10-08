@@ -7,13 +7,15 @@ as well; a writer detaches the file for everyone. A file over the admin's Max Up
 refused with the limit named, and a picture pasted into the note is shrunk to the size the
 person's Image Compression asks for.
 
-A reader's chat on the note is not given the note's file (docs: "Attached files feed the note's
-chat", and read access is enough to open one): the file belongs to the owner and the retrieval
-step only lets through files the asker owns or reaches through a knowledge base, a channel, a
-shared chat or a model, never through a note. That test stays red until the note grants count
-(open-webui/open-webui#32011).
+A reader's chat on the note is given the note's file too (docs: "Attached files feed the note's
+chat", and read access is enough to open one): the file belongs to the owner and fix b612c8847
+(issue open-webui/open-webui#32011) lets read access on a note open the files its owner attached.
+The chip dialog shows the text the note stored beside the chip, but its Preview of a spreadsheet
+or CSV reads the file itself, and a reader only gets that table with the fix.
 
-Discriminates: passes on the dev ebc6add67 build except the reader's chat test. In a frontend
+Discriminates: in a backend copy with b612c8847's change to utils/access_control/files.py undone
+the reader's chat test and the reader's CSV preview test fail (the dialog cannot load the CSV);
+the plain reader chip test passes there, since the note carries the text. In a frontend
 build whose file dialog shows "No content" for the text, whose note chip offers its remove button
 to a reader and never saves a writer's removal, whose note upload skips the size check and whose
 note paste skips image compression, every test but the owner's chat fails; in a backend copy
@@ -44,6 +46,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 FILE_TEXT = "The pilot boat waits at the lighthouse at noon."
 FILE_NAME = "pilot.txt"
+SHEET_NAME = "tides.csv"
+SHEET_CSV = "Harbour,High tide\nLighthouse,06:40\n"
 
 PASTE_IMAGE = """(editor, pngBase64) => {
     const bytes = Uint8Array.from(atob(pngBase64), (c) => c.charCodeAt(0));
@@ -104,11 +108,11 @@ def open_note_menu(page: Page) -> Locator:
     return menu
 
 
-def upload_to_note(page: Page, name: str, content: bytes) -> None:
+def upload_to_note(page: Page, name: str, content: bytes, mime_type: str = "text/plain") -> None:
     menu = open_note_menu(page)
     with page.expect_file_chooser() as chooser:
         menu.get_by_role("button", name="Upload files").click()
-    chooser.value.set_files({"name": name, "mimeType": "text/plain", "buffer": content})
+    chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": content})
 
 
 def file_chip(page: Page, name: str) -> Locator:
@@ -188,6 +192,25 @@ def test_a_reader_opens_the_notes_file_but_cannot_detach_it(note_with_file, page
     expect(open_note_menu(page).get_by_role("button", name="Upload files")).to_have_count(0)
 
 
+def test_a_reader_previews_a_spreadsheet_the_owner_put_on_the_note(page_for, make_user):
+    owner, reader = make_user(), make_user()
+    note_id = create_note(owner, [grant("user", reader.id, "read")])
+    owner_page = page_for(owner)
+    open_note(owner_page, note_id)
+    upload_to_note(owner_page, SHEET_NAME, SHEET_CSV.encode(), "text/csv")
+    expect(file_chip(owner_page, SHEET_NAME)).to_be_visible()
+    eventually(lambda: stored_file_names(owner, note_id), [SHEET_NAME])
+
+    page = page_for(reader)
+    open_note(page, note_id)
+    file_chip(page, SHEET_NAME).click()
+    dialog = page.get_by_role("dialog").filter(has_text=SHEET_NAME)
+    dialog.get_by_role("button", name="Preview", exact=True).click()
+
+    expect(dialog.get_by_role("cell", name="06:40")).to_be_visible()
+    expect(dialog.get_by_text("Failed to load Excel/CSV file")).to_have_count(0)
+
+
 def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, upstream):
     page = page_for(note_with_file.reader)
     open_note(page, note_with_file.note_id)
@@ -197,8 +220,7 @@ def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, u
     )
 
     assert FILE_TEXT in json.dumps(request["messages"]), (
-        "a reader's chat on the shared note was not given the note's file; the owner's is "
-        "(open-webui/open-webui#32011)"
+        "a reader's chat on the shared note was not given the note's file; the owner's is"
     )
 
 

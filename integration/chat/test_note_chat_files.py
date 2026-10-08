@@ -5,13 +5,14 @@ context (docs: "Attached files feed the note's chat"); read access on the note i
 such a chat. The owner uploads a text file, puts it on a note shared read-only with a reader, and
 each of them opens the note's chat and asks; the test reads what the provider was sent.
 
-The reader's chat is not given the file: the note adds its files to the request, but the retrieval
-step lets through only files the asker owns or reaches through a knowledge base, a channel, a
-shared chat or a model, never through a note. That test stays red until a note's grant counts
-(open-webui/open-webui#32011).
+The reader's chat is given the file too: the note adds its files to the request and the retrieval
+step lets through files the asker owns, reaches through a knowledge base, a channel, a shared chat
+or a model, or reaches through a note whose owner owns the file (fix b612c8847, issue
+open-webui/open-webui#32011).
 Twin of the note chat tests in e2e/notes/test_note_files.py.
 
-Discriminates: passes on dev ebc6add67 except the reader test; in a backend copy whose note chat
+Discriminates: passes on dev b5a20423e; in a backend copy with b612c8847's change to
+utils/access_control/files.py undone the reader test fails; in a backend copy whose note chat
 leaves out the note's files the owner test fails too.
 """
 
@@ -96,7 +97,4 @@ def test_the_owners_note_chat_is_given_the_notes_file(shared_note, upstream):
 def test_a_readers_note_chat_is_given_the_notes_file(shared_note, upstream):
     _, reader, note_id = shared_note
     sent = sent_in_note_chat(reader, note_id, upstream)
-    assert FILE_TEXT in sent, (
-        "a reader's chat on the shared note was not given the note's file "
-        "(open-webui/open-webui#32011)"
-    )
+    assert FILE_TEXT in sent, "a reader's chat on the shared note was not given the note's file"
