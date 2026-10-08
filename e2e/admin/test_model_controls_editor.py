@@ -2,16 +2,17 @@
 
 Opening a model in Admin Settings > Models shows a Model controls section. Add control opens a
 form for the name, the default option, a description and the options, each with its own custom
-parameters; Apply stays off while the name or an option name is blank. Saving the model stores the
-controls, and a user's chat on the model then sends the default option's parameters, with string
-values read as JSON. Editing a control keeps the keys of its options when they are renamed, Remove
-takes a control away from the model and from the chat input, and the arrow keys on a control's
-handle reorder the controls, in the store and in the chat input's menu. The workspace model editor
-of the same model shows no Model controls section and saves the controls it was given unchanged.
-Admin Settings opens a preset in the workspace editor, so the form is tested on a model the
-scripted provider serves and the workspace editor on a preset.
+parameters (a new option starts with one blank parameter row, and Add parameter stays off while
+a row is blank); Apply stays off while the name or an option name is blank. Saving the model
+stores the controls, and a user's chat on the model then sends the default option's parameters,
+with string values read as JSON. Editing a control keeps the keys of its options when they are
+renamed, Remove takes a control away from the model and from the chat input, and the arrow keys
+on a control's handle reorder the controls, in the store and in the chat input's menu. The
+workspace model editor of the same model shows no Model controls section and saves the controls
+it was given unchanged. Admin Settings opens a preset in the workspace editor, so the form is
+tested on a model the scripted provider serves and the workspace editor on a preset.
 
-Discriminates: passes on the dev ebc6add67 build. In a frontend build whose Apply drops the
+Discriminates: passes on the dev 93fc3fcb7 build. In a frontend build whose Apply drops the
 options' parameters and makes new option keys from the labels, whose Remove and reorder handles
 do nothing, whose Apply is never disabled and whose workspace editor shows the section too, every
 test fails.
@@ -124,8 +125,10 @@ def option_block(form: Locator, index: int) -> Locator:
 
 
 def fill_parameters(block: Locator, parameters: dict[str, str]) -> None:
-    for name, value in parameters.items():
-        block.get_by_role("button", name="Add Custom Parameter").click()
+    """A new option starts with one blank parameter row, which takes the first parameter."""
+    for index, (name, value) in enumerate(parameters.items()):
+        if index > 0:
+            block.get_by_role("button", name="Add Custom Parameter").click()
         block.get_by_role("textbox", name="Custom Parameter Name").last.fill(name)
         block.get_by_role("textbox", name="Custom Parameter Value").last.fill(value)
         block.get_by_role("textbox", name="Custom Parameter Value").last.blur()
