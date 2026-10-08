@@ -33,7 +33,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 RTL_LANGUAGES = {
     "ar": ("سجل المحادثات", "دردشة جديدة", "قائمة المستخدم"),
     "fa-IR": ("Chat history", "گپ جدید", "منوی کاربر"),
-    "he-IL": ("Chat history", "צ'אט חדש", "User menu"),
+    "he-IL": ("היסטוריית צ'אטים", "צ'אט חדש", "תפריט משתמש"),
 }
 ARABIC = "مرحبا بالعالم كيف حالك اليوم هل أنت بخير وهل كل شيء على ما يرام"
 ENGLISH = "The tide turns at noon and the harbour opens after it."
