@@ -27,6 +27,12 @@ Bugs, both red on dev ebc6add67:
   and then runs forever. `test_renaming_an_automation_keeps_the_end_of_its_schedule`, issue
   open-webui/open-webui#32000.
 
+`test_an_automation_on_a_preset_runs_with_its_prompt_and_tool`,
+`test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt` and
+`test_the_calendar_shows_an_active_automations_runs_and_opens_them` are red on dev 93fc3fcb7: since
+de73bb830 an automation's run, whose reply is stored before it is asked for, is refused with 409 and
+the reply is never written (open-webui/open-webui#32066). They pass on de73bb830^.
+
 Discriminates: passes on dev ebc6add67 apart from the two bugs. In a frontend copy building every
 weekly rule without its days the weekly create and rename cases go red, and with the Once date
 taken from the local day the Once day test turns green. In backend copies: the create route
