@@ -8,6 +8,11 @@ the same text as the first, and Stop in that second tab stops the reply in both.
 
 Twin of integration/chat/test_stream_interruptions.py for the closed tab.
 
+`test_stop_in_a_second_tab_stops_the_reply_in_both` is red on dev 93fc3fcb7: since de73bb830 a
+reply stopped with Stop never ends on the page and the Stop button stays
+(open-webui/open-webui#32081). It passes three of three on de73bb830^ and fails three of three on
+de73bb830.
+
 Discriminates: passes on dev ebc6add67; the follow test fails on a backend copy that sends a
 reply's events only to the tab that asked, the Stop test on one whose stop endpoint leaves the
 reply running, the closed-tab test on one that cancels every reply when a socket disconnects and
