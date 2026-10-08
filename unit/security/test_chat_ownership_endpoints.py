@@ -5,11 +5,13 @@ open-webui 0.11.0 fix `c882222f6` (PR #27486): `/api/chat/completed` and
 the caller owned that chat, so a filter or action wrote into another user's conversation. The
 two known routes are pinned over HTTP by integration/security/test_chat_ownership_endpoints.py;
 this `ast` sweep covers the class, so the next route that reads a body `chat_id` (or forwards
-the body to a handler that does) needs `verify_chat_ownership`, `is_chat_owner` or an
-admin-only dependency.
+the body to a handler that does) needs `verify_chat_ownership`, `is_chat_owner`, a write-level
+`get_accessible_chat_by_id` (since 6cfd6987e/de73bb830 the owner or a collaborator on a chat
+shared to continue) or an admin-only dependency.
 
-Discriminates: passes on dev bbfa876af; fails with either `verify_chat_ownership` call removed
-from main.py (the route shows up as ungated).
+Discriminates: passes on dev b5a20423e; fails with either `verify_chat_ownership` call removed
+from main.py, or with the write-level `get_accessible_chat_by_id` call removed from
+`chat_completion` (the route shows up as ungated).
 """
 
 from __future__ import annotations
@@ -67,12 +69,27 @@ def _reads_body_chat_id(function: ast.AST) -> bool:
     return False
 
 
+def _is_write_access_check(call: ast.Call) -> bool:
+    # A read-level lookup would let a reader of a shared chat write into it.
+    return _called_name(call) == "get_accessible_chat_by_id" and any(
+        keyword.arg == "permission"
+        and isinstance(keyword.value, ast.Constant)
+        and keyword.value.value == "write"
+        for keyword in call.keywords
+    )
+
+
 def _is_gated(function: ast.AST) -> bool:
-    names = {_called_name(node) for node in ast.walk(function) if isinstance(node, ast.Call)}
+    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+    names = {_called_name(call) for call in calls}
     admin_only = any(
         getattr(node, "id", None) == "get_admin_user" for node in ast.walk(function.args)
     )
-    return admin_only or bool(names & OWNERSHIP_GATES)
+    return (
+        admin_only
+        or bool(names & OWNERSHIP_GATES)
+        or any(_is_write_access_check(call) for call in calls)
+    )
 
 
 @pytest.fixture(scope="module")
