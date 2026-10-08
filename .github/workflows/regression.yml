@@ -295,7 +295,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -347,12 +347,12 @@ jobs:
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest e2e -q --splits 2 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
+        run: pytest e2e -q --splits 10 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
 
       - name: Summarise the results
         if: always()
         working-directory: tests
-        run: python scripts/junit_summary.py test-results/junit.xml "Browser suite, shard ${{ matrix.shard }} of 2" >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/junit_summary.py test-results/junit.xml "Browser suite, shard ${{ matrix.shard }} of 10" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report, traces and server logs
         if: always()
