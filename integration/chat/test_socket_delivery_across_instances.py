@@ -1,7 +1,8 @@
 """Every socket delivery reaches the same tabs across instances with room channels on and off.
 
 PR open-webui/open-webui#28818 (0.11.5): with `WEBSOCKET_MANAGER=redis`, an emit to one room
-(every live chat event goes to the account's `user:{id}` room, a channel's to `channel:{id}`, a
+(every live chat event goes to the account's `user:{id}` room, and since de73bb830 its reply also
+to the chat's `chat:{id}` room for those reading it shared, a channel's to `channel:{id}`, a
 note's to `note:{id}` and `doc_note:{id}`, an event call to the tab's own sid) is published on a
 Redis channel of that room's own, so an instance with nobody in the room drops it by channel name
 instead of decoding it. `WEBSOCKET_REDIS_ROOM_CHANNELS=false` puts every emit back on the shared
@@ -254,8 +255,12 @@ def test_room_emits_travel_on_the_room_channel_only(fleet, shared_redis):
     assert SHARED_CHANNEL not in channels, (
         "the chat's events were published on the shared channel, which every instance decodes"
     )
-    assert all(channel.endswith(f"user:{streamed.user_id}") for channel in channels), (
+    rooms = (f"user:{streamed.user_id}", f"chat:{streamed.chat_id}")
+    assert any(channel.endswith(rooms[0]) for channel in channels), (
         f"the chat's events went to {sorted(channels)}, not the account's room channel"
+    )
+    assert all(channel.endswith(rooms) for channel in channels), (
+        f"the chat's events went to {sorted(channels)}, not only the account's and the chat's rooms"
     )
 
 
