@@ -110,6 +110,14 @@ def file_fetched(fetched: list[str], file_id: str) -> bool:
     return any(f"/api/v1/files/{file_id}/content" in url for url in fetched)
 
 
+def wait_until_fetched(page: Page, fetched: list[str], file_id: str) -> None:
+    deadline = time.monotonic() + TURN_TIMEOUT_MS / 1000
+    while not file_fetched(fetched, file_id):
+        assert time.monotonic() < deadline, f"the page never loaded the avatar file {file_id}"
+        # a Playwright call, unlike time.sleep, lets the page's request events reach `fetched`
+        page.wait_for_timeout(50)
+
+
 def gesture_statuses(realtime) -> list[str]:
     realtime.wait_for(lambda: realtime.calls and realtime.calls[-1].gesture_results, "a gesture")
     return [result["status"] for result in realtime.calls[-1].gesture_results]
@@ -169,7 +177,7 @@ def test_the_voice_model_plays_a_gesture_on_the_avatar_and_hears_it_started(
     fetched = call_on(page, model)
     expect_avatar_shown(page)
     for clip in (settings["states"]["idle"]["file_id"], settings["gestures"][0]["file_id"]):
-        realtime.wait_for(lambda: file_fetched(fetched, clip), "the avatar's clips loaded")
+        wait_until_fetched(page, fetched, clip)
 
     realtime.hears(greeting, answers=answer, gesture="wave")
 
