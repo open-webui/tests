@@ -5,13 +5,15 @@ admin got a chat only through `ENABLE_ADMIN_CHAT_ACCESS` and never reached the a
 shared folder checks every other account got, so with the setting off an admin who was explicitly
 given a chat, directly or through a shared folder, was refused it. The fix lets every role fall
 through to those checks; the setting still keeps admins out of chats nobody shared with them.
-0.11.1 moved the resolution into `Chats.get_chat_by_id_for_user` unchanged.
+0.11.1 moved the resolution into `Chats.get_chat_by_id_for_user` unchanged. Since de73bb830 a
+chat shared with a person opens through its share link (the live chat only for a chat shared
+to continue), so a direct share is made the way the share dialog makes it and read there.
 
 Twin of unit/security/test_admin_shared_chat_access.py.
 
-Discriminates: passes on bbfa876af, fails when the admin branch of `get_chat_by_id_for_user`
-stops falling through (the a35b37adc~1 shape: the direct and folder shares answer 401 to the
-admin); the other tests pass on both.
+Discriminates: passes on dev 62f70a844; fails when the admin branch of `can_read_shared_chat`
+stops falling through to the grants (the a35b37adc~1 shape: the direct share answers 401 to
+the admin); the other tests pass on both.
 """
 
 from __future__ import annotations
@@ -40,13 +42,17 @@ def _create_chat(owner, folder_id: str | None = None) -> str:
     return created.json()["id"]
 
 
-def _share_chat(owner, chat_id: str, recipient) -> None:
+def _share_chat(owner, chat_id: str, recipient) -> str:
+    """Share the way the share dialog does: the link first, then the grant; returns the link id."""
     with owner.client() as client:
+        link = client.post(f"/api/v1/chats/{chat_id}/share")
+        assert link.status_code == 200, link.text
         shared = client.post(
             f"/api/v1/chats/shared/{chat_id}/access/update",
             json={"access_grants": _read_grant(recipient.id)},
         )
     assert shared.status_code == 200, shared.text
+    return link.json()["share_id"]
 
 
 def _chat_in_shared_folder(owner, recipient) -> str:
@@ -67,6 +73,11 @@ def _read_chat(reader, chat_id: str) -> int:
         return client.get(f"/api/v1/chats/{chat_id}").status_code
 
 
+def _open_link(reader, share_id: str) -> int:
+    with reader.client() as client:
+        return client.get(f"/api/v1/chats/share/{share_id}").status_code
+
+
 @pytest.fixture
 def restricted(instance_with):
     """An instance with ENABLE_ADMIN_CHAT_ACCESS off, its admin and a chat owner on it."""
@@ -84,10 +95,9 @@ def _recipient(restricted, role: str):
 
 def test_admin_reads_a_chat_shared_with_them(restricted):
     admin, owner, _ = restricted
-    chat_id = _create_chat(owner)
-    _share_chat(owner, chat_id, admin)
+    share_id = _share_chat(owner, _create_chat(owner), admin)
 
-    assert _read_chat(admin, chat_id) == 200, (
+    assert _open_link(admin, share_id) == 200, (
         "an admin explicitly given a chat was refused it because ENABLE_ADMIN_CHAT_ACCESS is off "
         "(#27127)"
     )
@@ -120,12 +130,11 @@ def test_an_explicit_share_is_honoured_for_every_role(restricted, role, share):
     _, owner, _ = restricted
     recipient = _recipient(restricted, role)
     if share == "direct":
-        chat_id = _create_chat(owner)
-        _share_chat(owner, chat_id, recipient)
+        status = _open_link(recipient, _share_chat(owner, _create_chat(owner), recipient))
     else:
-        chat_id = _chat_in_shared_folder(owner, recipient)
+        status = _read_chat(recipient, _chat_in_shared_folder(owner, recipient))
 
-    assert _read_chat(recipient, chat_id) == 200, f"a {role} lost a {share} share (#27127)"
+    assert status == 200, f"a {role} lost a {share} share (#27127)"
 
 
 @pytest.mark.parametrize("role", ["admin", "user"])

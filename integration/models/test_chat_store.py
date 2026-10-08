@@ -7,7 +7,8 @@
 * `b933292d6` (#28035) deleting a message walked `childrenIds[-1]` without remembering where it
   had been, so in a chat whose replies loop the request never returned.
 * `7d4747dfd` (#28767) the tags endpoint resolved the chat by ownership only, so an admin or a
-  reader of a shared chat or folder was refused the chat's tags.
+  reader of a shared chat or folder was refused the chat's tags. Since de73bb830 a person a chat
+  is shared with reads the live chat only when it is shared to continue, so that is the share.
 * `1c13fedb1` (#28742) `update_chat_by_id` wrote back the whole blob it was given, so a save that
   named only `files` dropped the conversation and a stale writer dropped newer messages.
 
@@ -269,8 +270,10 @@ def test_an_admin_gets_the_tags_of_another_accounts_chat(admin, owner, tagged_ch
     assert {tag["user_id"] for tag in response.json()} == {owner.id}
 
 
-def test_a_reader_of_a_shared_chat_gets_its_tags(admin, make_user, tagged_chat):
+def test_a_reader_of_a_shared_chat_gets_its_tags(admin, make_user, client, tagged_chat):
     reader = make_user()
+    link = client.post(f"/api/v1/chats/{tagged_chat}/share", json={"share_mode": "continue"})
+    assert link.status_code == 200, link.text
     grant = {"principal_type": "user", "principal_id": reader.id, "permission": "read"}
     with admin.client() as admin_client:
         shared = admin_client.post(

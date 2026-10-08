@@ -1,16 +1,18 @@
 """Journey: who may read, change, share and delete someone else's chat.
 
 A chat belongs to its owner. The only grant a chat takes is the read share the share dialog
-stores, so the reader and the writer (read plus write, stored the same way) may open the chat
-and its tags and nothing more; a stranger is refused everything. An admin reaches every chat
-while `ENABLE_ADMIN_CHAT_ACCESS` is on and is refused like a stranger on the read and owner
-routes while it is off. Every refused write leaves the owner's copy as it was.
+stores (the reader and the writer, read plus write, are stored the same way). Since de73bb830
+a share that is not to continue opens only through its link, so on the chat's own routes the
+reader and the writer are refused like a stranger, who is refused everything. An admin reaches
+every chat while `ENABLE_ADMIN_CHAT_ACCESS` is on and is refused like a stranger on the read and
+owner routes while it is off. Every refused write leaves the owner's copy as it was.
 
 Discriminates: in a backend copy, reading the chat with `Chats.get_chat_by_id` in place of the
 owner lookup in the update handler turns the `POST /api/v1/chats/{id}` rows red (the stranger,
 reader and writer get 200), dropping the non-owner check from the message update handler turns
 its rows red (the stranger rewrites the owner's message), and toggling the pin before the owner
-check turns the pin rows red on the refused-but-changed check alone.
+check turns the pin rows red on the refused-but-changed check alone. On dev 62f70a844, letting a
+read grant open the live chat again whatever the share mode turns the two `GET` rows red.
 """
 
 from __future__ import annotations
@@ -81,7 +83,8 @@ def _owners_folder(owner: Actor, chat_id: str) -> dict:
 
 
 REFUSED, ALLOWED = 401, 200
-READ = {"owner": ALLOWED, "stranger": REFUSED, "reader": ALLOWED, "writer": ALLOWED}
+# the read routes: a share that is not to continue does not open them
+READ = {"owner": ALLOWED, "stranger": REFUSED, "reader": REFUSED, "writer": REFUSED}
 OWNER = {"owner": ALLOWED, "stranger": REFUSED, "reader": REFUSED, "writer": REFUSED}
 # the delete and share-grant handlers answer 404 to anyone but the owner and an admin
 OWNER_OR_NOT_FOUND = {"owner": ALLOWED, "stranger": 404, "reader": 404, "writer": 404}
