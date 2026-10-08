@@ -22,6 +22,12 @@ de73bb830 a chat request whose reply message is already stored in the chat, the 
 sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
 (open-webui/open-webui#32066).
 
+`test_reasoning_deltas_fill_a_thinking_block_above_the_answer` and
+`test_a_long_reply_over_many_pieces_is_shown_in_full` are red now and then on dev 93fc3fcb7: since
+de73bb830 the reply in a new chat sometimes stays blank until a reload although the server saved
+it whole (open-webui/open-webui#32091). The first passes six of six on de73bb830^ and fails two of
+six on de73bb830 and on 93fc3fcb7.
+
 Discriminates: passes on dev 176d31d1d with the toggle off and on; with the in-place branch
 appending a marker before each piece every append-in-place case turns red and the append-copies
 cases stay green, and with the copying branch marked the reverse.
