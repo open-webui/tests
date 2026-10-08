@@ -409,7 +409,9 @@ def test_a_target_for_failed_chats_hears_of_a_reply_that_failed(
         reply.error(500, "the provider is down", match=reply.answering(prompt))
     )
     send(page, prompt)
-    expect(page.get_by_text("the provider is down")).to_be_visible()
+    expect(
+        page.get_by_label("Chat Conversation").get_by_text("the provider is down")
+    ).to_be_visible()
 
     # the docs promise chat.failed for a failed response; on dev only a finished one is announced
     assert _wait_for(lambda: hook.requests_to("/hook")), (
