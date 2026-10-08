@@ -8,12 +8,14 @@ returns early for a reader who does not own the chat.
 
 Here the model sets a real timer through the `timer` tool (behind ENABLE_SUBAGENTS), another
 account sends the read event for that chat over its own socket, and the test waits for the
-timer's prompt to reach the model. The owner filter shows on its own when an admin, who may
-continue any user's chat, sends a message there: only the admin's own timers may go.
+timer's prompt to reach the model. The owner filter shows on its own when someone the owner
+shared the chat with to continue sends a message there: only that person's own timers may go.
+(Before 6cfd6987e this was an admin continuing the chat; an admin may now only read it.)
 
 Twin of unit/security/test_timer_cancellation_scope.py, which keeps the audit that every caller
 passes the acting user.
 
+`test_a_collaborator_message_in_the_chat_leaves_the_owners_timer_running`,
 `test_a_read_leaves_timers_it_does_not_match` and
 `test_a_stranger_reading_the_chat_leaves_the_owners_timer_running` are red on dev 62f70a844: since
 de73bb830 a chat request whose reply message is already stored in the chat, the way automations,
@@ -22,8 +24,9 @@ sub-agents and timers prepare their reply, is refused with 409 and the reply is 
 
 Discriminates: passes on dev `ef67cc3fa`; with `e140d8f3c` reverted (the query's owner filter
 and the handler's early return) the stranger's read cancels the timer and it never fires, and
-with the owner filter alone dropped the admin's message cancels the owner's timer. Dropping the
-parent chat or the `cancel_on` match from the query fails the nearby tests.
+with the owner filter alone dropped the collaborator's message cancels the owner's timer (shown
+on dev 62f70a844 with the #32066 refusal removed). Dropping the parent chat or the `cancel_on`
+match from the query fails the nearby tests.
 """
 
 from __future__ import annotations
@@ -116,17 +119,30 @@ def _continue_chat(actor, upstream, turn: ChatTurn) -> None:
         ask(client, "one more thing", chat_id=turn.chat_id, parent_id=turn.assistant_message_id)
 
 
-def test_an_admin_message_in_the_chat_leaves_the_owners_timer_running(
-    timers_enabled, admin, make_user, upstream
-):
-    """Narrow: the admin continuing the owner's chat cancels only the admin's own timers."""
-    owner = make_user()
-    turn = _set_timer(owner, upstream, cancel_on=["chat.user_message"], at="6s")
+def _share_to_continue(owner, chat_id: str, collaborator) -> None:
+    """Share the way the share dialog does with Allow replies: the link, then the grant."""
+    grant = {"principal_type": "user", "principal_id": collaborator.id, "permission": "read"}
+    with owner.client() as client:
+        link = client.post(f"/api/v1/chats/{chat_id}/share", json={"share_mode": "continue"})
+        assert link.status_code == 200, link.text
+        shared = client.post(
+            f"/api/v1/chats/shared/{chat_id}/access/update", json={"access_grants": [grant]}
+        )
+        assert shared.status_code == 200, shared.text
 
-    _continue_chat(admin, upstream, turn)
+
+def test_a_collaborator_message_in_the_chat_leaves_the_owners_timer_running(
+    timers_enabled, make_user, upstream
+):
+    """Narrow: someone continuing the owner's shared chat cancels only their own timers."""
+    owner, collaborator = make_user(), make_user()
+    turn = _set_timer(owner, upstream, cancel_on=["chat.user_message"], at="6s")
+    _share_to_continue(owner, turn.chat_id, collaborator)
+
+    _continue_chat(collaborator, upstream, turn)
 
     assert _timer_fired(upstream, within=25), (
-        "the admin's message in the owner's chat cancelled the owner's timer, so its "
+        "the collaborator's message in the owner's chat cancelled the owner's timer, so its "
         "scheduled prompt never fired (#27472)"
     )
 
