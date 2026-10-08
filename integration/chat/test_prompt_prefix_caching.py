@@ -27,6 +27,10 @@ between, had both calls folded into one assistant message on the next round, so 
 rewrote the assistant message the previous request ended with; PR #31593 fixed that
 (open-webui/open-webui#31588).
 
+`test_a_sub_agent_only_appends` is red on dev 93fc3fcb7: since de73bb830 a chat request whose reply
+message is already stored in the chat, the way automations, sub-agents and timers prepare their
+reply, is refused with 409 and the reply is never written (open-webui/open-webui#32066).
+
 Discriminates: passes on dev 015dbc861 apart from those two, which fail there; the multi-step
 tool loop test fails on dev a5bc78300, before PR #31593. In backend copies, a clock value added
 to the model's system prompt and the tool list shuffled per request each turned all twenty

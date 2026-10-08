@@ -22,6 +22,9 @@ chat request whose reply message is already stored in the chat, the way automati
 timers prepare their reply, is refused with 409 and the reply is never written
 (open-webui/open-webui#32066).
 
+`test_the_row_reads_executing_while_the_subagent_is_still_working` is red on dev 93fc3fcb7
+for the same reason: the sub-agent is refused at once, so its row never reads Executing.
+
 Discriminates: passes on dev 176d31d1d. In backend copies the limit tests turn red when the
 iteration limit is dropped, the truncation is removed (or cut at `>=`), the failed status is
 swallowed, only the first call of a turn runs or the answer is replaced; on a build with the

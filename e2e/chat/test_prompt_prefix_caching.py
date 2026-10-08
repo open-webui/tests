@@ -26,6 +26,10 @@ open). The Create skill command is sent as the skill authoring prompt on its own
 typed command on the next, so that turn rewrites an earlier user message
 (open-webui/open-webui#31591, fix PR #31598 open).
 
+`test_a_sub_agent_only_appends` is red on dev 93fc3fcb7: since de73bb830 a chat request whose reply
+message is already stored in the chat, the way automations, sub-agents and timers prepare their
+reply, is refused with 409 and the reply is never written (open-webui/open-webui#32066).
+
 Discriminates: passes on dev 30f3f6a8f apart from those five, which fail there. In backend
 copies, a clock value added to the model's system prompt turned every other test red; with no
 stored system prompt handed to a timer or a report and the Create skill command left as typed,

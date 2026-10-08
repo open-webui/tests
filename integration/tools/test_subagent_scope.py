@@ -20,6 +20,11 @@ sub-agent's chat stored on the server, where `Temporary Chat` keeps nothing (the
 withheld from it for that reason, dev d2936c880); PR #31573 fixed that
 (open-webui/open-webui#31567).
 
+Every test here but the temporary chat one is red on dev 93fc3fcb7 (the skill test also for the
+reason above): since de73bb830 a chat request whose reply message is already stored in the chat, the
+way automations, sub-agents and timers prepare their reply, is refused with 409 and the reply is
+never written (open-webui/open-webui#32066). Apart from the skill test they pass on de73bb830^.
+
 Discriminates: passes on dev 015dbc861 apart from the skill test, which turns green in a backend
 copy that strips the skill list from the parent's prompt; the folder knowledge test fails on dev
 a5bc78300, before PR #31574, and the temporary chat test on dev 176d31d1d, before PR #31573. In
