@@ -3,23 +3,25 @@
 The owner, in a group allowed to share folders, opens Share in the folder's "More" menu and adds
 the group in the Access List; the folder is shared for writing unless the owner turns the
 group's Access level down to Read. A member of the group finds the folder in their own sidebar,
-lists the owner's chats in it and opens one read-only, with no message input. A member allowed
-to write starts a chat on the folder's page: the chat is filed in the folder, the folder's
-system prompt reaches the model for it as for the owner's own chats, and the owner finds the
-member's chat in the folder. A member who may only read gets no message input on the folder's
-page. Dragged onto the shared folder in the sidebar, a writing member's own chat is filed there,
-while a reading member's chat is not taken at all. Removing the group from the Access List takes
-the folder out of the member's sidebar again. Only the owner or an admin changes a folder's
-sharing (8145774e3): a writing member finds no Share entry in the folder's sidebar menu or in the
-menu on its page, while Edit and Export stay; the owner and an admin still find Share.
+lists the owner's chats in it and opens one read-only: no message input, a Clone Chat button in
+its place. A member allowed to write starts a chat on the folder's page: the chat is filed in the
+folder, the folder's system prompt reaches the model for it as for the owner's own chats, and the
+owner finds the member's chat in the folder. A member who may only read gets no message input on
+the folder's page. Dragged onto the shared folder in the sidebar, a writing member's own chat is
+filed there, while a reading member's chat is not taken at all. Removing the group from the
+Access List takes the folder out of the member's sidebar again. Only the owner or an admin
+changes a folder's sharing (8145774e3): a writing member finds no Share entry in the folder's
+sidebar menu or in the menu on its page, while Edit and Export stay; the owner and an admin still
+find Share.
 
-Discriminates: passes on dev ebc6add67. In a frontend copy whose Share dialog never saves a change
-the three tests that share or unshare in the dialog go red. In backend copies: listing no shared
-folders turns the read share, unshare and both drag tests red at the member's sidebar; the
-middleware's folder lookup returning no folder turns the writing member's test red (no folder
-prompt); reporting every shared folder as writable turns the read-only input and drop tests red.
-In a frontend copy whose folder menu shows Share to everyone (`canShare` forced true) the two tests
-for a writing member's menus go red.
+Discriminates: passes on dev ebc6add67, and on dev b5a20423e once the read share test looks for
+the Clone Chat button that replaced the Read only label (c6dd9a451). In a frontend copy whose
+Share dialog never saves a change the three tests that share or unshare in the dialog go red. In
+backend copies: listing no shared folders turns the read share, unshare and both drag tests red
+at the member's sidebar; the middleware's folder lookup returning no folder turns the writing
+member's test red (no folder prompt); reporting every shared folder as writable turns the
+read-only input and drop tests red. In a frontend copy whose folder menu shows Share to everyone
+(`canShare` forced true) the two tests for a writing member's menus go red.
 """
 
 from __future__ import annotations
@@ -174,7 +176,7 @@ def test_a_group_shared_to_read_lists_the_folder_and_opens_its_chats_read_only(p
     ).click()
     expect(member_page).to_have_url(re.compile(f"/c/{chat_id}"))
     expect(conversation(member_page).get_by_text("High tide at noon.")).to_be_visible()
-    expect(member_page.get_by_text("Read only", exact=True)).to_be_visible()
+    expect(member_page.get_by_role("button", name="Clone Chat")).to_be_visible()
     expect(chat_input(member_page)).to_have_count(0)
 
 
