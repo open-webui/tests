@@ -35,8 +35,9 @@ de73bb830 a chat request whose reply message is already stored in the chat, the 
 sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
 (open-webui/open-webui#32066).
 
-`test_a_background_limit_of_zero_means_the_default_and_refuses_nothing` is red now and then
-on dev 93fc3fcb7 for the same reason (two of three runs).
+`test_a_background_limit_of_zero_means_the_default_and_refuses_nothing` (two of three runs on dev
+93fc3fcb7) and `test_an_unlimited_background_setting_lets_every_delegation_through` (three of three
+on dev 896056690, none on de73bb830^) are red for the same reason.
 
 Discriminates: passes on dev a5bc78300; the two tests named above fail on dev 176d31d1d, before
 their fixes. In backend copies each test turns red with its edit: the dispatch made to wait for the
