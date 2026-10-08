@@ -1,10 +1,10 @@
 """An OpenAI-shaped model provider that records every request and answers from a script.
 
 `reset(mode)` sets the fallback every reply uses (`ok`, `stream` or `error`). `queue(...)` lines
-up scripted replies (text, reasoning, tool calls, usage, an HTTP error, a slow stream, a late
-start, a stream the provider drops halfway) that the next chat completions consume in order; a
-reply with `match` only answers a request it accepts, so a title or follow-up task cannot eat the
-reply meant for the chat.
+up scripted replies (text, reasoning, tool calls, usage, a finish reason, an HTTP error, a slow
+stream, a late start, a stream the provider drops halfway) that the next chat completions consume
+in order; a reply with `match` only answers a request it accepts, so a title or follow-up task
+cannot eat the reply meant for the chat.
 `requests` holds what Open WebUI actually sent, which is how a test sees the payload it built.
 """
 
@@ -33,6 +33,10 @@ class Reply:
     delay: float = 0.0  # seconds before the reply starts, headers included
     hang_up_after: int | None = None  # pieces streamed before the connection drops unfinished
     match: Callable[[dict], bool] | None = None
+    finish_reason: str | None = None  # why the reply ended; stop or tool_calls when unset
+
+    def finish(self) -> str:
+        return self.finish_reason or ("tool_calls" if self.tool_calls else "stop")
 
 
 def text(content: str | list[str], **options) -> Reply:
@@ -239,7 +243,7 @@ def _deltas(reply: Reply) -> Iterator[tuple[dict, str | None]]:
         yield {"tool_calls": [{"index": index, **header}]}, None
         arguments = {"arguments": call["function"]["arguments"]}
         yield {"tool_calls": [{"index": index, "function": arguments}]}, None
-    yield {}, "tool_calls" if reply.tool_calls else "stop"
+    yield {}, reply.finish()
 
 
 def _chunk(delta: dict, finish_reason: str | None, usage: dict | None) -> dict:
@@ -269,7 +273,7 @@ def _completion(reply: Reply) -> dict:
             {
                 "index": 0,
                 "message": message,
-                "finish_reason": "tool_calls" if reply.tool_calls else "stop",
+                "finish_reason": reply.finish(),
             }
         ],
         "usage": reply.usage or {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
