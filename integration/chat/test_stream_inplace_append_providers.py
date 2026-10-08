@@ -13,11 +13,10 @@ arguments are split across deltas for a workspace Python tool, an OpenAPI tool s
 server and a knowledge tool whose result carries a source. An Anthropic connection has no path of
 its own here: the messages endpoint only converts the handler's stream on the way out.
 
-The direct connection test is red on dev b859124f9 on purpose (open-webui/open-webui#31953): since
-24e30d1cb the socket router checks the tab's session token again for every event the tab sends, so
-the reply's pieces can overtake each other while those checks run and the stored reply comes back
-scrambled or empty. It passes on dev 015dbc861 and on b859124f9 with that check taken back out of
-the router.
+The direct connection test pins open-webui/open-webui#31953: since 24e30d1cb the socket router
+checks the tab's session token again for every event the tab sends, and the reply's pieces
+overtook each other while those checks ran, so the stored reply came back scrambled or empty. It
+passes on dev b5a20423e and is red in three runs of three with fix a1bb3b392 (#31979) reverted.
 
 Discriminates: with the in-place branch of the append breaking only itself, every append-in-place
 case failed and every append-copies case passed; with the copying branch breaking only itself the

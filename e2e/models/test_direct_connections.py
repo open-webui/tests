@@ -17,9 +17,10 @@ the key edit test red, skipping the direct connections in the model list fetch t
 test and the switch-off test red, dropping the tab's forwarding of the provider's stream turns
 the chat test red alone, and showing the tab and the connections whatever the admin switch says
 (and listing a connection whatever its own switch says) turns the three switch tests red.
-Red on dev ebc6add67, a real bug: the burst arrives scrambled and cut short
-(open-webui/open-webui#31953: since 24e30d1cb the socket router checks the tab's session token
-for every forwarded line, so the lines overtake each other; green with that check taken out).
+The burst test pins open-webui/open-webui#31953: since 24e30d1cb the socket router checked the
+tab's session token for every forwarded line, so the lines overtook each other and the burst
+arrived scrambled and cut short. It passes on dev b5a20423e and is red in three runs of three
+with fix a1bb3b392 (#31979) reverted in a backend copy.
 """
 
 from __future__ import annotations

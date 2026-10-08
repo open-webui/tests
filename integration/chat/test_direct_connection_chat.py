@@ -5,15 +5,16 @@ the completion (the request, the model and a channel), then reads the stream the
 on that channel and stores the reply like any other: text, usage, tool calls it runs itself
 before asking the tab again with the result. The tab here plays the web client's part.
 
-The streamed reply and tool call tests are red on dev b859124f9 on Postgres and Redis, and now and
-then on SQLite (open-webui/open-webui#31953): since 24e30d1cb the socket router checks the tab's
-session token again for every event the tab sends, so the reply's pieces can overtake each other
-while those checks run and the stored reply comes back scrambled or empty. It passes on dev
-015dbc861 and on b859124f9 with that check taken back out of the router.
+Since 24e30d1cb the socket router checks the tab's session token again for every event the tab
+sends, and the reply's pieces overtook each other while those checks ran, so the stored reply came
+back scrambled or empty (open-webui/open-webui#31953). Fix a1bb3b392 (#31979) handles a tab's
+events one at a time in the order they arrive.
 
-Discriminates: in a backend copy, dropping the dict frames the tab forwards fails the streamed
-reply test, ignoring the tab's refusal (treating any acknowledgement as a go) fails the refusal
-test, and skipping the session owner check lets the stranger's request reach the owner's tab.
+Discriminates: passes on dev b5a20423e; with a1bb3b392 reverted the streamed reply and tool call
+tests are red in one run of three on SQLite. In a backend copy, dropping the dict frames the tab
+forwards fails the streamed reply test, ignoring the tab's refusal (treating any acknowledgement
+as a go) fails the refusal test, and skipping the session owner check lets the stranger's request
+reach the owner's tab.
 """
 
 from __future__ import annotations
