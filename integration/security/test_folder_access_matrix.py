@@ -3,18 +3,17 @@
 The owner shares a folder with a reader (read) and a writer (read and write), directly or through
 a group. A stranger is refused every route; the reader may open the folder and list its chats
 (read-only) but not rename, move or re-share it; the writer and the admin may rename it, and only
-the owner and the admin may re-share it (since 8145774e3 editing a folder's contents no longer
-lets the writer manage its sharing). Moving stays the owner's alone: the move only looks in the
-caller's own folder tree, so it answers 404 to everyone else, the admin included. After a refused
-write the owner still sees the same name, parent and grants. With folders switched off every route
-refuses everyone, and without `features.folders` every route refuses a user but not the admin.
-Deleting is pinned by test_folder_delete_ownership.py.
+the owner and the admin may re-share it (8145774e3). Moving stays the owner's alone: the move
+only looks in the caller's own folder tree, so it answers 404 to everyone else, the admin
+included. After a refused write the owner still sees the same name, parent and grants. With
+folders switched off every route refuses everyone, and without `features.folders` every route
+refuses a user but not the admin. Deleting is pinned by test_folder_delete_ownership.py.
 
 Discriminates: in a backend copy, asking for `read` instead of `write` in the folder rename
 handler's shared-access check turns the `/update` rows red (the reader gets 200 and the name
-changes), and dropping the owner-or-admin check from the access update handler turns the
-`/access/update` rows red (the stranger, the reader and the writer get 200 and the grants are
-gone).
+changes), and dropping the owner-admin-or-write check from the access update handler turns the
+`/access/update` rows red (the stranger and the reader get 200 and the grants are gone), and
+restoring the write-grant branch there turns the writer's `/access/update` row red.
 """
 
 from __future__ import annotations
@@ -39,8 +38,8 @@ CONVERSATION = {"title": "Filed", "history": {"currentId": None, "messages": {}}
 OK = 200
 READ = {"owner", "reader", "writer", "admin"}
 WRITE = {"owner", "writer", "admin"}
-MANAGE = {"owner", "admin"}
 OWNER = {"owner"}
+SHARE = {"owner", "admin"}
 
 
 def _another_owner_folder(owner: Actor, folder_id: str) -> dict:
@@ -90,7 +89,7 @@ MATRIX = [
         404,
         OWNER,
     ),
-    ("POST", "/api/v1/folders/{id}/access/update", {"access_grants": []}, None, 403, MANAGE),
+    ("POST", "/api/v1/folders/{id}/access/update", {"access_grants": []}, None, 403, SHARE),
 ]
 
 

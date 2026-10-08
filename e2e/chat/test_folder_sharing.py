@@ -9,13 +9,17 @@ system prompt reaches the model for it as for the owner's own chats, and the own
 member's chat in the folder. A member who may only read gets no message input on the folder's
 page. Dragged onto the shared folder in the sidebar, a writing member's own chat is filed there,
 while a reading member's chat is not taken at all. Removing the group from the Access List takes
-the folder out of the member's sidebar again.
+the folder out of the member's sidebar again. Only the owner or an admin changes a folder's
+sharing (8145774e3): a writing member finds no Share entry in the folder's sidebar menu or in the
+menu on its page, while Edit and Export stay; the owner and an admin still find Share.
 
 Discriminates: passes on dev ebc6add67. In a frontend copy whose Share dialog never saves a change
 the three tests that share or unshare in the dialog go red. In backend copies: listing no shared
 folders turns the read share, unshare and both drag tests red at the member's sidebar; the
 middleware's folder lookup returning no folder turns the writing member's test red (no folder
 prompt); reporting every shared folder as writable turns the read-only input and drop tests red.
+In a frontend copy whose folder menu shows Share to everyone (`canShare` forced true) the two tests
+for a writing member's menus go red.
 """
 
 from __future__ import annotations
@@ -311,3 +315,70 @@ def test_a_reading_member_cannot_drop_a_chat_into_the_shared_folder(page_for, cr
 
     assert moves == [], "a read-only shared folder took a dropped chat"
     assert stored_folder_id(member, chat_id) is None
+
+
+def open_row_menu(page: Page, name: str) -> Locator:
+    row = folder_row(open_sidebar(page), name)
+    row.hover()
+    row.get_by_role("button").last.click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    return menu
+
+
+def open_page_menu(page: Page, folder_id: str) -> Locator:
+    page.goto(f"/folders/{folder_id}")
+    # the sidebar rows carry the same label, so look in the page itself
+    page.get_by_role("button", name="Folder options").last.click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    return menu
+
+
+def test_a_writing_member_finds_no_share_entry_in_the_sidebar_menu(page_for, crew):
+    owner, member, group_id, _ = crew
+    name = folder_name()
+    folder_id = create_folder(owner, name)
+    share_over_api(owner, folder_id, group_id, "write")
+
+    members_menu = open_row_menu(page_for(member), name)
+
+    expect(members_menu.get_by_role("button", name="Edit")).to_be_visible()
+    expect(members_menu.get_by_role("button", name="Share")).to_have_count(0)
+    owners_menu = open_row_menu(page_for(owner), name)
+    expect(owners_menu.get_by_role("button", name="Share")).to_be_visible()
+
+
+def test_a_writing_member_finds_no_share_entry_in_the_menu_on_the_folders_page(page_for, crew):
+    owner, member, group_id, _ = crew
+    folder_id = create_folder(owner, folder_name())
+    share_over_api(owner, folder_id, group_id, "write")
+
+    members_menu = open_page_menu(page_for(member), folder_id)
+
+    expect(members_menu.get_by_role("button", name="Edit")).to_be_visible()
+    expect(members_menu.get_by_role("button", name="Share")).to_have_count(0)
+    owners_menu = open_page_menu(page_for(owner), folder_id)
+    expect(owners_menu.get_by_role("button", name="Share")).to_be_visible()
+
+
+def test_an_admin_still_finds_share_in_the_menu_of_a_folder_shared_with_them(
+    page_for, crew, make_user
+):
+    owner, _, _, _ = crew
+    admin = make_user(role="admin")
+    name = folder_name()
+    folder_id = create_folder(owner, name)
+    with owner.client() as client:
+        grants = [
+            {"principal_type": "user", "principal_id": admin.id, "permission": permission}
+            for permission in ("read", "write")
+        ]
+        shared = client.post(
+            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": grants}
+        )
+    assert shared.status_code == 200, shared.text
+
+    admins_menu = open_row_menu(page_for(admin), name)
+
+    expect(admins_menu.get_by_role("button", name="Share")).to_be_visible()
