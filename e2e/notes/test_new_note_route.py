@@ -1,13 +1,18 @@
 """Journey: opening the new-note address creates a note and lands in its editor.
 
-Visiting `/notes/new` makes a note on the spot and replaces the address with the note's own. The
-note is titled with today's date unless the address carries a title, and starts with the text of
-the address's content when it has one. The saved note is listed on the Notes page and text typed
-into its editor is still there after a reload.
+Visiting `/notes/new` asks first (since 0ffd86967 a link no longer acts on its own), then makes the
+note and replaces the address with the note's own. The note is titled with today's date unless the
+address carries a title, and starts with the text of the address's content when it has one. The
+saved note is listed on the Notes page and text typed into its editor is still there after a reload.
 
-Discriminates: passes on dev 176d31d1d; in a frontend copy, with the route ignoring the title and
-content of its address the listing and prefilled tests fail, and with the route not creating a note
-all four fail.
+`test_text_typed_into_a_new_note_survives_a_reload` is red now and then: with keystrokes a few
+milliseconds apart an older edit's save can replace the newest one, so the stored note stays a
+few characters short (open-webui/open-webui#31585, fix PR #31596). Typed into 30 new notes, dev
+7b7dba6ee stored 7 short and dev with #31596 applied none.
+
+Discriminates: passes on dev 7b7dba6ee; in a frontend copy of dev 176d31d1d, with the route
+ignoring the title and content of its address the listing and prefilled tests fail, and with the
+route not creating a note all four fail.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import time
 from datetime import date
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 
@@ -47,8 +52,13 @@ def _wait_until_stored(author: Actor, note_id: str, text: str, timeout: float = 
     raise AssertionError(f"the note never stored {text!r}; it holds {stored}")
 
 
+def _confirm_dialog(page: Page) -> Locator:
+    return page.get_by_role("dialog").filter(has_text="Create a new note")
+
+
 def _open_new_note(page: Page, query: str = "") -> str:
     page.goto(f"/notes/new{query}")
+    _confirm_dialog(page).get_by_role("button", name="Confirm").click()
     expect(page).to_have_url(NOTE_URL)
     return page.url.rsplit("/", 1)[1]
 
@@ -56,7 +66,13 @@ def _open_new_note(page: Page, query: str = "") -> str:
 def test_new_note_address_lands_in_an_editor_for_a_note_titled_with_today(page_for, make_user):
     author = make_user()
     page = page_for(author)
-    note_id = _open_new_note(page)
+    page.goto("/notes/new")
+    expect(_confirm_dialog(page)).to_be_visible()
+    assert _stored_notes(author) == [], "the address made a note before it was confirmed"
+
+    _confirm_dialog(page).get_by_role("button", name="Confirm").click()
+    expect(page).to_have_url(NOTE_URL)
+    note_id = page.url.rsplit("/", 1)[1]
 
     editor_page = page.get_by_role("main")
     expect(editor_page.get_by_role("textbox", name="Title")).to_have_value(date.today().isoformat())
