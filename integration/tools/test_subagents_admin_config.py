@@ -7,6 +7,16 @@ the saved system prompt follows the parent's own (the built-in prompt when it is
 output cuts a long answer short before it reaches the parent, and the max iterations stops a
 sub-agent that keeps calling tools.
 
+`test_a_larger_max_iterations_lets_the_sub_agent_finish`,
+`test_an_answer_within_the_max_output_reaches_the_parent_whole`,
+`test_an_empty_system_prompt_gives_the_sub_agent_the_built_in_one`,
+`test_the_max_iterations_stops_a_sub_agent_that_keeps_calling_tools`,
+`test_the_max_output_cuts_a_long_answer_before_it_reaches_the_parent` and
+`test_the_saved_system_prompt_follows_the_parents_own_in_a_sub_agent` are red on dev 62f70a844:
+since de73bb830 a chat request whose reply message is already stored in the chat, the way
+automations, sub-agents and timers prepare their reply, is refused with 409 and the reply is never
+written (open-webui/open-webui#32066).
+
 Discriminates: passes on dev 176d31d1d; in a backend copy that offers the delegation tool whatever
 the setting says, or whatever the model's tick says, or that ignores the default settings' tick,
 the availability tests fail, and with the system prompt, the output cap or the iteration cap

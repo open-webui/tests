@@ -11,6 +11,14 @@ channel where a model answers and what the members receive, a sub-agent in the f
 one in the background, a timer, an automation that streams into a chat and an Anthropic client
 of the messages endpoint whose reply an outlet filter audits.
 
+`test_a_background_subagent_reports_its_whole_reply_and_the_chat_continues`,
+`test_a_subagent_reply_of_many_pieces_comes_back_whole_to_the_parent_chat`,
+`test_a_timer_run_saves_its_reply_of_many_pieces_in_the_chat` and
+`test_an_automation_run_streams_its_reply_into_a_new_chat` are red on dev 62f70a844: since de73bb830
+a chat request whose reply message is already stored in the chat, the way automations, sub-agents
+and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: in a backend copy whose in-place branch adds a bar before each piece every
 `append-in-place` case goes red and every `append-copies` case stays green; with the bar in the
 copying branch it is the other way round.

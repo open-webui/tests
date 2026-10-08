@@ -11,6 +11,12 @@ run time, so after it the page still said "Last run Never" above the run it list
 said "Never" as well), since only the scheduler's own claim wrote that time.
 `test_a_manual_run_shows_as_the_last_run` pins it.
 
+`test_a_manual_run_shows_as_the_last_run`, `test_run_now_lists_a_run_whose_chat_holds_the_answer`
+and `test_the_run_history_lists_every_run_with_its_chat` are red on dev 62f70a844: since de73bb830 a
+chat request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev a5bc78300, and the last run test fails on dev 176d31d1d, before PR
 #31583. On dev ac00d40e3, in a backend copy, with `POST /api/v1/automations/{id}/run` answering
 without starting the run no run is ever listed. On dev 176d31d1d a frontend copy keeping only the

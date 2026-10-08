@@ -7,6 +7,12 @@ the delegation row and the answer it holds.
 
 Twin of integration/tools/test_subagent_scope.py.
 
+`test_a_chat_shared_by_link_shows_the_reader_the_delegation_and_its_answer` and
+`test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_does_not` are red on dev
+62f70a844: since de73bb830 a chat request whose reply message is already stored in the chat, the way
+automations, sub-agents and timers prepare their reply, is refused with 409 and the reply is never
+written (open-webui/open-webui#32066).
+
 Discriminates: passes on dev 176d31d1d. In backend copies each test turns red with its edit: the
 sub-agent's tool ids dropped, the sub-agent's chat left listed, and the sub-agent's answer left
 out of a shared copy of the chat.

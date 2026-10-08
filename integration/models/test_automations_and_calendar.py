@@ -26,6 +26,11 @@ integration/chat/test_failed_timer_error.py: the reply it leaves carries the err
 
 Twin of unit/models/test_automations_and_calendar.py.
 
+`test_a_forked_timer_chat_does_not_fire_a_second_time` is red on dev 62f70a844: since de73bb830 a
+chat request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev bbfa876af; fails with each fix reverted (the expansion back on the
 server's clock, the COUNT check removed, `alert_minutes` compared unchecked, the single-spelling
 searches restored): occurrences move by the zone gap, a COUNT rule without DTSTART is stored, no

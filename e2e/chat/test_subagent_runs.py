@@ -10,6 +10,18 @@ in one reply each get their row and result, and a reload keeps all of it.
 Each request is tied to its own prompt: the sub-agent's latest user message is its task, the
 parent's is what the person typed.
 
+`test_a_failing_subagent_shows_its_error_and_the_parent_still_replies`,
+`test_a_reload_after_the_run_keeps_the_rows_and_the_reply`,
+`test_a_subagent_answer_longer_than_the_output_limit_is_cut`,
+`test_a_subagent_runs_its_own_loop_and_the_parent_carries_on_with_its_answer`,
+`test_a_subagent_stops_at_the_iteration_limit_and_says_so`,
+`test_an_answer_within_the_output_limit_is_handed_over_whole`,
+`test_several_subagents_in_one_reply_each_get_a_row_and_a_result` and
+`test_the_result_row_opens_to_the_task_and_the_answer` are red on dev 62f70a844: since de73bb830 a
+chat request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev 176d31d1d. In backend copies the limit tests turn red when the
 iteration limit is dropped, the truncation is removed (or cut at `>=`), the failed status is
 swallowed, only the first call of a turn runs or the answer is replaced; on a build with the

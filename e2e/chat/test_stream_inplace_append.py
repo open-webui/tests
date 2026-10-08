@@ -16,6 +16,12 @@ The open page does not follow a fired timer or a sub-agent report on dev (the ch
 current message still points at the earlier reply), so those two tests read the follow-up after
 a reload for both values.
 
+`test_a_background_subagent_report_and_its_follow_up_show_after_a_reload` and
+`test_a_timer_fires_and_its_whole_follow_up_shows_after_a_reload` are red on dev 62f70a844: since
+de73bb830 a chat request whose reply message is already stored in the chat, the way automations,
+sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev 176d31d1d with the toggle off and on; with the in-place branch
 appending a marker before each piece every append-in-place case turns red and the append-copies
 cases stay green, and with the copying branch marked the reverse.

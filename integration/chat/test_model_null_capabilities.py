@@ -9,6 +9,10 @@ automations run through (now `_resolve_model_defaults`, which channel replies sh
 
 Twin of unit/chat/test_model_null_capabilities.py.
 
+`test_an_automation_on_the_model_runs` is red on dev 62f70a844: since de73bb830 a chat request whose
+reply message is already stored in the chat, the way automations, sub-agents and timers prepare
+their reply, is refused with 409 and the reply is never written (open-webui/open-webui#32066).
+
 Discriminates: passes on bbfa876af; fails with 0016266c0 reverted (the memory chat gets no reply)
 and with 650b81792 reverted (the automation run records an error and the channel mention gets no
 reply); the nearby tests pass on both.

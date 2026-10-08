@@ -11,6 +11,11 @@ the automations page showed "Last run Never" above the run it listed.
 `test_a_run_now_run_sets_the_last_run_time` pins it; the browser twin is in
 e2e/models/test_automation_runs.py.
 
+`test_a_run_is_recorded_as_a_success_with_its_chat` is red on dev 62f70a844: since de73bb830 a chat
+request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev a5bc78300; the last run test fails on dev 176d31d1d, before PR #31583.
 In a backend copy recording every run as `success` the failed run test goes red, and recording a
 success without its chat turns the success test red.

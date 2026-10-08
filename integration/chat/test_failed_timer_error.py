@@ -13,6 +13,11 @@ a preset that is deleted before the timer fires.
 Also pins the older `f5a5a434b` (#27785, issue #27783), which caught the completion's error in
 the scheduler at all. Twin of unit/models/test_automations_and_calendar.py.
 
+`test_a_timer_on_a_working_model_still_gets_its_answer` is red on dev 62f70a844: since de73bb830 a
+chat request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev efe63bd34; with b0650d04b reverted in a backend copy the narrow test
 fails (the timer's reply stays empty and not done). On dev ef67cc3fa, with the try/except around
 the timer's completion removed, the error escapes the scheduler task and the narrow test fails

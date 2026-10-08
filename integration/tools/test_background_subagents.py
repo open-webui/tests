@@ -20,6 +20,20 @@ set the pointer.
 A report that came while the answer to a later question was still written was attached to the
 answer before it and hid that question (open-webui/open-webui#31507, fixed by PR #31557).
 
+`test_a_background_call_while_background_sub_agents_are_off_runs_as_an_ordinary_delegation`,
+`test_a_background_limit_of_one_refuses_the_next_delegation_and_frees_the_slot_afterwards`,
+`test_a_concurrent_limit_of_one_does_not_hold_background_subagents_back`,
+`test_a_failing_background_subagent_is_reported_with_its_error`,
+`test_a_report_that_arrives_while_the_reply_is_written_waits_for_it`,
+`test_a_stopped_background_subagent_is_reported_as_interrupted_and_the_chat_continues`,
+`test_the_finished_report_follows_the_reply_that_dispatched_it_and_the_model_continues`,
+`test_the_reply_ends_with_a_dispatch_handle_while_the_subagent_runs_on`,
+`test_the_stored_chat_points_at_the_follow_up_once_the_report_is_stored` and
+`test_two_chats_of_one_account_each_get_only_their_own_report` are red on dev 62f70a844: since
+de73bb830 a chat request whose reply message is already stored in the chat, the way automations,
+sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev a5bc78300; the two tests named above fail on dev 176d31d1d, before
 their fixes. In backend copies each test turns red with its edit: the dispatch made to wait for the
 sub-agent, the sub-agent left out of the running tasks, the report not stored, stored without its

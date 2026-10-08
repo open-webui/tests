@@ -10,6 +10,12 @@ name. A run now loads the model list first when it is empty.
 Saving the OpenAI connections unchanged empties the list, as a restart does; the run is started
 with Run now right after.
 
+`test_a_run_on_a_warm_cache_offers_the_models_tools` and
+`test_the_first_run_on_a_cold_cache_offers_the_models_tools` are red on dev 62f70a844: since
+de73bb830 a chat request whose reply message is already stored in the chat, the way automations,
+sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev efe63bd34; with 60ded561a reverted in a backend copy both cold-cache
 tests fail (no tools offered, and the channel run says "You are <model id>"). The warm-cache test
 passes on both.

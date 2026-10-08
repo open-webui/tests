@@ -15,6 +15,18 @@ the server told it to reload the chat while the chat's stored current message st
 earlier reply, so the page kept showing that one and neither the report nor the follow-up appeared
 until the person reloaded. Every test that reads the report waits for it in the open page.
 
+`test_a_background_limit_of_one_refuses_one_of_two_subagents_and_reports_the_other`,
+`test_a_failing_background_subagent_is_reported_and_the_chat_carries_on`,
+`test_a_reload_while_the_subagent_works_keeps_the_chat_and_the_report_still_comes`,
+`test_stopping_the_reply_leaves_the_background_subagent_running_and_its_report_comes`,
+`test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report`,
+`test_the_reply_ends_while_the_subagent_keeps_working_and_its_report_then_continues_the_chat`,
+`test_the_report_and_the_follow_up_show_in_the_open_chat_without_a_reload` and
+`test_two_accounts_at_once_each_get_only_their_own_report` are red on dev 62f70a844: since de73bb830
+a chat request whose reply message is already stored in the chat, the way automations, sub-agents
+and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev a5bc78300; on dev 176d31d1d the tests that wait for the report fail on
 that bug. In backend copies the tests turn red when the dispatch waits for the sub-agent, the cap
 is ignored, a failure is reported as completed, the reports of two chats are mixed up, two finished

@@ -10,6 +10,10 @@ current message the chat stores. Before PR #31576 (open-webui/open-webui#31566, 
 well) the timer left that pointing at the earlier reply, so the page showed neither the timer nor
 the follow-up until it was reloaded.
 
+Every test here is red on dev 62f70a844: since de73bb830 a chat request whose reply message is
+already stored in the chat, the way automations, sub-agents and timers prepare their reply, is
+refused with 409 and the reply is never written (open-webui/open-webui#32066).
+
 Discriminates: passes on dev a5bc78300; both tests fail on dev 176d31d1d for the reason above.
 """
 

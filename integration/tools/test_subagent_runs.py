@@ -7,6 +7,13 @@ the person's chat list. A call naming a file the chat does not hold, or
 an empty task, comes back to the model as an error before anything runs. Sub-agents of one reply
 run side by side up to the admin's concurrent limit.
 
+`test_a_concurrent_limit_of_one_runs_the_subagents_one_after_the_other`,
+`test_the_subagent_gets_the_task_with_its_context_and_no_way_to_delegate_again` and
+`test_the_subagents_of_one_reply_run_side_by_side` are red on dev 62f70a844: since de73bb830 a chat
+request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev 176d31d1d. In backend copies each test turns red with its edit: the
 context left off the task, the default prompt dropped, the delegation tool left in the sub-agent's
 kit, the internal marker dropped, the file check removed, the empty-task check removed, the limit

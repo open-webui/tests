@@ -11,6 +11,11 @@ model.
 The personal server's address is never called: its tools run in the browser, and only the specs
 the model is offered are checked here.
 
+`test_a_subagent_is_offered_the_personal_tools` is red on dev 62f70a844: since de73bb830 a chat
+request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev efe63bd34; with 5d4f9b957 reverted in a backend copy the sub-agent
 and the approval-resume tests fail (the personal tool is missing from those requests). The
 main-model test passes on both.

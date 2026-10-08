@@ -14,6 +14,12 @@ continue any user's chat, sends a message there: only the admin's own timers may
 Twin of unit/security/test_timer_cancellation_scope.py, which keeps the audit that every caller
 passes the acting user.
 
+`test_a_read_leaves_timers_it_does_not_match` and
+`test_a_stranger_reading_the_chat_leaves_the_owners_timer_running` are red on dev 62f70a844: since
+de73bb830 a chat request whose reply message is already stored in the chat, the way automations,
+sub-agents and timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066).
+
 Discriminates: passes on dev `ef67cc3fa`; with `e140d8f3c` reverted (the query's owner filter
 and the handler's early return) the stranger's read cancels the timer and it never fires, and
 with the owner filter alone dropped the admin's message cancels the owner's timer. Dropping the
