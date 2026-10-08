@@ -5,15 +5,16 @@
   `rapidocr`. A packaging guard over requirements.txt.
 - Milvus (PR #26911, `f4a6ea930`): the ORM-style PyMilvus API (`Collection`, `connections`,
   `utility`) was replaced with `MilvusClient`. The ORM API still works against a server, so no
-  request tells the two apart; this audit keeps it out of both Milvus stores.
+  request tells the two apart; this audit keeps it out of both Milvus stores. `CollectionSchema`
+  stays allowed: `MilvusClient.create_schema()` returns one, and PR #31660 names it as a type.
 
 The Milvus stores themselves, including the INVERTED fallback for a refused `resource_id` index
 (PR #27521, issue #26978), are driven against a Milvus stand-in in
 integration/retrieval/test_milvus_store.py. The upload, splitting, routing, knowledge base and
 embedding-prefix parts of this file moved to integration/retrieval/test_document_ingestion.py.
 
-Discriminates: passes on dev bbfa876af; fails with the old OCR pin back in requirements.txt and
-with an ORM name imported from pymilvus again.
+Discriminates: passes on dev b5a20423e; fails with the old OCR pin back in requirements.txt and
+with an ORM name (`Collection`) imported from pymilvus again.
 """
 
 from __future__ import annotations
@@ -82,7 +83,6 @@ def test_milvus_modules_do_not_import_the_deprecated_orm_api(open_webui_backend,
     assert imported, f"{relative} no longer imports pymilvus; retarget this audit"
     deprecated = imported & {
         "Collection",
-        "CollectionSchema",
         "FieldSchema",
         "connections",
         "utility",
