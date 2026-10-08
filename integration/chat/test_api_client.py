@@ -13,6 +13,11 @@ without a session id the call itself returns once the answer is stored. A wrong 
 that does not exist and a model the account may not use are refused before anything reaches the
 provider, the last two alike so a private model's name stays hidden.
 
+`test_a_saved_chat_runs_the_tool_loop_and_stores_the_answer` and
+`test_without_a_session_id_the_call_returns_once_the_answer_is_stored` are red on dev 62f70a844:
+since de73bb830 a call into a chat whose empty answer was stored first, as the docs describe, is
+refused with 409, with or without `user_message` (open-webui/open-webui#32066).
+
 Discriminates: on dev 0f5a58f5f, in backend copies: `get_current_user_by_api_key` finding no user
 fails every API-key run; an unknown key answered 403 fails the wrong-key test; dropping the
 `/api/v1/models` alias fails both model list runs; dropping the client's `temperature`,

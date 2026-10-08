@@ -9,6 +9,10 @@
   the same moment, so the rest of the queue went out too and two replies streamed into the
   chat at once.
 
+`test_send_now_sends_only_the_chosen_message` is red on dev 62f70a844: Send now stops the running
+reply first, and since de73bb830 a stopped reply never ends on the page, so the chosen message is
+not sent (open-webui/open-webui#32081).
+
 Discriminates: passes on the efe63bd34 build; with `5f8d8f0c5` reverted the delete and edit
 tests fail (the message behind the failed one is never sent), and with `aea7d34f4` reverted the
 Send now test fails (the rest of the queue is sent while the chosen message is answered).

@@ -10,6 +10,10 @@ integration/chat/test_filter_written_reply_start.py.
 Fix `f45332499` (PR #31653): independently of filters, the pane could look for artifacts before
 the page had picked them up from the reply, find none and close. It now looks again as it opens.
 
+`test_the_pane_a_filter_written_html_block_opens_stays_open` is red on dev 62f70a844: since
+de73bb830 the pane closes again right after it opens on a filter-written HTML block
+(open-webui/open-webui#32082).
+
 Discriminates: passes on dev 015dbc861 with its build; with `1058444d7` reverted in a backend
 copy the filter test goes red (the pane closed while the model's words streamed in, then came
 back). The `f45332499` race depends on timing inside the page: with it reverted (the 015dbc861

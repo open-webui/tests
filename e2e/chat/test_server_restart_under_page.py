@@ -9,6 +9,10 @@ The test of a reply cut off by the restart skips with Redis: the reply's task st
 until `REDIS_TASK_TTL` runs out, as the setting documents, so the reply keeps its Stop button for
 those minutes.
 
+`test_after_a_restart_cut_a_reply_off_the_next_message_is_answered` is red on dev 62f70a844: since
+de73bb830 a reply stopped with Stop never ends on the page, the Stop button stays and the next
+message is not answered (open-webui/open-webui#32081).
+
 Discriminates: passes on dev ebc6add67; the reconnect tests fail on a build whose socket does not
 reconnect (no "Reconnected", the next reply never shows).
 """

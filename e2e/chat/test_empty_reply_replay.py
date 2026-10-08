@@ -8,6 +8,10 @@ without an empty assistant message and fails every other one.
 
 Twin of integration/chat/test_empty_reply_replay.py.
 
+`test_a_chat_answers_again_after_a_reply_stopped_before_any_text` is red on dev 62f70a844: since
+de73bb830 a reply stopped with Stop never ends on the page, the Stop button stays and the next
+message is not answered (open-webui/open-webui#32081).
+
 Discriminates: passes on dev b859124f9, fails with 743a46bdc reverted (the second message gets the
 provider's refusal instead of the answer).
 """

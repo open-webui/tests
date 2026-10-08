@@ -6,9 +6,9 @@ another chat, and a click on a chip removes it. Each change is read back after a
 menu and through the search dialog's `tag:` filter, which lists the chats carrying a tag; once no
 chat carries a tag the input stops suggesting it.
 
-The suggestion test is red on dev: the suggestion list sits outside the menu, so the menu's
-outside-click handler closes the menu on the pick and the tag is never added
-(open-webui/open-webui#32014).
+The suggestion test was red until 62f70a844 fixed it (open-webui/open-webui#32014): the
+suggestion list sits outside the menu, so the menu's outside-click handler closed the menu on
+the pick and the tag was never added. It now guards against that coming back.
 
 Discriminates: the other three pass on dev ebc6add67; in a frontend copy whose tag input skips
 its add request and whose tag chip skips its delete request, every test fails.

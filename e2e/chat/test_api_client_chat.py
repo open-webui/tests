@@ -5,6 +5,9 @@ in `/api/chat/completions` with a session id so the server answers into that cha
 with the chat already open in the browser, sees the answer arrive without reloading, and the chat
 sits in the sidebar under the title the script gave it.
 
+Red on dev 62f70a844: since de73bb830 a call into a chat whose empty answer was stored first, as the
+docs describe, is refused with 409 (open-webui/open-webui#32066).
+
 Discriminates: on dev 0f5a58f5f, in a backend copy, `get_current_user_by_api_key` finding no user
 fails the test (the script is refused), and the OpenAI router stripping `data: ` from the relayed
 stream fails it (the answer stays empty).

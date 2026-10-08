@@ -10,10 +10,10 @@ issues a fresh token. integration/tools/test_mcp_oauth_connection.py covers refr
 Sign-ins are counted by the code grants the authorization server answered: Open WebUI's backend
 also fetches the authorize URL itself before sending the browser there.
 
-Red on dev ebc6add67: choosing OAuth 2.1 in the dialog leaves its check button labelled and
-tooltipped "Verify Connection". f822605b3 meant it to read "Check OAuth Discovery", but the label
-is computed by a function the template calls without naming the auth type, so it never updates
-(open-webui/open-webui#32012).
+Red on dev ebc6add67 and fixed by 8f11fda87 (open-webui/open-webui#32012): choosing OAuth 2.1
+in the dialog left its check button labelled and tooltipped "Verify Connection", because the
+label was computed by a function the template called without naming the auth type. The label
+test now guards against that coming back.
 
 Discriminates: on dev ebc6add67, in a backend copy that never stores the token from the sign-in
 callback every sign-in test fails (the server never shows as connected); with the stored token

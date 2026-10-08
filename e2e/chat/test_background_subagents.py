@@ -27,6 +27,11 @@ a chat request whose reply message is already stored in the chat, the way automa
 and timers prepare their reply, is refused with 409 and the reply is never written
 (open-webui/open-webui#32066).
 
+`test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_still_works` is red on
+dev 62f70a844 for two reasons: the sub-agent's reply is refused with 409
+(open-webui/open-webui#32066), and a reply stopped with Stop never ends on the page
+(open-webui/open-webui#32081).
+
 Discriminates: passes on dev a5bc78300; on dev 176d31d1d the tests that wait for the report fail on
 that bug. In backend copies the tests turn red when the dispatch waits for the sub-agent, the cap
 is ignored, a failure is reported as completed, the reports of two chats are mixed up, two finished
