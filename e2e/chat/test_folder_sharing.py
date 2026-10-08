@@ -136,7 +136,8 @@ def folder_row(sidebar: Locator, name: str) -> Locator:
 
 def open_share_dialog(page: Page, name: str) -> Locator:
     row = folder_row(open_sidebar(page), name)
-    row.hover()
+    # focus shows the row's buttons like a hover, and keeps them shown while the section slides
+    row.focus()
     row.get_by_role("button").last.click()
     page.get_by_role("menu").get_by_role("button", name="Share").click()
     dialog = page.get_by_role("dialog").filter(has_text=f"Share: {name}")
@@ -321,7 +322,8 @@ def test_a_reading_member_cannot_drop_a_chat_into_the_shared_folder(page_for, cr
 
 def open_row_menu(page: Page, name: str) -> Locator:
     row = folder_row(open_sidebar(page), name)
-    row.hover()
+    # focus shows the row's buttons like a hover, and keeps them shown while the section slides
+    row.focus()
     row.get_by_role("button").last.click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("button", name="Export")).to_be_visible()

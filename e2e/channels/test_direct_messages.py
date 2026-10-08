@@ -131,7 +131,8 @@ def test_a_closed_direct_message_stays_gone_and_reopens_with_its_history(people,
     entry = _entry(page, other.name)
     expect(entry).to_be_visible()
 
-    entry.hover()
+    # focus shows the row's buttons like a hover, and keeps them shown while the section slides
+    entry.focus()
     # the close button has no name; it is the only button beside the link
     entry.locator("xpath=following-sibling::div//button").click()
 
@@ -168,7 +169,8 @@ def test_a_closed_direct_message_comes_back_when_the_other_person_writes(people,
     page = page_for(closer)
     entry = _entry(page, other.name)
     expect(entry).to_be_visible()
-    entry.hover()
+    # focus shows the row's buttons like a hover, and keeps them shown while the section slides
+    entry.focus()
     entry.locator("xpath=following-sibling::div//button").click()
     expect(entry).to_have_count(0)
 
