@@ -140,6 +140,7 @@ def _open_live_chat(page: Page, chat_id: str) -> None:
 
 
 def test_the_link_opens_the_owners_live_chat_straight_away(page_for, make_user, upstream):
+    """Red on dev b5a20423e: the link sends the account home (open-webui/open-webui#32062)."""
     owner, member = _accounts(make_user)
     chat_id = _start_chat(page_for(owner), upstream)
     share_path = _share_over_api(owner, chat_id, [grant("user", member.id, "read")], "continue")
@@ -185,6 +186,7 @@ def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(page_for, m
 def test_a_group_member_loses_the_open_chat_when_taken_out_of_the_group(
     page_for, make_user, admin, upstream
 ):
+    """Red on dev b5a20423e: the chat stays open on screen (open-webui/open-webui#32063)."""
     owner, member = _accounts(make_user)
     group_id = make_group(admin, [member])
     owner_page = page_for(owner)
