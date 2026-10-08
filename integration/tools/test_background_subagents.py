@@ -24,6 +24,7 @@ answer before it and hid that question (open-webui/open-webui#31507, fixed by PR
 `test_a_background_limit_of_one_refuses_the_next_delegation_and_frees_the_slot_afterwards`,
 `test_a_concurrent_limit_of_one_does_not_hold_background_subagents_back`,
 `test_a_failing_background_subagent_is_reported_with_its_error`,
+`test_a_report_that_arrives_before_a_later_answer_ends_follows_the_answer_that_dispatched_it`,
 `test_a_report_that_arrives_while_the_reply_is_written_waits_for_it`,
 `test_a_stopped_background_subagent_is_reported_as_interrupted_and_the_chat_continues`,
 `test_the_finished_report_follows_the_reply_that_dispatched_it_and_the_model_continues`,
@@ -344,7 +345,9 @@ def test_a_report_that_arrives_before_a_later_answer_ends_follows_the_answer_tha
         wait_for_message(client, opened.chat_id, finished_reply("Looked up."))
         history = history_of(client, opened.chat_id)
 
-    [report] = [m for m in history["messages"].values() if m.get("meta")]
+    [report] = [
+        m for m in history["messages"].values() if (m.get("meta") or {}).get("type") == "subagent"
+    ]
     assert report["parentId"] == second.assistant_message_id, (
         "the report was attached to the earlier answer, so the chat now shows a branch without "
         "the second question"
