@@ -12,6 +12,10 @@ the chat shows the call and the skill's instructions reach the provider in the t
 Unticking Skills under the editor's Builtin Tools and saving withdraws the list and the viewer
 from the next chat, while the attached skill arrives in full.
 
+`test_a_skill_attached_in_the_editor_reaches_a_chat_on_that_model` is red now and then on dev
+896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload although the
+server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on dev ebc6add67; in a backend copy whose chat middleware ignores the skills
 a chat sends along for its model, the attach, detach, switched-off and unreadable-skill tests
 fail; in one that no longer filters skills by what the chatting account may read, the

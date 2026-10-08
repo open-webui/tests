@@ -7,6 +7,10 @@ an OpenAI-compatible speech engine on a local stand-in reads a reply aloud. Imag
 engine on a local stand-in draws the picture the model asks for. Every test works as a fresh
 admin and puts the settings back afterwards.
 
+`test_a_saved_image_engine_draws_the_models_picture` is red now and then on dev 896056690: since
+de73bb830 the reply in a new chat sometimes stays blank until a reload although the server saved it
+whole (open-webui/open-webui#32091).
+
 Discriminates: passes on dev ac00d40e3; in a backend copy, with `/api/v1/retrieval/config/update`
 ignoring `RAG_TEMPLATE` the documents test fails (the template never sticks), with it ignoring
 `WEB_SEARCH_ENGINE` the web search test fails (the engine is unset after the reload), with

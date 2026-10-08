@@ -15,6 +15,10 @@ unticked capability is no longer offered under Default Features. File Upload, We
 Tools and the Time category are covered in e2e/models/test_model_editor.py, Status Updates in
 e2e/chat/test_status_updates.py; the Code Interpreter is legacy and left out.
 
+`test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tools` is red now and then
+on dev 896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload
+although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose chat input ignores the
 Vision, Image Generation and Terminal capabilities those three tests fail, in one whose replies
 ignore the Citations capability the citations test fails and in one whose editor lists every
