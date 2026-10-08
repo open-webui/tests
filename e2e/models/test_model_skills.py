@@ -9,13 +9,16 @@ none of its instructions, while a skill shared with the account does reach it. W
 uses native function calling with builtin tools, the system prompt lists the attached skill by
 name and description only, the provider is offered the skill viewer, and when the model calls it
 the chat shows the call and the skill's instructions reach the provider in the tool result.
+Unticking Skills under the editor's Builtin Tools and saving withdraws the list and the viewer
+from the next chat, while the attached skill arrives in full.
 
 Discriminates: passes on dev ebc6add67; in a backend copy whose chat middleware ignores the skills
 a chat sends along for its model, the attach, detach, switched-off and unreadable-skill tests
 fail; in one that no longer filters skills by what the chatting account may read, the
 unreadable-skill test fails; in one that no longer skips switched-off skills, the switched-off
 test fails; in one whose skill viewer answers an error or whose system prompt leaves out the
-skill list, the native test fails.
+skill list, the native test fails; in one that ignores the model's Skills toggle (55e1c44c9), or a
+frontend build without the Skills entry in the editor's Builtin Tools, the toggle test fails.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, last_reply, send
+from utils.model_editor import offered_tool_names, set_checkbox
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -155,6 +159,14 @@ def system_prompt_of(page: Page, upstream, question: str) -> str:
     return system_text(request)
 
 
+def reply_request(page: Page, upstream, question: str) -> dict:
+    """Send `question` in the open chat; the request the provider got for it."""
+    upstream.queue(reply.text("noted", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "noted")
+    return next(filter(reply.answering(question), upstream.chat_requests()))
+
+
 def test_a_skill_attached_in_the_editor_reaches_a_chat_on_that_model(
     page_for, builder, make_model, make_skill, upstream
 ):
@@ -259,3 +271,29 @@ def test_native_function_calling_lists_the_skill_and_the_viewer_loads_it(
     expect(
         last_reply(page).get_by_role("button", name="View Result from view_skill")
     ).to_be_visible()
+
+
+def test_unticking_skills_in_the_editor_withdraws_the_list_and_the_viewer(
+    page_for, builder, make_model, make_skill, upstream
+):
+    instructions = unique("Check the tide table.")
+    model = make_model(params={"function_calling": "native"})
+    skill = make_skill(instructions)
+    page = page_for(builder)
+    attach_in_editor(page, model, skill)
+    open_chat_on(page, model["id"], model["name"])
+    ticked = reply_request(page, upstream, "when do we sail?")
+    assert "<available_skills>" in system_text(ticked), system_text(ticked)
+    assert "view_skill" in offered_tool_names(ticked)
+
+    editor = open_editor(page, model)
+    set_checkbox(editor, "Builtin Tools", "Skills", False)
+    save(editor)
+
+    open_chat_on(page, model["id"], model["name"])
+    unticked = reply_request(page, upstream, "when do we sail now?")
+    prompt = system_text(unticked)
+    assert "<available_skills>" not in prompt, prompt
+    assert "view_skill" not in offered_tool_names(unticked)
+    assert "get_current_timestamp" in offered_tool_names(unticked)
+    assert f'<skill name="{skill["name"]}">' in prompt and instructions in prompt, prompt
