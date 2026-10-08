@@ -16,7 +16,8 @@ fails instead. Asked to respond to it, it hands the request to the chat model th
 respond to a function result, it speaks the result's answer; asked for a call status, it speaks
 the status sentence; asked to read text (the realtime text-to-speech engine), it speaks that
 text. Speaking sends `fake.speech` (a quarter second of silent 24 kHz PCM unless a test sets a
-longer one) with its transcript, and `fake.spoken` lists every transcript spoken. A turn lined up
+longer one) in deltas of at most a second, as fast as it can, with its transcript, and
+`fake.spoken` lists every transcript spoken. A turn lined up
 with `gesture=name` (and `answers=text`) plays that gesture through the avatar's `play_animation`
 function while speaking the text; the gesture's result lands in `call.gesture_results`, and
 asked to go on after it the fake speaks the result's `effect`.
@@ -57,6 +58,7 @@ TRANSCRIPTION_MODEL = "transcribe-harbour"
 SAMPLE_RATE = 24000
 HEARING_BYTES = SAMPLE_RATE * 2 // 5  # a fifth of a second of 16-bit PCM
 SPOKEN_PCM = b"\x00\x00" * (SAMPLE_RATE // 4)
+SPEECH_DELTA_BYTES = SAMPLE_RATE * 2  # the instance refuses provider events over 512 KB
 # what a provider error carries, which the instance must never pass on
 PROVIDER_ERROR_TEXT = "invalid key sk-realtime-secret for instructions"
 
@@ -143,10 +145,11 @@ def _new_id(prefix: str) -> str:
 
 def _speak(fake: FakeRealtime, call: RealtimeCall, metadata: dict, text: str) -> None:
     response_id, item_id = _new_id("resp"), _new_id("item")
-    audio = base64.b64encode(fake.speech).decode()
     located = {"response_id": response_id, "item_id": item_id, "content_index": 0}
     call.send({"type": "response.created", "response": {"id": response_id, "metadata": metadata}})
-    call.send({"type": "response.output_audio.delta", **located, "delta": audio})
+    for start in range(0, len(fake.speech), SPEECH_DELTA_BYTES):
+        audio = base64.b64encode(fake.speech[start : start + SPEECH_DELTA_BYTES]).decode()
+        call.send({"type": "response.output_audio.delta", **located, "delta": audio})
     call.send({"type": "response.output_audio_transcript.delta", **located, "delta": text})
     call.send({"type": "response.output_audio_transcript.done", **located, "transcript": text})
     call.send({"type": "response.output_audio.done", **located})
