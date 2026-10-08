@@ -2,10 +2,10 @@
 
 A row's More menu clones the model: the clone opens in the model editor under the name with
 "(Clone)" added, and once saved it is a second model that users pick next to the first. The Select
-view filter lists only the matching models: Hidden shows the hidden one, Visible the others, and
-Workspace Models the presets without the base models. Make Public on a private model brings it
-back to the users' selector. Export in a row's More menu downloads that one model, not the list.
-Each test works as a fresh admin on presets of its own.
+view filter (since 461cc7aff it opens on Available) lists only the matching models: Hidden shows
+the hidden one, Visible the others, and Workspace Models the presets without the base models. Make
+Public on a private model brings it back to the users' selector. Export in a row's More menu
+downloads that one model, not the list. Each test works as a fresh admin on presets of its own.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, the clone entry opening the editor
 under the original name turns the clone test red, the Hidden and Workspace Models views listing
@@ -120,7 +120,7 @@ def test_the_view_filter_lists_only_the_matching_models(admin_page, presets):
     expect(rows.filter(has_text=shown["name"])).to_have_count(1)
     mine = rows.filter(has_text=re.compile(f"{shown['name']}|{hidden['name']}"))
 
-    _choose_view(admin_page, "All", "Hidden")
+    _choose_view(admin_page, "Available", "Hidden")
     expect(rows.filter(has_text=hidden["name"])).to_have_count(1)
     expect(rows.filter(has_text=shown["name"])).to_have_count(0)
 
