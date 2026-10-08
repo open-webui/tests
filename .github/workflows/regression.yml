@@ -109,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -136,12 +136,23 @@ jobs:
             open-webui/backend/requirements.txt
             tests/pyproject.toml
 
+      # The instances run offline, so the default embedding model is fetched up front.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2
+          key: embedding-model-sentence-transformers-all-MiniLM-L6-v2
+
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
+      # The Playwright web loader's spaCy model is installed here; an instance behind the
+      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
+          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           python -m playwright install --with-deps chromium
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
@@ -152,12 +163,12 @@ jobs:
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest integration -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        run: pytest integration -q --splits 8 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
 
       - name: Summarise the results
         if: always()
         working-directory: tests
-        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite, shard ${{ matrix.shard }} of 4" >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite, shard ${{ matrix.shard }} of 8" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report and server logs
         if: always()
@@ -175,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -202,7 +213,16 @@ jobs:
             open-webui/backend/requirements.txt
             tests/pyproject.toml
 
+      # The instances run offline, so the default embedding model is fetched up front.
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub/models--sentence-transformers--all-MiniLM-L6-v2
+          key: embedding-model-sentence-transformers-all-MiniLM-L6-v2
+
       # The suite starts a redis-server of its own per instance and Postgres through pgserver.
+      # The Playwright web loader's spaCy model is installed here; an instance behind the
+      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -210,6 +230,8 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
+          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           python -m playwright install --with-deps chromium
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
@@ -222,12 +244,12 @@ jobs:
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
           OWUI_TEST_DATABASE: postgres
           OWUI_TEST_REDIS: '1'
-        run: pytest integration -q --splits 4 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        run: pytest integration -q --splits 8 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
 
       - name: Summarise the results
         if: always()
         working-directory: tests
-        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite on Postgres and Redis, shard ${{ matrix.shard }} of 4" >> "$GITHUB_STEP_SUMMARY"
+        run: python scripts/junit_summary.py test-results/junit.xml "Integration suite on Postgres and Redis, shard ${{ matrix.shard }} of 8" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload report and server logs
         if: always()
@@ -330,6 +352,8 @@ jobs:
             tests/pyproject.toml
 
       # The instances that share a Redis start a redis-server of their own.
+      # The Playwright web loader's spaCy model is installed here; an instance behind the
+      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -337,14 +361,18 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e ./tests
+          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           python -m playwright install --with-deps chromium
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
 
+      # The browser reports the locale as its language, and the runner's C locale as en-US@POSIX.
       - name: Run the browser suite
         working-directory: tests
         env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
         run: pytest e2e -q --splits 10 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
