@@ -6,9 +6,14 @@ no plugin could inspect or edit what the model was actually asked. A `request` s
 before every model call: the first one, the continuation after a tool call, and the follow-up
 that `drain_approved_tool_calls` makes once the user approves a tool call.
 
+Commit 639139aa7 moved the resume of approved calls into `process_chat_payload`, so the request
+stage must also run before those tools do: a filter that refuses the resumed request has to stop
+the approved tool from running (nearby test, it passes before and after the commit).
+
 Twin of unit/chat/test_filter_request_stage.py.
 
-Discriminates: with 2daa610cb reverted the three request-stage tests fail (no `request` hook
+Discriminates: with the request filter removed from the resume step the refusal test fails (the
+tool runs first); with 2daa610cb reverted the three request-stage tests fail (no `request` hook
 ever runs); removing only the hook in `drain_approved_tool_calls` fails only the approval test.
 The inlet tests pass on both.
 """
@@ -78,6 +83,18 @@ def pending_tool_call(client: httpx.Client, turn: ChatTurn) -> dict:
     raise AssertionError("the tool call never waited for approval")
 
 
+def settled_message(client: httpx.Client, turn: ChatTurn) -> dict:
+    """The stored reply once it is done or carries an error."""
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        chat = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
+        message = chat["history"]["messages"][turn.assistant_message_id]
+        if message.get("error") or message.get("done"):
+            return message
+        time.sleep(0.2)
+    raise AssertionError("the resumed reply never settled")
+
+
 @pytest.fixture
 def tool_approval_on(admin, preserve) -> None:
     preserve(CHAT_CONFIG)
@@ -106,6 +123,37 @@ def test_the_request_stage_runs_before_the_call_after_an_approval(
     assert follow_up[-1]["role"] == "tool"
     assert follow_up[-1]["content"].endswith("[request tools=True]")
     assert message["content"] == "It is late."
+
+
+# only a resumed response carries assistant_message_id, so the first model call passes
+REFUSE_A_RESUMED_RESPONSE = """
+class Filter:
+    async def request(self, body, __metadata__):
+        if __metadata__.get("assistant_message_id"):
+            raise RuntimeError("request refused by policy")
+        return body
+"""
+
+
+def test_a_refusing_request_filter_stops_an_approved_tool_from_running(
+    admin, user, upstream, tool_approval_on
+):
+    upstream.queue(reply.tool_call("get_current_timestamp", {}), reply.text("It is late."))
+    with installed_function(admin, REFUSE_A_RESUMED_RESPONSE, is_global=True):
+        with user.client() as client:
+            turn = send_message(client, "what time is it?", params={"tool_approval_mode": "ask"})
+            call = pending_tool_call(client, turn)
+            client.post(
+                f"/api/v1/chats/{turn.chat_id}/messages/{turn.assistant_message_id}/resolve",
+                json={"call_id": call["call_id"], "action": "approve"},
+            )
+            message = settled_message(client, turn)
+
+    ran = [
+        item for item in message.get("output") or [] if item.get("type") == "function_call_output"
+    ]
+    assert not ran, "the approved tool ran although the request filter refused the request"
+    assert len(model_calls(upstream)) == 1, "the model was asked again after the filter refused"
 
 
 INLET_ONLY = """
