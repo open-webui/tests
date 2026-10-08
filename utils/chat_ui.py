@@ -45,4 +45,4 @@ def regenerate_buttons(page: Page) -> Locator:
 
 def typing_cursor(reply: Locator) -> Locator:
     """The blinking cursor a reply shows while it is still being written."""
-    return reply.locator(".animate-pulse")
+    return reply.locator(".animate-cursor-pulse")
