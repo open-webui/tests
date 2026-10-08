@@ -9,8 +9,10 @@
   sign-in failed against the stale keys until a restart.
 - MCP OAuth authorize (#26654, issue #26647, commit 3fff80ad2): a client registered against an
   authorization server whose metadata has no authorize endpoint made authlib raise
-  `RuntimeError('Missing "authorize_url" value')`, which escaped as a 500. It is now a 400 that
-  says to re-register the server.
+  `RuntimeError('Missing "authorize_url" value')`, which escaped as a 500. It became a 400 that
+  says to re-register the server; since a0e606bfa metadata without an authorize endpoint is
+  passed over for the MCP default endpoints on the server's origin, so the person is sent to
+  its `/authorize`.
 - MCP OAuth callback (c2107e5bb): the callback bound the new connection to whoever returned
   with the code instead of the account that started the flow. The initiator is now stamped into
   the state, and a different signed-in account returning to the callback gets nothing.
@@ -24,10 +26,11 @@ unit/security/test_oauth_identity.py). The profile picture fetch is in
 test_oauth_picture_fetch.py, the sign-up race in test_first_sign_in_race.py and the seeding of
 OAuth settings in integration/auth/test_oauth_settings_from_env.py.
 
-Discriminates: passes on dev bbfa876af; in a copy with the matching fix reverted, login and
+Discriminates: passes on dev 93fc3fcb7; in a copy with the matching fix reverted, login and
 callback redirect to the provider while OAuth is off, the sign-in after a key rotation keeps
-failing, the MCP authorize answers 500, the callback files the connection under the account
-that returned to it and the token without an expiry is stored as expiring in an hour.
+failing, the callback files the connection under the account that returned to it and the token
+without an expiry is stored as expiring in an hour. The MCP authorize answers 400 on dev
+de73bb830^, before a0e606bfa.
 """
 
 from __future__ import annotations
@@ -228,8 +231,10 @@ def has_connection(actor, client_key: str) -> bool:
         return client.delete(f"/api/v1/auths/oauth/sessions/{client_key}").status_code == 200
 
 
-def test_an_mcp_server_without_an_authorize_endpoint_gets_a_400(admin, preserve, listener):
-    """Narrow (#26654): an unresolvable authorize endpoint is a clear 400, never a 500."""
+def test_an_mcp_server_without_an_authorize_endpoint_is_sent_to_the_default_one(
+    admin, preserve, listener
+):
+    """Narrow (#26654): metadata without an authorize endpoint never ends in a 500."""
     preserve(TOOL_SERVERS)
     metadata = {"issuer": listener.base_url, "token_endpoint": f"{listener.base_url}/token"}
     listener.route("GET", "/.well-known/oauth-authorization-server", json_answer(metadata))
@@ -237,8 +242,8 @@ def test_an_mcp_server_without_an_authorize_endpoint_gets_a_400(admin, preserve,
         client_key = connect_mcp_server(client, f"{listener.base_url}/mcp")
         authorize = client.get(f"/oauth/clients/{client_key}/authorize", follow_redirects=False)
 
-    assert authorize.status_code == 400, authorize.text
-    assert "Re-register" in authorize.json()["detail"]
+    assert authorize.status_code == 302, authorize.text
+    assert authorize.headers["location"].startswith(f"{listener.base_url}/authorize?")
 
 
 def test_an_unknown_mcp_client_is_404(user):

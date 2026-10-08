@@ -2,17 +2,19 @@
 
 `AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER` (off by default since c5ec01b1f, PR #28242, after c-ares broke
 name resolution in #28013 and #28215) decides which resolver every aiohttp connector Open WebUI
-opens uses. The MCP OAuth client makes seven aiohttp calls of its own: the anonymous `initialize`
+opens uses. The MCP OAuth client makes six aiohttp calls of its own: the anonymous `initialize`
 post and the protected-resource metadata fetch that follow the server's 401, the authorization
 server's metadata fetch, dynamic client registration, the static-credentials variant of that
-discovery, the preflight `GET` of the authorize URL and, for an expiring token, the metadata
-fetch and the token post of the refresh. Each test serves the MCP server and its authorization
-server by a host name (`localhost`, a hosts-file name for `::1` alone and a hosts-file name for
-another local address) and expects the same outcome under both resolvers: the server registered
-with the scope its resource names, the user connected and the tool call carrying the token, an
-expiring token refreshed and the new one presented. A server or a token endpoint whose name does
-not resolve fails the same way under both: a refused registration, and a dropped connection with
-no tool offered.
+discovery, the preflight `GET` of the authorize URL and, for an expiring token, the token post
+of the refresh. Since a0e606bfa the refresh reuses the authorization server's metadata authlib
+loaded for the connect and keeps until a restart, so a token endpoint that moved is only read
+after one. Each test serves the MCP server and its authorization server by a host name
+(`localhost`, a hosts-file name for `::1` alone and a hosts-file name for another local address)
+and expects the same outcome under both resolvers: the server registered with the scope its
+resource names, the user connected and the tool call carrying the token, an expiring token
+refreshed and the new one presented. A server or a token endpoint whose name does not resolve
+fails the same way under both: a refused registration, and a dropped connection with no tool
+offered.
 
 The connect itself (authlib's code exchange) and the tool calls (the MCP SDK) run over httpx and
 are not affected by the flag.
@@ -177,12 +179,10 @@ def test_an_expiring_token_is_refreshed_at_a_server_named_by_host(
             for entry in auth_server.requests_to("/token")
             if entry.form.get("grant_type") == "refresh_token"
         ]
-        discoveries = auth_server.requests_to("/.well-known/oauth-authorization-server")
 
     assert echoed == PHRASE
     assert refresh.form["refresh_token"] == connected["refresh_token"]
     assert "aiohttp" in refresh.headers["User-Agent"]
-    assert len(_aiohttp_requests(discoveries)) >= 2, "the refresh did not fetch the metadata"
     assert connected["access_token"] not in mcp.presented, "the MCP server saw the old token"
     assert mcp.presented[-1] == auth_server.issued[-1]["access_token"]
 
@@ -213,6 +213,7 @@ def test_a_token_endpoint_that_does_not_resolve_drops_the_connection(
         server_id, person = registered(mcp)
         _connect(resolving_instance, person, server_id)
         auth_server.token_base = f"http://{UNRESOLVABLE}:1"
+        resolving_instance.restart()
 
         resolving_instance.upstream.queue(reply.text("no tools today"))
         with person.client() as client:
