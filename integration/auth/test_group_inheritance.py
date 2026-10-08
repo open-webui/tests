@@ -141,6 +141,23 @@ KINDS = {
 }
 
 
+def _skill_ids(client) -> set[str]:
+    listed = client.get("/api/v1/skills/")
+    assert listed.status_code == 200, listed.text
+    return {skill["id"] for skill in listed.json()}
+
+
+@pytest.fixture(autouse=True)
+def no_skill_left_behind(admin):
+    # An admin's active skill is listed in every later admin chat on the shared instance.
+    with admin.client() as client:
+        before = _skill_ids(client)
+    yield
+    with admin.client() as client:
+        for skill_id in _skill_ids(client) - before:
+            client.delete(f"/api/v1/skills/id/{skill_id}/delete")
+
+
 @pytest.fixture
 def chain(admin, make_user, preserve):
     preserve("admin_config")
