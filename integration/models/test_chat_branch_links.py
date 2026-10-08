@@ -19,6 +19,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from harness.actors import Actor
+
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 
@@ -52,9 +54,21 @@ def read_messages(client: httpx.Client, chat_id: str) -> dict:
 
 
 @pytest.fixture
-def client(make_user):
-    with make_user().client() as owner_client:
+def owner(make_user) -> Actor:
+    return make_user()
+
+
+@pytest.fixture
+def client(owner):
+    with owner.client() as owner_client:
         yield owner_client
+
+
+def authored(message: dict, account: Actor) -> dict:
+    """A user message as a read returns it since 6cfd6987e: naming its author."""
+    if message["role"] != "user":
+        return message
+    return {**message, "user_id": account.id, "user": {"id": account.id, "name": account.name}}
 
 
 def test_reading_a_chat_lists_a_reply_under_its_parent(client):
@@ -148,7 +162,8 @@ def test_a_parent_stored_without_a_children_list_gets_one(client):
     ],
     ids=["consistent", "single-root", "parent-not-in-history"],
 )
-def test_a_history_with_nothing_to_relink_is_read_back_unchanged(client, stored):
+def test_a_history_with_nothing_to_relink_is_read_back_unchanged(client, owner, stored):
     chat_id = create_chat(client, stored)
 
-    assert read_messages(client, chat_id) == stored["messages"]
+    expected = {key: authored(entry, owner) for key, entry in stored["messages"].items()}
+    assert read_messages(client, chat_id) == expected

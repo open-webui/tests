@@ -142,6 +142,13 @@ NESTED_CHAT = {
 }
 
 
+def authored(message: dict, account: Actor) -> dict:
+    """A user message as a read returns it since 6cfd6987e: naming its author."""
+    if message["role"] != "user":
+        return message
+    return {**message, "user_id": account.id, "user": {"id": account.id, "name": account.name}}
+
+
 def test_a_chat_keeps_its_nested_json_exactly(author):
     with author.client() as client:
         created = client.post("/api/v1/chats/new", json={"chat": NESTED_CHAT})
@@ -149,7 +156,11 @@ def test_a_chat_keeps_its_nested_json_exactly(author):
         stored = client.get(f"/api/v1/chats/{created.json()['id']}")
 
     assert stored.status_code == 200, stored.text
-    assert {key: stored.json()["chat"].get(key) for key in NESTED_CHAT} == NESTED_CHAT
+    expected = {
+        **NESTED_CHAT,
+        "messages": [authored(message, author) for message in NESTED_CHAT["messages"]],
+    }
+    assert {key: stored.json()["chat"].get(key) for key in NESTED_CHAT} == expected
 
 
 def test_a_model_presets_json_settings_read_back_exactly(on_database):
