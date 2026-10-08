@@ -2,15 +2,19 @@
 
 A row's More menu clones the model: the clone opens in the model editor under the name with
 "(Clone)" added, and once saved it is a second model that users pick next to the first. The Select
-view filter (since 461cc7aff it opens on Available) lists only the matching models: Hidden shows
-the hidden one, Visible the others, and Workspace Models the presets without the base models. Make
-Public on a private model brings it back to the users' selector. Export in a row's More menu
-downloads that one model, not the list. Each test works as a fresh admin on presets of its own.
+view filter lists only the matching models: Hidden shows the hidden one, Visible the others, and
+Workspace Models the presets without the base models. The list opens on Available (461cc7aff):
+the models a connection offers and the presets, while settings saved for a model no connection
+offers any more wait under Unavailable. Make Public on a private model brings it back to the
+users' selector. Export in a row's More menu downloads that one model, not the list. Each test
+works as a fresh admin on presets of its own.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, the clone entry opening the editor
 under the original name turns the clone test red, the Hidden and Workspace Models views listing
 every model turn the filter test red, Make Public saving the grants it had turns the republish test
 red (users still do not see the model) and Export saving an empty list turns the export test red.
+With 461cc7aff reverted in a frontend build (the list opens on All, with no Available or
+Unavailable view) the Available test and the view filter test are red, the other three pass.
 """
 
 from __future__ import annotations
@@ -32,12 +36,18 @@ MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
-def _create_preset(admin, label: str, public: bool = True, hidden: bool = False) -> dict:
+def _create_preset(
+    admin,
+    label: str,
+    public: bool = True,
+    hidden: bool = False,
+    base_model_id: str | None = "mock-model",
+) -> dict:
     suffix = uuid.uuid4().hex[:8]
     form = {
         "id": f"{label.lower()}-{suffix}",
         "name": f"{label} {suffix}",
-        "base_model_id": "mock-model",
+        "base_model_id": base_model_id,
         "meta": {"description": f"{label} for the harbour", "hidden": hidden},
         "params": {},
         "access_grants": [EVERYONE_READS] if public else [],
@@ -135,6 +145,29 @@ def test_the_view_filter_lists_only_the_matching_models(admin_page, presets):
     _choose_view(admin_page, "Base Models", "Workspace Models")
     expect(mine).to_have_count(2)
     expect(rows.filter(has_text="mock-model")).to_have_count(0)
+
+
+def test_the_list_opens_on_available_models_and_keeps_unavailable_ones_apart(admin_page, presets):
+    preset = presets("Atlas")
+    # Settings saved the way the panel saves a base model's, for a model no connection offers.
+    retired = presets("Retired", base_model_id=None)
+    admin_page.goto("/admin/settings/models")
+    settings = admin_page.get_by_role("dialog")
+    rows = settings.locator("#model-list > div")
+
+    expect(settings.get_by_role("button", name="Available", exact=True)).to_be_visible()
+    expect(rows.filter(has_text=preset["name"])).to_have_count(1)
+    expect(rows.filter(has_text="mock-model").first).to_be_visible()
+    expect(rows.filter(has_text=retired["name"])).to_have_count(0)
+
+    _choose_view(admin_page, "Available", "Unavailable")
+    expect(rows.filter(has_text=retired["name"])).to_have_count(1)
+    expect(rows.filter(has_text=preset["name"])).to_have_count(0)
+    expect(rows.filter(has_text="mock-model")).to_have_count(0)
+
+    _choose_view(admin_page, "Unavailable", "All")
+    expect(rows.filter(has_text=retired["name"])).to_have_count(1)
+    expect(rows.filter(has_text=preset["name"])).to_have_count(1)
 
 
 def test_a_private_model_made_public_is_offered_to_users_again(
