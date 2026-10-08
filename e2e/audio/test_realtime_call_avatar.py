@@ -7,7 +7,8 @@ cannot load (a file gone, a rig the browser's VRM loader refuses), the orb shows
 call goes on. The voice provider is offered a `play_animation` function naming the gestures; a
 gesture it plays is performed by the avatar and the call tells the provider whether it started,
 or that it was unavailable (no avatar on screen, reduced motion, a gesture the model does not
-have), and then asks it to go on speaking. The avatar is drawn on a canvas, so a test sees it
+have). Since 56b6b660a a gesture that started is the answer itself, so the call does not ask the
+provider to go on speaking after it. The avatar is drawn on a canvas, so a test sees it
 through that canvas and the orb, and its gestures through what the provider is told. Here the
 provider is `harness.realtime_provider` and the files come from `harness.voice_avatars`.
 
@@ -22,6 +23,7 @@ cases pass there as well; integration/audio/test_realtime_calls.py proves the la
 from __future__ import annotations
 
 import json
+import time
 import uuid
 
 import pytest
@@ -172,16 +174,16 @@ def test_the_voice_model_plays_a_gesture_on_the_avatar_and_hears_it_started(
     realtime.hears(greeting, answers=answer, gesture="wave")
 
     assert gesture_statuses(realtime) == ["started"]
-    realtime.wait_for(lambda: STARTED in realtime.spoken, "the call going on after the gesture")
     call = realtime.calls[-1]
+    # bounded: a resume would follow the gesture's result within a second
+    time.sleep(3)
+    assert STARTED not in realtime.spoken, "the call asked the provider to speak after a gesture"
+    assert len(call.received("response.create")) == 1, call.received("response.create")
     tools = {tool["name"]: tool for tool in call.session["tools"]}
     assert list(tools) == ["generate_chat_completion", "play_animation"]
     assert tools["play_animation"]["parameters"]["properties"]["name"]["enum"] == ["wave"]
     assert WAVE in tools["play_animation"]["description"]
     assert "Your avatar is your visible presence in this call." in call.session["instructions"]
-    follow_up = call.received("response.create")[-1]["response"]
-    assert list(follow_up["metadata"]) == ["input_item_id"]
-    assert [tool["name"] for tool in follow_up["tools"]] == ["generate_chat_completion"]
     expect(conversation(page).get_by_text(answer)).to_be_visible()
 
 
