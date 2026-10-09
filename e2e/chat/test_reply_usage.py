@@ -4,6 +4,11 @@ When the provider ends a reply with its token counts, the reply's info button sh
 tooltip, and they are still there when the chat is opened again. A reply the provider reported
 no usage for has no info button.
 
+`test_the_reported_usage_shows_in_the_reply_info_and_after_a_reload` failed on dev 9bbb95048 in CI
+with the reply left blank and passed 3 of 3 locally: since de73bb830 the reply in a new chat
+sometimes stays blank until a reload although the server saved it whole
+(open-webui/open-webui#32091).
+
 Discriminates: passes on dev 30f3f6a8f; in a backend copy that stores and sends no usage the
 first test fails.
 """

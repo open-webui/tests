@@ -9,6 +9,10 @@ that does not parse shows its source marked as an error while the formulas aroun
 typeset, clicking a formula copies its source, and the chat looks the same after a reload. The
 dashes next to a formula are covered in test_math_next_to_dashes.py.
 
+`test_prices_dollars_in_words_and_code_spans_stay_as_written` failed on dev 9bbb95048 in CI with the
+reply left blank and passed 3 of 3 locally: since de73bb830 the reply in a new chat sometimes stays
+blank until a reload although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
 copy: the characters allowed around a delimiter cut to spaces only and display math drawn
 inline) the punctuation cases, the display test and its reload twin go red; the prices test, the

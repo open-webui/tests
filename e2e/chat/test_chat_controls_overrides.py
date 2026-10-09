@@ -7,6 +7,10 @@
   Stream Chat Response setting was read before the chat's own, so a chat's Controls setting was
   ignored whenever the account had one.
 
+`test_a_chat_can_switch_streaming_off_over_the_account_setting` failed on dev 9bbb95048 in CI with
+the reply left blank and passed 3 of 3 locally: since de73bb830 the reply in a new chat sometimes
+stays blank until a reload although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on the efe63bd34 build; with `f2702e1f0` reverted the cleared-prompt test
 fails (the provider gets an empty system prompt), with `2c922bb53` reverted both streaming
 overrides fail (the provider gets the account's choice).
