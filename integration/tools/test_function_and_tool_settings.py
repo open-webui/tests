@@ -1,7 +1,8 @@
 """Journey: an admin tunes a function's valves and source, and users set a shared tool's valves.
 
 An admin saves a function's valves, reads them back and the filter or pipe uses them on the very
-next chat. Saving new source replaces the running code on the next chat; source that does not
+next chat; a pipe whose valves need a value with no default installs, and answers once it is
+saved. Saving new source replaces the running code on the next chat; source that does not
 compile is refused, and the stored code stays switched on and keeps answering. On a shared tool,
 anyone who may read the tool keeps their own user valves, while the tool's admin valves need
 write access.
@@ -62,6 +63,22 @@ LABELLING_PIPE = source(
 
         def pipe(self, body):
             return f"answered by {self.valves.label}"
+    """
+)
+
+
+KEYED_PIPE = source(
+    """
+    from pydantic import BaseModel
+
+    class Pipe:
+        class Valves(BaseModel):
+            api_key: str
+
+        valves = None
+
+        def pipe(self, body):
+            return f"answered with key {self.valves.api_key}"
     """
 )
 
@@ -160,6 +177,18 @@ def test_saved_pipe_valves_shape_the_next_reply(admin):
 
     assert stored == {"label": "the saved label"}
     assert (before, after) == ("answered by default label", "answered by the saved label")
+
+
+@pytest.mark.regression
+def test_a_pipe_whose_valves_need_a_key_installs_and_answers_once_the_key_is_saved(admin):
+    """Red on dev 3dd1db147: saving a function builds its Valves from the stored values, so a
+    function with a required valve and nothing stored yet is refused and cannot be installed
+    (open-webui/open-webui#32145)."""
+    with installed_function(admin, KEYED_PIPE) as pipe_id:
+        _save_function_valves(admin, pipe_id, {"api_key": "the saved key"})
+        reply = _pipe_reply(admin, pipe_id)
+
+    assert reply == "answered with key the saved key"
 
 
 def test_updated_source_runs_on_the_next_chat(admin):
