@@ -1,10 +1,10 @@
 """Journey: editing, versioning, switching off and sharing a prompt, as the chat's `/` menu sees it.
 
-An edit saved in the prompt editor with Set as Production unticked adds a version to the
-editor's history without going live: the `/` menu still inserts the old text until that version
-is set as production from the history. A prompt switched off in the workspace list leaves the
-`/` menu and returns when switched back on. A prompt shared with a group is offered to its
-members, who see it read-only in the editor, while an account outside the group is only offered
+An old version edited in the prompt editor and saved with Set as Production unticked adds a version
+to the editor's history without going live: the `/` menu still inserts the production text until
+that version is set as production from the history. A prompt switched off in the workspace list
+leaves the `/` menu and returns when switched back on. A prompt shared with a group is offered to
+its members, who see it read-only in the editor, while an account outside the group is only offered
 what was made public. A prompt shared with a group in the editor's Access dialog is offered to the
 group's member and not to an outsider, and taking the group out of that dialog withdraws it.
 
@@ -13,9 +13,10 @@ Discriminates: passes on the 176d31d1d build. In a backend copy where saving a v
 ignores `is_active`, the switched-off prompt stays offered; where the prompt list skips the
 read-grant check, the stranger is offered the group's prompt; where the access update route
 stores no grants, both sharing tests go red (the member is never offered the prompt). Retargeted
-for 37138282f, where the text is edited in place and versions are picked from a menu: the draft
-and group tests pass on that build, and the draft test goes red in a frontend build that saves
-every edit as production.
+for 37138282f and b130fec73, where the text is edited in place, versions are picked from a menu
+and only an old version taken up again can be saved without going live: the draft and group tests
+pass on b130fec73, and the draft test goes red in a frontend build that saves every edit as
+production.
 """
 
 from __future__ import annotations
@@ -67,6 +68,9 @@ def _slash_menu(page: Page, typed: str) -> Locator:
     page.goto("/")
     expect(chat_input(page)).to_be_visible()
     chat_input(page).click()
+    # the chat keeps text inserted earlier as a draft
+    page.keyboard.press("ControlOrMeta+A")
+    page.keyboard.press("Delete")
     page.keyboard.type(f"/{typed}")
     return page.get_by_role("tooltip")
 
@@ -84,22 +88,34 @@ def test_an_edit_saved_as_a_draft_goes_live_only_when_set_as_production(page_for
     account, add = librarian
     command = f"brief{uuid.uuid4().hex[:8]}"
     prompt_id = add(command, "Summarise this in three lines.")
+    with account.client() as client:
+        form = {"command": command, "name": f"Prompt {command}"}
+        live = client.post(
+            f"/api/v1/prompts/id/{prompt_id}/update",
+            json={**form, "content": "Summarise this.", "commit_message": "Plain"},
+        )
+        assert live.status_code == 200, live.text
+        history = client.get(f"/api/v1/prompts/id/{prompt_id}/history").json()
+    [first] = [entry for entry in history if entry["snapshot"]["content"].endswith("three lines.")]
     page = page_for(account)
 
     page.goto(f"/workspace/prompts/{prompt_id}")
     content = page.get_by_role("textbox", name="Prompt Content")
-    expect(content).to_have_value("Summarise this in three lines.")
+    expect(content).to_have_value("Summarise this.")
+    picker = page.get_by_label("Select version", exact=True)
+    picker.click()
+    page.get_by_role("menuitemradio", name=first["commit_message"]).click()
+    page.get_by_role("button", name="Edit as new version").click()
     content.fill("Summarise this in one line.")
     page.get_by_role("textbox", name="Commit Message").fill("Shorter summary")
-    page.get_by_role("checkbox", name="Set as Production").uncheck()
+    expect(page.get_by_role("checkbox", name="Set as Production")).not_to_be_checked()
     page.get_by_role("button", name="Save", exact=True).click()
-    picker = page.get_by_label("Select version", exact=True)
     expect(picker).to_have_text("Shorter summary")
 
-    expect(_inserted_text(page, command)).to_have_text("Summarise this in three lines.")
+    expect(_inserted_text(page, command)).to_have_text("Summarise this.")
 
     page.goto(f"/workspace/prompts/{prompt_id}")
-    expect(content).to_have_value("Summarise this in three lines.")
+    expect(content).to_have_value("Summarise this.")
     picker.click()
     page.get_by_role("menuitemradio", name="Shorter summary").click()
     page.get_by_role("button", name="Set as Production", exact=True).click()

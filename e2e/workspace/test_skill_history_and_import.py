@@ -18,8 +18,9 @@ dialog that offers no Replace turns the replace test red; and a row's Export ZIP
 JSON turns the export ZIP test red. In a backend copy, a comparison that reports every file as
 modified turns the version picker test red, a ZIP import that keeps only SKILL.md turns the
 import test red, a clone that copies an empty SKILL.md alone turns the clone test red and an
-export that leaves out the files turns the export JSON test red. Retargeted for 37138282f, where
-the comparison became a panel of its own: the version picker test passes on that build.
+export that leaves out the files turns the export JSON test red. Retargeted for 37138282f and
+b130fec73, where the comparison became a panel of its own showing removed and added lines side by
+side: the version picker test passes on b130fec73.
 """
 
 from __future__ import annotations
@@ -141,10 +142,11 @@ def test_the_version_picker_lists_saved_versions_and_compares_one_to_the_current
     expect(skill_file).to_contain_text("Modified")
     expect(skill_file).to_have_attribute("aria-expanded", "true")
 
-    # the line diff is shown as preformatted text
-    line_diff = comparison.locator("pre")
-    expect(line_diff).to_contain_text("-Read the tide table first.")
-    expect(line_diff).to_contain_text("+Ignore the tides.")
+    # the changed line shows as removed and added, side by side
+    removed = comparison.locator(".diff-cell.deletion .line-content")
+    added = comparison.locator(".diff-cell.addition .line-content")
+    expect(removed.filter(has_text="Read the tide table first.")).to_have_count(1)
+    expect(added.filter(has_text="Ignore the tides.")).to_have_count(1)
 
 
 def test_restoring_an_old_version_brings_back_its_files_for_the_next_chat(
