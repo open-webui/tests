@@ -3,7 +3,7 @@
 Saving a prompt in the Create Prompt dialog with a command that is already taken, by the same
 account or by another account's private prompt, is refused with the "already registered" toast and
 the first prompt keeps its text in the chat's `/` menu. Renaming a prompt's command to a taken one
-in the editor is refused the same way and the field goes back to the old command. The command
+in the editor is refused the same way and the prompt keeps its old command. The command
 follows the name as a lower-case slug until it is typed by hand; a hand-typed command with a
 leading slash or other odd characters is refused, and one made of letters, digits, hyphens and
 underscores is kept as typed and offered under that name. A prompt whose command is the name of a
@@ -15,6 +15,9 @@ a prompt, the three refusal tests go red (the second prompt is not refused, the 
 refused); in a frontend build whose dialog keeps the raw name as the command, accepts any command
 text and lower-cases what is typed, the slug, typed-case and odd-character tests go red; where the
 `/` menu drops a prompt that shares a name with a built-in command, the built-in test goes red.
+Retargeted for 37138282f, where the rewritten editor names its text box Prompt Content, refuses an
+odd command on creation with its own message and leaves a refused rename in the field: the tests
+pass on that build.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from utils.chat_ui import chat_input
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 TAKEN = "Uh-oh! This command is already registered. Please choose another command string."
-ODD_COMMAND = "Only alphanumeric characters and hyphens are allowed in the command string."
+ODD_COMMAND = "Enter a name, content, and a valid command."
 
 
 @pytest.fixture
@@ -67,10 +70,10 @@ def _create_dialog(page: Page, name: str, command: str | None, content: str) -> 
     """Fills the Create Prompt dialog (the command only when given) without saving it."""
     page.goto("/workspace/prompts/create")
     dialog = page.get_by_role("dialog").filter(has_text="Create Prompt")
-    dialog.get_by_role("textbox", name="Name").fill(name)
+    dialog.get_by_role("textbox", name="Prompt Name").fill(name)
     if command is not None:
         dialog.get_by_role("textbox", name="Command").fill(command)
-    dialog.get_by_role("textbox", name=re.compile("^Write a summary in 50 words")).fill(content)
+    dialog.get_by_role("textbox", name="Prompt Content").fill(content)
     return dialog
 
 
@@ -125,7 +128,8 @@ def test_renaming_a_command_to_a_taken_one_in_the_editor_is_refused(page_for, au
     field.fill(held)
 
     expect(page.get_by_text(TAKEN).first).to_be_visible()
-    expect(field).to_have_value(moving)
+    with account.client() as client:
+        assert client.get(f"/api/v1/prompts/id/{moving_id}").json()["command"] == moving
     expect(_slash_menu(page, moving).get_by_role("button", name=moving)).to_have_count(1)
     menu = _slash_menu(page, held)
     expect(menu.get_by_role("button", name=held)).to_have_count(1)

@@ -12,12 +12,14 @@ Discriminates: passes on the 176d31d1d build. In a backend copy where saving a v
 `is_production`, the draft test goes red (the draft goes live at once); where the prompt list
 ignores `is_active`, the switched-off prompt stays offered; where the prompt list skips the
 read-grant check, the stranger is offered the group's prompt; where the access update route
-stores no grants, both sharing tests go red (the member is never offered the prompt).
+stores no grants, both sharing tests go red (the member is never offered the prompt). Retargeted
+for 37138282f, where the text is edited in place and versions are picked from a menu: the draft
+and group tests pass on that build, and the draft test goes red in a frontend build that saves
+every edit as production.
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 
 import pytest
@@ -85,24 +87,25 @@ def test_an_edit_saved_as_a_draft_goes_live_only_when_set_as_production(page_for
     page = page_for(account)
 
     page.goto(f"/workspace/prompts/{prompt_id}")
-    page.get_by_role("button", name="Edit", exact=True).click()
-    editing = page.get_by_role("dialog").filter(has_text="Edit Prompt")
-    editing.get_by_role("textbox", name=re.compile("^Write a summary in 50 words")).fill(
-        "Summarise this in one line."
-    )
-    editing.get_by_role("textbox", name="Commit Message").fill("Shorter summary")
-    editing.get_by_role("checkbox", name="Set as Production").uncheck()
-    editing.get_by_role("button", name="Save", exact=True).click()
-    draft = page.get_by_role("button").filter(has_text="Shorter summary")
-    expect(draft).to_be_visible()
-    expect(draft).not_to_contain_text("Live")
+    content = page.get_by_role("textbox", name="Prompt Content")
+    expect(content).to_have_value("Summarise this in three lines.")
+    content.fill("Summarise this in one line.")
+    page.get_by_role("textbox", name="Commit Message").fill("Shorter summary")
+    page.get_by_role("checkbox", name="Set as Production").uncheck()
+    page.get_by_role("button", name="Save", exact=True).click()
+    picker = page.get_by_label("Select version", exact=True)
+    expect(picker).to_have_text("Shorter summary")
 
     expect(_inserted_text(page, command)).to_have_text("Summarise this in three lines.")
 
     page.goto(f"/workspace/prompts/{prompt_id}")
-    draft.click()
+    expect(content).to_have_value("Summarise this in three lines.")
+    picker.click()
+    page.get_by_role("menuitemradio", name="Shorter summary").click()
     page.get_by_role("button", name="Set as Production", exact=True).click()
-    expect(draft).to_contain_text("Live")
+    expect(page.get_by_text("Production version updated")).to_be_visible()
+    expect(picker).to_have_text("Production")
+    expect(content).to_have_value("Summarise this in one line.")
 
     expect(_inserted_text(page, command)).to_have_text("Summarise this in one line.")
 
@@ -149,7 +152,7 @@ def test_a_prompt_shared_with_a_group_reaches_only_its_members(
     expect(_inserted_text(member_page, shared)).to_have_text("Draft the team update.")
     member_page.goto(f"/workspace/prompts/{shared_id}")
     expect(member_page.get_by_text("Read Only", exact=True)).to_be_visible()
-    expect(member_page.get_by_role("button", name="Edit", exact=True)).to_have_count(0)
+    expect(member_page.get_by_role("textbox", name="Prompt Content")).not_to_be_editable()
 
     stranger_menu = _slash_menu(page_for(stranger), prefix)
     expect(_offered(stranger_menu, public)).to_be_visible()

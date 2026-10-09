@@ -3,7 +3,7 @@
 The skill editor's version picker lists the saved versions by their change description. Picking
 an old one shows its files read only with Compare to current and Restore as new version; the
 old version takes no typing and opens no rename field; the comparison names each changed file
-and shows a file's line diff, and restoring saves the old files
+with how it changed and opens the first one's line diff, and restoring saves the old files
 as the current version, which a `$` mention then sends to the model. On the Skills page, Import
 takes a ZIP of skill folders and opens a dialog listing each skill with its file count; Import
 selected saves them with all their files. A skill that already exists is listed to be skipped,
@@ -18,7 +18,8 @@ dialog that offers no Replace turns the replace test red; and a row's Export ZIP
 JSON turns the export ZIP test red. In a backend copy, a comparison that reports every file as
 modified turns the version picker test red, a ZIP import that keeps only SKILL.md turns the
 import test red, a clone that copies an empty SKILL.md alone turns the clone test red and an
-export that leaves out the files turns the export JSON test red.
+export that leaves out the files turns the export JSON test red. Retargeted for 37138282f, where
+the comparison became a panel of its own: the version picker test passes on that build.
 """
 
 from __future__ import annotations
@@ -133,11 +134,15 @@ def test_the_version_picker_lists_saved_versions_and_compares_one_to_the_current
     expect(code_editor(page)).to_contain_text("High water at noon.")
     expect(page.get_by_role("main").locator("li[data-file-row] input")).to_have_count(0)
     page.get_by_role("button", name="Compare to current").click()
-    expect(page.get_by_role("button", name="deleted: references/tables.md")).to_be_visible()
-    page.get_by_role("button", name="modified: SKILL.md").click()
+    comparison = page.get_by_role("region", name="Compare to current")
+    expect(comparison.get_by_role("button", name="references/tables.md")).to_contain_text("Deleted")
+    # the first changed file opens on its own
+    skill_file = comparison.get_by_role("button", name="SKILL.md")
+    expect(skill_file).to_contain_text("Modified")
+    expect(skill_file).to_have_attribute("aria-expanded", "true")
 
     # the line diff is shown as preformatted text
-    line_diff = page.get_by_role("main").locator("pre")
+    line_diff = comparison.locator("pre")
     expect(line_diff).to_contain_text("-Read the tide table first.")
     expect(line_diff).to_contain_text("+Ignore the tides.")
 

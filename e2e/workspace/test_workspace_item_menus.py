@@ -5,15 +5,16 @@ creation editor filled in from the original, and saving it stores a copy that th
 under its new name or command; a skill's Clone stores the copy at once and opens it. A model
 hidden from its menu leaves the chat's model selector and returns when shown again. Delete,
 after its confirmation, removes the model, prompt or tool from the list and from the chat's
-selector, slash menu or integrations menu. In the prompt editor's history a version that is not
-live can be deleted, and the live one offers no delete.
+selector, slash menu or integrations menu. In the prompt editor's version picker an older version
+can be deleted, and the production one offers no delete.
 
 Discriminates: passes on dev 30f3f6a8f. In a backend copy where the model, prompt, tool or prompt
 history delete route answers true without deleting, the matching delete test goes red, and where
 the model update ignores `hidden` the hide test goes red; in a frontend build whose clone handlers
 change the copied system prompt, content or instructions, each clone test goes red. Retargeted for
 9bbb95048, where a skill's Clone saves the copy at once and opens it: the skill clone test passes
-on dev 178de3666 and goes red in a backend copy whose clone drops the instructions.
+on dev 178de3666 and goes red in a backend copy whose clone drops the instructions. Retargeted
+for 37138282f, where prompt versions are picked from a menu: the prompt history test passes there.
 """
 
 from __future__ import annotations
@@ -243,26 +244,30 @@ def test_a_version_in_the_prompt_history_can_be_deleted_but_not_the_live_one(pag
     )
     page = page_for(builder)
     page.goto(f"/workspace/prompts/{prompt['id']}")
-    older = page.get_by_role("button").filter(has_text="First draft")
-    live = page.get_by_role("button").filter(has_text="Shorter")
-    expect(live).to_contain_text("Live")
+    expect(page.get_by_role("textbox", name="Prompt Content")).to_have_value(
+        "Summarise in one line."
+    )
+    picker = page.get_by_label("Select version", exact=True)
+    expect(picker).to_have_text("Production")
 
-    live.click()
     page.get_by_label("More Options").click()
     page.get_by_text("Delete", exact=True).hover()
     expect(page.get_by_text("Cannot delete the production version")).to_be_visible()
     expect(page.get_by_role("button", name="Delete", exact=True)).to_have_count(0)
     page.keyboard.press("Escape")
 
-    older.click()
+    picker.click()
+    page.get_by_role("menuitemradio", name="First draft").click()
+    expect(picker).to_have_text("First draft")
     page.get_by_label("More Options").click()
     page.get_by_role("button", name="Delete", exact=True).click()
     page.get_by_role("dialog", name="Delete Version").get_by_role("button", name="Delete").click()
     expect(page.get_by_text("Version deleted")).to_be_visible()
 
     page.reload()
-    expect(live).to_be_visible()
-    expect(older).to_have_count(0)
+    picker.click()
+    expect(page.get_by_role("menuitemradio", name="Production")).to_be_visible()
+    expect(page.get_by_role("menuitemradio", name="First draft")).to_have_count(0)
     history = _fetch(builder, f"/api/v1/prompts/id/{prompt['id']}/history")
     assert [entry["commit_message"] for entry in history] == ["Shorter"]
 
