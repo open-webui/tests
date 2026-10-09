@@ -18,12 +18,14 @@
 
 Discriminates: passes on dev 0f5a58f5f. A frontend build whose visibility select changes nothing
 fails every public test and the public-to-private test (no change is saved), and one that shows
-every Sharing switch whatever its parent fails the group switch test. A backend copy that skips
-the model access checks on chat completions fails the revoked model and base model tests (the
-reply arrives); one that keeps every attached base in retrieval fails the revoked base test (the
-model is sent the text); one whose file access check always allows fails the open page test. The
-public tests were retargeted for 784b72f19, whose access dialog picks the visibility from a menu;
-on dev 206bf9723 they pass, and a build whose visibility menu saves no change fails them.
+every Sharing switch whatever its parent fails the group switch test. A backend copy that skips the
+model access checks on chat completions fails the revoked model and base model tests (the reply
+arrives); one that keeps every attached base in retrieval fails the revoked base test (the model is
+sent the text); one whose file access check always allows fails the open page test. The public,
+group switch and public-to-private tests were retargeted for 784b72f19, whose access dialog picks
+the visibility from a menu: they pass on dev 3dd1db147, a build whose visibility menu saves no
+change fails the public tests, and one that always offers Public fails the group switch and
+public-to-private tests.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ from harness.actors import Actor
 from harness.knowledge_bases import add_text_file
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.access_control import choose_visibility
+from utils.access_control import choose_visibility, visibility, visibility_choices
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 
@@ -128,11 +130,6 @@ def _knowledge(owner: Actor, grants: list[dict] | None = None) -> dict:
 def _access_dialog(page: Page) -> Locator:
     page.get_by_role("main").get_by_role("button", name="Access", exact=True).click()
     return page.get_by_role("dialog").filter(has_text="Access Control")
-
-
-def _visibility(dialog: Locator) -> Locator:
-    # the visibility select is the dialog's first; each grant row adds an Access level one
-    return dialog.get_by_role("combobox").first
 
 
 def _publish_model(page: Page, item: dict) -> None:
@@ -322,10 +319,6 @@ def _base_access(page: Page, base: dict) -> Locator:
     return _access_dialog(page)
 
 
-def _choices(dialog: Locator) -> Locator:
-    return _visibility(dialog).locator("option")
-
-
 def test_a_groups_knowledge_sharing_switch_offers_its_members_add_access_and_public(
     admin, make_user, page_for
 ):
@@ -347,11 +340,11 @@ def test_a_groups_knowledge_sharing_switch_offers_its_members_add_access_and_pub
 
     member_dialog = _base_access(page_for(member), _knowledge(member))
     expect(member_dialog.get_by_role("button", name="Add Access")).to_be_visible()
-    expect(_choices(member_dialog)).to_have_text(["Private", "Public"])
+    expect(visibility_choices(member_dialog)).to_have_text(["Private", "Public"])
 
     outsider_dialog = _base_access(page_for(outsider), _knowledge(outsider))
     expect(outsider_dialog.get_by_role("button", name="Add Access")).to_have_count(0)
-    expect(_choices(outsider_dialog)).to_have_text(["Private"])
+    expect(visibility_choices(outsider_dialog)).to_have_text(["Private"])
 
 
 def test_an_owner_without_public_sharing_can_make_a_public_base_private_but_not_public_again(
@@ -370,12 +363,14 @@ def test_an_owner_without_public_sharing_can_make_a_public_base_private_but_not_
 
     page = page_for(base_owner)
     dialog = _base_access(page, base)
-    expect(_visibility(dialog)).to_have_value("public")
-    expect(_choices(dialog)).to_have_text(["Private", "Public"])
+    expect(visibility(dialog)).to_have_text("Public")
+    choices = visibility_choices(dialog)
+    expect(choices).to_have_text(["Private", "Public"])
     with page.expect_response(lambda response: "/access/update" in response.url) as saved:
-        _visibility(dialog).select_option("private")
+        choices.filter(has_text="Private").click()
     assert saved.value.ok
-    expect(_choices(dialog)).to_have_text(["Private"])
+    expect(visibility(dialog)).to_have_text("Private")
+    expect(visibility_choices(dialog)).to_have_text(["Private"])
 
     with make_user().client() as client:
         assert client.get(f"/api/v1/knowledge/{base['id']}").status_code != 200
