@@ -33,6 +33,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 CONNECTION_LOST = "Connection lost. Reconnecting..."
 RECONNECTED = "Reconnected"
+# the socket retries up to 5 s apart, so it may only reconnect that long after the network returns
+RECONNECT_TIMEOUT_MS = 15_000
 WHOLE_REPLY = "".join(SLOW_PIECES).strip()
 PROMPT = "tell me a long story"
 
@@ -54,7 +56,7 @@ def _go_offline_and_back(page: Page) -> None:
     page.context.set_offline(True)
     expect(page.get_by_text(CONNECTION_LOST)).to_be_visible()
     page.context.set_offline(False)
-    expect(page.get_by_text(RECONNECTED)).to_be_visible()
+    expect(page.get_by_text(RECONNECTED)).to_be_visible(timeout=RECONNECT_TIMEOUT_MS)
 
 
 def test_an_idle_page_reconnects_and_answers_the_next_message(chat_page, upstream):
@@ -94,5 +96,5 @@ def test_a_reply_that_finished_while_offline_shows_whole(page_for, make_user, up
         wait_until_no_reply_runs(client, chat_page.url.rsplit("/", 1)[1])
     chat_page.context.set_offline(False)
 
-    expect(chat_page.get_by_text(RECONNECTED)).to_be_visible()
+    expect(chat_page.get_by_text(RECONNECTED)).to_be_visible(timeout=RECONNECT_TIMEOUT_MS)
     _expect_whole_and_finished(chat_page)
