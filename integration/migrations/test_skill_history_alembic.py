@@ -15,7 +15,11 @@ v0.10.2 SQLite and v0.11.4 Postgres sets: a second migration file branching off 
 fails the single-head test (and `upgrade head` refuses the two heads); a `downgrade()` that
 leaves `skill_history` behind fails every set at the second upgrade (the table already exists);
 one that recreates the skill table empty in the old shape fails the step-down and step-up tests;
-a backfill that writes no `version_id` fails the step-up test.
+a backfill that writes no `version_id` fails the step-up test. Retargeted for 16849284f, whose
+model history migration came after this one: the step down first goes back to this migration and
+compares with its tables. It passes on dev 206bf9723 for the v0.11.4 SQLite set, and a backend copy
+whose `downgrade()` keeps `skill_history` (with an upgrade that skips an existing table) fails the
+step-down test.
 """
 
 from __future__ import annotations
@@ -70,7 +74,7 @@ class Steps:
 
 @pytest.fixture(scope="module", params=data_set_params())
 def steps(request, tmp_path_factory) -> Iterator[Steps]:
-    """Each data set taken up, up again, one step down past the migration and up once more."""
+    """Each data set taken up, up again, down to the migration, one past it and up once more."""
     name = request.param
     root = tmp_path_factory.mktemp(name)
     with release_data(DATA_SETS / f"{name}.tar.gz", root) as release:
@@ -91,6 +95,7 @@ def steps(request, tmp_path_factory) -> Iterator[Steps]:
         for step, arguments in (
             ("upgraded", ("upgrade", "head")),
             ("upgraded twice", ("upgrade", "head")),
+            ("at the migration", ("downgrade", REVISION)),
             ("stepped down", ("downgrade", f"{REVISION}-1")),
             ("upgraded again", ("upgrade", "head")),
         ):
@@ -115,7 +120,7 @@ def test_stepping_down_gives_back_the_skill_table_the_release_left(steps):
     release, stepped_down = steps.states["release"], steps.states["stepped down"]
     schemas = steps.schemas
     # an older release's set keeps the tables of the migrations between it and this one
-    tables = set(schemas["upgraded"]["tables"]) - {"skill_history"}
+    tables = set(schemas["at the migration"]["tables"]) - {"skill_history"}
     assert set(schemas["stepped down"]["tables"]) == tables
     skill_table = {key: value for key, value in schemas["release"].items() if key != "tables"}
     assert {key: schemas["stepped down"][key] for key in skill_table} == skill_table

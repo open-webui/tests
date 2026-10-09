@@ -1,21 +1,24 @@
 """Journey: the skill file tree and version history, as a reader, writer and stranger meet them.
 
 A skill with SKILL.md and references/checklist.md has two versions. A reader (read grant only)
-opens its editor, sees the tree, opens the checklist and reads it, but is told it is read only:
-no Actions menu with New File, New Folder or Upload, no Rename or Delete on a file, a file
-editor that takes no typing, and no "Restore as new version" on an older version. A writer adds
-a file with New File and the server lists it, and restores an older version so the checklist is
-back to its first text. A stranger who opens the edit URL sees neither the instructions nor the
-file names. On the Skills list, Import and Export entries follow the skills_import and
-skills_export permissions, in the list's create menu and in a skill's menu.
+opens its editor, sees the tree, opens the checklist and reads it, but is told it is read only: no
+Actions menu with New File, New Folder or Upload, no Rename or Delete on a file, a file editor that
+takes no typing, no "Set as Production" on an older version and no delete in the version picker. A
+writer adds a file with New File and the server lists it, and sets an older version as production
+so the checklist is back to its first text. A stranger who opens the edit URL sees neither the
+instructions nor the file names. On the Skills list, Import and Export entries follow the
+skills_import and skills_export permissions, in the list's create menu and in a skill's menu.
 
 Discriminates: passes on dev 178de3666. In a frontend copy where SkillEditor passes
-`readOnly={false}` to SkillFiles and always offers "Restore as new version", the reader test
-goes red (Actions menu, typing and Restore appear). Where the edit page renders the skill
-whatever the server answers, the stranger test goes red. Where the import entries are visible
-to everyone, the import test goes red, and where the export entries are visible to everyone,
-the export test goes red. In a backend copy whose restore keeps the current files, the writer
-test goes red (the checklist keeps its second text).
+`readOnly={false}` to SkillFiles and always offers "Restore as new version", the reader test goes
+red (Actions menu, typing and Restore appear). Where the edit page renders the skill whatever the
+server answers, the stranger test goes red. Where the import entries are visible to everyone, the
+import test goes red, and where the export entries are visible to everyone, the export test goes
+red. In a backend copy whose restore keeps the current files, the writer test goes red (the
+checklist keeps its second text). Retargeted for 24ee1cb16, which replaced "Restore as new version"
+with "Set as Production" and added deleting a version from the picker: both tests pass on dev
+206bf9723; a frontend build that offers both to readers turns the reader test red, and a backend
+copy whose version switch keeps the current version turns the writer test red.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import grant, make_group
 from harness.actors import Actor
+from utils.skill_editor import actions
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -171,10 +175,13 @@ def test_a_reader_reads_the_files_but_meets_a_read_only_editor(
     assert _server_checklist(skill_owner, skill["id"]) == SECOND_CHECKLIST
 
     _choose_first_version(page, skill)
-    expect(main.get_by_text("Restore as new version")).to_have_count(0)
+    expect(main.get_by_role("button", name="Set as Production")).to_have_count(0)
+    main.get_by_role("button", name="Select version").first.click()
+    expect(page.get_by_role("menuitemradio").first).to_be_visible()
+    expect(page.get_by_label("More Options")).to_have_count(0)
 
 
-def test_a_writer_adds_a_file_and_restores_an_older_version(
+def test_a_writer_adds_a_file_and_sets_an_older_version_as_production(
     page_for, skill_owner, make_user, grant_permissions
 ):
     writer = make_user()
@@ -184,8 +191,7 @@ def test_a_writer_adds_a_file_and_restores_an_older_version(
     main = _open_checklist(page, skill)
 
     expect(main.get_by_text("Read Only", exact=True)).to_have_count(0)
-    main.get_by_label("Actions").click()
-    page.get_by_role("button", name="New File").click()
+    actions(page, "New File")
     main.get_by_role("textbox", name="File name").fill("notes.md")
     main.get_by_role("textbox", name="File name").press("Enter")
     expect(main.get_by_role("button", name=re.compile(r"^notes\.md"))).to_be_visible()
@@ -194,8 +200,8 @@ def test_a_writer_adds_a_file_and_restores_an_older_version(
     assert "references/notes.md" in _server_paths(skill_owner, skill["id"])
 
     _choose_first_version(page, skill)
-    main.get_by_text("Restore as new version").click()
-    expect(page.get_by_text("Saved").first).to_be_visible()
+    main.get_by_role("button", name="Set as Production").click()
+    expect(page.get_by_text("Production version updated")).to_be_visible()
     assert _server_checklist(skill_owner, skill["id"]) == FIRST_CHECKLIST
 
 

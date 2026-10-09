@@ -21,7 +21,10 @@ mention, rename and orphan tests; one dating the first version to the migration 
 history tests; one also resetting `updated_at` fails the unchanged-columns and history tests;
 one deleting the skills' grants fails the unchanged-columns, read-back, access, both mention and
 first-save tests. A copy whose every startup writes another first version for each skill fails
-the restart test, along with the history, first-save, rename and orphan tests.
+the restart test, along with the history, first-save, rename and orphan tests. Retargeted for
+24ee1cb16, where the first-save test goes back to the migrated version by setting it as
+production in place of restoring it; it passes on dev 206bf9723 and fails in a backend copy
+whose version switch keeps the current version.
 """
 
 from __future__ import annotations
@@ -265,13 +268,14 @@ def test_the_first_save_by_a_writer_adds_a_version_and_keeps_the_instructions(mi
     ]
     assert history[0]["user_id"] == upgraded.manifest["accounts"]["bob"]["id"]
 
-    restored = upgraded.backend.client(upgraded.tokens["bob"]).post(
-        f"/api/v1/skills/id/bulk-000/history/{first['version_id']}/restore",
-        json={"expected_version_id": skill["version_id"]},
+    switched = upgraded.backend.client(upgraded.tokens["bob"]).post(
+        "/api/v1/skills/id/bulk-000/update/version",
+        json={"version_id": first["version_id"], "expected_version_id": skill["version_id"]},
     )
-    assert restored.status_code == 200, restored.text
-    assert restored.json()["description"] == first["description"]
-    assert restored.json()["content"] == migrated.added["bulk-000"]
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["version_id"] == first["version_id"]
+    assert switched.json()["description"] == first["description"]
+    assert switched.json()["content"] == migrated.added["bulk-000"]
 
 
 def test_a_skill_above_the_new_file_limit_can_still_be_renamed(migrated):

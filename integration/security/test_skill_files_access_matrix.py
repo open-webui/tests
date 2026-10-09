@@ -1,10 +1,11 @@
-"""Journey: who may list, read, change, look back on and restore the files of a shared skill.
+"""Journey: who may list, read, change and look back on the files of a shared skill.
 
 A user with the workspace skills permission writes a skill with a supporting file, changes the
 file once (two versions), and shares the skill with a reader (read) and a writer (read and
 write), directly or through a group. Listing the files, downloading one, reading the history, an
 old version and the diffs between versions is open to everyone who may read the skill; adding,
-renaming, deleting and uploading files and restoring an old version need write. A stranger gets
+renaming, deleting and uploading files, setting an old version as production and deleting an
+old version need write. A stranger gets
 none of it, and no refused answer carries the file's text. After every refused write the owner's
 skill, its files and its history are as they were. A public skill opens the reads to everyone
 and the writes to nobody; a reader removed from the group that held the grant loses it all; a
@@ -13,17 +14,19 @@ content switched off the admin is a stranger too. A version id of a skill the ca
 opens nothing through a skill the caller can, and a skill made under a deleted skill's id starts
 with no versions of the old one.
 
-Discriminates: passes on dev 178de3666. In a backend copy, making the skills router's shared
-access check always pass turned the read rows, the public skill and the dropped reader red (the
-stranger got 200 and the file's text); dropping the grant lookup from that check turned the
-reader rows and the reader and writer tests red; asking it for `read` whatever the permission
-turned the restore rows red; dropping the write check from the update handler turned the file
-edit rows red; letting `get_verified_user` pass a pending account turned the pending test red;
-letting every admin through regardless of the admin access setting turned the admin test red;
-serving the current version whatever version is asked turned the reader's version test red;
-restoring without the old snapshot turned the writer's restore test red; looking a history
-entry up by its id alone turned the foreign version test red; and keeping the history of a
-deleted skill turned the reused id test red.
+Discriminates: passes on dev 178de3666. In a backend copy, making the skills router's shared access
+check always pass turned the read rows, the public skill and the dropped reader red (the stranger
+got 200 and the file's text); dropping the grant lookup from that check turned the reader rows and
+the reader and writer tests red; asking it for `read` whatever the permission turned the set
+production rows red; dropping the write check from the update handler turned the file edit rows
+red; letting `get_verified_user` pass a pending account turned the pending test red; letting every
+admin through regardless of the admin access setting turned the admin test red; serving the current
+version whatever version is asked turned the reader's version test red; looking a history entry up
+by its id alone turned the foreign version test red; and keeping the history of a deleted skill
+turned the reused id test red. Retargeted for 24ee1cb16, which replaced restoring a version with
+setting it as production and added deleting a version: on dev 206bf9723 a backend copy whose
+version switch and version delete ask for `read` turned the set production and delete rows red, and
+one whose version switch keeps the current version turned the writer's set production test red.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ import pytest
 
 from harness.access import ROLES, Cast, Shareable, cast, create_shared, grant, make_group
 from harness.actors import Actor, admin_of, create_user
+from harness.skill_files import read
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -96,8 +100,8 @@ def _file_edit(*operations: dict) -> Callable[[Actor, dict], dict]:
     return body
 
 
-def _restore(actor: Actor, fields: dict) -> dict:
-    return {"expected_version_id": fields["current"]}
+def _set_production(actor: Actor, fields: dict) -> dict:
+    return {"version_id": fields["first"], "expected_version_id": fields["current"]}
 
 
 def _owner_view(client: httpx.Client, fields: dict) -> list[tuple[int, bytes]]:
@@ -135,7 +139,8 @@ MATRIX = [
         READ,
         403,
     ),
-    ("POST", f"{HISTORY}/{{first}}/restore", _restore, WRITE, 403),
+    ("POST", f"{SKILLS}/id/{{id}}/update/version", _set_production, WRITE, 403),
+    ("DELETE", f"{HISTORY}/{{first}}", None, WRITE, 403),
     (
         "POST",
         f"{SKILLS}/id/{{id}}/update",
@@ -182,7 +187,8 @@ ROW_IDS = [
     "an old version",
     "diff",
     "file diff",
-    "restore",
+    "set production",
+    "delete a version",
     "add a file",
     "rename",
     "delete a folder",
@@ -268,28 +274,23 @@ def test_a_reader_sees_the_right_text_in_each_version(admin, make_user):
     }
 
 
-def test_a_writers_restore_brings_the_old_files_back_as_a_new_version(admin, make_user):
+def test_a_writers_switch_to_an_old_version_brings_its_files_back(admin, make_user):
     accounts = cast(SKILL, admin, make_user)
     fields = _fresh(accounts)
     base = f"{SKILLS}/id/{fields['id']}"
 
     with accounts.writer.client() as client:
-        restored = client.post(
-            f"{base}/history/{fields['first']}/restore", json=_restore(None, fields)
-        )
-    assert restored.status_code == 200, restored.text
+        switched = client.post(f"{base}/update/version", json=_set_production(None, fields))
+    assert switched.status_code == 200, switched.text
+    live = read(accounts.owner, fields["id"], "references/checklist.md")
     with accounts.owner.client() as client:
-        current = client.get(
-            f"{base}/files/content",
-            params={"version_id": restored.json()["version_id"], "path": "references/checklist.md"},
-        )
         history = client.get(f"{base}/history").json()
-        grants = client.get(f"{base}").json()["access_grants"]
+        skill = client.get(f"{base}").json()
 
-    assert current.text == FIRST_TEXT
-    restore_entry = next(entry for entry in history if entry["parent_id"] == fields["current"])
-    assert len(history) == 3 and restore_entry["user_id"] == accounts.writer.id, history
-    assert len(grants) == 3, "a restore changed who the skill is shared with"
+    assert live == FIRST_TEXT.encode()
+    assert skill["version_id"] == fields["first"]
+    assert {entry["id"] for entry in history} == {fields["first"], fields["current"]}, history
+    assert len(skill["access_grants"]) == 3, "a version switch changed who the skill is shared with"
 
 
 def test_a_public_skill_is_readable_by_anyone_and_writable_by_nobody(admin, make_user):
@@ -398,15 +399,20 @@ def test_a_version_of_another_skill_opens_nothing(admin, make_user):
             ),
         ]
     with accounts.writer.client() as client:
-        restore = client.post(
-            f"{base}/history/{foreign}/restore",
-            json={"expected_version_id": readable["current"]},
-        )
+        writes = [
+            client.post(
+                f"{base}/update/version",
+                json={"version_id": foreign, "expected_version_id": readable["current"]},
+            ),
+            client.delete(f"{base}/history/{foreign}"),
+        ]
 
-    assert [answer.status_code for answer in [*reads, restore]] == [404] * 6
-    assert not any(FIRST_TEXT in answer.text for answer in [*reads, restore])
+    assert [answer.status_code for answer in [*reads, *writes]] == [404] * 7
+    assert not any(FIRST_TEXT in answer.text for answer in [*reads, *writes])
     with accounts.owner.client() as client:
         assert client.get(f"{base}").json()["version_id"] == readable["current"]
+        private_history = client.get(f"{SKILLS}/id/{private_id}/history").json()
+    assert foreign in {entry["id"] for entry in private_history}
 
 
 @pytest.mark.slow
