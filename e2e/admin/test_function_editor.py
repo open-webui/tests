@@ -2,14 +2,15 @@
 
 Source with a syntax error is refused when a new function is saved: the editor shows where the
 code fails to parse and an error, stays open and nothing is stored. The same mistake made while
-editing an existing pipe shows the same errors, keeps the stored code and switches the pipe off,
-as the functions docs describe; switched back on it answers with its old code. Code edited and
-saved without a mistake answers the next chat. Import From Link fetches a function's source into
+editing an existing pipe shows where it fails to parse and the Python error, keeps the stored
+code and leaves the pipe on, still answering with its old code. Code edited and saved without a
+mistake answers the next chat. Import From Link fetches a function's source into
 the editor, named after its file, and once saved and switched on it answers a chat.
 
 Discriminates: passes on dev ebc6add67. One backend copy whose function create and update store
 source that failed to load, whose update keeps the old source and running module and whose link
-import answers a placeholder pipe turned each test red on its own edit.
+import answers a placeholder pipe turned each test red on its own edit, as did one whose refused
+update switches the function off.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ MISSING_COLON = """class Pipe:
 """
 
 PARSE_ERROR = re.compile(r"Cannot parse.*2:\d+")
+SAVE_ERROR = re.compile(r"\(<string>, line 2\)")
 
 
 @pytest.fixture
@@ -103,7 +105,7 @@ def open_editor(page: Page, function_id: str) -> None:
     expect(page.get_by_role("main").locator(".cm-content")).to_contain_text("class Pipe")
 
 
-def test_an_edit_that_does_not_parse_keeps_the_old_code_and_switches_the_pipe_off(page_for, admin):
+def test_an_edit_that_does_not_parse_is_refused_and_the_pipe_keeps_its_old_code(page_for, admin):
     with installed_function(admin, clock_pipe("High tide at nine.")) as pipe_id:
         page = page_for(admin)
         open_editor(page, pipe_id)
@@ -111,11 +113,8 @@ def test_an_edit_that_does_not_parse_keeps_the_old_code_and_switches_the_pipe_of
         page.get_by_role("main").get_by_role("button", name="Save", exact=True).click()
 
         expect(page.get_by_text(PARSE_ERROR)).to_be_visible()
-        expect(page.get_by_text("Error updating function")).to_be_visible()
-        switch = pipe_card(page, pipe_id).get_by_role("switch")
-        expect(switch).not_to_be_checked()
-        switch.click()
-        expect(switch).to_be_checked()
+        expect(page.get_by_text(SAVE_ERROR)).to_be_visible()
+        expect(pipe_card(page, pipe_id).get_by_role("switch")).to_be_checked()
         ask_pipe(page, pipe_id, "when is high tide?", "High tide at nine.")
 
 

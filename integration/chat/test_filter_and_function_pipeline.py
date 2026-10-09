@@ -300,12 +300,15 @@ RAISING_STREAM = source(
 
 UNBUILDABLE_VALVES = source(
     """
+    from pathlib import Path
     from pydantic import BaseModel
 
     class Filter:
         class Valves(BaseModel):
             def __init__(self, **values):
-                raise RuntimeError("valves exploded")
+                if not Path("VALVES_FILE").exists():
+                    raise RuntimeError("valves exploded")
+                super().__init__(**values)
 
         valves = None
 
@@ -323,10 +326,15 @@ UNBUILDABLE_VALVES = source(
     ],
 )
 def test_a_failing_outlet_is_logged_with_the_filter_and_traceback(
-    instance, admin, user, upstream, filter_source, stage, error
+    instance, admin, user, upstream, tmp_path, filter_source, stage, error
 ):
+    valves_file = tmp_path / "valves"
+    valves_file.touch()
+    filter_source = filter_source.replace("VALVES_FILE", str(valves_file))
     offset = instance.log_size()
     with installed_function(admin, filter_source, is_global=True) as filter_id:
+        # saving builds the Valves, so they can only break afterwards
+        valves_file.unlink()
         with user.client() as client:
             _, message = ask(client, "hello")
         logged = wait_for_log(instance, offset, f"Error in {stage} filter {filter_id}")

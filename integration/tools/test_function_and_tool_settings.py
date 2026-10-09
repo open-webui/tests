@@ -2,14 +2,14 @@
 
 An admin saves a function's valves, reads them back and the filter or pipe uses them on the very
 next chat. Saving new source replaces the running code on the next chat; source that does not
-compile is refused, the stored code stays as it was and the function is switched off until the
-admin turns it back on, as the functions docs describe. On a shared tool, anyone who may read
-the tool keeps their own user valves, while the tool's admin valves need write access.
+compile is refused, and the stored code stays switched on and keeps answering. On a shared tool,
+anyone who may read the tool keeps their own user valves, while the tool's admin valves need
+write access.
 
 Discriminates: in a backend copy, the function valves update skipping its save turned both valves
 tests red; the update route not replacing the cached module while the cache also ignored changed
-source turned the updated-source test red; the update storing source whose load failed turned the
-refused-source test red; the tool admin valves routes checking read in place of write turned the
+source turned the updated-source test red; the update storing source whose load failed, and a
+refused update switching the function off, each turned the refused-source test red; the tool admin valves routes checking read in place of write turned the
 reader test red, and the user valves routes checking write in place of read turned the user valves
 test red. Each left the other tests green.
 """
@@ -172,18 +172,16 @@ def test_updated_source_runs_on_the_next_chat(admin):
     assert (before, after) == ("answered by version one", "answered by version two")
 
 
-def test_source_that_does_not_compile_is_refused_and_the_stored_code_runs_once_switched_on(admin):
+def test_source_that_does_not_compile_is_refused_and_the_stored_code_keeps_answering(admin):
     with installed_function(admin, versioned_pipe("one")) as pipe_id:
         _pipe_reply(admin, pipe_id)
         refused = _update_function_source(admin, pipe_id, UNCOMPILABLE_PIPE)
         with admin.client() as client:
             stored = client.get(f"/api/v1/functions/id/{pipe_id}").json()
-            # a failed load switches the function off, as documented
-            client.post(f"/api/v1/functions/id/{pipe_id}/toggle").raise_for_status()
         after = _pipe_reply(admin, pipe_id)
 
     assert refused.status_code == 400
-    assert (stored["content"], stored["is_active"]) == (versioned_pipe("one"), False)
+    assert (stored["content"], stored["is_active"]) == (versioned_pipe("one"), True)
     assert after == "answered by version one"
 
 

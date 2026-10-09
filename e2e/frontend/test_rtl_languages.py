@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 # per language: the sidebar's landmark name, its New Chat label and the user menu's label
 RTL_LANGUAGES = {
     "ar": ("سجل المحادثات", "دردشة جديدة", "قائمة المستخدم"),
-    "fa-IR": ("Chat history", "گپ جدید", "منوی کاربر"),
+    "fa-IR": ("تاریخچه گفتگو", "گپ جدید", "منوی کاربر"),
     "he-IL": ("היסטוריית צ'אטים", "צ'אט חדש", "תפריט משתמש"),
 }
 ARABIC = "مرحبا بالعالم كيف حالك اليوم هل أنت بخير وهل كل شيء على ما يرام"
