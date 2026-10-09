@@ -5,8 +5,14 @@ its real data in `structuredContent`. Only the `content` items reached the model
 tool's forecast arrived as the one line summary and the numbers were lost. The structured data
 is now added to the tool result as JSON, unless a text item already carries the same JSON.
 
-Discriminates: passes on dev 1c010b438, fails with 22102e4a2 reverted (the follow-up request
-carries the summary but not the forecast).
+Red on dev 1c010b438 and a53e453a2: a tool written with the official MCP SDK that returns a plain
+string also sends it as structured content, `{"result": "..."}`, and since the text is not JSON
+the structured copy is added as well, so the model gets the text twice
+(open-webui/open-webui#32126). `test_a_plain_string_from_an_sdk_tool_reaches_the_model_once`.
+
+Discriminates: passes on dev 1c010b438 apart from the #32126 test; with 22102e4a2 reverted in a
+backend copy the forecast test fails (the follow-up request carries the summary but not the
+forecast) and the #32126 test passes (the text arrives once).
 """
 
 from __future__ import annotations
@@ -98,3 +104,27 @@ def test_a_plain_text_result_is_sent_unchanged(weather, upstream):
     content = tool_result_sent_to_the_model(person, upstream, server_id, "headline")
 
     assert content == HEADLINE
+
+
+def test_a_plain_string_from_an_sdk_tool_reaches_the_model_once(
+    admin, make_user, preserve, upstream
+):
+    preserve(TOOL_SERVERS)
+    person = make_user()
+    server_id = f"echo_{secrets.token_hex(4)}"
+    said = "The tide turns at noon."
+    upstream.queue(reply.tool_call(f"{server_id}_echo", {"text": said}), reply.text("Noted."))
+    # the harness echo tool is a plain `-> str` FastMCP tool, as the SDK's docs write one
+    with serving_mcp() as url:
+        connection = mcp_connection(url, server_id, [read_grant(person.id)])
+        with admin.client() as client:
+            saved = client.post(TOOL_SERVERS[1], json={"TOOL_SERVER_CONNECTIONS": [connection]})
+        assert saved.status_code == 200, saved.text
+        with person.client() as client:
+            ask(client, "echo the tide", tool_ids=[f"server:mcp:{server_id}"])
+
+    follow_up = upstream.chat_requests()[-1]["messages"]
+    [content] = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
+    assert content.count(said) == 1, (
+        f"#32126: the model got the tool's text more than once: {content}"
+    )
