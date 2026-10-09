@@ -11,6 +11,9 @@ chat step through the sidebar's chats and Toggle Controls opens and closes the C
 With Keyboard Shortcuts switched off in the settings the sidebar, model selector and new
 chat shortcuts do nothing.
 
+`test_escape_in_the_message_box_stops_a_streaming_reply` is red on dev 1c010b438: since de73bb830 a
+stopped reply never ends on the page, so the Stop button stays (open-webui/open-webui#32081).
+
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose keydown handler ignores every
 chord but Ctrl+K every test but the switched-off one fails, and in a backend copy whose settings
 update drops the switch that one fails. In a frontend build of ebc6add67 whose

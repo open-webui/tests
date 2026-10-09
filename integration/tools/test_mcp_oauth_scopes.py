@@ -8,6 +8,10 @@ scope and every tool call was refused. The requested scope is now kept, and a co
 registered before the fix gets its scopes back from the server's protected-resource metadata
 when the tool servers are saved, without registering again.
 
+Every test here is red on dev 1c010b438: a tool written with the official MCP SDK that returns plain
+text also sends it as structured data, and the model gets the text twice, the second time wrapped as
+`{"result": ...}` (open-webui/open-webui#32126).
+
 Discriminates: passes on dev efe63bd34, fails with f7ce4024d reverted (the sign-in asks for no
 scope). Undoing only the recovery fails the recovered-connection test; undoing only the kept
 registration scope leaves both green, as the recovery on save then fills it in.

@@ -10,6 +10,13 @@ replaces its client: authlib keeps every client it built by name, so saving the 
 drop the old one from authlib's registry, or the next connect still signs in as the old client
 (twin of the registry case in unit/deps/test_authlib.py).
 
+`test_a_user_connects_the_server_and_the_tool_call_carries_their_token`,
+`test_an_expiring_token_is_refreshed_before_the_tool_call` and
+`test_registering_the_server_again_connects_with_the_new_client` are red on dev 1c010b438: a tool
+written with the official MCP SDK that returns plain text also sends it as structured data, and the
+model gets the text twice, the second time wrapped as `{"result": ...}`
+(open-webui/open-webui#32126).
+
 Discriminates: in a backend copy, never adding the S256 code challenge fails every test at the
 connect (the authorization server refuses the authorize), and returning the stored token without
 checking its expiry fails the refresh and the revoked-token tests (no refresh is tried). On dev

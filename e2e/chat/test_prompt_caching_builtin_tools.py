@@ -14,6 +14,10 @@ search, page fetch and a notification. Every consecutive pair of the provider's 
 checked: each one repeats the tool list and every message of the one before it byte for byte and
 only adds to the end.
 
+`test_the_time_task_list_and_question_tools_only_append` failed on dev 1c010b438 in CI: the reply
+stayed blank on the page; since de73bb830 the reply in a new chat sometimes stays blank until a
+reload although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on dev 30f3f6a8f. In a backend copy with a clock value added to the
 model's system prompt every test fails.
 """

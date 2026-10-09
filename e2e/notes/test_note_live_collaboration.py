@@ -7,6 +7,9 @@ read the note opens it in an editor that takes no typing; a read-only editor doe
 live document (upstream 5078d987f), so a reader who kept the note open sees the writing once they
 reload.
 
+`test_a_reader_with_the_note_open_sees_the_writing_after_a_reload` failed on dev 1c010b438 in CI:
+the note was saved a few characters short (open-webui/open-webui#31585, fix PR #31596 open).
+
 Discriminates: passes on dev 176d31d1d. In a frontend copy, the editor not applying remote Yjs
 updates turns the three writer tests red and the editor staying editable for a reader turns the
 reader typing test red. In a backend copy, `ydoc:document:update` not broadcasting to the room

@@ -21,6 +21,10 @@ after its first turn (its `<attached_knowledge>` list is in the system message, 
 message that carried it) and a skill shared with the person mid-chat (every readable skill is
 listed in the system message, whether or not it was attached).
 
+`test_unchanged_memories_with_the_system_context_on_only_append` failed on dev 1c010b438 in CI:
+the reply stayed blank on the page; since de73bb830 the reply in a new chat sometimes stays blank
+until a reload although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on dev 30f3f6a8f. In a backend copy with a clock value added to the
 model's system prompt every positive test failed, and so did the controls whose break falls after
 the system message, since the clock moved the first break into it; the other controls passed.

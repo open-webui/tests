@@ -10,6 +10,11 @@ The MCP server here names 42 Google Workspace scopes in its protected-resource m
 browser stand-in drops a cookie over 4096 bytes the way Chromium does, and the sign-in then has to
 land connected with the tool call carrying the user's token. Nearby: one scope signs in as before.
 
+`test_a_sign_in_asking_for_many_scopes_keeps_the_session_cookie_small` and
+`test_a_sign_in_asking_for_one_scope_is_unchanged` are red on dev 1c010b438: a tool written with the
+official MCP SDK that returns plain text also sends it as structured data, and the model gets the
+text twice, the second time wrapped as `{"result": ...}` (open-webui/open-webui#32126).
+
 Discriminates: passes on dev b859124f9, fails with cd64930c0 reverted (the session cookie is over
 4096 bytes, the browser stand-in drops it and the callback is refused over its state).
 """

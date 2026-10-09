@@ -18,6 +18,10 @@ checks the tab's session token again for every event the tab sends, and the repl
 overtook each other while those checks ran, so the stored reply came back scrambled or empty. It
 passes on dev b5a20423e and is red in three runs of three with fix a1bb3b392 (#31979) reverted.
 
+`test_an_mcp_tool_gets_the_text_streamed_in_pieces` is red on dev 1c010b438: a tool written with the
+official MCP SDK that returns plain text also sends it as structured data, and the model gets the
+text twice, the second time wrapped as `{"result": ...}` (open-webui/open-webui#32126).
+
 Discriminates: with the in-place branch of the append breaking only itself, every append-in-place
 case failed and every append-copies case passed; with the copying branch breaking only itself the
 reverse held.
