@@ -1,9 +1,9 @@
 """Journey: skills brought in as files, sent out one at a time, and named in another language.
 
-A SKILL.md picked through the Skills page's import opens the skill editor filled in from its
-front matter (the name, the id made from it and the description) with the whole file as the
-instructions, and saving it gives a skill a `$` mention sends to the model. A JSON file holding
-several skills imports every one of them. A row's own Export downloads that skill alone, with its
+A SKILL.md picked through the Skills page's Import is listed in the import dialog under the name
+and id from its front matter; Import selected saves it with that description and the whole file
+as the instructions, which a `$` mention sends to the model. A JSON file holding several skills
+imports every one of them. A row's own Export JSON downloads that skill alone, with its
 instructions. A German name and description given in the editor's Editing language show in place
 of the default ones once the interface is German, in the list and in the `$` menu, and the
 English interface keeps the default name; the German name also finds the skill in the list's
@@ -16,15 +16,16 @@ server, which matches only the original name, description and id, so typing the 
 user is shown finds nothing (open-webui/open-webui#32018).
 
 Discriminates: passes on the dev ebc6add67 build apart from the search test; in a frontend copy
-whose markdown import ignores the front matter the SKILL.md test goes red (the editor holds the
-file's name and no description), one whose row Export drops the instructions turns the export
-test red, and one that never resolves a translated name turns the German name test red.
+that never resolves a translated name the German name test goes red. Retargeted for 9bbb95048,
+where import moved into a dialog backed by the server and Export became Export JSON with the
+skill's files: passes on dev 178de3666 apart from the search test; in a backend copy whose import
+ignores the front matter the SKILL.md test goes red (the skill is named "Imported skill"), and in
+one whose export leaves out the files the export test goes red.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from typing import Iterator
 
@@ -71,10 +72,18 @@ def _import(page: Page, file_name: str, content: str, mime_type: str) -> None:
     page.goto("/workspace/skills")
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import JSON").click()
+        page.get_by_role("button", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[{"name": file_name, "mimeType": mime_type, "buffer": content.encode()}]
     )
+
+
+def _import_selected(page: Page, count: int) -> None:
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("textbox", name="Skill ID")).to_have_count(count)
+    dialog.get_by_role("button", name="Import selected").click()
+    expect(dialog.get_by_text("saved", exact=True)).to_have_count(count)
+    dialog.get_by_role("button", name="Close").click()
 
 
 def _list_rows(page: Page, query: str, search_label: str = "Search Skills") -> Locator:
@@ -114,7 +123,7 @@ def _system_prompt_after_mention(page: Page, upstream, typed: str, shown: str) -
     )
 
 
-def test_a_skill_markdown_file_opens_the_editor_filled_in_and_is_saved(page_for, keeper, upstream):
+def test_a_skill_markdown_file_is_imported_named_from_its_front_matter(page_for, keeper, upstream):
     suffix = uuid.uuid4().hex[:6]
     markdown = (
         f"---\nname: tide-tables-{suffix}\ndescription: Reading tide tables\n---\n"
@@ -124,20 +133,15 @@ def test_a_skill_markdown_file_opens_the_editor_filled_in_and_is_saved(page_for,
 
     _import(page, "SKILL.md", markdown, "text/markdown")
 
-    expect(page).to_have_url(re.compile(r"/workspace/skills/create$"))
-    editor = page.get_by_role("main")
-    expect(editor.get_by_placeholder("Skill Name")).to_have_value(
-        f"Tide Tables {suffix.capitalize()}"
-    )
-    expect(editor.get_by_role("textbox", name="Skill ID")).to_have_value(f"tide-tables-{suffix}")
-    expect(editor.get_by_placeholder("Skill Description")).to_have_value("Reading tide tables")
-    expect(editor.get_by_role("textbox", name="Skill Instructions")).to_have_value(markdown)
-    editor.get_by_role("button", name="Save & Create").click()
-    expect(page).to_have_url(re.compile(r"/workspace/skills$"))
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("textbox", name="Skill name")).to_have_value(f"tide-tables-{suffix}")
+    expect(dialog.get_by_role("textbox", name="Skill ID")).to_have_value(f"tide-tables-{suffix}")
+    _import_selected(page, 1)
+    stored = _stored(keeper, f"tide-tables-{suffix}")
+    assert stored["description"] == "Reading tide tables"
+    assert stored["content"] == markdown
 
-    system = _system_prompt_after_mention(
-        page, upstream, suffix, f"Tide Tables {suffix.capitalize()}"
-    )
+    system = _system_prompt_after_mention(page, upstream, suffix, f"tide-tables-{suffix}")
     assert "Read the high tide column first." in system
 
 
@@ -151,7 +155,7 @@ def test_a_json_file_of_several_skills_imports_each_of_them(page_for, keeper):
 
     _import(page, "skills.json", json.dumps(skills), "application/json")
 
-    expect(page.get_by_text("Skill imported successfully")).to_be_visible()
+    _import_selected(page, 2)
     rows = _list_rows(page, suffix)
     expect(rows.filter(has_text=f"Anchoring {suffix}")).to_be_visible()
     expect(rows.filter(has_text=f"Docking {suffix}")).to_be_visible()
@@ -169,13 +173,13 @@ def test_a_rows_own_export_downloads_that_skill_alone_with_its_instructions(page
     row.get_by_role("button", name="Skill Menu").last.click()
 
     with page.expect_download() as download:
-        page.get_by_role("button", name="Export", exact=True).click()
+        page.get_by_role("button", name="Export JSON", exact=True).click()
     with open(download.value.path()) as saved:
         exported = json.load(saved)
 
-    assert [entry["id"] for entry in exported] == [exported_id]
-    assert exported[0]["name"] == f"Exported {suffix}"
-    assert exported[0]["content"] == "Keep the log tidy."
+    assert exported["id"] == exported_id, exported
+    assert exported["name"] == f"Exported {suffix}"
+    assert exported["files"] == [{"path": "SKILL.md", "content": "Keep the log tidy."}]
 
 
 def _name_in_german(page: Page, skill_id: str, name: str, description: str) -> None:

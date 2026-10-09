@@ -38,7 +38,9 @@ stored system prompt handed to a timer or a report and the Create skill command 
 the timer, report and Create skill tests passed. Earlier, on dev 176d31d1d, the tool list
 shuffled per request turned the first tests red, and with no working directory in the tool
 description and the shell tools offered whether or not the shell is open, the two terminal
-tests passed.
+tests passed. Retargeted for 9bbb95048, which offers the Create skill command only to people
+allowed to write skills: its test runs for a person whose group may, and on dev 178de3666 it is red
+for #31591 again, as before.
 """
 
 from __future__ import annotations
@@ -53,6 +55,7 @@ import pytest
 from playwright.sync_api import expect
 
 from harness import upstream as reply
+from harness.access import make_group
 from harness.mcp_server import SNAPSHOT_PNG
 from harness.prompt_caching import (
     assert_append_only,
@@ -173,8 +176,19 @@ def test_a_chat_about_an_attached_image_only_appends(page_for, cached_setup, mak
 @pytest.fixture
 def terminal_chat(page_for, cached_setup, admin, make_user, preserve, open_terminal):
     """A page on the cached model with the Open Terminal picked for the chat, and its home."""
-    preserve(TERMINAL_SERVERS_CONFIG)
+    return _terminal_chat(page_for, cached_setup, admin, make_user(), preserve, open_terminal)
+
+
+@pytest.fixture
+def skill_author_chat(page_for, cached_setup, admin, make_user, preserve, open_terminal):
+    """The same, for a person whose group may write skills, as the Create skill command needs."""
     person = make_user()
+    make_group(admin, [person], permissions={"workspace": {"skills": True}})
+    return _terminal_chat(page_for, cached_setup, admin, person, preserve, open_terminal)
+
+
+def _terminal_chat(page_for, cached_setup, admin, person, preserve, open_terminal):
+    preserve(TERMINAL_SERVERS_CONFIG)
     connection = open_terminal.connection(config={"access_grants": [read_grant(person.id)]})
     with admin.client() as client:
         configure_terminals(client, connection)
@@ -561,8 +575,8 @@ def terminal_skill(open_terminal):
 
 
 @pytest.mark.regression
-def test_the_create_skill_command_keeps_the_prefix(terminal_skill, terminal_chat, upstream):
-    page = terminal_chat
+def test_the_create_skill_command_keeps_the_prefix(terminal_skill, skill_author_chat, upstream):
+    page = skill_author_chat
     ask(page, upstream, "high tide is read from the first column", reply.text("Understood."))
     upstream.queue(reply.text("The skill is up to date.", match=reply.answering("skill")))
     chat_input(page).click()

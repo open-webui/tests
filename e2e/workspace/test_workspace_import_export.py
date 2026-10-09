@@ -6,7 +6,8 @@ content intact, with the tool asking for a confirmation first.
 
 Discriminates: passes on dev 176d31d1d. In a frontend copy where the prompts import sends an empty
 content, the skills import a changed content and the models import no base model, only the matching
-round trip goes red.
+round trip goes red. Retargeted for 9bbb95048, where skills import through a dialog; the skill
+round trip passes on dev 178de3666.
 """
 
 from __future__ import annotations
@@ -161,8 +162,23 @@ def test_an_exported_skill_is_restored_by_importing_the_file(page_for, keeper):
     saved = [entry for entry in _export(page, "skills") if entry["id"] == skill_id]
     assert len(saved) == 1, "the exported file does not hold the skill"
     _remove(keeper, f"/api/v1/skills/id/{skill_id}/delete")
-    _import(page, "skills", json.dumps(saved))
-
-    expect(page.get_by_text("Skill imported successfully")).to_be_visible()
+    # skills import through a dialog that lists what the file holds before saving it
+    page.goto("/workspace/skills")
+    page.get_by_label("Open create menu").click()
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Import", exact=True).click()
+    chooser.value.set_files(
+        files=[
+            {
+                "name": "import.json",
+                "mimeType": "application/json",
+                "buffer": json.dumps(saved).encode(),
+            }
+        ]
+    )
+    dialog = page.get_by_role("dialog")
+    dialog.get_by_role("button", name="Import selected").click()
+    expect(dialog.get_by_text("saved", exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Close").click()
     _find_in_list(page, "Search Skills", name)
     assert _fetch(keeper, f"/api/v1/skills/id/{skill_id}")["content"] == "Be brief."

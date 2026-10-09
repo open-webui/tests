@@ -309,13 +309,13 @@ def test_selected_skills_are_injected_in_sorted_order(owner, upstream, skills):
         ask(client, "use my skills", skill_ids=selected, params={"function_calling": "legacy"})
 
     system_prompt = _system_prompt(upstream.chat_requests()[-1])
-    positions = [system_prompt.find(f'<skill name="{skill_id}">') for skill_id in skills]
+    positions = [system_prompt.find(f'<skill id="{skill_id}"') for skill_id in skills]
     assert -1 not in positions, f"a selected skill was not injected: {system_prompt[:500]}"
     assert positions == sorted(positions), (
         "selected skills were injected in set iteration order, which changes per process and "
         "defeats the provider's prompt caching (#26986)"
     )
-    assert system_prompt.count(f'<skill name="{skills[0]}">') == 1
+    assert system_prompt.count(f'<skill id="{skills[0]}"') == 1
 
 
 # --- #27411: a failure after a tool call is reported and stored ---------------------------

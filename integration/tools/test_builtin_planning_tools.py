@@ -308,7 +308,11 @@ def test_a_skill_is_loaded_only_when_the_account_may_read_it(skills, upstream):
     loaded = call(reader, upstream, "view_skill", id=shared_id.upper())
     refused = call(reader, upstream, "view_skill", id=private_id)
 
-    assert loaded == {"name": "shared skill", "content": "shared instructions"}
+    assert (loaded["id"], loaded["name"], loaded["content"]) == (
+        shared_id,
+        "shared skill",
+        "shared instructions",
+    ), loaded
     assert refused == {"error": "Access denied"}, f"a private skill was loaded: {refused}"
 
 

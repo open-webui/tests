@@ -184,7 +184,8 @@ def test_a_skill_attached_in_the_editor_reaches_a_chat_on_that_model(
     open_chat_on(page, MOCK_MODEL_ID, MOCK_MODEL_ID)
     plain = system_prompt_of(page, upstream, "how do I moor here?")
 
-    assert f'<skill name="{skill["name"]}">' in attached, attached
+    assert f'<skill id="{skill["id"]}"' in attached, attached
+    assert f'name="{skill["name"]}">' in attached, attached
     assert instructions in attached, attached
     assert instructions not in plain, plain
 
@@ -300,4 +301,4 @@ def test_unticking_skills_in_the_editor_withdraws_the_list_and_the_viewer(
     assert "<available_skills>" not in prompt, prompt
     assert "view_skill" not in offered_tool_names(unticked)
     assert "get_current_timestamp" in offered_tool_names(unticked)
-    assert f'<skill name="{skill["name"]}">' in prompt and instructions in prompt, prompt
+    assert f'<skill id="{skill["id"]}"' in prompt and instructions in prompt, prompt

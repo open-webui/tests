@@ -11,7 +11,8 @@ with a shared skill is integration/security/test_skill_access_matrix.py.
 Discriminates: passes on the dev ebc6add67 build; in a backend copy whose access update stores
 no grants every test here goes red (the member is never offered the skill, the writer meets a
 read-only editor); in one whose access update only adds grants, the withdraw test goes red (the
-member is still offered the skill) and the other two pass.
+member is still offered the skill) and the other two pass. Retargeted for 9bbb95048, where the
+instructions became SKILL.md in the skill's file editor; passes on dev 178de3666.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
 from utils.chat_ui import chat_input, expect_reply
+from utils.skill_editor import code_editor, replace_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -182,7 +184,8 @@ def test_a_writer_changes_the_instructions_and_a_reader_meets_a_read_only_editor
 
     writer_page = page_for(writer)
     writer_page.goto(f"/workspace/skills/edit?id={skill['id']}")
-    writer_page.get_by_role("textbox", name="Skill Instructions").fill("Tie a sheet bend.")
+    expect(code_editor(writer_page)).to_contain_text("Tie a reef knot.")
+    replace_text(writer_page, "Tie a sheet bend.")
     writer_page.get_by_role("main").get_by_role("button", name="Save", exact=True).click()
     expect(writer_page.get_by_text("Skill updated successfully")).to_be_visible()
 
@@ -190,7 +193,7 @@ def test_a_writer_changes_the_instructions_and_a_reader_meets_a_read_only_editor
     reader_page.goto(f"/workspace/skills/edit?id={skill['id']}")
     expect(reader_page.get_by_text("Read Only", exact=True)).to_be_visible()
     expect(reader_page.get_by_text("Tie a sheet bend.")).to_be_visible()
-    expect(reader_page.get_by_role("textbox", name="Skill Instructions")).to_have_count(0)
+    expect(code_editor(reader_page)).to_have_attribute("contenteditable", "false")
     expect(reader_page.get_by_role("main").get_by_role("button", name="Save")).to_have_count(0)
 
     system = _mention_and_ask(page, upstream, skill)

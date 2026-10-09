@@ -7,7 +7,9 @@ it leaves the list and the `$` picker, while a skill next to it stays.
 
 Discriminates: passes on dev 176d31d1d. In a backend copy where `/api/v1/skills/create` drops
 the content, where `/api/v1/skills/id/{id}/update` leaves the content as it was and where the
-delete answers without deleting, the matching test goes red.
+delete answers without deleting, the matching test goes red. Retargeted for 9bbb95048, where the
+instructions became the skill's SKILL.md in the file editor and Save & Create opens the saved
+skill; passes on dev 178de3666.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import chat_input, expect_reply
+from utils.skill_editor import code_editor, replace_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -42,9 +45,9 @@ def _write_skill(page: Page, name: str, instructions: str) -> None:
     editor = page.get_by_role("main")
     editor.get_by_placeholder("Skill Name").fill(name)
     editor.get_by_placeholder("Skill Description").fill("how to answer")
-    editor.get_by_role("textbox", name="Skill Instructions").fill(instructions)
+    replace_text(page, instructions)
     editor.get_by_role("button", name="Save & Create").click()
-    expect(page).to_have_url(re.compile(r"/workspace/skills$"))
+    expect(page).to_have_url(re.compile(r"/workspace/skills/edit\?id="))
 
 
 def _skill_row(page: Page, name: str) -> Locator:
@@ -104,7 +107,8 @@ def test_changed_instructions_replace_the_old_ones_in_the_next_mention(
 
     _skill_menu_item(page, name, "Edit")
     expect(page).to_have_url(re.compile(r"/workspace/skills/edit\?id="))
-    page.get_by_role("textbox", name="Skill Instructions").fill("Answer like a sailor.")
+    expect(code_editor(page)).to_contain_text("Answer formally.")
+    replace_text(page, "Answer like a sailor.")
     page.get_by_role("main").get_by_role("button", name="Save", exact=True).click()
     expect(page.get_by_text("Skill updated successfully")).to_be_visible()
 

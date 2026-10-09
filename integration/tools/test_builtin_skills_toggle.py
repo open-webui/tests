@@ -104,7 +104,8 @@ def test_with_skills_off_an_attached_skill_arrives_whole(admin, upstream):
     with skilled_model(admin, {"skills": False}, attach=True) as setup:
         system, offered = provider_request(admin, upstream, setup["model"])
 
-    assert f'<skill name="{setup["skill"]["name"]}">' in system, system
+    assert f'<skill id="{setup["skill"]["id"]}"' in system, system
+    assert f'name="{setup["skill"]["name"]}">' in system, system
     assert setup["text"] in system, system
     assert "<available_skills>" not in system, system
     assert "view_skill" not in offered, sorted(offered)

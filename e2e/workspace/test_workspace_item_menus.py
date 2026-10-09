@@ -2,15 +2,18 @@
 
 A fresh admin owns a model, a prompt, a tool and a skill. Clone from a row's menu opens the
 creation editor filled in from the original, and saving it stores a copy that the chat offers
-under its new name or command. A model hidden from its menu leaves the chat's model selector and
-returns when shown again. Delete, after its confirmation, removes the model, prompt or tool from
-the list and from the chat's selector, slash menu or integrations menu. In the prompt editor's
-history a version that is not live can be deleted, and the live one offers no delete.
+under its new name or command; a skill's Clone stores the copy at once and opens it. A model
+hidden from its menu leaves the chat's model selector and returns when shown again. Delete,
+after its confirmation, removes the model, prompt or tool from the list and from the chat's
+selector, slash menu or integrations menu. In the prompt editor's history a version that is not
+live can be deleted, and the live one offers no delete.
 
 Discriminates: passes on dev 30f3f6a8f. In a backend copy where the model, prompt, tool or prompt
 history delete route answers true without deleting, the matching delete test goes red, and where
 the model update ignores `hidden` the hide test goes red; in a frontend build whose clone handlers
-change the copied system prompt, content or instructions, each clone test goes red.
+change the copied system prompt, content or instructions, each clone test goes red. Retargeted for
+9bbb95048, where a skill's Clone saves the copy at once and opens it: the skill clone test passes
+on dev 178de3666 and goes red in a backend copy whose clone drops the instructions.
 """
 
 from __future__ import annotations
@@ -308,9 +311,10 @@ def test_a_cloned_skill_is_saved_with_the_same_instructions(page_for, builder):
     page = page_for(builder)
 
     _menu_item(page, _row(page, "skills", skill["name"]), "Skill Menu", "Clone")
-    page.get_by_role("main").get_by_role("button", name="Save & Create").click()
-    expect(page).to_have_url(re.compile(r"/workspace/skills$"))
+    # a skill's clone is saved at once under a short random suffix and opened in the editor
+    expect(page).to_have_url(re.compile(rf"/workspace/skills/edit\?id={skill['id']}-\w+$"))
 
-    stored = _fetch(builder, f"/api/v1/skills/id/{skill['id']}_clone")
-    assert stored["name"] == f"{skill['name']} (Clone)"
+    clone_id = page.url.split("id=")[1]
+    stored = _fetch(builder, f"/api/v1/skills/id/{clone_id}")
+    assert stored["name"] == f"{skill['name']} ({clone_id.rsplit('-', 1)[1]})"
     assert stored["content"] == "Answer in exactly three bullet points."

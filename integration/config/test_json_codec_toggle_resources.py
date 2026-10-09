@@ -15,7 +15,8 @@ Discriminates: passes on dev 176d31d1d. In backend copies of dev 176d31d1d, the 
 writing mojibake or orjson request parsing that mangles non-ASCII turns every crossing with an
 orjson side red and the stdlib codec writing mojibake every crossing with a stdlib side, leaving
 the stdlib-only and orjson-only crossings green respectively; the analytics summary counting one
-extra message with the switch on turns the analytics test red.
+extra message with the switch on turns the analytics test red. Retargeted for 9bbb95048, where a
+skill's export holds its instructions as the file SKILL.md.
 """
 
 from __future__ import annotations
@@ -638,7 +639,10 @@ def test_tools_skills_and_functions_export_and_sync_the_same_across_the_switch(
         return next(item for item in listed if item["id"] == entity_id)
 
     _covers({key: tool[key] for key in ("id", "name", "meta")}, exported("tools", tool["id"]))
-    _covers(skill, exported("skills", skill["id"]))
+    # a skill's export carries its instructions as the file SKILL.md
+    skill_export = {key: value for key, value in skill.items() if key != "content"}
+    skill_export["files"] = [{"path": "SKILL.md", "content": skill["content"]}]
+    _covers(skill_export, exported("skills", skill["id"]))
     function_export = exported("functions", function["id"], include_valves="true")
     _covers({key: function[key] for key in ("id", "name")}, function_export)
     _covers(FUNCTION_VALVES, function_export["valves"])

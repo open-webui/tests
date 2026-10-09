@@ -9,7 +9,8 @@ and each shows where a person meets it:
   is there and opens the create form; switched back off, /workspace/<section> sends the user
   home with no Create button.
 - Import and Export of Models, Prompts, Tools and Skills: the section's create menu offers
-  Import JSON or Export JSON, each by its own switch and none when both are off.
+  Import JSON (Import for skills) or Export JSON, each by its own switch and none when both are
+  off.
 - Sharing of Models, Prompts, Knowledge, Tools, Skills and Notes: the item's Access dialog offers
   Add Access; off, the dialog has no Add Access button, however Public Sharing is set.
 - Public Sharing of the same six: the Access dialog's visibility list offers Public next to
@@ -22,7 +23,8 @@ always listing users and groups) turns red the "switched back off" and "both swi
 and the "adds only its menu entry" and "but not public" tests, and the picker removal tests; one
 that never grants (every workspace page redirects, no import or export entry, no Add Access, no
 Public, an empty picker) turns red every "switched on" test, the "offers its create button" ones
-and the default picker test.
+and the default picker test. Retargeted for 9bbb95048, which renamed the skills entry to Import;
+the import and export tests pass on dev 178de3666.
 """
 
 from __future__ import annotations
@@ -135,8 +137,10 @@ def create_menu_entries(page: Page, section: str) -> tuple[Locator, Locator]:
     open_section(page, section)
     page.get_by_label("Open create menu").click()
     menu = page.get_by_role("menu")
+    # skills import JSON, ZIP or Markdown files, so their entry is just Import
+    import_label = "Import" if section == "skills" else "Import JSON"
     return (
-        menu.get_by_role("button", name="Import JSON"),
+        menu.get_by_role("button", name=import_label, exact=True),
         menu.get_by_role("button", name="Export JSON"),
     )
 
