@@ -5,7 +5,10 @@ URL, the one an admin enters for an MCP tool server connection. It offers a sing
 and stops again when the block ends. With `media=True` it also offers `snapshot`, answering
 with `SNAPSHOT_PNG` as an image, and `chime`, answering with `CHIME_WAV` as audio; with
 `failing=True`, `capsize`, which fails with `CAPSIZE_ERROR`; with `slow=True`, `ponder`, which
-answers `PONDERED` after the number of seconds it is asked to wait. `tls=True` serves it over
+answers `PONDERED` after the number of seconds it is asked to wait; with `structured=True`,
+`forecast`, answering `FORECAST_SUMMARY` as text and `FORECAST` as structured content,
+`conditions`, answering `CONDITIONS` from a typed return (the same JSON as text and structured
+content), and `headline`, answering `HEADLINE` as plain text alone. `tls=True` serves it over
 HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
 plain 401, the way a server keyed by an API key answers (no OAuth metadata).
 `mcp_connection(...)` is the admin's connection to it without auth; save it through
@@ -31,6 +34,8 @@ from typing import Any, Iterator
 
 import uvicorn
 from mcp.server.fastmcp import Audio, FastMCP, Image
+from mcp.types import CallToolResult, TextContent
+from pydantic import BaseModel
 
 from harness.instance import free_port
 from harness.object_storage import self_signed_certificate
@@ -38,6 +43,16 @@ from harness.object_storage import self_signed_certificate
 ECHO_DESCRIPTION = "Repeat the text back."
 CAPSIZE_ERROR = "the boat capsized in the harbour"
 PONDERED = "slept on it"
+FORECAST_SUMMARY = "Mostly dry in Graz, rain on Saturday."
+FORECAST = {
+    "city": "Graz",
+    "days": [
+        {"date": "2026-10-09", "high_c": 17.5, "low_c": 6, "rain_mm": 0, "windy": False},
+        {"date": "2026-10-10", "high_c": 12, "low_c": 8.5, "rain_mm": 14.2, "windy": True},
+    ],
+}
+CONDITIONS = {"city": "Graz", "temperature_c": 15.5, "humidity": 71, "raining": False}
+HEADLINE = "Fog lifting over the Mur by noon."
 SNAPSHOT_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
@@ -56,6 +71,13 @@ def _silence_wav() -> bytes:
 CHIME_WAV = _silence_wav()
 
 
+class Conditions(BaseModel):
+    city: str
+    temperature_c: float
+    humidity: int
+    raining: bool
+
+
 def _requiring_bearer(app, bearer_key: str):
     expected = f"Bearer {bearer_key}".encode()
 
@@ -71,7 +93,11 @@ def _requiring_bearer(app, bearer_key: str):
 
 
 def _echo_server(
-    media: bool = False, failing: bool = False, slow: bool = False, **auth: Any
+    media: bool = False,
+    failing: bool = False,
+    slow: bool = False,
+    structured: bool = False,
+    **auth: Any,
 ) -> FastMCP:
     server = FastMCP("harness-mcp", log_level="WARNING", **auth)
 
@@ -102,6 +128,23 @@ def _echo_server(
             await asyncio.sleep(seconds)
             return PONDERED
 
+    if structured:
+
+        @server.tool(description="The weather forecast for a city.")
+        def forecast(city: str) -> CallToolResult:
+            return CallToolResult(
+                content=[TextContent(type="text", text=FORECAST_SUMMARY)],
+                structuredContent=FORECAST,
+            )
+
+        @server.tool(description="The current weather in a city.")
+        def conditions(city: str) -> Conditions:
+            return Conditions(**CONDITIONS)
+
+        @server.tool(description="The weather headline for a city.", structured_output=False)
+        def headline(city: str) -> str:
+            return HEADLINE
+
     return server
 
 
@@ -111,6 +154,7 @@ def serving_mcp(
     media: bool = False,
     failing: bool = False,
     slow: bool = False,
+    structured: bool = False,
     tls: bool = False,
     host: str = "127.0.0.1",
     name: str | None = None,
@@ -119,7 +163,7 @@ def serving_mcp(
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to FastMCP."""
     port = port or free_port()
-    app = _echo_server(media, failing, slow, **auth).streamable_http_app()
+    app = _echo_server(media, failing, slow, structured, **auth).streamable_http_app()
     if bearer_key:
         app = _requiring_bearer(app, bearer_key)
     with tempfile.TemporaryDirectory(prefix="owui-mcp-") as certificates:
