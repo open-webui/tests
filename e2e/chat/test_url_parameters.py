@@ -1,16 +1,18 @@
 """Journey: a chat started from a link with URL parameters, as the URL Parameters docs page lists.
 
-`/?q=` sends its text as the first message at once, and with `submit=false` only puts it in the
-message box. `models=` opens the chat on several models, which all answer. `temporary-chat=true`
-starts a chat that is never stored. `tools=` (or its older name `tool-ids=`) turns a workspace
-tool on for the chat, so it is offered to the model, and `web-search=true` sends the message with
-web search on. `image-generation=true` sends it with image generation on, so the model is offered
-the image tool, which a chat opened without the parameter is not.
+`/?q=` puts its text in the message box and sends nothing until the person sends it (since
+0ffd86967 a link no longer sends a message on its own), with or without `submit=false`. `models=`
+opens the chat on several models, which all answer. `temporary-chat=true` starts a chat that is
+never stored. `tools=` (or its older name `tool-ids=`) turns a workspace tool on for the chat, so
+it is offered to the model, and `web-search=true` sends the message with web search on.
+`image-generation=true` sends it with image generation on, so the model is offered the image
+tool, which a chat opened without the parameter is not.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build that ignores the q, models,
 temporary-chat, tools and web-search parameters every test fails, each on its own parameter; in
 one that reads `tool_ids` in place of `tool-ids` and turns image generation on exactly when the
-parameter is missing, the tool-ids and both image generation tests fail.
+parameter is missing, the tool-ids and both image generation tests fail. The q test passes on dev
+22102e4a2, fails in a build of it that ignores q and fails in one that sends q at once.
 """
 
 from __future__ import annotations
@@ -54,12 +56,19 @@ def _request_for(upstream, question: str) -> dict:
     return next(filter(reply.answering(question), upstream.chat_requests()))
 
 
-def test_q_sends_its_text_as_the_first_message(page_for, make_user, upstream):
+def test_q_fills_the_message_box_and_waits_for_the_person_to_send(page_for, make_user, upstream):
     page = page_for(make_user())
     question = _question()
     upstream.queue(reply.text("At noon.", match=reply.answering(question)))
     _open(page, f"q={quote(question)}")
 
+    expect(chat_input(page)).to_have_text(question)
+    page.wait_for_timeout(1000)  # a link that sends on its own sends at once
+    expect(replies(page)).to_have_count(0)
+    assert not [body for body in upstream.chat_requests() if reply.answering(question)(body)]
+
+    chat_input(page).click()
+    page.keyboard.press("Enter")
     expect_reply(page, "At noon.")
     expect(page).to_have_url(re.compile(r"/c/"))
 

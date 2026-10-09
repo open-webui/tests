@@ -4,7 +4,7 @@ open-webui 0.11.0 fix `18719fef9` (#26910, issue #26908): Docker Compose list sy
 surrounding quotes through, so `"localhost"` became an allow entry with the quotes in it, which
 matches no host, and a non-empty allow list refuses everything else: every link a user attached
 to a chat was refused. The chat page attaches the link named in its `load-url` query parameter,
-the way a "chat about this page" link does.
+the way a "chat about this page" link does, once the person confirms it (since 0ffd86967).
 
 Twin of integration/retrieval/test_web_fetch_filter_list.py.
 
@@ -21,6 +21,7 @@ from playwright.sync_api import expect
 from harness.actors import create_user
 from harness.listener import listening, text_answer
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_ui import link_dialog
 
 pytestmark = [
     pytest.mark.regression,
@@ -53,10 +54,11 @@ def is_attachment_answer(response) -> bool:
 
 
 def open_chat_about(page_for, launched, link: str):
-    """The chat page attaching `link`, once the server has answered the attachment."""
+    """The chat page attaching `link`, once confirmed and answered by the server."""
     page = page_for(create_user(launched))
+    page.goto(f"/?models={MOCK_MODEL_ID}&load-url={link}")
     with page.expect_response(is_attachment_answer, timeout=30_000):
-        page.goto(f"/?models={MOCK_MODEL_ID}&load-url={link}")
+        link_dialog(page).get_by_role("button", name="Confirm").click()
     return page
 
 

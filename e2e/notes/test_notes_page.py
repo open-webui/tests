@@ -7,13 +7,14 @@ from either layout. The All, Created by you and Shared with you filters, with Wr
 beside them, keep the notes the account owns or was given at that level, and the choice survives
 a reload too. The Title column sorts the list both ways, holding Shift turns every note's menu
 into a delete button that deletes at once, and Create a new note in the global search opens a
-note holding what was typed there.
+note holding what was typed there, once the confirm dialog it shows is accepted (since 0ffd86967).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the import storing notes without their text (both import tests), the file type check
 dropped, the grid card showing no text, the grid title and the list row opening the Notes page,
 the list asked for with no view option or access level, the Title column not sorting, the Shift
-delete button asking for a confirmation and the search action dropping the typed text.
+delete button asking for a confirmation and the search action dropping the typed text (the last
+checked again on dev 22102e4a2).
 """
 
 from __future__ import annotations
@@ -308,6 +309,9 @@ def test_create_a_new_note_in_the_search_opens_a_note_with_the_typed_text(page_f
     sidebar.get_by_role("button", name="Search", exact=True).click()
     page.get_by_placeholder("Search").last.fill("call the plumber")
     page.get_by_role("button", name="Create a new note").click()
+    confirm = page.get_by_role("dialog", name="Create a new note")
+    expect(confirm).to_contain_text("call the plumber")
+    confirm.get_by_role("button", name="Confirm").click()
 
     expect(page).to_have_url(NOTE_URL)
     editor = page.get_by_role("main").get_by_label("Write something...")

@@ -5,8 +5,9 @@ transcript API's error, so a YouTube link attached to a chat failed with a gener
 the hint that fixes a blocked server (the Youtube Proxy URL setting) never reached the user.
 
 The chat page attaches the video named in its `youtube` query parameter, the way a shared "chat
-about this video" link does. YouTube is played by `harness.youtube` behind the admin's Youtube
-Proxy URL, on an instance that trusts its certificate authority.
+about this video" link does, once the person confirms it (since 0ffd86967). YouTube is played by
+`harness.youtube` behind the admin's Youtube Proxy URL, on an instance that trusts its
+certificate authority.
 
 Twin of integration/retrieval/test_youtube_transcripts.py.
 
@@ -25,7 +26,7 @@ from harness import youtube
 from harness.actors import create_user
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import LOCAL_WEB_FETCH, save_web_settings, web_settings_restored
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply, link_dialog, send
 
 pytestmark = [
     pytest.mark.regression,
@@ -56,6 +57,7 @@ def youtube_instance(instance_with, fake_youtube):
 def open_chat_about(page_for, launched, video_id: str):
     page = page_for(create_user(launched))
     page.goto(f"/?models={MOCK_MODEL_ID}&youtube={video_id}")
+    link_dialog(page).get_by_role("button", name="Confirm").click()
     return page
 
 

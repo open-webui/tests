@@ -18,6 +18,11 @@ def send(page: Page, text: str) -> None:
     page.keyboard.press("Enter")
 
 
+def link_dialog(page: Page) -> Locator:
+    """The dialog a chat link asks in before it loads its `load-url` or `youtube` page or calls."""
+    return page.get_by_role("dialog", name="Open link")
+
+
 def conversation(page: Page) -> Locator:
     return page.get_by_label("Chat Conversation")
 

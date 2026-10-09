@@ -4,9 +4,10 @@ The dialog opens from the sidebar's Search entry or the search shortcut. Typing 
 `GET /api/v1/chats/search`, which matches chat titles and message text and understands `tag:`,
 `folder:`, `pinned:` and `archived:` filters, offered as suggestions while typing; a match in the
 text shows as a highlighted snippet. Hovering or arrowing onto a result previews its conversation
-and a click opens it. "Start a new conversation" sends the typed text as the first message of a
-new chat. Another account's matching chat never appears. The menu on a result renames, pins,
-clones, archives and deletes the chat (after a confirm dialog), and each change is read back after a
+and a click opens it. "Start a new conversation" opens a new chat with the typed text in its
+message box, where the person sends it (since 0ffd86967 the chat address only fills the box).
+Another account's matching chat never appears. The menu on a result renames, pins, clones,
+archives and deletes the chat (after a confirm dialog), and each change is read back after a
 reload or over the API as the owner.
 
 Clicking into the search box suggests all five filters (`tag:`, `folder:`, `pinned:`, `shared:` and
@@ -33,7 +34,9 @@ the title, snippet, filter and other-account tests go red. The filter suggestion
 pass on dev ebc6add67; on a build without the shared: option, the Untagged entry, Enter handling
 and result paging the matching test each fails, on one offering only true for pinned: the pinned
 false test fails, and in a backend copy ignoring shared: or matching any of several tags the
-shared and two tag tests fail.
+shared and two tag tests fail. The two new-conversation tests pass on dev 22102e4a2; in a build of
+it that drops the query the sending test fails, and in one that puts the query into the address
+unencoded the ampersand test fails.
 """
 
 from __future__ import annotations
@@ -344,24 +347,25 @@ def test_start_a_new_conversation_sends_the_typed_text(page_for, make_user, upst
     page = page_for(make_user())
 
     start_a_new_conversation(page, question)
+    expect(chat_input(page)).to_have_text(question)
+    chat_input(page).click()
+    page.keyboard.press("Enter")
 
     expect_reply(page, "About two metres.")
     expect(page.get_by_label("Chat Conversation").get_by_text(question)).to_be_visible()
 
 
 @pytest.mark.regression
-def test_start_a_new_conversation_keeps_an_ampersand(page_for, make_user, upstream):
+def test_start_a_new_conversation_keeps_an_ampersand(page_for, make_user):
     question = f"Q&A about the {unique_word()}"
-    upstream.queue(reply.text("Ask away.", match=reply.answering("Q")))
     page = page_for(make_user())
 
     start_a_new_conversation(page, question)
 
-    expect_reply(page, "Ask away.")
     expect(
-        page.get_by_label("Chat Conversation").get_by_text(question),
-        "the text after the & was dropped from the new chat's first message (#31469)",
-    ).to_be_visible()
+        chat_input(page),
+        "the text after the & was dropped from the new chat's message box (#31469)",
+    ).to_have_text(question)
 
 
 @pytest.fixture

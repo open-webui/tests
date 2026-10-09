@@ -4,15 +4,16 @@ The plus menu offers Attach Webpage; the modal takes one link per line, refuses 
 an http(s) link, and the page behind each link is fetched by the server and shown in the composer
 as an attachment named by its link. The text of the page reaches the model with the next message,
 and a page the server cannot read is refused with a toast and leaves no attachment. A link in the
-`load-url` parameter of a chat link is attached the same way when the chat opens. Without the web
-upload permission the menu entry does nothing for a user and still opens for an admin. The pages
-are a local service, on an instance that may fetch loopback addresses.
+`load-url` parameter of a chat link is attached the same way once the person confirms it in the
+Open link dialog, and nothing is fetched before that (since 0ffd86967). Without the web upload
+permission the menu entry does nothing for a user and still opens for an admin. The pages are a
+local service, on an instance that may fetch loopback addresses.
 
 Discriminates: passes on the 176d31d1d build; with the link validation removed the refused-text
 test goes red, with the de-duplication removed the several-links test does, with the handoff to
 the chat or the modal's close button removed the attachment, refusal and close tests do, and with
-the permission check removed from the menu entry the no-permission test does; in a build that
-ignores the `load-url` parameter its test goes red.
+the permission check removed from the menu entry the no-permission test does; in a build of dev
+22102e4a2 that ignores the `load-url` parameter its test goes red.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.listener import listening, text_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, link_dialog, send
 
 pytestmark = [
     pytest.mark.journey,
@@ -114,15 +115,20 @@ def test_the_attachment_stays_on_the_message_once_it_is_sent(page_for, fetching_
     expect(page.get_by_text(link(pages, "/tides"))).to_be_visible()
 
 
-def test_a_link_in_the_load_url_parameter_is_attached_when_the_chat_opens(
+def test_a_link_in_the_load_url_parameter_is_attached_once_confirmed(
     page_for, fetching_instance, pages
 ):
     page = page_for(create_user(fetching_instance))
     prompt = "what does the linked page say?"
     fetching_instance.upstream.queue(reply.text("about tides", match=reply.answering(prompt)))
+    fetched_before = len(pages.requests_to("/tides"))
 
     page.goto(f"/?load-url={quote(link(pages, '/tides'))}")
 
+    expect(link_dialog(page)).to_contain_text(link(pages, "/tides"))
+    assert len(pages.requests_to("/tides")) == fetched_before, "fetched before it was confirmed"
+    link_dialog(page).get_by_role("button", name="Confirm").click()
+    expect(link_dialog(page)).to_be_hidden()
     expect(page.get_by_text(link(pages, "/tides"))).to_be_visible(timeout=30_000)
     send(page, prompt)
     expect_reply(page, "about tides")
