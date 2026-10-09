@@ -16,6 +16,7 @@ test.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Iterator
 
@@ -86,7 +87,8 @@ def _sent_for(upstream, question: str) -> str:
 
 
 def _file_row(base: Locator, filename: str) -> Locator:
-    return base.get_by_role("listitem").filter(has_text=filename)
+    entry = base.page.get_by_role("button", name=re.compile(rf"^{re.escape(filename)}(\s|$)"))
+    return base.locator("[data-knowledge-row]").filter(has=entry)
 
 
 def test_a_reader_cites_the_shared_base_in_chat_but_cannot_change_its_files(
@@ -114,8 +116,13 @@ def test_a_reader_cites_the_shared_base_in_chat_but_cannot_change_its_files(
     expect(base.get_by_text("Read Only")).to_be_visible()
     row = _file_row(base, "gate.txt")
     expect(row).to_be_visible()
-    # the file's icon and name; a writer's row adds the rename, download and delete menu
-    expect(row.get_by_role("button")).to_have_count(2)
+    # the menu's trigger wraps the labelled button
+    row.get_by_role("button", name="More").last.click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("button", name="Download")).to_be_visible()
+    expect(menu.get_by_role("button", name="Rename")).to_have_count(0)
+    expect(menu.get_by_role("button", name="Remove from knowledge")).to_have_count(0)
+    page.keyboard.press("Escape")
     expect(base.get_by_role("button", name="Add Content")).to_have_count(0)
 
     outsider_page = page_for(outsider)

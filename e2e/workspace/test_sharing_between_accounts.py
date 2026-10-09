@@ -260,9 +260,7 @@ def test_a_base_revoked_while_its_page_is_open_no_longer_opens_its_files(
             client.post(f"/api/v1/knowledge/{base['id']}/access/update", json={"access_grants": []})
         )
 
-    opened.get_by_role("listitem").filter(has_text="gate.txt").get_by_role(
-        "button", name=re.compile("gate.txt")
-    ).click()
+    opened.get_by_role("button", name=re.compile(r"^gate\.txt(\s|$)")).click()
     expect(reader_page.get_by_text("Failed to load file content.")).to_be_visible()
     expect(reader_page.get_by_text("The harbour gate code is 4242.")).to_have_count(0)
     reader_page.reload()

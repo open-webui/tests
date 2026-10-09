@@ -295,7 +295,7 @@ def test_the_owner_edits_and_saves_the_indexed_text(page_for, curator):
     edit_indexed_text(page, "High tide at one.")
     page.get_by_role("button", name="Save").click()
 
-    expect(page.get_by_text("Indexed text saved.")).to_be_visible()
+    expect(page.get_by_text("File content updated successfully.")).to_be_visible()
     expect(page.get_by_role("button", name="Edit")).to_be_visible()
     with curator.client() as client:
         assert indexed_text(client, files["tides.txt"]) == "High tide at one."
@@ -314,7 +314,7 @@ def test_a_save_while_embedding_fails_shows_the_error_and_keeps_the_edit(
     page.get_by_role("button", name="Save").click()
 
     expect(page.get_by_text("not fully indexed")).to_be_visible()
-    expect(page.get_by_text("Indexed text saved.")).to_have_count(0)
+    expect(page.get_by_text("File content updated successfully.")).to_have_count(0)
     expect(page.get_by_role("button", name="Save")).to_be_visible()
 
 

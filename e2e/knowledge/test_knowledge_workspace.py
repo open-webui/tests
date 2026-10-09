@@ -116,8 +116,34 @@ def _open_base(page: Page, knowledge_id: str) -> Locator:
     return base
 
 
-def _file_row(base: Locator, filename: str) -> Locator:
-    return base.get_by_role("listitem").filter(has_text=filename)
+def _entry(base: Locator | Page, name: str) -> Locator:
+    """A file's or directory's own button in the file list; its name leads the button's text."""
+    return base.get_by_role("button", name=re.compile(rf"^{re.escape(name)}(\s|$)"))
+
+
+def _file_row(base: Locator, name: str) -> Locator:
+    # a filter's inner locator is matched inside the row, so it starts from the page
+    return base.locator("[data-knowledge-row]").filter(has=_entry(base.page, name))
+
+
+def _expect_listed(base: Locator, *names: str) -> None:
+    """Each file listed, and done uploading and processing."""
+    for name in names:
+        expect(_entry(base, name)).to_be_visible()
+        expect(_entry(base, name)).not_to_contain_text(re.compile("Uploading|Processing"))
+
+
+def _row_menu(page: Page, row: Locator, item: str) -> None:
+    # the menu's trigger wraps the labelled button
+    row.get_by_role("button", name="More").last.click()
+    page.get_by_role("menu").get_by_role("button", name=item).click()
+
+
+def _open_file(page: Page, base: Locator, name: str) -> Locator:
+    """Open the file in the viewer on its indexed text; returns that text's editor."""
+    _entry(base, name).click()
+    page.get_by_role("button", name="Indexed text").click()
+    return page.get_by_role("textbox", name="File content")
 
 
 def _add_content(page: Page, base: Locator, item: str) -> None:
@@ -193,14 +219,14 @@ def test_uploaded_files_and_pasted_text_are_listed_once_processed(page_for, cura
             {"name": "berths.txt", "mimeType": "text/plain", "buffer": b"Berth 9 is free.\n"},
         ]
     )
-    expect(base.get_by_text("2 files")).to_be_visible()
+    _expect_listed(base, "tides.txt", "berths.txt")
 
     _add_content(page, base, "Add text content")
     writing = page.get_by_role("dialog")
     writing.get_by_placeholder("Title").fill("office hours")
     writing.get_by_placeholder("Write something...").fill("The office opens at eight.")
     writing.get_by_role("button", name="Save").click()
-    expect(base.get_by_text("3 files")).to_be_visible()
+    _expect_listed(base, "office hours.txt")
 
     for filename in ("tides.txt", "berths.txt", "office hours.txt"):
         expect(_file_row(base, filename)).to_have_count(1)
@@ -232,11 +258,12 @@ def test_an_uploaded_folder_keeps_its_subfolders(page_for, curator, tmp_path: Pa
         _add_content(page, base, "Upload directory")
     chooser.value.set_files(str(folder))
 
-    base.get_by_role("button", name="harbour").click()
+    _entry(base, "harbour").click()
     expect(_file_row(base, "tides.txt")).to_be_visible()
-    base.get_by_role("button", name="moorings").click()
+    # a collapsed subfolder hides its files
+    expect(_file_row(base, "berths.txt")).to_have_count(0)
+    _entry(base, "moorings").click()
     expect(_file_row(base, "berths.txt")).to_be_visible()
-    expect(_file_row(base, "tides.txt")).to_have_count(0)
     assert _stored_file_names(curator, knowledge_id) == ["berths.txt", "tides.txt"]
 
 
@@ -246,12 +273,9 @@ def test_opening_a_file_shows_its_text(page_for, curator):
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
 
-    _file_row(base, "tides.txt").get_by_role("button", name=re.compile("tides.txt")).click()
+    content = _open_file(page, base, "tides.txt")
 
-    expect(page.get_by_role("link", name="tides.txt")).to_be_visible()
-    expect(page.get_by_role("textbox", name="File content")).to_have_value(
-        "High tide at 06:40, low tide at 12:55."
-    )
+    expect(content).to_have_text("High tide at 06:40, low tide at 12:55.")
 
 
 def test_searching_the_base_lists_only_matching_files(page_for, curator):
@@ -263,7 +287,7 @@ def test_searching_the_base_lists_only_matching_files(page_for, curator):
     )
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
-    expect(base.get_by_text("3 files")).to_be_visible()
+    _expect_listed(base, "tides.txt", "moorings.txt", "fuel.txt")
 
     base.get_by_role("textbox", name="Search Collection").fill("moor")
 
@@ -282,8 +306,10 @@ def test_a_removed_file_is_no_longer_sent_to_a_chat(page_for, curator, upstream)
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
 
-    _file_row(base, "gate.txt").get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    _row_menu(page, _file_row(base, "gate.txt"), "Remove from knowledge")
+    page.get_by_role("dialog", name="Remove file from knowledge?").get_by_role(
+        "button", name="Confirm"
+    ).click()
     expect(page.get_by_text("File removed successfully.")).to_be_visible()
     expect(_file_row(base, "gate.txt")).to_have_count(0)
     expect(_file_row(base, "fuel.txt")).to_be_visible()
@@ -314,35 +340,30 @@ def test_a_new_directory_holds_its_text_and_deleting_it_removes_that_text(
     base = _open_base(page, knowledge_id)
 
     _add_content(page, base, "New directory")
-    page.get_by_role("dialog").get_by_placeholder("Directory name").fill("moorings")
-    page.get_by_role("dialog").get_by_role("button", name="Create").click()
+    naming = base.get_by_role("textbox", name="Folder name")
+    naming.fill("moorings")
+    naming.press("Enter")
     expect(page.get_by_text("Directory created.")).to_be_visible()
     page.reload()
     base = page.get_by_role("main")
-    directory = base.get_by_role("button", name="moorings").last
-    expect(directory).to_be_visible()
+    expect(_entry(base, "moorings")).to_be_visible()
 
-    directory.click()
-    _add_content(page, base, "Add text content")
+    _entry(base, "moorings").click()
+    _row_menu(page, _directory_row(base, "moorings"), "Add text content")
     writing = page.get_by_role("dialog")
     writing.get_by_placeholder("Title").fill("gate")
     writing.get_by_placeholder("Write something...").fill("The gate code is 4242.")
     writing.get_by_role("button", name="Save").click()
-    expect(_file_row(base, "gate.txt")).to_be_visible()
+    _expect_listed(base, "gate.txt")
     page.reload()
     base = page.get_by_role("main")
     expect(_file_row(base, "fuel.txt")).to_be_visible()
+    # a collapsed directory hides its files
     expect(_file_row(base, "gate.txt")).to_have_count(0)
-    base.get_by_role("button", name="moorings").last.click()
+    _entry(base, "moorings").click()
     expect(_file_row(base, "gate.txt")).to_be_visible()
-    expect(_file_row(base, "fuel.txt")).to_have_count(0)
 
-    # the root crumb carries the base's name
-    base.get_by_role("button", name=name, exact=True).click()
-    # a directory row is no list item, and its menu button has no label
-    row = base.locator("div[draggable=true]").filter(has_text="moorings")
-    row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    _row_menu(page, _directory_row(base, "moorings"), "Delete folder")
     page.get_by_role("dialog", name="Delete directory?").get_by_role(
         "button", name="Confirm"
     ).click()
@@ -350,7 +371,7 @@ def test_a_new_directory_holds_its_text_and_deleting_it_removes_that_text(
     page.reload()
     base = page.get_by_role("main")
     expect(_file_row(base, "fuel.txt")).to_be_visible()
-    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
+    expect(_entry(base, "moorings")).to_have_count(0)
 
     assert _stored_file_names(curator, knowledge_id) == ["fuel.txt"]
     question = "what is the gate code?"
@@ -395,8 +416,7 @@ def _level(owner: Actor, knowledge_id: str, directory_id: str = "") -> tuple[lis
 
 
 def _directory_row(base: Locator, name: str) -> Locator:
-    # a directory row is no list item, and its menu button has no label
-    return base.locator("div[draggable=true]").filter(has_text=name)
+    return _file_row(base, name)
 
 
 def test_a_renamed_directory_keeps_its_files_under_the_new_name(page_for, curator):
@@ -406,22 +426,17 @@ def test_a_renamed_directory_keeps_its_files_under_the_new_name(page_for, curato
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
 
-    row = _directory_row(base, "moorings")
-    row.focus()
-    row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Rename").click()
-    # the row no longer shows its name as text while it is edited
-    renaming = base.locator("div[draggable=true]").get_by_role("textbox")
+    _row_menu(page, _directory_row(base, "moorings"), "Rename")
+    renaming = base.get_by_role("textbox", name="Rename")
     renaming.fill("pontoons")
     renaming.press("Enter")
-    # Enter and the blur that follows both save, so the toast shows twice
     expect(page.get_by_text("Directory renamed.").first).to_be_visible()
 
     page.reload()
     base = page.get_by_role("main")
-    expect(base.get_by_role("button", name="pontoons").last).to_be_visible()
-    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
-    base.get_by_role("button", name="pontoons").last.click()
+    expect(_entry(base, "pontoons")).to_be_visible()
+    expect(_entry(base, "moorings")).to_have_count(0)
+    _entry(base, "pontoons").click()
     expect(_file_row(base, "gate.txt")).to_be_visible()
     assert _level(curator, knowledge_id) == (["pontoons"], [])
     assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
@@ -439,16 +454,16 @@ def test_a_file_dragged_onto_a_directory_is_listed_inside_it(page_for, curator):
     base = _open_base(page, knowledge_id)
     expect(_file_row(base, "gate.txt")).to_be_visible()
 
-    _file_row(base, "gate.txt").drag_to(_directory_row(base, "moorings"))
+    _entry(base, "gate.txt").drag_to(_directory_row(base, "moorings"))
     expect(page.get_by_text("File moved.")).to_be_visible()
 
     page.reload()
     base = page.get_by_role("main")
     expect(_file_row(base, "fuel.txt")).to_be_visible()
+    # no longer at the top level: hidden until its directory is expanded
     expect(_file_row(base, "gate.txt")).to_have_count(0)
-    base.get_by_role("button", name="moorings").last.click()
+    _entry(base, "moorings").click()
     expect(_file_row(base, "gate.txt")).to_be_visible()
-    expect(_file_row(base, "fuel.txt")).to_have_count(0)
     assert _level(curator, knowledge_id) == (["moorings"], ["fuel.txt"])
     assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
 
@@ -462,16 +477,16 @@ def test_a_directory_dragged_onto_another_shows_nested_with_its_files(page_for, 
     base = _open_base(page, knowledge_id)
     expect(_directory_row(base, "quay")).to_be_visible()
 
-    _directory_row(base, "moorings").drag_to(_directory_row(base, "quay"))
+    _entry(base, "moorings").drag_to(_directory_row(base, "quay"))
     expect(page.get_by_text("Directory moved.")).to_be_visible()
 
     page.reload()
     base = page.get_by_role("main")
     expect(_directory_row(base, "quay")).to_be_visible()
     expect(_directory_row(base, "moorings")).to_have_count(0)
-    base.get_by_role("button", name="quay").last.click()
+    _entry(base, "quay").click()
     expect(_directory_row(base, "moorings")).to_be_visible()
-    base.get_by_role("button", name="moorings").last.click()
+    _entry(base, "moorings").click()
     expect(_file_row(base, "gate.txt")).to_be_visible()
     assert _level(curator, knowledge_id) == (["quay"], [])
     assert _level(curator, knowledge_id, harbour) == (["moorings"], [])
@@ -488,10 +503,7 @@ def test_deleting_a_directory_but_keeping_its_contents_moves_the_files_up(
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
 
-    row = _directory_row(base, "moorings")
-    row.focus()
-    row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    _row_menu(page, _directory_row(base, "moorings"), "Delete folder")
     deleting = page.get_by_role("dialog", name="Delete directory?")
     # the checkbox has no label of its own, and it is the dialog's only one
     deleting.get_by_role("checkbox").uncheck()
@@ -502,7 +514,7 @@ def test_deleting_a_directory_but_keeping_its_contents_moves_the_files_up(
     base = page.get_by_role("main")
     expect(_file_row(base, "gate.txt")).to_be_visible()
     expect(_file_row(base, "fuel.txt")).to_be_visible()
-    expect(base.get_by_role("button", name="moorings")).to_have_count(0)
+    expect(_entry(base, "moorings")).to_have_count(0)
     assert _level(curator, knowledge_id) == ([], ["fuel.txt", "gate.txt"])
     sent = _sent_to_the_model(curator, upstream, knowledge_id, "what is the gate code?")
     assert "4242" in sent, "the files kept from a deleted directory are no longer sent to a chat"
@@ -535,8 +547,7 @@ def test_a_webpage_added_by_its_link_is_listed_and_its_text_reaches_a_chat(
     expect(page.get_by_text("File added successfully.")).to_be_visible(timeout=30_000)
     page.reload()
     base = page.get_by_role("main")
-    expect(base.get_by_role("listitem")).to_have_count(1)
-    expect(base.get_by_text("1 file")).to_be_visible()
+    expect(base.locator("[data-knowledge-row]")).to_have_count(1)
     question = "when is high tide?"
     sent = _sent_to_the_model(owner, launched.upstream, knowledge_id, question)
     assert "High tide at the harbour is at noon" in sent
@@ -635,10 +646,12 @@ def test_a_group_with_read_access_sees_the_base_read_only(page_for, curator, tea
     expect(base.get_by_role("textbox", name="Knowledge Description")).to_be_disabled()
     expect(base.get_by_text("Read Only")).to_be_visible()
     expect(base.get_by_role("button", name="Add Content")).to_have_count(0)
-    _file_row(base, "tides.txt").get_by_role("button", name=re.compile("tides.txt")).click()
-    content = member_page.get_by_role("textbox", name="File content")
-    expect(content).to_have_value("High tide at 06:40.")
-    expect(content).to_be_disabled()
+    content = _open_file(member_page, base, "tides.txt")
+    expect(content).to_have_text("High tide at 06:40.")
+    content.click()
+    member_page.keyboard.type("Low tide at noon.")
+    expect(content).to_have_text("High tide at 06:40.")
+    expect(member_page.get_by_role("button", name="Edit")).to_have_count(0)
 
     outsider_page = page_for(outsider)
     _search_list(outsider_page, name)
@@ -676,7 +689,7 @@ def test_resetting_the_base_empties_it(page_for, curator):
     _add_files(curator, knowledge_id, {"tides.txt": "High tide.", "fuel.txt": "Cards only."})
     page = page_for(curator)
     base = _open_base(page, knowledge_id)
-    expect(base.get_by_text("2 files")).to_be_visible()
+    _expect_listed(base, "tides.txt", "fuel.txt")
 
     _add_content(page, base, "Reset")
     page.get_by_role("dialog", name="Reset knowledge base?").get_by_role(
@@ -684,7 +697,8 @@ def test_resetting_the_base_empties_it(page_for, curator):
     ).click()
 
     expect(page.get_by_text("Knowledge base has been reset")).to_be_visible()
-    expect(base.get_by_text("No content found")).to_be_visible()
+    expect(base.get_by_text("No files")).to_be_visible()
+    expect(base.locator("[data-knowledge-row]")).to_have_count(0)
     assert _stored_file_names(curator, knowledge_id) == []
 
 
@@ -724,7 +738,7 @@ def test_syncing_a_directory_mirrors_its_changes_into_the_base(
     expect(
         page.get_by_text("Sync complete: 1 added, 1 modified, 1 deleted, 1 unmodified")
     ).to_be_visible()
-    base.get_by_role("button", name="harbour").click()
+    _entry(base, "harbour").click()
     expect(_file_row(base, "gate.txt")).to_be_visible()
     expect(_file_row(base, "tides.txt")).to_have_count(1)
     expect(_file_row(base, "fuel.txt")).to_have_count(0)
