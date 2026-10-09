@@ -9,6 +9,8 @@ Discriminates: passes on dev ac00d40e3; in a backend copy, with the preset's sys
 out of the provider payload the preset test fails (no system message), and with
 `/api/v1/prompts/create` answering without storing the prompt the prompt test fails (it never
 shows in the list).
+Retargeted for 37138282f, where the rewritten prompt editor names its fields Prompt Name and
+Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
 """
 
 from __future__ import annotations
@@ -87,9 +89,9 @@ def test_a_saved_prompt_is_offered_by_its_slash_command_and_sent(page_for, build
     page.goto("/workspace/prompts")
     page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
     creating = page.get_by_role("dialog").filter(has_text="Create Prompt")
-    creating.get_by_role("textbox", name="Name", exact=True).fill(f"Sea haiku {suffix}")
+    creating.get_by_role("textbox", name="Prompt Name").fill(f"Sea haiku {suffix}")
     creating.get_by_role("textbox", name="Command").fill(command)
-    creating.get_by_role("textbox", name=re.compile("^Write a summary in 50 words")).fill(text)
+    creating.get_by_role("textbox", name="Prompt Content").fill(text)
     creating.get_by_role("button", name="Save & Create").click()
     expect(page.get_by_role("main").get_by_text(f"/{command}")).to_be_visible()
 

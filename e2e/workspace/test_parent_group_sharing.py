@@ -17,6 +17,8 @@ ignore `include_inherited` turns every test here red (only direct groups count, 
 parent was given or allowed reaches the subgroup's member); in another, an edit with a null
 parent keeping the old one and removing a member from a group leaving them in it turns the
 prompt and note tests red (the prompt is still offered and the note still listed afterwards).
+Retargeted for 37138282f, where the rewritten prompt editor names its fields Prompt Name and
+Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
 """
 
 from __future__ import annotations
@@ -317,11 +319,9 @@ def test_a_workspace_permission_on_the_parent_lets_a_subgroup_member_create_a_pr
     page.goto("/workspace/prompts")
     page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
     creating = page.get_by_role("dialog").filter(has_text="Create Prompt")
-    creating.get_by_role("textbox", name="Name", exact=True).fill("Tide check")
+    creating.get_by_role("textbox", name="Prompt Name").fill("Tide check")
     creating.get_by_role("textbox", name="Command").fill(command)
-    creating.get_by_role("textbox", name=re.compile("^Write a summary in 50 words")).fill(
-        "When is high tide?"
-    )
+    creating.get_by_role("textbox", name="Prompt Content").fill("When is high tide?")
     creating.get_by_role("button", name="Save & Create").click()
     expect(page.get_by_role("main").get_by_text(f"/{command}")).to_be_visible()
     expect(page).to_have_url(re.compile("/workspace/prompts"))

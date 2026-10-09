@@ -11,6 +11,8 @@ Discriminates: passes on the ebc6add67 build. In a frontend build of ebc6add67 w
 section links do not scroll the lists test goes red; in a frontend build whose phone layout is 480
 pixels wide (wider than the screen, so controls on the right fall off it) all three go red. In a
 backend copy whose model create drops `params` the editor test goes red at the system prompt.
+Retargeted for 37138282f, where the rewritten prompt editor names its fields Prompt Name and
+Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
 """
 
 from __future__ import annotations
@@ -139,11 +141,9 @@ def test_a_prompt_made_on_a_phone_is_listed_with_its_command(phone):
     tap_on_screen(phone.get_by_role("main").get_by_role("button", name="Create", exact=True))
     creating = phone.get_by_role("dialog").filter(has_text="Create Prompt")
     fields = {
-        creating.get_by_role("textbox", name="Name", exact=True): f"Tide pools {command}",
+        creating.get_by_role("textbox", name="Prompt Name"): f"Tide pools {command}",
         creating.get_by_role("textbox", name="Command"): command,
-        creating.get_by_role(
-            "textbox", name=re.compile("^Write a summary in 50 words")
-        ): "Describe a tide pool.",
+        creating.get_by_role("textbox", name="Prompt Content"): "Describe a tide pool.",
     }
     for field, text in fields.items():
         expect_reachable(field)

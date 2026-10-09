@@ -14,11 +14,12 @@ date fields fall back to the plain text area, where a bare flag such as `require
 when a variable is parsed and where the form starts every field empty in place of its default,
 each of those three tests goes red; in a frontend build whose insertion leaves the built-in
 placeholders unfilled the Create dialog test goes red; the chat journeys pass on those copies.
+Retargeted for 37138282f, where the rewritten prompt editor names its fields Prompt Name and
+Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -142,9 +143,9 @@ def test_a_prompt_made_in_the_create_dialog_fills_its_built_in_placeholders(
 
     page.goto("/workspace/prompts/create")
     creating = page.get_by_role("dialog").filter(has_text="Create Prompt")
-    creating.get_by_role("textbox", name="Name").fill(name)
+    creating.get_by_role("textbox", name="Prompt Name").fill(name)
     creating.get_by_role("textbox", name="Command").fill(f"itinerary-{suffix}")
-    creating.get_by_role("textbox", name=re.compile("^Write a summary in 50 words")).fill(
+    creating.get_by_role("textbox", name="Prompt Content").fill(
         "{{USER_NAME}} ({{USER_LANGUAGE}}, {{CURRENT_TIMEZONE}}, {{CURRENT_WEEKDAY}}) plans"
         ' {{place | text:placeholder="Place"}}.'
     )
