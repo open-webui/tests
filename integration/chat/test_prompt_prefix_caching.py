@@ -18,18 +18,22 @@ the page names (Citations on, File Context on, the memory system context with a 
 changing, web search switched on mid-chat, an earlier message edited) and show the check goes
 red on each.
 
-Two tests stay red. The turn a timer or a background sub-agent's report starts is sent the
-chat's finished system prompt as its own and has the model's system prompt and attached knowledge
-added to it again, so the system message changes on that turn and changes back on the next;
-issue open-webui/open-webui#31568 reports the same reuse for the sub-agent's own prompt (fix PR
-#31579 open). A model that called a second tool straight after the first, with no text in
-between, had both calls folded into one assistant message on the next round, so that round
-rewrote the assistant message the previous request ended with; PR #31593 fixed that
-(open-webui/open-webui#31588).
+The turn a timer or a background sub-agent's report started was sent the chat's finished system
+prompt as its own and had the model's system prompt and attached knowledge added to it again, so
+the system message changed on that turn and changed back on the next; issue
+open-webui/open-webui#31568 reports the same reuse for the sub-agent's own prompt. Dev ecbbff8af
+fixed both by handing those turns the chat's own system messages to build on. A model that
+called a second tool straight after the first, with no text in between, had both calls folded
+into one assistant message on the next round, so that round rewrote the assistant message the
+previous request ended with; PR #31593 fixed that (open-webui/open-webui#31588).
 
-`test_a_sub_agent_only_appends` is red on dev 93fc3fcb7: since de73bb830 a chat request whose reply
-message is already stored in the chat, the way automations, sub-agents and timers prepare their
-reply, is refused with 409 and the reply is never written (open-webui/open-webui#32066).
+`test_a_sub_agent_only_appends`, `test_a_timer_only_appends` and
+`test_a_background_sub_agent_report_only_appends` are red on dev 1c010b438: since de73bb830 a chat
+request whose reply message is already stored in the chat, the way automations, sub-agents and
+timers prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066). With that refusal removed in a backend copy of dev 1c010b438 all
+three pass three of three; with ecbbff8af reverted as well the timer and report tests fail three
+of three.
 
 Discriminates: passes on dev 015dbc861 apart from those two, which fail there; the multi-step
 tool loop test fails on dev a5bc78300, before PR #31593. In backend copies, a clock value added

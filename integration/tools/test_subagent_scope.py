@@ -11,19 +11,21 @@ stop request leaves a running sub-agent alone.
 The scripted model delegates, the sub-agent's provider requests show what it was offered and
 sent, and where a tool matters the sub-agent calls it and the test reads the result it got back.
 
-One test is red on dev on purpose: a sub-agent's system prompt names each skill twice, since the
-parent's already-assembled prompt carries the skill list the sub-agent builds again
-(open-webui/open-webui#31568, fix PR #31579 open). A sub-agent started in a folder chat was offered
-the tools that browse every knowledge base where its parent has the folder's scoped ones; PR
-#31574 fixed that (open-webui/open-webui#31569). A temporary chat that delegated left the
-sub-agent's chat stored on the server, where `Temporary Chat` keeps nothing (the task tools are
-withheld from it for that reason, dev d2936c880); PR #31573 fixed that
-(open-webui/open-webui#31567).
+A sub-agent's system prompt named each skill twice, since the parent's already-assembled
+prompt carried the skill list the sub-agent builds again (open-webui/open-webui#31568); dev
+ecbbff8af fixed that by handing the sub-agent the chat's own system messages to build on. A
+sub-agent started in a folder chat was offered the tools that browse every knowledge base where
+its parent has the folder's scoped ones; PR #31574 fixed that (open-webui/open-webui#31569). A
+temporary chat that delegated left the sub-agent's chat stored on the server, where `Temporary
+Chat` keeps nothing (the task tools are withheld from it for that reason, dev d2936c880); PR
+#31573 fixed that (open-webui/open-webui#31567).
 
-Every test here but the temporary chat one is red on dev 93fc3fcb7 (the skill test also for the
-reason above): since de73bb830 a chat request whose reply message is already stored in the chat, the
-way automations, sub-agents and timers prepare their reply, is refused with 409 and the reply is
-never written (open-webui/open-webui#32066). Apart from the skill test they pass on de73bb830^.
+Every test here but the temporary chat one is red on dev 1c010b438: since de73bb830 a chat request
+whose reply message is already stored in the chat, the way automations, sub-agents and timers
+prepare their reply, is refused with 409 and the reply is never written
+(open-webui/open-webui#32066). Apart from the skill test they pass on de73bb830^. With that refusal
+removed in a backend copy of dev 1c010b438 the skill test passes three of three, and fails three
+of three with ecbbff8af reverted as well.
 
 Discriminates: passes on dev 015dbc861 apart from the skill test, which turns green in a backend
 copy that strips the skill list from the parent's prompt; the folder knowledge test fails on dev

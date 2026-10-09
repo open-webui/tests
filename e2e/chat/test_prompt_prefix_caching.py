@@ -15,20 +15,22 @@ model's description edited mid-chat, a workspace tool picked before the first tu
 skill loaded on demand and a sub-agent. Every consecutive pair of the provider's requests is
 checked.
 
-Five tests stay red, on what the page does not name as a breaker. Two rewrite the tool list at
+Five tests went red, on what the page does not name as a breaker. Two rewrite the tool list at
 the very start of the prefix: opening a folder in the terminal's file browser moves the working
 directory written into the run_command tool's description (open-webui/open-webui#32026), and a
 reload with the terminal's shell open closes it, which drops the two user shell tools
-(open-webui/open-webui#31590, fix PR #31602 open). Two rewrite the system message: the turn a
-timer or a background sub-agent's report starts is sent the chat's finished system prompt with
-the model's system prompt and knowledge added again (open-webui/open-webui#31568, fix PR #31579
-open). The Create skill command is sent as the skill authoring prompt on its own turn and as the
-typed command on the next, so that turn rewrites an earlier user message
-(open-webui/open-webui#31591, fix PR #31598 open).
+(open-webui/open-webui#31590, fix PR #31602 open). Two rewrote the system message: the turn a
+timer or a background sub-agent's report started was sent the chat's finished system prompt with
+the model's system prompt and knowledge added again (open-webui/open-webui#31568). Dev ecbbff8af
+fixed that; both are now red only for the refusal below. The Create skill command is sent as the
+skill authoring prompt on its own turn and as the typed command on the next, so that turn
+rewrites an earlier user message (open-webui/open-webui#31591, fix PR #31598 open).
 
-`test_a_sub_agent_only_appends` is red on dev 93fc3fcb7: since de73bb830 a chat request whose reply
-message is already stored in the chat, the way automations, sub-agents and timers prepare their
-reply, is refused with 409 and the reply is never written (open-webui/open-webui#32066).
+`test_a_sub_agent_only_appends` is red on dev 93fc3fcb7, and the timer and report tests on dev
+1c010b438: since de73bb830 a chat request whose reply message is already stored in the chat, the
+way automations, sub-agents and timers prepare their reply, is refused with 409 and the reply is
+never written (open-webui/open-webui#32066). With that refusal removed in a backend copy of dev
+1c010b438 the timer and report tests pass three of three, and fail with ecbbff8af reverted as well.
 
 Discriminates: passes on dev 30f3f6a8f apart from those five, which fail there. In backend
 copies, a clock value added to the model's system prompt turned every other test red; with no
