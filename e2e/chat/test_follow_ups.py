@@ -103,6 +103,8 @@ def test_only_the_last_reply_lists_follow_ups_unless_the_account_keeps_them(
     keeping = page_for(_account_with(make_user, keepFollowUpPrompts=True))
     for page in (plain, keeping):
         _asked_answered(page, upstream)
+        # the next turn would otherwise take the follow-ups queued for this one
+        expect(_follow_up(page, FOLLOW_UPS[0])).to_be_visible()
         upstream.queue(reply.text("In late September.", match=reply.answering("next question")))
         send(page, "next question")
         expect_reply(page, "In late September.")
