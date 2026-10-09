@@ -6,6 +6,7 @@ import re
 
 from playwright.sync_api import Locator, Page, expect
 
+from utils.access_control import choose_visibility
 from utils.chat_ui import chat_input, conversation
 from utils.tooltips import tooltip_button
 
@@ -53,7 +54,7 @@ def open_access_control(page: Page, form: Locator) -> Locator:
 
 def make_public(page: Page, form: Locator) -> None:
     access = open_access_control(page, form)
-    access.get_by_role("combobox").first.select_option(label="Public")
+    choose_visibility(access, "Public")
     expect(access.get_by_text("Accessible to all users")).to_be_visible()
     page.keyboard.press("Escape")
     expect(access).to_have_count(0)

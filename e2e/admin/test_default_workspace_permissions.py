@@ -24,7 +24,9 @@ and the "adds only its menu entry" and "but not public" tests, and the picker re
 that never grants (every workspace page redirects, no import or export entry, no Add Access, no
 Public, an empty picker) turns red every "switched on" test, the "offers its create button" ones
 and the default picker test. Retargeted for 9bbb95048, which renamed the skills entry to Import;
-the import and export tests pass on dev 178de3666.
+the import and export tests pass on dev 178de3666. The Public Sharing tests were retargeted for
+784b72f19, whose access dialog picks the visibility from a menu; they pass on dev 206bf9723, and
+a build that always offers Public turns the "but not public" and "withdraws" tests red.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.access import make_group
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
+from utils.access_control import visibility_choices
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -250,10 +253,6 @@ def open_access_dialog(page: Page, owner: Actor, kind: str) -> Locator:
     page.goto(SHARED_KINDS[kind][0](owner))
     page.get_by_role("button", name="Access", exact=True).click()
     return page.get_by_role("dialog").filter(has_text="Access Control")
-
-
-def visibility_choices(dialog: Locator) -> Locator:
-    return dialog.get_by_role("combobox").locator("option")
 
 
 def sharing_switches(kind: str, *names: int) -> dict[str, bool]:

@@ -21,7 +21,9 @@ fails every public test and the public-to-private test (no change is saved), and
 every Sharing switch whatever its parent fails the group switch test. A backend copy that skips
 the model access checks on chat completions fails the revoked model and base model tests (the
 reply arrives); one that keeps every attached base in retrieval fails the revoked base test (the
-model is sent the text); one whose file access check always allows fails the open page test.
+model is sent the text); one whose file access check always allows fails the open page test. The
+public tests were retargeted for 784b72f19, whose access dialog picks the visibility from a menu;
+on dev 206bf9723 they pass, and a build whose visibility menu saves no change fails them.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from harness.actors import Actor
 from harness.knowledge_bases import add_text_file
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
+from utils.access_control import choose_visibility
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 
@@ -136,7 +139,7 @@ def _publish_model(page: Page, item: dict) -> None:
     page.goto(f"/workspace/models/edit?id={item['id']}")
     editor = page.get_by_role("main")
     expect(editor.get_by_placeholder("Model Name")).to_have_value(item["name"])
-    _visibility(_access_dialog(page)).select_option("public")
+    choose_visibility(_access_dialog(page), "Public")
     page.keyboard.press("Escape")
     editor.get_by_role("button", name="Save & Update").click()
     expect(page).to_have_url(re.compile(r"/workspace/models/?$"))
@@ -146,7 +149,7 @@ def _publish_on_page(path: str) -> Callable[[Page, dict], None]:
     def publish(page: Page, item: dict) -> None:
         page.goto(path.format(**item))
         dialog = _access_dialog(page)
-        _visibility(dialog).select_option("public")
+        choose_visibility(dialog, "Public")
         expect(page.get_by_text("Saved").first).to_be_visible()
         expect(dialog.get_by_text("Accessible to all users")).to_be_visible()
 
