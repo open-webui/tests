@@ -8,6 +8,10 @@ counts red pixels on the page; the title shows as the file name and the text as 
 
 Discriminates: passes on dev ef67cc3fa; with the frontend change of #30975 reverted the pasted
 note's PDF has no red pixels, while the text-only note passes on both.
+
+The pasted image test is red now and then on dev 22102e4a2: when an earlier save of the note is
+echoed back to the tab after the paste, the paste is stored with an empty file list and the PDF
+has no picture (open-webui/open-webui#32123).
 """
 
 from __future__ import annotations
