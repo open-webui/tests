@@ -1,12 +1,13 @@
-"""Journey: a skill's files, its saved versions, restoring one, and moving skills in and out.
+"""Journey: a skill's files, its saved versions, going back to one, and moving skills in and out.
 
 A skill is a tree of files with `SKILL.md` at its root. The editor creates it with every file and
 saves each edit as file operations against the version it opened: a put, a move and a delete in
 one save leave the untouched files as they were and add one version carrying the commit message.
 A save made from a version that is no longer current is refused as a conflict and changes nothing.
 Binary files keep their bytes. The history lists every version; comparing an old one to the
-current one names the added, deleted and changed files and gives a text diff per file; restoring
-an old version saves its files again as a new current version. The Skills page imports a ZIP
+current one names the added, deleted and changed files and gives a text diff per file; setting
+an old version as production brings its files back without adding a version, and an old version
+can be deleted while the current one cannot. The Skills page imports a ZIP
 holding skill folders, a folder picked from disk, a single SKILL.md, or a JSON export, with a
 preview that names each skill from its front matter and offers to replace one that exists. A
 skill's own ZIP export holds every file under the skill's name, Clone copies the files into a new
@@ -16,16 +17,19 @@ its SKILL.md with the list of its other files.
 Who may read or change a shared skill's files and history, and the upgrade of skills saved
 before files existed, are covered elsewhere.
 
-Discriminates: passes on dev 178de3666. Each of these edits to a backend copy turns its test red:
-a file move that keeps the old path (editor save), every save adding a version (save with nothing
+Discriminates: passes on dev 178de3666. Each of these edits to a backend copy turns its test red: a
+file move that keeps the old path (editor save), every save adding a version (save with nothing
 changed), no version check on save (conflict), base64 files counted as text (binary), every file
-compared as modified (comparison), a restore that keeps the current files (restore), a ZIP import
-that keeps only SKILL.md (ZIP import), a picked folder that keeps only SKILL.md (folder import),
-an import that ignores the front matter (Markdown), a preview that never offers Replace
-(replace), a copy import that keeps the uploaded id (copy), a ZIP export that writes only
-SKILL.md (ZIP export), an old version exported as the current one (old version export), a clone
-that copies an empty SKILL.md alone (clone), a delete that keeps the history (delete) and a
-mentioned skill sent without its file list (chat mention).
+compared as modified (comparison), a version switch that keeps the current files (set production), a
+ZIP import that keeps only SKILL.md (ZIP import), a picked folder that keeps only SKILL.md (folder
+import), an import that ignores the front matter (Markdown), a preview that never offers Replace
+(replace), a copy import that keeps the uploaded id (copy), a ZIP export that writes only SKILL.md
+(ZIP export), an old version exported as the current one (old version export), a clone that copies
+an empty SKILL.md alone (clone), a delete that keeps the history (delete) and a mentioned skill sent
+without its file list (chat mention). Retargeted for 24ee1cb16, where an old version is set as
+production in place of being restored as a copy and old versions can be deleted: the set production
+and version delete tests pass on that build, and go red in a backend copy whose version switch keeps
+the current files or whose version delete answers true without deleting.
 """
 
 from __future__ import annotations
@@ -43,14 +47,15 @@ from harness.skill_files import (
     create,
     current,
     delete_skills_of,
+    delete_version,
     files,
     history,
     import_skills,
     new_id,
     preview,
     read,
-    restore,
     save,
+    set_production,
     skill_md,
 )
 
@@ -206,7 +211,7 @@ def test_comparing_an_old_version_names_each_changed_file_and_diffs_it(owner):
     assert "+High water at one." in file_diff["diff"]
 
 
-def test_restoring_an_old_version_saves_its_files_as_a_new_current_version(owner):
+def test_setting_an_old_version_as_production_brings_back_its_files(owner):
     skill = _tide_skill(owner)
     edited = save(
         owner,
@@ -217,11 +222,10 @@ def test_restoring_an_old_version_saves_its_files_as_a_new_current_version(owner
         ],
     ).json()
 
-    restored = restore(owner, skill["id"], skill["version_id"], edited["version_id"])
+    switched = set_production(owner, skill["id"], skill["version_id"], edited["version_id"])
 
-    assert restored.status_code == 200, restored.text
-    restored_version = restored.json()["version_id"]
-    assert restored_version not in (skill["version_id"], edited["version_id"])
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["version_id"] == skill["version_id"]
     assert set(files(owner, skill["id"])) == {
         "SKILL.md",
         "references/charts.md",
@@ -232,8 +236,24 @@ def test_restoring_an_old_version_saves_its_files_as_a_new_current_version(owner
     assert {entry["id"] for entry in history(owner, skill["id"])} == {
         skill["version_id"],
         edited["version_id"],
-        restored_version,
     }
+
+
+def test_an_old_version_can_be_deleted_but_not_the_current_one(owner):
+    skill = _tide_skill(owner)
+    edited = save(
+        owner,
+        skill,
+        [{"op": "put", "path": "SKILL.md", "content": skill_md(skill["id"], "Ignore tides.")}],
+    ).json()
+
+    refused = delete_version(owner, skill["id"], edited["version_id"])
+    deleted = delete_version(owner, skill["id"], skill["version_id"])
+
+    assert refused.status_code == 400, refused.text
+    assert deleted.status_code == 200, deleted.text
+    assert [entry["id"] for entry in history(owner, skill["id"])] == [edited["version_id"]]
+    assert b"Ignore tides." in read(owner, skill["id"], "SKILL.md")
 
 
 def test_a_zip_of_skill_folders_imports_each_skill_with_all_its_files(owner):

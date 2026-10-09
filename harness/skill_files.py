@@ -101,12 +101,17 @@ def history(owner: Actor, skill_id: str) -> list[dict]:
     return listed.json()
 
 
-def restore(owner: Actor, skill_id: str, version_id: str, expected_version_id: str):
+def set_production(owner: Actor, skill_id: str, version_id: str, expected_version_id: str):
     with owner.client() as client:
         return client.post(
-            f"/api/v1/skills/id/{skill_id}/history/{version_id}/restore",
-            json={"expected_version_id": expected_version_id},
+            f"/api/v1/skills/id/{skill_id}/update/version",
+            json={"version_id": version_id, "expected_version_id": expected_version_id},
         )
+
+
+def delete_version(owner: Actor, skill_id: str, version_id: str):
+    with owner.client() as client:
+        return client.delete(f"/api/v1/skills/id/{skill_id}/history/{version_id}")
 
 
 def _uploads(uploads: dict[str, bytes]) -> list[tuple[str, tuple[str, bytes, str]]]:
