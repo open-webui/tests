@@ -12,6 +12,9 @@ with Run now shows on today and opens its chat.
 
 Renaming an automation in its Edit dialog keeps every schedule the menu can show as it was.
 
+Since 7d205a86d the list and the page word a schedule the same way, with weekdays as the Schedule
+menu names them ("Mo, Th at 8:15 AM", "Monthly 15 at 6:00 PM").
+
 Bugs, both red on dev ebc6add67:
 
 * The Once schedule fills its date with today's date in UTC and its time with the browser's
@@ -164,13 +167,12 @@ SCHEDULE_KINDS = {
     "Weekly": (
         set_weekly,
         "RRULE:FREQ=WEEKLY;BYDAY=MO,TH;BYHOUR=8;BYMINUTE=15",
-        "MO,TH at 8:15 AM",
+        "Mo, Th at 8:15 AM",
     ),
     "Monthly": (
         set_monthly,
         "RRULE:FREQ=MONTHLY;BYMONTHDAY=15;BYHOUR=18;BYMINUTE=0",
         "Monthly 15 at 6:00 PM",
-        "Monthly on the 15th at 6:00 PM",
     ),
     "Custom": (
         set_custom,
@@ -182,7 +184,7 @@ SCHEDULE_KINDS = {
 
 @pytest.mark.parametrize("kind", list(SCHEDULE_KINDS))
 def test_each_schedule_kind_is_saved_as_chosen_and_described(page_for, scheduler, kind):
-    fill, rule, described, *listed = SCHEDULE_KINDS[kind]
+    fill, rule, described = SCHEDULE_KINDS[kind]
     title = unique(f"{kind} report")
     page = page_for(scheduler, **IN_ZONE)
     dialog = open_create_dialog(page)
@@ -198,8 +200,7 @@ def test_each_schedule_kind_is_saved_as_chosen_and_described(page_for, scheduler
     page.goto("/automations")
     page.get_by_role("textbox", name="Search Automations").fill(title)
     row = page.get_by_role("button", name="Open automation").filter(has_text=title)
-    # the list words a monthly rule its own way
-    expect(row).to_contain_text(listed[0] if listed else described)
+    expect(row).to_contain_text(described)
 
 
 def test_a_daily_run_is_due_at_the_chosen_time_in_the_browsers_zone(page_for, scheduler):
