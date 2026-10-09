@@ -15,7 +15,9 @@ tested on a model the scripted provider serves and the workspace editor on a pre
 Discriminates: passes on the dev 93fc3fcb7 build. In a frontend build whose Apply drops the
 options' parameters and makes new option keys from the labels, whose Remove and reorder handles
 do nothing, whose Apply is never disabled and whose workspace editor shows the section too, every
-test fails.
+test fails. The workspace editor test was retargeted for 16849284f, whose editor saves only a
+change: it renames the preset first, passes on dev 206bf9723 and fails in a build whose workspace
+editor drops the controls on save.
 """
 
 from __future__ import annotations
@@ -316,6 +318,8 @@ def test_the_workspace_editor_shows_no_controls_and_saves_them_unchanged(page_fo
         expect(editor.get_by_text("Advanced Params")).to_be_visible()
         expect(editor.get_by_text("Model controls", exact=True)).to_have_count(0)
         expect(editor.get_by_role("button", name="Add control")).to_have_count(0)
+        # the editor saves only a change, so rename the preset
+        editor.get_by_placeholder("Model Name").fill(f"{preset['name']} renamed")
         editor.get_by_role("button", name="Save & Update").click()
         expect(page).to_have_url(re.compile(r"/workspace/models/?$"))
 
