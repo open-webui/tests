@@ -4,8 +4,8 @@ Every save that changes a prompt adds a history entry holding a snapshot of it a
 entry the active version. Restoring an earlier entry copies its snapshot back into the prompt.
 Deleting an entry takes write access to the prompt: an account the prompt is shared with for
 reading is refused and the entry stays, the owner, a writer and the admin may delete it. The
-active version cannot be deleted. The diff route is left out: `/history/{history_id}` is
-declared before it, so `/history/diff` never reaches it.
+active version cannot be deleted. Two versions are compared line by line for anyone who may read
+the prompt, and a version of another prompt is not compared.
 
 Discriminates: in a backend copy, `update_prompt_by_id` skipping `create_history_entry` turns
 `test_a_save_adds_a_history_entry_and_makes_it_active` red (and the delete matrix, whose first
@@ -13,7 +13,10 @@ entry stays active), `update_prompt_version` no longer copying the snapshot turn
 `test_restoring_an_earlier_version_brings_its_content_back` red, and the history delete handler
 asking for `read` instead of `write` turns
 `test_only_accounts_that_may_write_can_delete_a_history_entry` red (the reader gets 200 and the
-entry is gone).
+entry is gone). The comparison tests pass on dev b130fec73; the line-by-line and read access
+tests go red in a backend copy with the routes in the order before 37138282f, where the
+single-version route is declared first and answers every comparison with 404, and the other-prompt
+test goes red where the comparison looks versions up without binding them to the prompt.
 """
 
 from __future__ import annotations
@@ -178,3 +181,59 @@ def test_only_accounts_that_may_write_can_delete_a_history_entry(admin, make_use
         removed = attempt.before - attempt.after
         expected_removed = 1 if statuses[role] == ALLOWED else 0
         assert len(removed) == expected_removed, f"{role}: {attempt.before} -> {attempt.after}"
+
+
+def test_two_versions_are_compared_line_by_line(author):
+    with author.client() as client:
+        prompt = _create_prompt(client, "first draft")
+        saved = _save(client, prompt, "second draft")
+        first = _entry_holding(_history(client, prompt["id"]), "first draft")
+        compared = client.get(
+            f"/api/v1/prompts/id/{prompt['id']}/history/diff",
+            params={"from_id": first["id"], "to_id": saved["version_id"]},
+        )
+
+    assert compared.status_code == 200, compared.text
+    lines = compared.json()["content_diff"]
+    assert "-first draft" in lines
+    assert "+second draft" in lines
+
+
+def test_a_version_of_another_prompt_is_not_compared(author):
+    with author.client() as client:
+        prompt = _create_prompt(client, "first draft")
+        other = _create_prompt(client, "someone else's draft")
+        compared = client.get(
+            f"/api/v1/prompts/id/{prompt['id']}/history/diff",
+            params={"from_id": other["version_id"], "to_id": prompt["version_id"]},
+        )
+
+    assert compared.status_code == 404, compared.text
+
+
+def _both_versions(owner, prompt_id: str) -> dict:
+    with owner.client() as client:
+        prompt = client.get(f"/api/v1/prompts/id/{prompt_id}").json()
+        saved = _save(client, prompt, "second draft")
+        first = _entry_holding(_history(client, prompt_id), "first draft")
+    return {"from_id": first["id"], "to_id": saved["version_id"]}
+
+
+def test_any_account_that_may_read_can_compare_two_versions(admin, make_user):
+    accounts = cast(PROMPT, admin, make_user)
+    _allow_prompt_authoring(admin, accounts.owner)
+
+    answered = attempts(
+        accounts,
+        "GET",
+        "/api/v1/prompts/id/{id}/history/diff?from_id={from_id}&to_id={to_id}",
+        setup=_both_versions,
+    )
+
+    assert {role: attempt.status for role, attempt in answered.items()} == {
+        "owner": ALLOWED,
+        "stranger": REFUSED,
+        "reader": ALLOWED,
+        "writer": ALLOWED,
+        "admin": ALLOWED,
+    }
