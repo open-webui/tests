@@ -3,19 +3,22 @@
 The editor's version picker lists the production version and every older one by its change
 description. Picking an old one shows its text read only with its short id, and Production brings
 the current text back for editing. Compare to current opens a comparison naming the changed name
-and tags with their old and new values and the prompt text as a line diff, and Close returns to the
-old text. Edit as new version makes the old text editable and saves it as a further version that is
-not production, leaving what the chat inserts unchanged. Switching versions with unsaved typing asks
-whether to discard it first, and so does leaving the editor. Ctrl+S saves the text. A user the
-prompt is shared with read only can pick and compare its versions but is offered no way to change
-them.
+and tags with their old and new values and the prompt text as removed and added lines side by
+side, and Close returns to the old text. The Unified layout shows those lines in one column and is
+kept for the next comparison; a version that differs only in its line endings says so. Edit as new
+version makes the old text editable and saves it as a further version that is not production,
+leaving what the chat inserts unchanged. Switching versions with unsaved typing asks whether to
+discard it first, and so does leaving the editor. Ctrl+S saves the text. A user the prompt is
+shared with read only can pick and compare its versions but is offered no way to change them.
 
-Discriminates: passes on dev 37138282f. In a frontend build where an old version's text box takes
+Discriminates: passes on dev b130fec73. In a frontend build where an old version's text box takes
 typing the read-only test goes red; where the comparison leaves out the prompt text the comparison
 test goes red; where Edit as new version saves as production the edit test goes red; where switching
 versions never asks about unsaved typing the discard test goes red; where Ctrl+S does nothing the
-shortcut test goes red; where leaving the editor never asks the leave test goes red; and where an
-old version offers its write buttons whatever the access, the reader test goes red.
+shortcut test goes red; where leaving the editor never asks the leave test goes red; where an old
+version offers its write buttons whatever the access the reader test goes red; where the chosen
+layout is not remembered the layout test goes red; and where a change of line endings alone counts
+as no change the line endings test goes red.
 """
 
 from __future__ import annotations
@@ -97,6 +100,15 @@ def _change(comparison: Locator, label: str) -> Locator:
     return row.locator(".grid > div")
 
 
+def _removed(comparison: Locator) -> Locator:
+    """The lines the comparison shows as taken out of the old version."""
+    return comparison.locator(".diff-cell.deletion .line-content")
+
+
+def _added(comparison: Locator) -> Locator:
+    return comparison.locator(".diff-cell.addition .line-content")
+
+
 def _open(page: Page, prompt_id: str, text: str) -> None:
     page.goto(f"/workspace/prompts/{prompt_id}")
     expect(_content(page)).to_have_value(text)
@@ -133,12 +145,8 @@ def test_compare_to_current_shows_the_changed_name_tags_and_text(page_for, write
     expect(comparison).to_contain_text(latest["version_id"][:7])
     expect(_change(comparison, "Name")).to_have_text([first["name"], latest["name"]])
     expect(_change(comparison, "Tags")).to_have_text(["notes", "notes, short"])
-    expect(comparison.get_by_role("button", name=re.compile("Prompt Content"))).to_contain_text(
-        "Modified"
-    )
-    line_diff = comparison.locator("pre")
-    expect(line_diff).to_contain_text(f"-{THREE_LINES}")
-    expect(line_diff).to_contain_text(f"+{ONE_LINE}")
+    expect(_removed(comparison)).to_have_text([THREE_LINES])
+    expect(_added(comparison)).to_have_text([ONE_LINE])
 
     comparison.get_by_role("button", name="Close").click()
     expect(comparison).to_have_count(0)
@@ -241,8 +249,56 @@ def test_a_reader_can_compare_versions_but_not_change_them(page_for, writer, adm
     _pick_version(page, "First draft")
     expect(_content(page)).to_have_value(THREE_LINES)
     page.get_by_role("button", name="Compare to current").click()
-    line_diff = page.get_by_role("region", name="Compare to current").locator("pre")
-    expect(line_diff).to_contain_text(f"+{ONE_LINE}")
+    expect(_added(page.get_by_role("region", name="Compare to current"))).to_have_text([ONE_LINE])
     expect(page.get_by_role("button", name="Edit as new version")).to_have_count(0)
     expect(page.get_by_role("button", name="Set as Production")).to_have_count(0)
     expect(page.get_by_role("button", name="Save", exact=True)).to_have_count(0)
+
+
+def _compare(page: Page, label: str) -> Locator:
+    _pick_version(page, label)
+    page.get_by_role("button", name="Compare to current").click()
+    return page.get_by_role("region", name="Compare to current")
+
+
+def test_the_unified_layout_shows_the_change_in_one_column_and_is_kept(page_for, writer):
+    first, _ = _edited_once(writer)
+    page = page_for(writer)
+    _open(page, first["id"], ONE_LINE)
+
+    comparison = _compare(page, "First draft")
+    layout = comparison.get_by_label("Diff layout", exact=True)
+    expect(layout).to_have_text("Split")
+    expect(comparison.locator(".split-row")).not_to_have_count(0)
+    layout.click()
+    page.get_by_role("button", name="Unified", exact=True).click()
+    expect(layout).to_have_text("Unified")
+    expect(comparison.locator(".split-row")).to_have_count(0)
+    expect(comparison.locator(".unified-row.deletion .line-content")).to_have_text([THREE_LINES])
+    expect(comparison.locator(".unified-row.addition .line-content")).to_have_text([ONE_LINE])
+
+    _open(page, first["id"], ONE_LINE)
+    comparison = _compare(page, "First draft")
+    expect(comparison.get_by_label("Diff layout", exact=True)).to_have_text("Unified")
+    expect(comparison.locator(".split-row")).to_have_count(0)
+
+
+def test_a_version_that_differs_only_in_line_endings_says_so(page_for, writer):
+    command = f"crlf{uuid.uuid4().hex[:8]}"
+    form = {"command": command, "name": f"Endings {command}"}
+    first = _post(
+        writer,
+        "/api/v1/prompts/create",
+        {**form, "content": "Line one\nLine two", "commit_message": "Unix endings"},
+    )
+    _post(
+        writer,
+        f"/api/v1/prompts/id/{first['id']}/update",
+        {**form, "content": "Line one\r\nLine two", "commit_message": "Windows endings"},
+    )
+    page = page_for(writer)
+    _open(page, first["id"], "Line one\nLine two")
+
+    comparison = _compare(page, "Unix endings")
+    expect(comparison).to_contain_text("Only line endings changed")
+    expect(comparison).not_to_contain_text("No differences")
