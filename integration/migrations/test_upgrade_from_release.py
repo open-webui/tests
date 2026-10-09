@@ -6,12 +6,14 @@ permission of its own, a chat with a regenerated reply, a tool call and an attac
 the server streamed itself, one it answered from a knowledge base with its citation, folders,
 a shared chat, a note, a knowledge base with a file, a model preset, prompts, a tool, a filter
 function with valves, memories, a channel with a thread and a reaction, feedback and settings
-changed from their defaults, a default model among them. Its manifest records what was made and
-for whom. The checkout boots on a copy of it (`harness.upgraded_release`), running every migration
-since that release, and each account signs in with its old password and finds its data intact,
-while access grants still apply to the right accounts. The Postgres data sets restore a `pg_dump`
-into an embedded server first. `scripts/seed_upgrade_data.py` regenerates the data sets; the
-browser twin, `e2e/migrations/test_upgrade_from_release.py`, opens the same data in the app.
+changed from their defaults, a default model among them, and skills, one of them owned by a
+fifth account deleted since (`test_skill_history_upgrade.py` reads those). Its manifest records
+what was made and for whom. The checkout boots on a copy of it (`harness.upgraded_release`),
+running every migration since that release, and each account signs in with its old password
+and finds its data intact, while access grants still apply to the right accounts. The Postgres
+data sets restore a `pg_dump` into an embedded server first. `scripts/seed_upgrade_data.py`
+regenerates the data sets; the browser twin, `e2e/migrations/test_upgrade_from_release.py`,
+opens the same data in the app.
 
 Discriminates: passes on dev ac00d40e3 for all six data sets; with the copy step of
 `3ff2c63645b8` (config reshape) skipping the `ui.` keys in a copy of it, both v0.9.6 sets fail

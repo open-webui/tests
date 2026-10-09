@@ -7,7 +7,8 @@ checkout on it, which runs every migration since that release, and points the em
 connections the release saved at a scripted provider of its own (`Upgraded.provider`). `settings`
 go to the boot, such as `FRONTEND_BUILD_DIR` for the browser suite. `Upgraded.sign_in(who)` signs
 a manifest account in with its old password, `client(who)` keeps that session and `actor(who)` is
-the account as the browser suite's `page_for` takes it. `data_set_params()` gives every data set
+the account as the browser suite's `page_for` takes it. `prepare(release)` runs on the unpacked
+data set before the checkout first starts on it. `data_set_params()` gives every data set
 as a pytest param, the Postgres ones marked `requires_postgres`.
 """
 
@@ -16,14 +17,14 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import httpx
 import pytest
 
 from harness import upstream as upstream_module
 from harness.actors import Actor
-from harness.prepared_data import RunningBackend, release_data, serving
+from harness.prepared_data import ReleaseData, RunningBackend, release_data, serving
 
 DATA_SETS = Path(__file__).resolve().parent.parent / "integration" / "migrations" / "upgrade_data"
 
@@ -79,10 +80,15 @@ class Upgraded:
 
 @contextlib.contextmanager
 def upgraded_release(
-    name: str, root: Path, settings: dict[str, str] | None = None
+    name: str,
+    root: Path,
+    settings: dict[str, str] | None = None,
+    prepare: Callable[[ReleaseData], None] | None = None,
 ) -> Iterator[Upgraded]:
     with contextlib.ExitStack() as stack:
         release = stack.enter_context(release_data(DATA_SETS / f"{name}.tar.gz", root))
+        if prepare:
+            prepare(release)
         provider, shutdown = upstream_module.serve()
         stack.callback(shutdown)
         boot_settings = {

@@ -94,6 +94,28 @@ class Filter:
 GROUP_PERMISSIONS = {"workspace": {"models": True}}
 
 KNOWLEDGE_TEXT = "The upgrade handbook says the lighthouse key hangs behind the blue door."
+
+TRIP_SKILL = """---
+name: trip-planner
+description: Plans multi-city trips by train.
+---
+
+# Trip planner
+
+1. Ask for the cities and the dates.
+2. Prefer night trains over flights.
+3. Keep every transfer above 40 minutes.
+"""
+# what alice changes the trip planner to, so its last change is later than its creation
+TRIP_SKILL_EDITED = TRIP_SKILL + "4. Name the platform for every departure.\n"
+TRANSLATOR_SKILL = (
+    "# Übersetzer \U0001f30d\r\n"
+    "\r\n"
+    "Übersetze höflich: «Grüß Gott» → 「こんにちは」, 你好, Привет, مرحبا, שלום.\r\n"
+    "\tKeep combining marks (e\u0301, n\u0303) "
+    "and emoji with modifiers (\U0001f44b\U0001f3fd).  \r\n"
+    "Math stays: ∑ x² ≤ ∞; quotes stay: ‘single’ “double” `<$PATH>`.\r\n"
+)
 CHAT_FILE_TEXT = "Packing list: umbrella, passport, a very old map of Vienna."
 
 
@@ -182,6 +204,7 @@ class Seeder:
         self.group()
         self.settings()
         self.workspace()
+        self.skills()
         self.knowledge()
         self.chats()
         self.notes_and_memories()
@@ -257,6 +280,7 @@ class Seeder:
             permissions = _ensure(client.get("/api/v1/users/default/permissions"), "permissions")
             permissions["chat"]["delete"] = False
             permissions["workspace"]["prompts"] = True
+            permissions["workspace"]["skills"] = True
             _ensure(
                 client.post("/api/v1/users/default/permissions", json=permissions),
                 "saving default permissions",
@@ -289,7 +313,11 @@ class Seeder:
                 "ENABLE_CHANNELS": True,
                 "WEBUI_URL": "https://chat.example.com",
             },
-            "permissions": {"chat.delete": False, "workspace.prompts": True},
+            "permissions": {
+                "chat.delete": False,
+                "workspace.prompts": True,
+                "workspace.skills": True,
+            },
             "banner": banner,
             "alice_ui": user_settings["ui"],
             "bob_ui": bob_settings["ui"],
@@ -400,6 +428,167 @@ class Seeder:
             "system": "You answer from the handbook.",
             "readers": ["bob"],
         }
+
+    def _create_skill(self, who: str, form: dict) -> None:
+        with self.client(who) as client:
+            _ensure(client.post("/api/v1/skills/create", json=form), f"creating {form['id']}")
+
+    def skills(self) -> None:
+        """Skills of every shape an install holds, read back as the release stored them."""
+        group_id = self.manifest["group"]["id"]
+        self._create_skill(
+            "alice",
+            {
+                "id": "trip-planner",
+                "name": "Trip planner",
+                "description": "Plans multi-city trips by train.",
+                "content": TRIP_SKILL,
+                "meta": {"tags": ["travel"]},
+                "access_grants": [
+                    _grant("group", group_id),
+                    _grant("user", self._id("bob"), "write"),
+                ],
+            },
+        )
+        time.sleep(1.1)
+        with self.client("alice") as client:
+            _ensure(
+                client.post(
+                    "/api/v1/skills/id/trip-planner/update",
+                    json={
+                        "id": "trip-planner",
+                        "name": "Trip planner",
+                        "description": "Plans multi-city trips by train.",
+                        "content": TRIP_SKILL_EDITED,
+                        "meta": {"tags": ["travel"]},
+                    },
+                ),
+                "editing the trip planner",
+            )
+        self._create_skill(
+            "alice",
+            {
+                "id": "uebersetzer",
+                "name": "Übersetzer 日本語 \U0001f680",
+                "description": "",
+                "content": TRANSLATOR_SKILL,
+                "access_grants": [],
+            },
+        )
+        # no description and no meta, then switched off
+        self._create_skill(
+            "bob", {"id": "old-habits", "name": "Old habits", "content": "Answer in Latin."}
+        )
+        with self.client("bob") as client:
+            _ensure(client.post("/api/v1/skills/id/old-habits/toggle"), "switching off old-habits")
+        self._create_skill(
+            "admin",
+            {
+                "id": "house-style",
+                "name": "House style",
+                "description": "How every answer is formatted.",
+                "content": "Use sentence case headings and no exclamation marks.",
+                "access_grants": [_grant("user", "*")],
+            },
+        )
+        # an account that leaves: its skill stays, owned by an id no account has any more
+        dave = {"name": "Dave Departed", "email": "dave@example.com", "password": "dave-pass-1"}
+        with self.client("admin") as client:
+            added = _ensure(
+                client.post("/api/v1/auths/add", json={**dave, "role": "user"}), "adding dave"
+            )
+        self.tokens["dave"] = added["token"]
+        self._create_skill(
+            "dave",
+            {
+                "id": "dave-notes",
+                "name": "Dave's notes",
+                "description": "Left behind.",
+                "content": "Hand over to the next shift at six.",
+                "access_grants": [_grant("group", group_id)],
+            },
+        )
+        with self.client("admin") as client:
+            deleted = _ensure(client.delete(f"/api/v1/users/{added['id']}"), "deleting dave")
+            assert deleted is True, deleted
+            stored = {}
+            for skill_id in (
+                "trip-planner",
+                "uebersetzer",
+                "old-habits",
+                "house-style",
+                "dave-notes",
+            ):
+                skill = _ensure(client.get(f"/api/v1/skills/id/{skill_id}"), f"reading {skill_id}")
+                stored[skill_id] = {
+                    key: skill[key]
+                    for key in (
+                        "id",
+                        "user_id",
+                        "name",
+                        "description",
+                        "content",
+                        "meta",
+                        "is_active",
+                    )
+                }
+                stored[skill_id]["created_at"] = skill["created_at"]
+                stored[skill_id]["updated_at"] = skill["updated_at"]
+                stored[skill_id]["grants"] = sorted(
+                    (
+                        {
+                            key: grant[key]
+                            for key in ("principal_type", "principal_id", "permission")
+                        }
+                        for grant in skill.get("access_grants", [])
+                    ),
+                    key=lambda grant: (
+                        grant["principal_type"],
+                        grant["principal_id"],
+                        grant["permission"],
+                    ),
+                )
+        expected_grants = {
+            "trip-planner": 2,
+            "uebersetzer": 0,
+            "old-habits": 0,
+            "house-style": 1,
+            "dave-notes": 1,
+        }
+        for skill_id, count in expected_grants.items():
+            if len(stored[skill_id]["grants"]) != count:
+                raise SystemExit(f"{skill_id} was stored with grants {stored[skill_id]['grants']}")
+        if (
+            stored["old-habits"]["is_active"]
+            or stored["trip-planner"]["content"] != TRIP_SKILL_EDITED
+        ):
+            raise SystemExit("the release did not keep the toggle or the edit")
+        owners = {
+            "trip-planner": "alice",
+            "uebersetzer": "alice",
+            "old-habits": "bob",
+            "house-style": "admin",
+        }
+        for skill_id, who in owners.items():
+            stored[skill_id]["owner"] = who
+        stored["dave-notes"]["owner"] = None
+        readers = {
+            "trip-planner": ["alice", "bob"],
+            "uebersetzer": ["alice"],
+            "old-habits": ["bob"],
+            "house-style": ["alice", "bob", "carol"],
+            "dave-notes": ["alice", "bob"],
+        }
+        writers = {
+            "trip-planner": ["alice", "bob"],
+            "uebersetzer": ["alice"],
+            "old-habits": ["bob"],
+        }
+        for skill_id in stored:
+            stored[skill_id]["readers"] = readers[skill_id]
+            stored[skill_id]["writers"] = writers.get(skill_id, [])
+        self.manifest["skills"] = stored
+        self.manifest["deleted_account"] = {**dave, "id": added["id"]}
 
     def _upload(self, client: httpx.Client, filename: str, text: str) -> str:
         uploaded = client.post(

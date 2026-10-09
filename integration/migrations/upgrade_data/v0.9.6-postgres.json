@@ -1,39 +1,39 @@
 {
   "release": "v0.9.6",
   "engine": "postgres",
-  "data_dir": "/tmp/seed-v0.9.6-wtbjsq1t/data",
+  "data_dir": "/tmp/seed-v0.9.6-postgres/data",
   "accounts": {
     "admin": {
       "name": "Ada Admin",
       "email": "admin@example.com",
       "password": "admin-pass-1",
-      "id": "7b397ba4-8c13-4bee-83bb-45fd386d2449",
+      "id": "ec9f46f7-27d8-4045-9852-401ccd233693",
       "role": "admin"
     },
     "alice": {
       "name": "Alice Author",
       "email": "alice@example.com",
       "password": "alice-pass-1",
-      "id": "4ffa8c89-b40f-436b-9336-cf8822edb6ab",
+      "id": "6dfcf736-78c9-4eb3-9337-a140900ba51e",
       "role": "user"
     },
     "bob": {
       "name": "Bob Reader",
       "email": "bob@example.com",
       "password": "bob-pass-1",
-      "id": "30ddd733-56d8-46d6-9109-7d1080f90d5b",
+      "id": "7f83f8e8-8d3d-4bb0-bd78-c481993db872",
       "role": "user"
     },
     "carol": {
       "name": "Carol Outsider",
       "email": "carol@example.com",
       "password": "carol-pass-1",
-      "id": "1d32791e-46c2-4345-b0ac-8cf3a97fee3f",
+      "id": "811ec59c-ea87-4b95-b27e-b39b9c1a48cd",
       "role": "user"
     }
   },
   "group": {
-    "id": "05f0b78e-5412-4c7f-92fe-028d8e53db98",
+    "id": "ddb62723-0ee0-47d8-a31a-34d95be5eb00",
     "name": "Research",
     "members": [
       "alice",
@@ -54,7 +54,8 @@
     },
     "permissions": {
       "chat.delete": false,
-      "workspace.prompts": true
+      "workspace.prompts": true,
+      "workspace.skills": true
     },
     "banner": {
       "id": "upgrade-banner",
@@ -115,10 +116,149 @@
       "bob"
     ]
   },
+  "skills": {
+    "trip-planner": {
+      "id": "trip-planner",
+      "user_id": "6dfcf736-78c9-4eb3-9337-a140900ba51e",
+      "name": "Trip planner",
+      "description": "Plans multi-city trips by train.",
+      "content": "---\nname: trip-planner\ndescription: Plans multi-city trips by train.\n---\n\n# Trip planner\n\n1. Ask for the cities and the dates.\n2. Prefer night trains over flights.\n3. Keep every transfer above 40 minutes.\n4. Name the platform for every departure.\n",
+      "meta": {
+        "tags": [
+          "travel"
+        ]
+      },
+      "is_active": true,
+      "created_at": 1791544619,
+      "updated_at": 1791544620,
+      "grants": [
+        {
+          "principal_type": "group",
+          "principal_id": "ddb62723-0ee0-47d8-a31a-34d95be5eb00",
+          "permission": "read"
+        },
+        {
+          "principal_type": "user",
+          "principal_id": "7f83f8e8-8d3d-4bb0-bd78-c481993db872",
+          "permission": "write"
+        }
+      ],
+      "owner": "alice",
+      "readers": [
+        "alice",
+        "bob"
+      ],
+      "writers": [
+        "alice",
+        "bob"
+      ]
+    },
+    "uebersetzer": {
+      "id": "uebersetzer",
+      "user_id": "6dfcf736-78c9-4eb3-9337-a140900ba51e",
+      "name": "\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80",
+      "description": "",
+      "content": "# \u00dcbersetzer \ud83c\udf0d\r\n\r\n\u00dcbersetze h\u00f6flich: \u00abGr\u00fc\u00df Gott\u00bb \u2192 \u300c\u3053\u3093\u306b\u3061\u306f\u300d, \u4f60\u597d, \u041f\u0440\u0438\u0432\u0435\u0442, \u0645\u0631\u062d\u0628\u0627, \u05e9\u05dc\u05d5\u05dd.\r\n\tKeep combining marks (e\u0301, n\u0303) and emoji with modifiers (\ud83d\udc4b\ud83c\udffd).  \r\nMath stays: \u2211 x\u00b2 \u2264 \u221e; quotes stay: \u2018single\u2019 \u201cdouble\u201d `<$PATH>`.\r\n",
+      "meta": {
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1791544620,
+      "updated_at": 1791544620,
+      "grants": [],
+      "owner": "alice",
+      "readers": [
+        "alice"
+      ],
+      "writers": [
+        "alice"
+      ]
+    },
+    "old-habits": {
+      "id": "old-habits",
+      "user_id": "7f83f8e8-8d3d-4bb0-bd78-c481993db872",
+      "name": "Old habits",
+      "description": null,
+      "content": "Answer in Latin.",
+      "meta": {
+        "tags": []
+      },
+      "is_active": false,
+      "created_at": 1791544620,
+      "updated_at": 1791544620,
+      "grants": [],
+      "owner": "bob",
+      "readers": [
+        "bob"
+      ],
+      "writers": [
+        "bob"
+      ]
+    },
+    "house-style": {
+      "id": "house-style",
+      "user_id": "ec9f46f7-27d8-4045-9852-401ccd233693",
+      "name": "House style",
+      "description": "How every answer is formatted.",
+      "content": "Use sentence case headings and no exclamation marks.",
+      "meta": {
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1791544620,
+      "updated_at": 1791544620,
+      "grants": [
+        {
+          "principal_type": "user",
+          "principal_id": "*",
+          "permission": "read"
+        }
+      ],
+      "owner": "admin",
+      "readers": [
+        "alice",
+        "bob",
+        "carol"
+      ],
+      "writers": []
+    },
+    "dave-notes": {
+      "id": "dave-notes",
+      "user_id": "edc24529-061e-48c8-8c2d-a8441c1322a9",
+      "name": "Dave's notes",
+      "description": "Left behind.",
+      "content": "Hand over to the next shift at six.",
+      "meta": {
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1791544620,
+      "updated_at": 1791544620,
+      "grants": [
+        {
+          "principal_type": "group",
+          "principal_id": "ddb62723-0ee0-47d8-a31a-34d95be5eb00",
+          "permission": "read"
+        }
+      ],
+      "owner": null,
+      "readers": [
+        "alice",
+        "bob"
+      ],
+      "writers": []
+    }
+  },
+  "deleted_account": {
+    "name": "Dave Departed",
+    "email": "dave@example.com",
+    "password": "dave-pass-1",
+    "id": "edc24529-061e-48c8-8c2d-a8441c1322a9"
+  },
   "knowledge": {
-    "id": "285217af-de56-404e-aa91-90ca982c3167",
+    "id": "fd6b412c-7311-4aae-a949-1354be4a4c3d",
     "name": "Handbook",
-    "file_id": "06c4cee9-711c-4119-ae8f-03967b9fc8ce",
+    "file_id": "30fbd0fd-4fa6-4f94-939a-6ab0b3e2e48c",
     "filename": "handbook.txt",
     "text": "The upgrade handbook says the lighthouse key hangs behind the blue door.",
     "readers": [
@@ -128,17 +268,17 @@
   },
   "folders": {
     "parent": {
-      "id": "7214f07b-1ea7-493b-abab-7ef0c79cba17",
+      "id": "2855bbd0-7512-4b8e-9167-27ec033a5d7b",
       "name": "Trips"
     },
     "child": {
-      "id": "e874f573-87c8-418c-a57f-01b36279ebc4",
+      "id": "da4010cd-9bec-49bd-882e-e3871a503783",
       "name": "Vienna"
     }
   },
   "chats": {
     "branched": {
-      "id": "8744d23a-d0ab-4aee-a0eb-4bda19ce3823",
+      "id": "eda3ec1f-88cb-4e8e-950c-3111558698a0",
       "title": "Packing for Vienna",
       "current_id": "a2-0000-4000-8000-000000000000",
       "messages": {
@@ -180,62 +320,62 @@
           "content": "A light jacket."
         }
       },
-      "folder_id": "e874f573-87c8-418c-a57f-01b36279ebc4",
-      "share_id": "b3910c2c-3f1c-4c09-bf87-797e4a46f298"
+      "folder_id": "da4010cd-9bec-49bd-882e-e3871a503783",
+      "share_id": "0bac0bb0-67e3-4392-8933-41f38c454cf8"
     },
     "live": {
-      "id": "d324ffb7-d8d9-4a85-b01e-ae3616f597b0",
+      "id": "7ffb7379-bfbf-4ac2-88ff-a1b737354a37",
       "title": "Schnitzel questions",
-      "current_id": "664e0fc5-247d-4b98-9fd7-3c4b6c173657",
+      "current_id": "56db5164-5b8a-4ce0-afe4-bc9a799b8108",
       "messages": {
-        "179b6916-febb-4fea-bbfd-bca22ab7269b": {
+        "6b715ce3-b8ae-4fcc-9fa3-b4a4ccf99b0e": {
           "parent": null,
           "children": [
-            "97cdc2a1-dfe1-4a06-892d-a83fec0f6276"
+            "273c4535-ef5c-461e-a5fb-d7ad64349ca1"
           ],
           "role": "user",
           "content": "What is a Schnitzel?"
         },
-        "97cdc2a1-dfe1-4a06-892d-a83fec0f6276": {
-          "parent": "179b6916-febb-4fea-bbfd-bca22ab7269b",
+        "273c4535-ef5c-461e-a5fb-d7ad64349ca1": {
+          "parent": "6b715ce3-b8ae-4fcc-9fa3-b4a4ccf99b0e",
           "children": [
-            "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d"
+            "e4009c63-8684-4750-b226-06873a503800"
           ],
           "role": "assistant",
           "content": "Schnitzel is a breaded cutlet."
         },
-        "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d": {
-          "parent": "97cdc2a1-dfe1-4a06-892d-a83fec0f6276",
+        "e4009c63-8684-4750-b226-06873a503800": {
+          "parent": "273c4535-ef5c-461e-a5fb-d7ad64349ca1",
           "children": [
-            "664e0fc5-247d-4b98-9fd7-3c4b6c173657"
+            "56db5164-5b8a-4ce0-afe4-bc9a799b8108"
           ],
           "role": "user",
           "content": "How do I eat it?"
         },
-        "664e0fc5-247d-4b98-9fd7-3c4b6c173657": {
-          "parent": "a59f36e6-72aa-4fd7-9c2e-ef7f35cf2d1d",
+        "56db5164-5b8a-4ce0-afe4-bc9a799b8108": {
+          "parent": "e4009c63-8684-4750-b226-06873a503800",
           "children": [],
           "role": "assistant",
           "content": "Try it with lemon."
         }
       },
-      "reply_id": "97cdc2a1-dfe1-4a06-892d-a83fec0f6276"
+      "reply_id": "273c4535-ef5c-461e-a5fb-d7ad64349ca1"
     },
     "cited": {
-      "id": "7e8c92b8-085b-42ea-be38-b834dcc38025",
-      "title": "Lighthouse key",
-      "current_id": "26231b9c-d668-4279-9547-ef56a158fc68",
+      "id": "41054faf-aff2-47e8-90c7-1a96de739e4d",
+      "title": "Where does the lighthouse key hang?",
+      "current_id": "adca0f18-4388-4c28-9d11-1b782291f164",
       "messages": {
-        "c8e4b895-1b6f-49d4-a42f-77a6ca2c3543": {
+        "92699958-1d61-4c48-bdae-94fe57c0624f": {
           "parent": null,
           "children": [
-            "26231b9c-d668-4279-9547-ef56a158fc68"
+            "adca0f18-4388-4c28-9d11-1b782291f164"
           ],
           "role": "user",
           "content": "Where does the lighthouse key hang?"
         },
-        "26231b9c-d668-4279-9547-ef56a158fc68": {
-          "parent": "c8e4b895-1b6f-49d4-a42f-77a6ca2c3543",
+        "adca0f18-4388-4c28-9d11-1b782291f164": {
+          "parent": "92699958-1d61-4c48-bdae-94fe57c0624f",
           "children": [],
           "role": "assistant",
           "content": "Behind the blue door [1]."
@@ -248,22 +388,22 @@
       ]
     },
     "archived": {
-      "id": "661105de-100d-468a-b906-8c2c4a200f07",
+      "id": "549c0622-626c-475c-b319-02d1e1964967",
       "title": "Old plans"
     }
   },
   "chat_file": {
-    "id": "121cdfec-c25b-4735-9b0f-64117a54f0a9",
+    "id": "66eab207-aa7c-48dc-9dde-c6e38b39579d",
     "filename": "packing.txt",
     "text": "Packing list: umbrella, passport, a very old map of Vienna."
   },
   "feedback": {
-    "id": "5cc751dc-f7c2-4b76-b573-7f6eb21d8c3a",
+    "id": "145a121e-f741-4699-a711-a154488f91b8",
     "reason": "Accurate",
     "rating": 1
   },
   "note": {
-    "id": "31343645-0293-4a58-8a10-f3eb5653de35",
+    "id": "4ed5d13d-63b3-4068-8c03-9b8571a4cada",
     "title": "Groceries",
     "md": "# Groceries\n\n- apples\n- *dark* chocolate",
     "writers": [
@@ -278,18 +418,18 @@
     ]
   },
   "channel": {
-    "id": "b919b19f-d698-41c7-b883-e62ca23f238f",
+    "id": "e1d8d956-6dc7-478a-98e5-e1f04259bb37",
     "name": "lighthouse",
     "readers": [
       "alice",
       "bob"
     ],
     "message": {
-      "id": "e74e424b-2b3d-4bd6-89ca-8fc21ab6fa3d",
+      "id": "c8991e9e-95ad-46be-ab0a-b1ed3a279be2",
       "content": "Who has the lighthouse key?"
     },
     "reply": {
-      "id": "5ab37ddf-7742-405f-b863-17ec6e376ef5",
+      "id": "ead3209a-e656-4f0c-8cd8-b45e172880a0",
       "content": "Behind the blue door."
     },
     "reaction": "thumbsup"

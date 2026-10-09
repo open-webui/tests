@@ -15,9 +15,10 @@ migration chain that breaks on an empty database is a dead install. Regressions 
 The server starts on an empty database, the first account becomes the admin and saves
 something in every feature area, the server restarts on that database (a second upgrade, as
 every container restart runs) and it all reads back, while accounts are still added, renamed
-and deleted. The operator's manual commands from the migration guide then run on an empty
-database of their own: upgrade to head, the key tables it lists, a second upgrade, a step back
-and forward again, and `alembic downgrade base` unwinding every table. Postgres runs on the
+and deleted. The skill it saved starts its history with one version, which the restart keeps.
+The operator's manual commands from the migration guide then run on an empty database of their
+own: upgrade to head, the key tables it lists, a second upgrade, a step back and forward again,
+and `alembic downgrade base` unwinding every table. Postgres runs on the
 embedded server (`pgserver`) in either database mode of the suite.
 
 Twin of unit/migrations/test_lifecycle.py and of unit/deps/test_alembic.py.
@@ -28,7 +29,8 @@ longer drops `calendar_event_attendee` fails the downgrade test on both; a colum
 the note model with no migration behind it fails the install on SQLite (saving a note answers
 400); a batch alteration of `4ace53fd72c8` told not to recreate its table (`recreate='never'`)
 fails the install and the manual commands on SQLite, as does an `env.py` that never calls
-`run_migrations()`.
+`run_migrations()`. A copy whose skill save writes no history entry (9bbb95048) fails the skill
+test on both.
 """
 
 from __future__ import annotations
@@ -66,6 +68,8 @@ CRITICAL_TABLES = {
     "note",
     "oauth_session",
     "prompt",
+    "skill",
+    "skill_history",
     "tag",
     "tool",
     "user",
@@ -163,6 +167,10 @@ def _save_one_of_everything(client: httpx.Client) -> dict[str, str]:
         "/api/v1/groups/create", json={"name": f"Travellers {tag}", "description": ""}
     )
     channel = client.post("/api/v1/channels/create", json={"name": f"trips-{tag}"})
+    skill = client.post(
+        "/api/v1/skills/create",
+        json={"id": f"packing-{tag}", "name": f"Packing {tag}", "content": "Pack light."},
+    )
     start = time.time_ns()
     event = create_event(
         client, default_calendar_id(client), start_at=start, end_at=start + HOUR_NS
@@ -177,6 +185,7 @@ def _save_one_of_everything(client: httpx.Client) -> dict[str, str]:
         "group": _created(group, "a group")["id"],
         "channel": _created(channel, "a channel")["id"],
         "event": _created(event, "a calendar event")["id"],
+        "skill": _created(skill, "a skill")["id"],
     }
 
 
@@ -235,6 +244,18 @@ def test_a_restart_keeps_what_every_feature_saved(installed, restarted):
     assert "travel" in {tag["name"] for tag in tags}
     memories = restarted.get("/api/v1/memories/").json()
     assert made["memory"] in {memory["id"] for memory in memories}
+
+
+def test_the_first_skill_save_starts_its_history_and_a_restart_keeps_it(installed, restarted):
+    skill_id = installed.made["skill"]
+    skill = restarted.get(f"/api/v1/skills/id/{skill_id}").json()
+    history = restarted.get(f"/api/v1/skills/id/{skill_id}/history").json()
+    assert [(entry["id"], entry["parent_id"]) for entry in history] == [
+        (skill["version_id"], None)
+    ], f"the new skill's history on {installed.database.engine}: {history}"
+    assert history[0]["user_id"] == installed.admin["id"]
+    files = restarted.get(f"/api/v1/skills/id/{skill_id}/files").json()
+    assert [file["path"] for file in files["files"]] == ["SKILL.md"]
 
 
 def test_accounts_are_added_renamed_and_deleted_after_a_restart(restarted):

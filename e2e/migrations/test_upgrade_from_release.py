@@ -10,7 +10,9 @@ whose earlier turns reach the model and whose new turn is still there after a re
 the note Alice shared, starts new chats on the default model he picked and asks the knowledge
 base. Group and default permissions decide the workspace and the chat menu as before, prompts
 insert their text by their command, the shared tool runs, the admin's filter is still on and the
-channel keeps its message, reaction and thread.
+channel keeps its message, reaction and thread. Alice's old skill opens in the editor with its
+instructions and saves a new version on top of the one the skill history migration gave it,
+and Bob, who reads it through the group, mentions it in a new chat and the model gets it.
 
 Discriminates: passes on dev ebc6add67 for every data set; with the last migration of a copy of it
 mangling one kind of data on the v0.10.2 SQLite set, each test fails on its kind: assistant replies
@@ -18,7 +20,10 @@ blanked (the branch, cited reply and continuation tests), the regenerated branch
 branch test), stored sources dropped (the citation test), pins, folder nesting, the chat's folder
 or the archive flag cleared, the note emptied, user settings reset, group and default permissions
 reset, prompt commands renamed, the knowledge base's grants dropped, the tool's source broken, the
-filter switched off and the channel's reactions and thread links dropped.
+filter switched off and the channel's reactions and thread links dropped. With the skill history
+migration (`d6a8c3f912ab`) of a copy setting no `version_id`, the editor test fails on every set
+(the save is refused as a conflict); with it writing `SKILL.md` empty, the editor opens the skill
+without its instructions.
 """
 
 from __future__ import annotations
@@ -370,3 +375,45 @@ def test_the_channel_keeps_its_message_reaction_and_thread(open_as, upgraded):
     main.get_by_role("button", name=re.compile("^1 Replies")).click()
 
     expect(page.get_by_text(channel["reply"]["content"])).to_be_visible()
+
+
+def test_an_old_skill_opens_in_the_editor_and_saves_a_new_version(open_as, upgraded):
+    skill = upgraded.manifest["skills"]["trip-planner"]
+    page = open_as("alice", "/workspace/skills/edit?id=trip-planner")
+    editor = page.get_by_role("main")
+    expect(editor.get_by_placeholder("Skill Name")).to_have_value(skill["name"])
+    expect(editor.get_by_text("Prefer night trains over flights.")).to_be_visible()
+
+    editor.get_by_placeholder("Skill Description").fill("Plans trips by train and ferry.")
+    editor.get_by_role("textbox", name="Commit message").fill("Mention ferries")
+    editor.get_by_role("button", name="Save", exact=True).click()
+
+    expect(page.get_by_text("Skill updated successfully")).to_be_visible()
+    saved = upgraded.get("alice", "/api/v1/skills/id/trip-planner").json()
+    assert (saved["description"], saved["content"]) == (
+        "Plans trips by train and ferry.",
+        skill["content"],
+    )
+    history = upgraded.get("alice", "/api/v1/skills/id/trip-planner/history").json()
+    assert [entry["commit_message"] for entry in history] == ["Mention ferries", None]
+
+
+def test_a_group_reader_mentions_an_old_skill_in_a_new_chat(open_as, upgraded, provider):
+    skill = upgraded.manifest["skills"]["trip-planner"]
+    page = open_as("bob")
+    expect(chat_input(page)).to_be_visible()
+    chat_input(page).click()
+    page.keyboard.type("$Trip")
+    page.get_by_role("button").filter(has_text=skill["name"]).click()
+    question = "Which trains for Ljubljana?"
+    provider.queue(reply.text("The night train.", match=_the_chat_asking(question)))
+
+    page.keyboard.type(question)
+    page.keyboard.press("Enter")
+
+    expect_reply(page, "The night train.")
+    [request] = [body for body in provider.chat_requests() if _the_chat_asking(question)(body)]
+    system = "\n".join(
+        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
+    )
+    assert "Prefer night trains over flights." in system, system
