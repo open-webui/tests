@@ -13,7 +13,8 @@ that opens that channel for the other member who clicks it.
 A message sent while its file still uploads waits in the input's queue and posts by itself once
 the upload is done, with a file the other member can open; it posted at once with a file nobody
 could open until dev 8a4547104 (open-webui/open-webui#31587). The mention toast showed the raw
-mention markup until PR #31601 (open-webui/open-webui#31586).
+mention markup until PR #31601 (open-webui/open-webui#31586). After a pick the input takes focus
+back one animation frame later, so the tests wait for that before typing on.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, a picker that drops the mention type
 turns the person and thread model tests red, a toast that goes nowhere on click turns the person
@@ -65,6 +66,8 @@ def _mention(page: Page, query: str, label: str) -> None:
     page.keyboard.type(f"@{query}")
     suggestions = page.locator("#suggestions-container")
     suggestions.get_by_role("button", name=label).click()
+    # the input takes focus back a frame after the pick; keys sent before that are lost
+    expect(chat_input(page)).to_be_focused()
 
 
 def _sidebar_entry(page: Page, channel_name: str) -> Locator:
@@ -259,6 +262,7 @@ def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
     chat_input(page).click()
     page.keyboard.type(f"#{linked_name}")
     page.locator("#suggestions-container").get_by_role("button", name=linked_name).click()
+    expect(chat_input(page)).to_be_focused()
     page.keyboard.type(" has the packing list")
     page.keyboard.press("Enter")
 
