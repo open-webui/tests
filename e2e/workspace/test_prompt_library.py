@@ -11,12 +11,13 @@ group's member and not to an outsider, and taking the group out of that dialog w
 Discriminates: passes on the 176d31d1d build. In a backend copy where saving a version ignores
 `is_production`, the draft test goes red (the draft goes live at once); where the prompt list
 ignores `is_active`, the switched-off prompt stays offered; where the prompt list skips the
-read-grant check, the stranger is offered the group's prompt; where the access update route
-stores no grants, both sharing tests go red (the member is never offered the prompt). Retargeted
-for 37138282f and b130fec73, where the text is edited in place, versions are picked from a menu
-and only an old version taken up again can be saved without going live: the draft and group tests
-pass on b130fec73, and the draft test goes red in a frontend build that saves every edit as
-production.
+read-grant check, the stranger is offered the group's prompt; where the access update route stores
+no grants, both sharing tests go red (the member is never offered the prompt). Retargeted for
+37138282f and b130fec73, where the text is edited in place, versions are picked from a menu and
+only an old version taken up again can be saved without going live: the draft and group tests pass
+on b130fec73, and the draft test goes red in a frontend build that saves every edit as production.
+Retargeted for 6a7678ac7, which named the version picker History and the live version Live: the
+draft test passes on dev 206bf9723.
 """
 
 from __future__ import annotations
@@ -102,7 +103,7 @@ def test_an_edit_saved_as_a_draft_goes_live_only_when_set_as_production(page_for
     page.goto(f"/workspace/prompts/{prompt_id}")
     content = page.get_by_role("textbox", name="Prompt Content")
     expect(content).to_have_value("Summarise this.")
-    picker = page.get_by_label("Select version", exact=True)
+    picker = page.get_by_label("History", exact=True)
     picker.click()
     page.get_by_role("menuitemradio", name=first["commit_message"]).click()
     page.get_by_role("button", name="Edit as new version").click()
@@ -120,7 +121,7 @@ def test_an_edit_saved_as_a_draft_goes_live_only_when_set_as_production(page_for
     page.get_by_role("menuitemradio", name="Shorter summary").click()
     page.get_by_role("button", name="Set as Production", exact=True).click()
     expect(page.get_by_text("Production version updated")).to_be_visible()
-    expect(picker).to_have_text("Production")
+    expect(picker).to_have_text("Live")
     expect(content).to_have_value("Summarise this in one line.")
 
     expect(_inserted_text(page, command)).to_have_text("Summarise this in one line.")

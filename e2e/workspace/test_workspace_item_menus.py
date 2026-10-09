@@ -9,14 +9,16 @@ selector, slash menu or integrations menu. In the prompt editor's version picker
 can be deleted, and the production one offers no delete.
 
 Discriminates: passes on dev 30f3f6a8f. In a backend copy where the model, prompt, tool or prompt
-history delete route answers true without deleting, the matching delete test goes red, and where the
-model update ignores `hidden` the hide test goes red; in a frontend build whose clone handlers
+history delete route answers true without deleting, the matching delete test goes red, and where
+the model update ignores `hidden` the hide test goes red; in a frontend build whose clone handlers
 change the copied system prompt, content or instructions, each clone test goes red. Retargeted for
-9bbb95048, where a skill's Clone saves the copy at once and opens it: the skill clone test passes on
-dev 178de3666 and goes red in a backend copy whose clone drops the instructions. Retargeted for
+9bbb95048, where a skill's Clone saves the copy at once and opens it: the skill clone test passes
+on dev 178de3666 and goes red in a backend copy whose clone drops the instructions. Retargeted for
 37138282f and 24ee1cb16, where prompt versions are picked and deleted from a menu: the prompt
 history test passes on 24ee1cb16 and goes red in a frontend build whose version rows offer no
-delete.
+delete. Retargeted for 6a7678ac7, which named the version picker History and the live version Live
+and offers its delete switched off: the prompt history test passes on dev 206bf9723 and goes red in
+a build that lets the live version be deleted.
 """
 
 from __future__ import annotations
@@ -249,12 +251,10 @@ def test_a_version_in_the_prompt_history_can_be_deleted_but_not_the_live_one(pag
     expect(page.get_by_role("textbox", name="Prompt Content")).to_have_value(
         "Summarise in one line."
     )
-    picker = page.get_by_label("Select version", exact=True)
-    expect(picker).to_have_text("Production")
+    picker = page.get_by_label("History", exact=True)
+    expect(picker).to_have_text("Live")
 
     picker.click()
-    production_row = page.get_by_role("menuitemradio", name="Production").locator("xpath=..")
-    expect(production_row.get_by_label("More Options")).to_have_count(0)
     older_row = page.get_by_role("menuitemradio", name="First draft").locator("xpath=..")
     older_row.get_by_label("More Options").click()
     page.get_by_role("button", name="Delete", exact=True).click()
@@ -263,8 +263,10 @@ def test_a_version_in_the_prompt_history_can_be_deleted_but_not_the_live_one(pag
 
     page.reload()
     picker.click()
-    expect(page.get_by_role("menuitemradio", name="Production")).to_be_visible()
     expect(page.get_by_role("menuitemradio", name="First draft")).to_have_count(0)
+    live_row = page.get_by_role("menuitemradio", name="Live").locator("xpath=..")
+    live_row.get_by_label("More Options").click()
+    expect(page.get_by_role("button", name="Delete", exact=True)).to_be_disabled()
     history = _fetch(builder, f"/api/v1/prompts/id/{prompt['id']}/history")
     assert [entry["commit_message"] for entry in history] == ["Shorter"]
 

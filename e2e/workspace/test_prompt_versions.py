@@ -13,12 +13,14 @@ shared with read only can pick and compare its versions but is offered no way to
 
 Discriminates: passes on dev b130fec73. In a frontend build where an old version's text box takes
 typing the read-only test goes red; where the comparison leaves out the prompt text the comparison
-test goes red; where Edit as new version saves as production the edit test goes red; where switching
-versions never asks about unsaved typing the discard test goes red; where Ctrl+S does nothing the
-shortcut test goes red; where leaving the editor never asks the leave test goes red; where an old
-version offers its write buttons whatever the access the reader test goes red; where the chosen
-layout is not remembered the layout test goes red; and where a change of line endings alone counts
-as no change the line endings test goes red.
+test goes red; where Edit as new version saves as production the edit test goes red; where
+switching versions never asks about unsaved typing the discard test goes red; where Ctrl+S does
+nothing the shortcut test goes red; where leaving the editor never asks the leave test goes red;
+where an old version offers its write buttons whatever the access the reader test goes red; where
+the chosen layout is not remembered the layout test goes red; and where a change of line endings
+alone counts as no change the line endings test goes red. Retargeted for 6a7678ac7, which named the
+version picker History and the live version Live: the tests pass on dev 206bf9723, and a frontend
+build whose version switch keeps the current text turns the read-only test red.
 """
 
 from __future__ import annotations
@@ -90,7 +92,7 @@ def _content(page: Page) -> Locator:
 
 
 def _pick_version(page: Page, label: str) -> None:
-    page.get_by_label("Select version", exact=True).click()
+    page.get_by_label("History", exact=True).click()
     page.get_by_role("menuitemradio", name=label).click()
 
 
@@ -127,7 +129,7 @@ def test_an_old_version_opens_read_only_and_production_brings_back_the_current_t
     expect(page.get_by_text(first["version_id"][:7], exact=False)).to_be_visible()
     expect(page.get_by_role("button", name="Save", exact=True)).to_have_count(0)
 
-    _pick_version(page, "Production")
+    _pick_version(page, "Live")
     expect(_content(page)).to_have_value(ONE_LINE)
     expect(_content(page)).to_be_editable()
     expect(page.get_by_role("button", name="Save", exact=True)).to_be_visible()
@@ -160,13 +162,13 @@ def test_edit_as_new_version_saves_a_version_that_is_not_production(page_for, wr
 
     _pick_version(page, "First draft")
     page.get_by_role("button", name="Edit as new version").click()
-    expect(page.get_by_label("Select version", exact=True)).to_contain_text("Editing")
+    expect(page.get_by_label("History", exact=True)).to_contain_text("Editing")
     expect(page.get_by_role("checkbox", name="Set as Production")).not_to_be_checked()
     _content(page).fill("Summarise this in two lines.")
     page.get_by_role("textbox", name="Commit Message").fill("Middle ground")
     page.get_by_role("button", name="Save", exact=True).click()
 
-    expect(page.get_by_label("Select version", exact=True)).to_have_text("Middle ground")
+    expect(page.get_by_label("History", exact=True)).to_have_text("Middle ground")
     expect(_content(page)).to_have_value("Summarise this in two lines.")
     expect(_content(page)).not_to_be_editable()
     stored = _get(writer, f"/api/v1/prompts/id/{first['id']}")
