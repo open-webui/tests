@@ -13,12 +13,15 @@ Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form s
 settings back in place of the edited ones, every test but the "own setting" one fails; in a backend
 copy whose settings read lets the defaults win over the account's own, the "own setting" test
 fails; in a frontend build of dev ebc6add67 whose folder dialog skips its file count check, the
-folder refusal test fails.
+folder refusal test fails. The folder tests were retargeted for 8d0ff76f2, whose folder
+dialog uploads files from its Knowledge picker: they pass on dev 76ad6f97c (3 of 3), and the
+refusal test fails in a build of it whose folder dialog skips the file count check.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Callable
 
 import pytest
@@ -267,14 +270,18 @@ def edit_folder_with_files(page: Page, folder_name: str, *names: str) -> Locator
     row.get_by_role("button").last.click()
     page.get_by_role("menu").get_by_role("button", name="Edit").click()
     dialog = page.get_by_role("dialog")
+    dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
+        dialog.locator("button[aria-expanded]")
+    ).click()
     with page.expect_file_chooser() as chooser:
-        dialog.get_by_role("button", name="Upload Files").click()
+        page.get_by_role("button", name="Upload Files").click()
     chooser.value.set_files(
         [{"name": name, "mimeType": "text/plain", "buffer": name.encode()} for name in names]
     )
     for name in names:
-        expect(dialog.get_by_text(name)).to_be_visible()
-    expect(dialog.get_by_text("Uploading")).to_have_count(0)
+        expect(page.get_by_text(name, exact=True)).to_be_visible()
+    expect(page.get_by_text("Uploading")).to_have_count(0)
+    page.get_by_role("button", name="Done").click()
     return dialog
 
 

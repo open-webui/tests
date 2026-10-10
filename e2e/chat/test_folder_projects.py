@@ -18,6 +18,9 @@ chat started on the folder page sent without the folder, the expand toggle not b
 icon pick saved empty and the edit dialog saving without the background image. In the a5bc78300
 build with #31368 reverted, the pinned chat dropped on Chats stays under Pinned and the one
 dropped on Pinned ends unpinned.
+The folder settings test was retargeted for 8d0ff76f2, whose folder dialog picks knowledge and
+uploads files in its Knowledge picker: it passes on dev 76ad6f97c (3 of 3) and fails in a build of
+it whose folder dialog saves without its files.
 
 The in-place rename test also pins open-webui/open-webui#31582, fixed by PR #31584: pressing Enter
 saved the folder twice, so two update requests and two "Folder updated successfully" toasts
@@ -182,19 +185,20 @@ def test_the_folder_settings_reach_a_new_chat_started_in_the_folder(
         folder_menu(sidebar, "Harbour").get_by_role("button", name="Edit").click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_placeholder(re.compile("Write your model system prompt")).fill(SYSTEM_PROMPT)
-        dialog.get_by_text("Select Knowledge").click()
-        search = page.get_by_placeholder("Search", exact=True).last
-        search.click()
-        page.keyboard.type(base_name)
+        dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
+            dialog.locator("button[aria-expanded]")
+        ).click()
+        page.get_by_placeholder("Search knowledge").fill(base_name)
         page.get_by_role("button", name=base_name).click()
         expect(dialog.get_by_text(base_name)).to_be_visible()
         with page.expect_file_chooser() as chooser:
-            dialog.get_by_role("button", name="Upload Files").click()
+            page.get_by_role("button", name="Upload Files").click()
         chooser.value.set_files(
             files=[{"name": "moorings.txt", "mimeType": "text/plain", "buffer": b"Berth 4."}]
         )
         expect(dialog.get_by_text("moorings.txt")).to_be_visible()
-        expect(dialog.get_by_text("Uploading")).to_have_count(0)
+        expect(page.get_by_text("Uploading")).to_have_count(0)
+        page.get_by_role("button", name="Done").click()
         dialog.get_by_role("button", name="Save").click()
         expect(page.get_by_text("Folder updated successfully")).to_be_visible()
 
