@@ -7,6 +7,11 @@ code and leaves the pipe on, still answering with its old code. Code edited and 
 mistake answers the next chat. Import from URL fetches a function's source into
 the editor, named after its file, and once saved and switched on it answers a chat.
 
+`test_edited_code_answers_the_next_chat` failed on dev 76ad6f97c in CI with the reply left blank
+although the server answered it, and passed 3 of 3 locally: since de73bb830 the reply in a new chat
+sometimes stays blank until a reload although the server saved it whole
+(open-webui/open-webui#32091).
+
 Discriminates: passes on dev ebc6add67. One backend copy whose function create and update store
 source that failed to load, whose update keeps the old source and running module and whose link
 import answers a placeholder pipe turned each test red on its own edit, as did one whose refused

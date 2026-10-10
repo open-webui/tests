@@ -8,6 +8,11 @@ text as older versions kept them: the pane the answer's own HTML block opens hol
 also once the reasoning is opened. Folding on the open chat and Always Expand Details are covered in
 test_chat_journeys.py and test_settings_interface_effects.py.
 
+`test_an_html_block_in_the_reasoning_is_no_artifact_of_its_own` failed on dev 76ad6f97c in CI with
+the reply left blank although the server answered it, and passed 3 of 3 locally: since de73bb830 the
+reply in a new chat sometimes stays blank until a reload although the server saved it whole
+(open-webui/open-webui#32091).
+
 Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
 copy: the label's duration dropped) the reload test goes red, and in the `rendering-front2` copy
 (reasoning left in the text the artifacts are read from) the stored reply case goes red, and in

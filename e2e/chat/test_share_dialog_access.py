@@ -15,6 +15,11 @@ Two fixes to the chat's Share dialog, both in the frontend:
   (open-webui/open-webui#31496, issue open-webui/open-webui#31493) the chat header menu these
   tests open Share from, clicking once.
 
+`test_the_dialog_says_a_new_link_starts_private` failed on dev 76ad6f97c in CI with the reply left
+blank although the server answered it, and passed 3 of 3 locally: since de73bb830 the reply in a new
+chat sometimes stays blank until a reload although the server saved it whole
+(open-webui/open-webui#32091).
+
 Discriminates: fails on dev 00a245b9f (the first Copy Link click creates no link) and passes on dev
 176d31d1d and a5bc78300; it fails on a build with the relinking or wording fix reverted (the
 relinked dialog still shows Public and the granted account, or the old sentence is shown).
