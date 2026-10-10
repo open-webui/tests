@@ -8,6 +8,14 @@ An older version can be deleted from its menu and the Production entry offers no
 stays disabled until something changes, and a save with a description of only spaces is refused with
 nothing stored. A user who may only read the tool is sent away from its editor.
 
+On dev 10fdca6e3 in CI all six saving tests failed waiting 5 s for the save's toast: a
+non-admin's save formats the code with Pyodide first, which took 4.2 s there before the
+update was sent, so the toast now gets 30 s. A build without the Pyodide packages skips the
+formatting; with them the formatted code comes back without its last newline, so the new
+code is written without one. With both changes the module passes on dev 0401b7522 with the
+Pyodide packages built in (3 of 3), and the message and delete tests fail in a build of it whose
+save sends no commit message.
+
 Discriminates: passes on the dev 206bf9723 build; one frontend build with these edits turns every
 test red: the editor's restore no longer copying the restored code in (the restore tests keep the
 new code), the save sending no commit message (the dropdown lists the short id, not the message),
@@ -32,7 +40,10 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 TOOL_BUILDER = {"workspace": {"tools": True}}
 OLD_SOURCE = 'class Tools:\n    def ping(self) -> str:\n        return "pong"\n'
-NEW_SOURCE = 'class Tools:\n    def ping(self) -> str:\n        return "ping back"\n'
+# The save formats the code first, which drops the last newline.
+NEW_SOURCE = 'class Tools:\n    def ping(self) -> str:\n        return "ping back"'
+# A non-admin's save formats the code with Pyodide in the browser, seconds on CI.
+SAVE_TIMEOUT_MS = 30_000
 
 
 @pytest.fixture
@@ -87,7 +98,7 @@ def _replace_code(page: Page, source: str) -> None:
 def _save(page: Page, message: str) -> None:
     page.get_by_label("Describe this change").fill(message)
     page.get_by_role("main").get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Tool updated successfully")).to_be_visible()
+    expect(page.get_by_text("Tool updated successfully")).to_be_visible(timeout=SAVE_TIMEOUT_MS)
 
 
 def _version_menu(page: Page) -> None:
@@ -208,7 +219,9 @@ def test_save_waits_for_a_change_and_a_blank_description_is_refused(page_for, to
     expect(save).to_be_enabled()
     save.click()
 
-    expect(page.get_by_text("Name and description are required")).to_be_visible()
+    expect(page.get_by_text("Name and description are required")).to_be_visible(
+        timeout=SAVE_TIMEOUT_MS
+    )
     assert _tool(toolsmith, tool["id"])["meta"]["description"] == "answers a ping"
     assert len(_history(toolsmith, tool["id"])) == 1
 
