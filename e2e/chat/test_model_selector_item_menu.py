@@ -144,8 +144,9 @@ def page(page_for, owner) -> Page:
 
 
 def test_edit_opens_the_settings_of_a_provider_model(page, owner, provider_model):
-    """Red on dev 3dd1db147: the editor of a never-customised provider model stays blank
-    (open-webui/open-webui#32143)."""
+    """Red on dev 3dd1db147: the editor of a never-customised provider model stayed blank
+    (open-webui/open-webui#32143). Fixed by fdb8cb749: passes on dev 0401b7522 (3 of 3) and
+    fails on that build with fdb8cb749 reverted."""
     click_menu_item(page, provider_model, "Edit")
 
     settings = page.get_by_role("dialog")
