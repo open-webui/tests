@@ -13,6 +13,11 @@ is a local stand-in, and every test puts the connection settings back afterwards
 
 Twin of integration/models/test_admin_connection_settings.py.
 
+`test_an_edited_key_is_the_one_the_provider_gets_on_the_next_chat` failed on dev 10fdca6e3 in CI
+with the reply left blank although the server answered it, and passed 3 of 3 locally: since
+de73bb830 the reply in a new chat sometimes stays blank until a reload although the server saved
+it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on the dev 176d31d1d build; in a frontend build, the dialog saving an empty
 allowlist turns the add test red (the model left off the list shows), the row switch not saving
 turns the switch-off test red, the edited key not reaching the saved settings turns the key test

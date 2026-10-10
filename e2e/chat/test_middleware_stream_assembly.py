@@ -14,6 +14,11 @@
 
 Twin of unit/chat/test_middleware_stream_assembly.py.
 
+`test_a_provider_that_hangs_up_after_a_tool_call_shows_an_error` failed on dev 10fdca6e3 in CI
+with the reply stuck on the tool call although the server logged the connection error, and
+passed 3 of 3 locally: since de73bb830 the reply in a new chat sometimes stays unfinished until
+a reload although the server saved it whole (open-webui/open-webui#32091).
+
 Discriminates: passes on dev `bbfa876af`; each test fails with its fix reverted in the backend and
 the dev frontend build unchanged (one mutation each).
 """
