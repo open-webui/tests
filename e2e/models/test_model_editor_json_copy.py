@@ -8,7 +8,9 @@ preview showed the current form (open-webui/open-webui#31955), fixed in dev 106a
 
 Discriminates: in a frontend build without the Copy button the copy tests go red (no button). The
 two tests that compare the copy with the preview pass on dev ebc6add67 and failed on dev 30f3f6a8f,
-before 106aae70e (the unedited starting state was copied).
+before 106aae70e (the unedited starting state was copied). Retargeted for d4879a98b, whose JSON
+Preview heading is the button that shows it: passes on dev 0401b7522 (3 of 3), and the
+renamed-copy test fails in a build of it whose Copy puts the stored model on the clipboard.
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ def open_editor_with_preview(page: Page, model: dict):
     editor = page.get_by_role("main")
     expect(editor.get_by_placeholder("Model Name")).to_have_value(model["name"])
     beside_copy = editor.get_by_role("button", name="Copy", exact=True).locator("xpath=..")
-    beside_copy.get_by_role("button", name="Show").click()
+    beside_copy.get_by_role("button", name="JSON Preview").click()
     return editor, editor.locator("textarea[readonly]")
 
 

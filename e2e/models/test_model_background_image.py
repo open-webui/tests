@@ -8,6 +8,10 @@ background. A JPEG named `.png` saves, and its file is typed as the JPEG it is.
 
 Twin of integration/deps/test_image_validation.py, which drives the same checks over HTTP.
 
+Retargeted for d4879a98b, whose editor picks the background from the header (Add background,
+then Change background): passes on dev 0401b7522 (3 of 3), and the refusal test fails in a
+backend copy of it without the `load()` after `verify()`.
+
 Discriminates: passes on dev ef67cc3fa; in a backend copy without the `load()` after `verify()`
 the short PNG is saved and the refusal test fails, and in one whose `Image.open` fails on every
 input the JPEG is refused.
@@ -74,11 +78,10 @@ def model_id(admin):
 
 def _choose_background_and_save(page, model_id: str, content: bytes) -> None:
     page.goto(f"/workspace/models/edit?id={model_id}")
-    expect(page.get_by_text("Background Image")).to_be_visible()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload", exact=True).click()
+        page.get_by_role("button", name="Add background").click()
     chooser.value.set_files({"name": "harbour.png", "mimeType": "image/png", "buffer": content})
-    expect(page.get_by_role("button", name="Replace", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Change background")).to_be_visible()
     page.get_by_role("button", name="Save & Update").click()
 
 

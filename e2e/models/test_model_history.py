@@ -17,7 +17,9 @@ id, whose version delete skips its request and whose unsaved-edits check is gone
 stored prompt stays the newer one, no confirmation, the deleted version is still stored) while
 the read-only test and an unrelated model editor test pass. In a build where picking a version
 always shows Production, `test_an_older_version_opens_read_only_beside_the_production_one` goes
-red (no preview opens) and the unrelated test passes.
+red (no preview opens) and the unrelated test passes. Retargeted for d4879a98b, whose editor
+shows a saved system prompt collapsed until it is clicked: passes on dev 0401b7522 (3 of 3), and
+the same edits on a build of it turn the same tests red.
 """
 
 from __future__ import annotations
@@ -36,6 +38,16 @@ from harness.upstream import MOCK_MODEL_ID
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 SYSTEM_PROMPT = re.compile("^Write your model system prompt")
+
+
+def _system_prompt(scope: Locator) -> Locator:
+    """The system prompt field, opened first when a saved prompt shows collapsed."""
+    field = scope.get_by_role("textbox", name=SYSTEM_PROMPT)
+    collapsed = scope.get_by_role("button", name="System Prompt", exact=True)
+    expect(field.or_(collapsed)).to_be_visible()
+    if collapsed.is_visible():
+        collapsed.click()
+    return field
 
 
 @pytest.fixture
@@ -101,7 +113,7 @@ def _pick_first_version(page: Page, model: dict) -> Locator:
     """The read-only preview of the model's first version, picked from the version menu."""
     _version_menu(page).get_by_role("menuitemradio", name=model["first_version"][:7]).click()
     preview = page.get_by_role("region", name="Model version preview")
-    expect(preview.get_by_role("textbox", name=SYSTEM_PROMPT)).to_have_value("first draft")
+    expect(_system_prompt(preview)).to_have_value("first draft")
     return preview
 
 
@@ -119,7 +131,7 @@ def test_a_save_with_a_message_is_listed_as_the_production_version(page_for, cur
     page = page_for(curator)
     editor = _open_editor(page, model)
 
-    editor.get_by_role("textbox", name=SYSTEM_PROMPT).fill("second draft")
+    _system_prompt(editor).fill("second draft")
     editor.get_by_role("textbox", name="Commit message").fill("Shorter prompt")
     editor.get_by_role("button", name="Save & Update").click()
     expect(page).to_have_url(re.compile(r"/workspace/models/?$"))
@@ -142,7 +154,7 @@ def test_an_older_version_opens_read_only_beside_the_production_one(page_for, cu
 
     preview = _pick_first_version(page, model)
 
-    expect(preview.get_by_role("textbox", name=SYSTEM_PROMPT)).to_be_disabled()
+    expect(_system_prompt(preview)).to_be_disabled()
     expect(page.get_by_role("button", name="Set as Production")).to_be_visible()
     expect(page.get_by_role("button", name="Save & Update")).to_have_count(0)
 
@@ -158,7 +170,7 @@ def test_set_as_production_brings_the_old_prompt_back_into_the_editor_and_the_ch
     page.get_by_role("button", name="Set as Production").click()
 
     expect(page.get_by_text("Production version updated")).to_be_visible()
-    expect(editor.get_by_role("textbox", name=SYSTEM_PROMPT)).to_have_value("first draft")
+    expect(_system_prompt(editor)).to_have_value("first draft")
     stored, versions = _stored(curator, model["id"])
     assert stored["params"]["system"] == "first draft"
     assert stored["version_id"] == model["first_version"]
@@ -176,7 +188,7 @@ def test_unsaved_edits_are_confirmed_before_an_old_version_replaces_them(page_fo
     model = _model_with_two_versions(curator)
     page = page_for(curator)
     editor = _open_editor(page, model)
-    editor.get_by_role("textbox", name=SYSTEM_PROMPT).fill("an edit nobody saved")
+    _system_prompt(editor).fill("an edit nobody saved")
     _pick_first_version(page, model)
 
     page.get_by_role("button", name="Set as Production").click()
@@ -187,7 +199,7 @@ def test_unsaved_edits_are_confirmed_before_an_old_version_replaces_them(page_fo
 
     confirm.get_by_role("button", name="Set as Production").click()
     expect(page.get_by_text("Production version updated")).to_be_visible()
-    expect(editor.get_by_role("textbox", name=SYSTEM_PROMPT)).to_have_value("first draft")
+    expect(_system_prompt(editor)).to_have_value("first draft")
     stored, _ = _stored(curator, model["id"])
     assert stored["params"]["system"] == "first draft"
 

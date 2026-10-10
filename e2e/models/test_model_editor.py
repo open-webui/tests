@@ -15,7 +15,9 @@ it. With realtime voice calls on, a Realtime Voice set in the editor is the voic
 model opens with, and cleared it falls back to the admin's; with calls on Standard the editor
 offers no such field. A TTS voice set for the model reads its replies aloud, over the voice the
 user picked for themselves. The system prompt is covered by
-e2e/workspace/test_workspace_presets.py.
+e2e/workspace/test_workspace_presets.py. The advanced params test was retargeted for
+d4879a98b, whose Advanced Params heading is itself the button that shows them: it passes on
+dev 0401b7522 (3 of 3) and fails in a build of it whose editor drops the params from the model.
 
 Discriminates: passes on the dev 176d31d1d build; on a build of it whose editor saves without
 the capabilities, default features, tags, prompt suggestions, tools, filters, actions and params,
@@ -289,7 +291,7 @@ def test_unticking_the_builtin_tools_capability_offers_none_of_them(
 def test_advanced_params_reach_the_provider(page_for, builder, preset, upstream):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    header_row(editor, "Advanced Params").get_by_role("button", name="Show").click()
+    editor.get_by_role("button", name="Advanced Params").click()
     for label in ("Temperature", "Seed"):
         header_row(editor, label).get_by_role("button", name="Default").click()
     editor.get_by_role("spinbutton", name="Temperature").fill("0.3")

@@ -17,7 +17,9 @@ options' parameters and makes new option keys from the labels, whose Remove and 
 do nothing, whose Apply is never disabled and whose workspace editor shows the section too, every
 test fails. The workspace editor test was retargeted for 16849284f, whose editor saves only a
 change: it renames the preset first, passes on dev 206bf9723 and fails in a build whose workspace
-editor drops the controls on save.
+editor drops the controls on save. The add and edit tests were retargeted for 10fdca6e3, whose
+parameter fields suggest names and values and so are found by their label: they pass on dev
+0401b7522 (3 of 3) and fail in a build of it whose Apply drops the options' parameters.
 """
 
 from __future__ import annotations
@@ -131,9 +133,9 @@ def fill_parameters(block: Locator, parameters: dict[str, str]) -> None:
     for index, (name, value) in enumerate(parameters.items()):
         if index > 0:
             block.get_by_role("button", name="Add Custom Parameter").click()
-        block.get_by_role("textbox", name="Custom Parameter Name").last.fill(name)
-        block.get_by_role("textbox", name="Custom Parameter Value").last.fill(value)
-        block.get_by_role("textbox", name="Custom Parameter Value").last.blur()
+        block.get_by_label("Custom Parameter Name", exact=True).last.fill(name)
+        block.get_by_label("Custom Parameter Value", exact=True).last.fill(value)
+        block.get_by_label("Custom Parameter Value", exact=True).last.blur()
 
 
 def fill_option(form: Locator, index: int, label: str, parameters: dict[str, str]) -> None:
@@ -221,7 +223,7 @@ def test_an_edited_control_keeps_its_option_keys_and_sends_the_new_default(
     editor.get_by_role("button", name="Edit Thinking").click()
     form = control_form(editor.page)
     form.get_by_role("textbox", name="Option name").nth(1).fill("Deeper")
-    value = option_block(form, 1).get_by_role("textbox", name="Custom Parameter Value")
+    value = option_block(form, 1).get_by_label("Custom Parameter Value", exact=True)
     value.fill("medium")
     form.get_by_role("combobox", name="Default option").select_option(label="Deeper")
     apply_control(form)

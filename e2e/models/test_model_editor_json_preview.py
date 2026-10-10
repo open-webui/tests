@@ -10,6 +10,9 @@ The Copy button beside the preview is covered by test_model_editor_json_copy.py.
 
 Discriminates: passes on the dev b859124f9 build, fails on that build with 571dafae3 reverted (the
 preview still shows the old name, no system prompt, no params and the old capabilities).
+Retargeted for d4879a98b, whose JSON Preview and Advanced Params headings are the buttons that
+show them: passes on dev 0401b7522 (3 of 3) and fails in a build of it whose preview leaves out
+the edited params.
 """
 
 from __future__ import annotations
@@ -73,9 +76,7 @@ def _preview(editor: Locator) -> dict:
 
 
 def _show_preview(editor: Locator) -> None:
-    editor.get_by_text("JSON Preview", exact=True).locator("xpath=..").get_by_role(
-        "button", name="Show"
-    ).click()
+    editor.get_by_role("button", name="JSON Preview").click()
     expect(editor.locator("textarea[readonly]")).to_be_visible()
 
 
@@ -98,9 +99,7 @@ def test_the_json_preview_shows_unsaved_changes_of_the_editor(page_for, builder,
     editor.get_by_role("textbox", name=re.compile("^Write your model system prompt")).fill(
         system_prompt
     )
-    editor.get_by_text("Advanced Params", exact=True).locator("xpath=..").get_by_role(
-        "button", name="Show"
-    ).click()
+    editor.get_by_role("button", name="Advanced Params").click()
     editor.get_by_text("Temperature", exact=True).locator("xpath=..").get_by_role(
         "button", name="Default"
     ).click()
