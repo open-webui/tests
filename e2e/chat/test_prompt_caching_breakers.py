@@ -31,6 +31,9 @@ the system message, since the clock moved the first break into it; the other con
 Retargeted for 9bbb95048, which offers the skill tools from the first turn: a skill saved in the
 terminal between turns now breaks the prefix in the system message's skill list, not in the tool
 list.
+The builtin tool test was retargeted for 8d0ff76f2, whose Builtin Tools categories are switches in a
+section that opens on a click: passes on dev 76ad6f97c (3 of 3) and fails in a build of it whose
+editor saves the model's settings as they were loaded.
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ from utils.cached_chat import (
     turn_on_tool,
 )
 from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.model_editor import section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -401,7 +405,7 @@ def test_a_skill_saved_between_turns_rewrites_the_prefix(terminal_chat, skill_di
 def untick_builtin_tool(page: Page, model_id: str, label: str) -> None:
     page.goto(f"/workspace/models/edit?id={model_id}")
     editor = page.get_by_role("main")
-    checkbox = editor.get_by_role("checkbox", name=label, exact=True)
+    checkbox = section(editor, "Builtin Tools").get_by_role("switch", name=label, exact=True)
     expect(checkbox).to_have_attribute("aria-checked", "true")
     checkbox.click()
     expect(checkbox).to_have_attribute("aria-checked", "false")

@@ -18,7 +18,10 @@ off; the env test fails when the tab ignores what it loads; the model test fails
 Sub-agents tick cannot be unticked. In a backend copy the offered-tools tests fail when the tool
 is offered whatever the setting says (or never), when the model's tick is ignored, or when the
 `background` argument is never stripped; the tab tests fail when the max output is not stored,
-when a default differs or when its environment variable is ignored.
+when a default differs or when its environment variable is ignored. The model test was
+retargeted for 8d0ff76f2, whose Sub-agents switch sits in the editor's Builtin Tools section:
+it passes on dev 76ad6f97c (3 of 3) and fails in a build of it whose save leaves the builtin
+tools as loaded.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from harness.actors import admin_of
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.model_editor import section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -326,8 +330,9 @@ def test_unticking_sub_agents_in_a_models_editor_withdraws_delegation_from_that_
     admin_page, model_with_delegation, upstream
 ):
     admin_page.goto(f"/workspace/models/edit?id={model_with_delegation}")
-    subagents_tick = admin_page.get_by_role("checkbox", name="Sub-agents")
-    expect(subagents_tick).to_be_checked()
+    editor = admin_page.get_by_role("main")
+    subagents_tick = section(editor, "Builtin Tools").get_by_role("switch", name="Sub-agents")
+    expect(subagents_tick).to_have_attribute("aria-checked", "true")
     subagents_tick.click()
     admin_page.get_by_role("button", name="Save & Update").click()
     expect(admin_page.get_by_role("button", name="Save & Update")).to_have_count(0)

@@ -14,6 +14,9 @@ Discriminates: passes on the dev ebc6add67 build. In a backend copy whose builti
 model's unticked categories every case fails (the category's tools are still offered); in a
 frontend build whose editor saves the Builtin Tools categories as they were loaded every case
 fails as well.
+Retargeted for 8d0ff76f2, whose Builtin Tools categories are switches in a section that opens on a
+click: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's
+settings as they were loaded every case fails.
 """
 
 from __future__ import annotations

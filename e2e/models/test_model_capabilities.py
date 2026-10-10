@@ -25,6 +25,9 @@ ignore the Citations capability the citations test fails and in one whose editor
 default feature the default feature test fails. In a backend copy that injects file text whatever
 File Context says the file context test fails, in one that never asks for usage the usage test
 fails and in one that ignores the Memory capability the memory test fails.
+Retargeted for 8d0ff76f2, whose capabilities are switches in sections that open on a click: passes
+on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's settings as they were
+loaded every test that saves an edit fails.
 """
 
 from __future__ import annotations
@@ -293,10 +296,10 @@ def test_an_unticked_capability_is_not_offered_as_a_default_feature(page_for, bu
     page = page_for(builder)
     editor = open_editor(page, preset)
     defaults = section(editor, "Default Features")
-    expect(defaults.get_by_role("checkbox", name="Web Search", exact=True)).to_be_visible()
-    expect(defaults.get_by_role("checkbox", name="Image Generation", exact=True)).to_be_visible()
+    expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_be_visible()
+    expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()
 
     set_checkbox(editor, "Capabilities", "Web Search", False)
 
-    expect(defaults.get_by_role("checkbox", name="Web Search", exact=True)).to_have_count(0)
-    expect(defaults.get_by_role("checkbox", name="Image Generation", exact=True)).to_be_visible()
+    expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_have_count(0)
+    expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()

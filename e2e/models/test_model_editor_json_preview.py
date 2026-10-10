@@ -13,6 +13,8 @@ preview still shows the old name, no system prompt, no params and the old capabi
 Retargeted for d4879a98b, whose JSON Preview and Advanced Params headings are the buttons that
 show them: passes on dev 0401b7522 (3 of 3) and fails in a build of it whose preview leaves out
 the edited params.
+Retargeted again for 8d0ff76f2, whose File Upload switch sits in the Capabilities section: passes
+on dev 76ad6f97c (3 of 3) and fails in a build of it whose preview shows the stored model.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
+from utils.model_editor import section
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -104,7 +107,7 @@ def test_the_json_preview_shows_unsaved_changes_of_the_editor(page_for, builder,
         "button", name="Default"
     ).click()
     editor.get_by_role("spinbutton", name="Temperature").fill("0.3")
-    editor.get_by_role("checkbox", name="File Upload", exact=True).click()
+    section(editor, "Capabilities").get_by_role("switch", name="File Upload").click()
 
     expect(editor.locator("textarea[readonly]")).to_have_value(re.compile(re.escape(new_name)))
     shown = _preview(editor)

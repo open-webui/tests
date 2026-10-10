@@ -7,6 +7,9 @@ from the model, so an image attached to a chat with it is refused where it attac
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Model Defaults save sends the
 stored defaults back in place of the edited ones, every test but the untouched attach fails.
+The prompt suggestion and capability tests were retargeted for 8d0ff76f2, whose defaults use
+the model editor's prompt rows and Capabilities switches: they pass on dev 76ad6f97c (3 of 3)
+and fail in a build of it whose save drops the edited capabilities and prompt suggestions.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.model_editor import section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -71,8 +75,9 @@ def test_a_default_prompt_suggestion_shows_on_a_new_chat_and_sends(
     settings = open_model_defaults(admin_page)
     open_section(settings, "Prompt Suggestions")
     settings.get_by_role("button", name="Add prompt suggestion").click()
+    settings.get_by_role("textbox", name="Prompt", exact=True).last.fill(content)
+    settings.get_by_text("Display text").last.click()
     settings.get_by_role("textbox", name="Title", exact=True).last.fill(title)
-    settings.get_by_role("textbox", name="Content").last.fill(content)
     save(admin_page, settings)
 
     page = page_for(make_user())
@@ -111,10 +116,10 @@ def test_a_default_capability_switched_off_refuses_an_image(
     admin_page = page_for(admin)
     settings = open_model_defaults(admin_page)
     open_section(settings, "Model Capabilities")
-    vision = settings.get_by_role("checkbox", name="Vision")
-    expect(vision).to_be_checked()
+    vision = section(settings, "Capabilities").get_by_role("switch", name="Vision")
+    expect(vision).to_have_attribute("aria-checked", "true")
     vision.click()
-    expect(vision).not_to_be_checked()
+    expect(vision).to_have_attribute("aria-checked", "false")
     save(admin_page, settings)
 
     page = page_for(make_user())

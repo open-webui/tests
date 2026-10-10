@@ -1,10 +1,11 @@
 """Editing a model in the workspace's model editor and chatting on it, the way an admin does.
 
-`open_editor` opens the editor of a model by id and waits for its name, `set_checkbox` ticks or
-unticks a box under one of the editor's titled parts (Capabilities, Default Features, Builtin
-Tools) and `save` saves and waits for the models list. `open_chat_on` starts a new chat on the
-model, `open_menu` opens one of the chat input's menus and `sent_request` sends a question and
-returns the request the scripted provider got for it.
+`open_editor` opens the editor of a model by id and waits for its name, `section` opens one of
+the editor's collapsible parts (Capabilities, Default Features, Builtin Tools, Prompts, Voice),
+`set_checkbox` turns a switch in one of them on or off, `pick` ticks or unticks an entry in the
+search list of Tools, Skills, Filters or Actions and `save` saves and waits for the models list.
+`open_chat_on` starts a new chat on the model, `open_menu` opens one of the chat input's menus and
+`sent_request` sends a question and returns the request the scripted provider got for it.
 """
 
 from __future__ import annotations
@@ -30,16 +31,35 @@ def save(editor: Locator) -> None:
 
 
 def section(editor: Locator, title: str) -> Locator:
-    """The innermost part of the editor under `title` that holds checkboxes."""
-    titled = editor.locator("div").filter(has=editor.page.get_by_text(title, exact=True))
-    return titled.filter(has=editor.page.get_by_role("checkbox")).last
+    """The editor's collapsible part titled `title`, opened."""
+    title_text = editor.page.locator("summary > span:first-child").get_by_text(title, exact=True)
+    part = editor.locator("details").filter(has=title_text)
+    if part.get_attribute("open") is None:
+        part.locator("summary").first.click()
+    expect(part).to_have_attribute("open", "")
+    return part
 
 
 def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None:
-    checkbox = section(editor, title).get_by_role("checkbox", name=label, exact=True)
-    if (checkbox.get_attribute("aria-checked") == "true") != checked:
-        checkbox.click()
-    expect(checkbox).to_have_attribute("aria-checked", str(checked).lower())
+    switch = section(editor, title).get_by_role("switch", name=label, exact=True)
+    if (switch.get_attribute("aria-checked") == "true") != checked:
+        switch.click()
+    expect(switch).to_have_attribute("aria-checked", str(checked).lower())
+
+
+def pick(editor: Locator, label: str, name: str, ticked: bool = True) -> None:
+    """Tick or untick `name` in the search list behind the editor's `label` row (Tools, Skills,
+    Filters, Actions)."""
+    trigger = editor.get_by_role("button", name=label, exact=True)
+    trigger = trigger.and_(editor.locator("button[aria-expanded]"))
+    trigger.click()
+    editor.page.get_by_placeholder(f"Search {label.lower()}").fill(name)
+    item = editor.page.get_by_role("button", name=name, exact=True)
+    if (item.get_attribute("aria-pressed") == "true") != ticked:
+        item.click()
+    expect(item).to_have_attribute("aria-pressed", str(ticked).lower())
+    editor.page.get_by_role("button", name="Done").click()
+    expect(editor.page.get_by_placeholder(f"Search {label.lower()}")).to_have_count(0)
 
 
 def open_chat_on(page: Page, model: dict) -> None:

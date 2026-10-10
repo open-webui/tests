@@ -23,6 +23,10 @@ unreadable-skill test fails; in one that no longer skips switched-off skills, th
 test fails; in one whose skill viewer answers an error or whose system prompt leaves out the
 skill list, the native test fails; in one that ignores the model's Skills toggle (55e1c44c9), or a
 frontend build without the Skills entry in the editor's Builtin Tools, the toggle test fails.
+Retargeted for 8d0ff76f2, whose editor picks skills from a search list and keeps the Skills switch
+in its Builtin Tools section: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor
+saves the model's settings as they were loaded the attach, detach, switched-off, unreadable-skill
+and toggle tests fail.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, last_reply, send
-from utils.model_editor import offered_tool_names, set_checkbox
+from utils.model_editor import offered_tool_names, pick, set_checkbox
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -125,20 +129,13 @@ def save(editor: Locator) -> None:
 def attach_in_editor(page: Page, model: dict, skill: dict) -> None:
     """Tick the skill in the model editor's Skills section and save."""
     editor = open_editor(page, model)
-    editor.get_by_text("Select Skill", exact=True).click()
-    page.get_by_placeholder("Search skills").fill(skill["name"])
-    page.get_by_role("button", name=skill["name"], exact=True).click()
-    page.keyboard.press("Escape")
-    expect(editor.get_by_role("checkbox", name=skill["name"])).to_be_checked()
+    pick(editor, "Skills", skill["name"])
     save(editor)
 
 
 def detach_in_editor(page: Page, model: dict, skill: dict) -> None:
     editor = open_editor(page, model)
-    checkbox = editor.get_by_role("checkbox", name=skill["name"])
-    expect(checkbox).to_be_checked()
-    checkbox.click()
-    expect(checkbox).to_have_count(0)
+    pick(editor, "Skills", skill["name"], ticked=False)
     save(editor)
 
 

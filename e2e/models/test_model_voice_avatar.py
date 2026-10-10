@@ -16,10 +16,14 @@ Discriminates: passes on the dev d989375b4 build. In a frontend copy of it whose
 avatar as loaded the upload, clips and gesture and Use orb tests turn red, and in one whose
 Apply ignores what the preview found the refused avatar and lowercase name tests turn red; one
 that never shows the expression warnings or accepts any gesture name turns those tests red.
+Retargeted for 8d0ff76f2, whose Voice avatar row is one button inside the editor's Voice
+section: passes on dev 76ad6f97c (3 of 3), and a build of it whose save leaves the avatar as
+loaded turns the upload, clips and gesture and Use orb tests red.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -35,7 +39,7 @@ from harness.voice_avatars import (
     grown_to,
     upload,
 )
-from utils.model_editor import open_editor, save
+from utils.model_editor import open_editor, save, section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -85,11 +89,11 @@ def file_content(admin, file_id: str) -> bytes:
 
 
 def avatar_row(editor: Locator) -> Locator:
-    return editor.get_by_text("Voice avatar", exact=True).locator("xpath=../..")
+    return section(editor, "Voice").get_by_role("button", name=re.compile("^Voice avatar"))
 
 
 def open_setup(editor: Locator) -> Locator:
-    avatar_row(editor).get_by_role("button", name="Configure").click()
+    avatar_row(editor).click()
     setup = editor.page.get_by_role("dialog")
     expect(setup.get_by_role("heading", name="Avatar setup")).to_be_visible()
     return setup
@@ -290,7 +294,7 @@ def test_without_realtime_calls_only_a_model_with_an_avatar_shows_the_row(page_f
 
     editor = open_editor(page, model)
     expect(editor.get_by_text("Description", exact=True).first).to_be_visible()
-    expect(editor.get_by_text("Voice avatar", exact=True)).to_have_count(0)
+    expect(section(editor, "Voice").get_by_text("Voice avatar", exact=True)).to_have_count(0)
 
     with admin.client() as client:
         settings = {"voice_avatar": {"file_id": upload(admin, "pilot.vrm", avatar())}}

@@ -29,6 +29,10 @@ whether switched on or not the toggle test fails, and in one that never runs the
 filter tests fail. The realtime voice tests pass on the dev ebc6add67 build, and the first fails
 on a build of it whose editor saves without the Realtime Voice. In a frontend build whose Read
 Aloud skips the model's own voice the TTS voice test fails.
+Retargeted for 8d0ff76f2, whose editor folds its settings into sections that open on a click, turns
+its checkboxes into switches and picks tools, skills, filters, actions and knowledge from a search
+list: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's settings
+as they were loaded every test that saves an edit fails.
 """
 
 from __future__ import annotations
@@ -55,6 +59,7 @@ from harness.realtime_provider import (
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.model_editor import pick, section, set_checkbox
 from utils.speech_audio import silent_wav
 from utils.tooltips import tooltip_button
 
@@ -136,31 +141,9 @@ def save(editor: Locator) -> None:
     expect(editor.page).to_have_url(re.compile(r"/workspace/models/?$"))
 
 
-def section(editor: Locator, title: str) -> Locator:
-    """The innermost part of the editor under `title` that holds checkboxes."""
-    titled = editor.locator("div").filter(has=editor.page.get_by_text(title, exact=True))
-    return titled.filter(has=editor.page.get_by_role("checkbox")).last
-
-
-def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None:
-    checkbox = section(editor, title).get_by_role("checkbox", name=label, exact=True)
-    if (checkbox.get_attribute("aria-checked") == "true") != checked:
-        checkbox.click()
-    expect(checkbox).to_have_attribute("aria-checked", str(checked).lower())
-
-
 def header_row(editor: Locator, label: str) -> Locator:
     """The row holding the setting labelled `label` and its switch."""
     return editor.get_by_text(label, exact=True).locator("xpath=..")
-
-
-def pick(editor: Locator, kind: str, name: str) -> None:
-    """Tick `name` in the editor's picker of that kind: Tool, Filter or Action."""
-    editor.get_by_text(f"Select {kind}", exact=True).click()
-    editor.page.get_by_placeholder(f"Search {kind.lower()}s").fill(name)
-    editor.page.get_by_role("button", name=name).click()
-    editor.page.keyboard.press("Escape")
-    expect(editor.get_by_role("checkbox", name=name)).to_be_checked()
 
 
 def open_chat_on(page: Page, model: dict) -> None:
@@ -328,10 +311,11 @@ def test_a_prompt_suggestion_shows_on_the_new_chat_and_sends(page_for, builder, 
     title, content = unique("Tide times"), unique("When is high tide in the harbour today?")
     page = page_for(builder)
     editor = open_editor(page, preset)
-    prompts = editor.locator("section").filter(has=page.get_by_text("Prompts", exact=True))
-    prompts.get_by_role("button", name="Default").click()
+    prompts = section(editor, "Prompts")
+    prompts.get_by_role("button", name="Customize").click()
+    prompts.get_by_role("textbox", name="Prompt", exact=True).fill(content)
+    prompts.get_by_text("Display text").click()
     prompts.get_by_role("textbox", name="Title", exact=True).fill(title)
-    prompts.get_by_role("textbox", name="Content").fill(content)
     save(editor)
 
     open_chat_on(page, preset)
@@ -350,7 +334,7 @@ def test_a_tool_ticked_in_the_editor_is_offered_with_the_chat(
     with python_tool(admin, LOCKER_TOOL, name=tool_name):
         page = page_for(builder)
         editor = open_editor(page, preset)
-        pick(editor, "Tool", tool_name)
+        pick(editor, "Tools", tool_name)
         save(editor)
 
         open_chat_on(page, preset)
@@ -372,9 +356,12 @@ def test_a_knowledge_base_attached_in_the_editor_is_searched_for_the_chat(
         add_text_file(client, knowledge_id, "keepers.txt", "The lighthouse keeper is Morag.")
         page = page_for(builder)
         editor = open_editor(page, preset)
-        editor.get_by_text("Select Knowledge", exact=True).click()
-        page.get_by_placeholder("Search", exact=True).last.fill(base_name)
+        editor.get_by_role("button", name=re.compile("^Knowledge")).and_(
+            editor.locator("button[aria-expanded]")
+        ).click()
+        page.get_by_placeholder("Search knowledge").fill(base_name)
         page.get_by_role("button", name=base_name).click()
+        page.get_by_role("button", name="Done").click()
         expect(editor.get_by_text(base_name)).to_be_visible()
         save(editor)
 
@@ -401,7 +388,7 @@ def test_a_filter_ticked_in_the_editor_runs_on_the_chat(page_for, admin, builder
     with installed_function(admin, FILTER_SOURCE) as filter_id:
         page = page_for(builder)
         editor = open_editor(page, preset)
-        pick(editor, "Filter", filter_id)
+        pick(editor, "Filters", filter_id)
         save(editor)
 
         open_chat_on(page, preset)
@@ -432,7 +419,7 @@ def test_a_toggleable_filter_runs_only_while_switched_on_in_the_chat(
     with installed_function(admin, TOGGLE_FILTER_SOURCE) as filter_id:
         page = page_for(builder)
         editor = open_editor(page, preset)
-        pick(editor, "Filter", filter_id)
+        pick(editor, "Filters", filter_id)
         save(editor)
 
         open_chat_on(page, preset)
@@ -459,12 +446,12 @@ def test_a_default_filter_starts_switched_on_in_a_new_chat(
     with installed_function(admin, TOGGLE_FILTER_SOURCE) as filter_id:
         page = page_for(builder)
         editor = open_editor(page, preset)
-        pick(editor, "Filter", filter_id)
-        defaults = editor.get_by_text("Default Filters", exact=True).locator("xpath=..")
-        defaults.get_by_text("Select Filter", exact=True).click()
-        page.get_by_placeholder("Search filters").last.fill(filter_id)
-        page.get_by_role("button", name=filter_id).last.click()
-        page.keyboard.press("Escape")
+        pick(editor, "Filters", filter_id)
+        editor.get_by_role("button", name="Filters", exact=True).and_(
+            editor.locator("button[aria-expanded]")
+        ).click()
+        page.get_by_role("switch", name="Start enabled in new chats").click()
+        page.get_by_role("button", name="Done").click()
         save(editor)
 
         open_chat_on(page, preset)
@@ -484,7 +471,7 @@ def test_an_action_ticked_in_the_editor_shows_under_the_reply_and_runs(
     with installed_function(admin, ACTION_SOURCE) as action_id:
         page = page_for(builder)
         editor = open_editor(page, preset)
-        pick(editor, "Action", action_id)
+        pick(editor, "Actions", action_id)
         save(editor)
 
         open_chat_on(page, preset)
@@ -576,7 +563,7 @@ def test_a_realtime_voice_set_in_the_editor_is_the_voice_of_calls_on_the_model(
 ):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    voice_box = editor.get_by_role("combobox", name="Realtime Voice")
+    voice_box = section(editor, "Voice").get_by_role("combobox", name="Realtime Voice")
     expect(voice_box).to_have_attribute("placeholder", "Admin default")
 
     voice_box.fill("cedar")
@@ -588,8 +575,9 @@ def test_a_realtime_voice_set_in_the_editor_is_the_voice_of_calls_on_the_model(
     assert realtime_calls.calls[-1].session["audio"]["output"]["voice"] == "cedar"
 
     editor = open_editor(page, preset)
-    expect(editor.get_by_role("combobox", name="Realtime Voice")).to_have_value("cedar")
-    editor.get_by_role("combobox", name="Realtime Voice").fill("")
+    voice_box = section(editor, "Voice").get_by_role("combobox", name="Realtime Voice")
+    expect(voice_box).to_have_value("cedar")
+    voice_box.fill("")
     save(editor)
 
     assert stored_meta(builder, preset).get("voice") is None
@@ -597,10 +585,10 @@ def test_a_realtime_voice_set_in_the_editor_is_the_voice_of_calls_on_the_model(
 
 
 def test_the_editor_offers_no_realtime_voice_while_calls_are_standard(page_for, builder, preset):
-    editor = open_editor(page_for(builder), preset)
+    voice = section(open_editor(page_for(builder), preset), "Voice")
 
-    expect(editor.get_by_text("TTS Voice", exact=True)).to_be_visible()
-    expect(editor.get_by_role("combobox", name="Realtime Voice")).to_have_count(0)
+    expect(voice.get_by_text("TTS Voice", exact=True)).to_be_visible()
+    expect(voice.get_by_role("combobox", name="Realtime Voice")).to_have_count(0)
 
 
 def test_a_tts_voice_set_in_the_editor_reads_the_replies_over_the_users_own(
@@ -619,7 +607,7 @@ def test_a_tts_voice_set_in_the_editor_reads_the_replies_over_the_users_own(
 
     with admin.client() as client, using_audio_engine(client, engine):
         editor = open_editor(page_for(builder), preset)
-        editor.get_by_placeholder("e.g. alloy, echo, shimmer").fill("lighthouse")
+        section(editor, "Voice").get_by_placeholder("e.g. alloy, echo, shimmer").fill("lighthouse")
         save(editor)
 
         page = page_for(reader)
