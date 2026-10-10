@@ -3,7 +3,7 @@
 A fresh admin writes a tool in the workspace's Tools editor, turns it on for a chat under
 Integrations, and asks a question the scripted model answers by calling the tool (native
 function calling, the default). The tool runs on the server, the model is sent its result, and
-the reply shows the call; opening it shows what the tool returned. Import From Link fetches a
+the reply shows the call; opening it shows what the tool returned. Import from URL fetches a
 tool's source from a URL into the editor, named after its file, and saving it stores that source.
 Source that does not parse is refused: the editor shows where it fails, stays open and stores
 nothing.
@@ -13,6 +13,9 @@ the editor's source without its `specs` the model is never offered the tool. On 
 with the link import answering a placeholder in place of the fetched source, the import test
 fails. In a backend copy whose tool create stores source that failed to load, the syntax error
 test fails.
+The link import test was retargeted for d54aa9836, which renamed the menu entry to Import
+from URL: it passes on dev 76ad6f97c (3 of 3) and fails in a backend copy of it whose link import
+answers a placeholder.
 """
 
 from __future__ import annotations
@@ -100,7 +103,7 @@ def test_a_tool_imported_from_a_link_opens_in_the_editor_and_saves_its_source(
     page = page_for(toolsmith)
     page.goto("/workspace/tools")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name="Import From Link").click()
+    page.get_by_role("button", name="Import from URL").click()
     importing = page.get_by_role("dialog")
     importing.get_by_placeholder("Enter the URL to import").fill(
         f"{listener.base_url}/tools/locker_desk.py"

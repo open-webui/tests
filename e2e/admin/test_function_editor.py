@@ -4,13 +4,16 @@ Source with a syntax error is refused when a new function is saved: the editor s
 code fails to parse and an error, stays open and nothing is stored. The same mistake made while
 editing an existing pipe shows where it fails to parse and the Python error, keeps the stored
 code and leaves the pipe on, still answering with its old code. Code edited and saved without a
-mistake answers the next chat. Import From Link fetches a function's source into
+mistake answers the next chat. Import from URL fetches a function's source into
 the editor, named after its file, and once saved and switched on it answers a chat.
 
 Discriminates: passes on dev ebc6add67. One backend copy whose function create and update store
 source that failed to load, whose update keeps the old source and running module and whose link
 import answers a placeholder pipe turned each test red on its own edit, as did one whose refused
 update switches the function off.
+The link import test was retargeted for d54aa9836, which renamed the menu entry to Import
+from URL: it passes on dev 76ad6f97c (3 of 3) and fails in a backend copy of it whose link import
+answers a placeholder.
 """
 
 from __future__ import annotations
@@ -138,7 +141,7 @@ def test_a_function_imported_from_a_link_is_saved_and_answers(page_for, editor_a
     page = page_for(editor_admin)
     page.goto("/admin/functions")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name="Import From Link").click()
+    page.get_by_role("button", name="Import from URL").click()
     importing = page.get_by_role("dialog")
     importing.get_by_placeholder("Enter the URL to import").fill(
         f"{listener.base_url}/functions/{file_name}.py"
