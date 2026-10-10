@@ -10,9 +10,10 @@ write access.
 Discriminates: in a backend copy, the function valves update skipping its save turned both valves
 tests red; the update route not replacing the cached module while the cache also ignored changed
 source turned the updated-source test red; the update storing source whose load failed, and a
-refused update switching the function off, each turned the refused-source test red; the tool admin valves routes checking read in place of write turned the
-reader test red, and the user valves routes checking write in place of read turned the user valves
-test red. Each left the other tests green.
+refused update switching the function off, each turned the refused-source test red; the tool
+admin valves routes checking read in place of write turned the reader test red, and the user
+valves routes checking write in place of read turned the user valves test red. Each left the
+other tests green.
 """
 
 from __future__ import annotations
