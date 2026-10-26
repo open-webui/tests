@@ -3,11 +3,15 @@
 Replies are stored with a chosen day, model and token usage, and the admin reads them back
 through every analytics report, always narrowed to the test's own accounts or presets. The token
 reports split input and output per model and per user (both usage namings, a reply without usage
-adds no tokens), the daily series puts each reply on its day and fills the empty days, a window
-that starts after the oldest reply drops it from every report, the message list filters by model,
-user and chat, the model drill-down lists, orders and pages the chats inside a window, the model
-overview counts the chats' tags and the rated thumbs per day and a plain user is refused every
-route.
+adds no tokens) and the user leaderboard ranks and cuts by the metric picked, the daily series
+puts each reply on its day and fills the empty days, sums tokens per day with the Tokens metric,
+buckets by every chart interval and lines each bucket up with the period before when comparing
+(refusing a comparison without both ends), a window that starts after the oldest reply drops it
+from every report, the message list filters by model, user and chat, the model drill-down lists,
+orders and pages the chats inside a window and keeps to the user group picked (#33207, fix
+02821c505), the model overview counts the chats' tags and the rated thumbs per day, a plain user
+is refused every route and with `ENABLE_ADMIN_ANALYTICS` off the dashboard is hidden and the
+routes are gone.
 
 Discriminates: passes on dev ebc6add67; in a backend copy, with the input and output token columns
 swapped the token test fails, with the daily series not filling empty days the daily test fails,
@@ -17,19 +21,25 @@ both overview history tests fail and with the daily route open to verified users
 fails for that route only. With every route open to verified users each refusal case fails, and
 with the summary ignoring the start date, the chat id filter answering nothing, ordering by user
 name dropped and paging ignoring `skip`, the window, message filter, ordering and paging tests fail.
+On dev 8889e8d6a, with the user leaderboard always ranked by messages the leaderboard test fails,
+with the Tokens metric counting messages the tokens test fails, with every interval bucketed by
+the hour the three interval cases fail, with the compared buckets carrying no previous counts the
+compare test fails, with the group filter of the model chats route removed (02821c505's backend
+half reverted) the group test fails and with the analytics routes mounted whatever the setting
+the analytics-off test fails.
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable, Iterator
 
 import pytest
 
 from harness.access import make_group
-from harness.actors import Actor
+from harness.actors import Actor, admin_of
 from harness.backends import write_rows
 from harness.chat_history import seed_chat
 from harness.upstream import MOCK_MODEL_ID
@@ -172,6 +182,25 @@ def test_token_reports_split_input_and_output_per_model_and_per_user(admin, acco
     assert (users[second.id]["output_tokens"], users[second.id]["total_tokens"]) == (5, 55)
 
 
+def test_the_user_leaderboard_ranks_by_the_metric_picked(admin, accounts, make_preset):
+    chatty, heavy = accounts(), accounts()
+    model_id = make_preset()
+    group_id = make_group(admin, [chatty, heavy])
+    for answer in ("one", "two", "three"):
+        seed_reply(chatty, model_id, answer, usage={"input_tokens": 10, "output_tokens": 1})
+    seed_reply(heavy, model_id, "big", usage={"input_tokens": 900, "output_tokens": 100})
+
+    def top(**params) -> list[str]:
+        users = report(admin, "users", group_id=group_id, **params)["users"]
+        return [entry["user_id"] for entry in users]
+
+    assert top(metric="messages") == [chatty.id, heavy.id]
+    assert top(metric="tokens") == [heavy.id, chatty.id]
+    # the limit keeps the leader of the metric picked, not of the message count
+    assert top(metric="tokens", limit=1) == [heavy.id]
+    assert top(metric="messages", limit=1) == [chatty.id]
+
+
 # ---------------------------------------------------------------- daily series
 
 
@@ -198,6 +227,91 @@ def test_daily_series_puts_each_reply_on_its_day_and_fills_the_empty_days(
         day_of(2): {aster: 1, birch: 1},
         day_of(0): {aster: 1},
     }
+
+
+def test_the_tokens_metric_sums_each_days_tokens_per_model(admin, accounts, make_preset):
+    owner = accounts()
+    aster, birch = make_preset(), make_preset()
+    group_id = make_group(admin, [owner])
+    seed_reply(owner, aster, "today", usage={"input_tokens": 100, "output_tokens": 10})
+    seed_reply(owner, aster, "today too", usage={"prompt_tokens": 200, "completion_tokens": 20})
+    seed_reply(owner, birch, "two days", days_ago=2, usage={"input_tokens": 40, "output_tokens": 4})
+    # a reply without usage is a message but adds nothing to the tokens series
+    seed_reply(owner, birch, "unrecorded", days_ago=2)
+
+    def by_day(metric: str) -> dict[str, dict[str, int]]:
+        series = report(
+            admin, "daily", granularity="daily", metric=metric, group_id=group_id, **window(3)
+        )["data"]
+        return {entry["date"]: entry["models"] for entry in series if entry["models"]}
+
+    assert by_day("tokens") == {day_of(0): {aster: 330}, day_of(2): {birch: 44}}
+    assert by_day("messages") == {day_of(0): {aster: 2}, day_of(2): {birch: 2}}
+
+
+@pytest.mark.parametrize("granularity, minutes", [("10m", 10), ("3h", 180), ("6h", 360)])
+def test_the_chart_interval_puts_a_reply_in_the_bucket_it_falls_in(
+    admin, accounts, make_preset, granularity, minutes
+):
+    owner = accounts()
+    model_id = make_preset()
+    group_id = make_group(admin, [owner])
+    stamp = int(time.time()) - 2 * 3600
+    with owner.client() as client:
+        seed_chat(
+            client,
+            [
+                {"role": "user", "content": "when", "timestamp": stamp},
+                {"role": "assistant", "content": "now", "timestamp": stamp},
+            ],
+            model=model_id,
+        )
+
+    series = report(admin, "daily", granularity=granularity, group_id=group_id, **window(1))["data"]
+
+    moment = datetime.fromtimestamp(stamp)
+    floored = (moment.hour * 60 + moment.minute) // minutes * minutes
+    bucket = moment.replace(hour=floored // 60, minute=floored % 60).strftime("%Y-%m-%d %H:%M")
+    assert {entry["date"]: entry["models"] for entry in series if entry["models"]} == {
+        bucket: {model_id: 1}
+    }
+    # the empty buckets are filled at the same step
+    starts = [datetime.strptime(entry["date"], "%Y-%m-%d %H:%M") for entry in series]
+    steps = {later - earlier for earlier, later in zip(starts, starts[1:])}
+    assert steps == {timedelta(minutes=minutes)}, steps
+
+
+def test_compare_lines_each_bucket_up_with_the_period_before(admin, accounts, make_preset):
+    owner = accounts()
+    model_id = make_preset()
+    group_id = make_group(admin, [owner])
+    seed_reply(owner, model_id, "this period one")
+    seed_reply(owner, model_id, "this period two")
+    # 36 hours ago is inside the 25-hour window before this one; three days ago is in neither
+    with owner.client() as client:
+        for hours_ago in (36, 72):
+            stamp = int(time.time()) - hours_ago * 3600
+            seed_chat(
+                client,
+                [{"role": "assistant", "content": f"{hours_ago}h ago", "timestamp": stamp}],
+                model=model_id,
+            )
+    bounds = window(1)
+
+    series = report(
+        admin, "daily", granularity="hourly", compare=True, group_id=group_id, **bounds
+    )["data"]
+
+    assert series, "the compared chart has no buckets"
+    assert sum(entry["models"].get(model_id, 0) for entry in series) == 2
+    assert sum(entry["previous"]["models"].get(model_id, 0) for entry in series) == 1
+
+    # without both ends there is no period before to compare with
+    with admin.client() as client:
+        unbounded = client.get("/api/v1/analytics/daily", params={"compare": True})
+    assert unbounded.status_code == 400, unbounded.text
+    plain = report(admin, "daily", granularity="hourly", group_id=group_id, **bounds)["data"]
+    assert all(entry.get("previous") is None for entry in plain)
 
 
 def test_a_window_after_the_oldest_reply_leaves_it_out_of_every_report(
@@ -275,7 +389,7 @@ def drilldown(admin, accounts, make_preset, instance) -> dict:
             "UPDATE chat SET updated_at = :stamp WHERE id = :id",
             [{"stamp": now - age, "id": chats[key]}],
         )
-    return {"model_id": model_id, "chats": chats, "names": names}
+    return {"model_id": model_id, "chats": chats, "names": names, "people": people}
 
 
 def listed(admin: Actor, model_id: str, **params) -> dict:
@@ -326,6 +440,19 @@ def test_model_chats_page_with_skip_and_limit_and_report_the_total(admin, drilld
     assert [chat["chat_id"] for chat in first["chats"]] == [chats["Bob"], chats["Ann"]]
     assert [chat["chat_id"] for chat in second["chats"]] == [chats["Cy"]]
     assert first["total"] == second["total"] == 3
+
+
+@pytest.mark.regression
+def test_model_chats_keep_to_the_user_group_picked(admin, drilldown):
+    """#33207: the model's Chats tab listed every user's chats with a group picked."""
+    model_id, chats = drilldown["model_id"], drilldown["chats"]
+    group_id = make_group(admin, [drilldown["people"]["Ann"], drilldown["people"]["Cy"]])
+
+    narrowed = listed(admin, model_id, group_id=group_id)
+
+    assert {chat["chat_id"] for chat in narrowed["chats"]} == {chats["Ann"], chats["Cy"]}
+    assert narrowed["total"] == 2
+    assert listed(admin, model_id)["total"] == 3
 
 
 # ---------------------------------------------------------------- model overview
@@ -409,3 +536,16 @@ def test_a_plain_user_is_refused_every_analytics_route(accounts, path):
     with user.client() as client:
         response = client.get(f"/api/v1/analytics/{path}", params={"model_id": "some-model"})
     assert response.status_code in (401, 403), f"{path} answered {response.status_code}"
+
+
+@pytest.mark.slow
+def test_with_analytics_off_the_dashboard_is_hidden_and_its_api_gone(instance_with):
+    disabled = instance_with({"ENABLE_ADMIN_ANALYTICS": "False"})
+    admin = admin_of(disabled)
+    with admin.client() as client:
+        features = client.get("/api/config").json()["features"]
+        summary = client.get("/api/v1/analytics/summary")
+    assert features["enable_admin_analytics"] is False, features
+    # an unknown path: the web app's page, or a 404 when no frontend is built
+    assert summary.status_code in (200, 404), summary.status_code
+    assert "total_messages" not in summary.text, summary.text[:200]
