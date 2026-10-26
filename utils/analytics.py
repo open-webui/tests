@@ -64,6 +64,50 @@ def chart_interval(settings: Locator) -> Locator:
     return settings.get_by_role("combobox", name="Chart interval").locator("option:checked")
 
 
+def _reload_chart(settings: Locator, change, *query: str) -> None:
+    """Make `change` and wait for the chart's data asked for with every `query` part."""
+    with settings.page.expect_response(
+        lambda response: (
+            "/api/v1/analytics/daily?" in response.url
+            and all(part in response.url for part in query)
+        )
+    ):
+        change()
+
+
+def pick_interval(settings: Locator, label: str, granularity: str) -> None:
+    """Pick the chart's bucket size, which reloads the chart with `granularity`."""
+    picker = settings.get_by_role("combobox", name="Chart interval")
+    _reload_chart(settings, lambda: picker.select_option(label=label), f"granularity={granularity}")
+    expect(chart_interval(settings)).to_have_text(label)
+
+
+def compare_switch(settings: Locator) -> Locator:
+    return settings.get_by_role("button", name="Compare", exact=True)
+
+
+def compare_to_previous_period(settings: Locator) -> None:
+    _reload_chart(settings, compare_switch(settings).click, "compare=true")
+    expect(compare_switch(settings)).to_have_attribute("aria-pressed", "true")
+
+
+def chart_view(settings: Locator, name: str) -> None:
+    """Switch the chart between Volume (stacked bars) and Activity (a lane per model)."""
+    switch = settings.get_by_role("button", name=name, exact=True)
+    switch.click()
+    expect(switch).to_have_attribute("aria-pressed", "true")
+
+
+def legend_entry(settings: Locator, name: str) -> Locator:
+    """The model's entry in the chart legend, which isolates the model when clicked."""
+    return settings.get_by_role("button", name=f"{name} — Select to isolate model")
+
+
+def activity_lane(settings: Locator, name: str) -> Locator:
+    """The model's lane in the Activity view, named by the model and the day under focus."""
+    return settings.get_by_role("button", name=re.compile(f"^{re.escape(name)}, "))
+
+
 def chart_point(settings: Locator, label: str) -> Locator:
     """The chart's bar for the bucket the axis writes as `label`."""
     return settings.get_by_role("button", name=re.compile(f"^{re.escape(label)}: "))

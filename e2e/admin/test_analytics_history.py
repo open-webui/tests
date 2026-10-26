@@ -5,15 +5,23 @@ days ago, one today), one on birch two days ago and one on aster ten days ago, e
 token usage, and two of the chats carry a tag. Narrowed to that user's group, the dashboard counts
 seven days or thirty depending on the period picked, the messages chart of the last 7 days counts
 by the hour and shows each model's count and share for the hour the pointer is on, the last 24
-hours switch it to 10-minute buckets, the token total is split into input and output, the model
-table sorts by tokens and gives each model's share of the messages and a model's row opens an
-overview with its chats' tags and a chat list that keeps to the period picked.
+hours switch it to 10-minute buckets, the last 30 days chart counts by six hours until Daily is
+picked and then names each day's tokens or messages per model with the metric picked, comparing
+lines each day up with the week before, a model picked in the legend is charted alone, the
+Activity view gives each model a lane that can be isolated, the token total is split into input
+and output, the model table sorts by tokens and gives each model's share of the messages and a
+model's row opens an overview with its chats' tags and a chat list that keeps to the period
+picked.
 
 Discriminates: passes on dev 21f770fb7. In a frontend build of it whose chart hover box gives
 every model the whole share, whose Input figure shows the total, whose model table ignores the
 Total sort, whose model details ignore the period and whose last 24 hours and last 30 days both
 ask for seven days, every test but the tag one fails; in a backend copy whose model overview
-counts no tags the tag test fails (dev fbeee59e9).
+counts no tags the tag test fails (dev fbeee59e9). On dev 8889e8d6a, in a frontend build whose
+chart asks for message counts under Tokens, whose compared days carry no previous counts and
+whose bars and Activity lanes ignore the model picked, the metric, compare, legend and Activity
+tests fail; in one whose chart always asks for the period's default interval, every test that
+picks Daily fails (the chart never loads it).
 """
 
 from __future__ import annotations
@@ -26,23 +34,29 @@ from datetime import datetime
 from typing import Iterator
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness.access import make_group
 from harness.actors import Actor
 from harness.chat_history import seed_chat
 from harness.upstream import MOCK_MODEL_ID
 from utils.analytics import (
+    activity_lane,
     chart_interval,
     chart_point,
+    chart_view,
     close_model_details,
+    compare_switch,
+    compare_to_previous_period,
     count_by,
     dashboard,
     day_label,
     hour_label,
+    legend_entry,
     model_row,
     open_model_details,
     period_picker,
+    pick_interval,
     point_details,
     summary_figure,
 )
@@ -179,6 +193,89 @@ def test_the_last_24_hours_chart_counts_in_ten_minute_buckets(history, admin_pag
     expect(summary_figure(settings, "Messages")).to_have_text("1")
     expect(model_row(settings, birch)).to_have_count(0)
     expect(model_row(settings, aster)).to_have_count(1)
+
+
+def test_the_chart_counts_tokens_or_messages_per_interval_picked(history, admin_page, presets):
+    aster, birch = presets
+    settings = dashboard(admin_page, history.group_name, "Last 30 days")
+    expect(chart_interval(settings)).to_have_text("6 hours")
+    moment = datetime.fromtimestamp(history.two_days_ago)
+    quarter = moment.replace(hour=moment.hour // 6 * 6, minute=0, second=0)
+    # the six-hour buckets are named by their hour, so no bar carries the day alone yet
+    expect(chart_point(settings, hour_label(quarter))).to_have_count(1)
+    expect(chart_point(settings, day_label(moment))).to_have_count(0)
+
+    pick_interval(settings, "Daily", "daily")
+    day = chart_point(settings, day_label(moment))
+    # Tokens is the default metric; each model's part follows, the larger first
+    expect(day).to_have_attribute(
+        "aria-label", f"{day_label(moment)}: 530 Tokens. {birch}: 500, {aster}: 30"
+    )
+    expect(settings.get_by_role("columnheader", name="Token share")).to_be_visible()
+
+    count_by(settings, "Messages")
+    expect(day).to_have_attribute(
+        "aria-label", f"{day_label(moment)}: 3 Messages. {aster}: 2, {birch}: 1"
+    )
+    expect(settings.get_by_role("columnheader", name="Message share")).to_be_visible()
+
+
+def test_comparing_lines_each_day_up_with_the_week_before(history, admin_page):
+    settings = dashboard(admin_page, history.group_name, "Last 7 days")
+    count_by(settings, "Messages")
+    pick_interval(settings, "Daily", "daily")
+    compare_to_previous_period(settings)
+
+    def compared(current: int, previous: int) -> Locator:
+        label = rf"^Current: .+, {current} Messages\. Previous: .+, {previous} Messages$"
+        return settings.get_by_role("button", name=re.compile(label))
+
+    # two days ago this week holds three replies, the same day a week earlier none
+    expect(compared(3, 0)).to_have_count(1)
+    # the reply of ten days ago lines up with three days ago, which this week left empty
+    expect(compared(0, 1)).to_have_count(1)
+    details = point_details(admin_page, compared(0, 1), "All models")
+    expect(details).to_contain_text("-100%")
+
+    period_picker(settings).select_option(label="All time")
+    expect(compare_switch(settings)).to_be_disabled()
+
+
+def test_isolating_a_model_charts_only_its_replies(history, admin_page, presets):
+    aster, birch = presets
+    settings = dashboard(admin_page, history.group_name, "Last 7 days")
+    count_by(settings, "Messages")
+    pick_interval(settings, "Daily", "daily")
+    day = chart_point(settings, day_label(datetime.fromtimestamp(history.two_days_ago)))
+    expect(day).to_have_attribute("aria-label", re.compile(r": 3 Messages\. "))
+
+    legend_entry(settings, birch).click()
+
+    expect(legend_entry(settings, birch)).to_have_attribute("aria-pressed", "true")
+    expect(day).to_have_attribute("aria-label", re.compile(rf": 1 Messages\. {birch}: 1$"))
+
+
+def test_the_activity_view_gives_each_model_a_lane(history, admin_page, presets):
+    aster, birch = presets
+    settings = dashboard(admin_page, history.group_name, "Last 7 days")
+    count_by(settings, "Messages")
+    pick_interval(settings, "Daily", "daily")
+    chart_view(settings, "Activity")
+    expect(activity_lane(settings, aster)).to_have_count(1)
+    expect(activity_lane(settings, birch)).to_have_count(1)
+
+    # the lane's right end is today, where aster has its one reply
+    lane = activity_lane(settings, aster)
+    box = lane.bounding_box()
+    assert box, "the aster lane has no size"
+    lane.hover(position={"x": box["width"] - 2, "y": box["height"] / 2})
+    details = admin_page.get_by_role("tooltip").filter(has_text=aster)
+    expect(details).to_contain_text(re.compile(r"1\s*\(100(\.0)?%\)"))
+
+    # isolate the lower lane, so keeping only the top one would not pass
+    settings.get_by_role("button", name=birch, exact=True).click()
+    expect(activity_lane(settings, aster)).to_have_count(0)
+    expect(activity_lane(settings, birch)).to_have_count(1)
 
 
 def test_the_token_total_is_split_into_input_and_output(history, admin_page):

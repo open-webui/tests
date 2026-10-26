@@ -4,8 +4,9 @@ Two fresh users chat with two presets of the scripted model, each reply carrying
 The dashboard's model table then shows each preset's messages, users, chats and tokens, the user
 table (narrowed to the two users' group) shows each user's messages and tokens with the totals
 above it, a custom date range from before the chats empties the dashboard and the last day
-brings it back, a model row opens the model's chats with the user who had each, and a plain
-user is sent back to the chat by the analytics page and refused its API.
+brings it back, a model row opens the model's chats with the user who had each and, with a
+group picked, only the chats of that group's users (#33207), and a plain user is sent back to the
+chat by the analytics page and refused its API.
 
 Discriminates: passes on dev 21f770fb7 (the user table and date range mutations proven there, the
 rest on 176d31d1d); in a backend copy, with `/api/v1/analytics/models` reporting `unique_users=0`
@@ -13,7 +14,8 @@ the model table test fails, with `/api/v1/analytics/users` reporting `total_toke
 table test fails, with `/api/v1/analytics/models` ignoring the dates the date range test fails
 (the row survives a range before the chats), with the model chats route dropping `user_name` the
 drill-down test fails, and with `/api/v1/analytics/summary` open to verified users the access test
-fails (HTTP 200).
+fails (HTTP 200). On dev 8889e8d6a, with the dashboard no longer passing the group to the model's
+details (02821c505's frontend half reverted) the group drill-down test fails (both chats listed).
 """
 
 from __future__ import annotations
@@ -220,6 +222,33 @@ def test_a_model_row_opens_the_models_chats_with_who_had_them(activity, dashboar
     expect(details.get_by_text(activity.first.name)).to_be_visible()
     expect(details.get_by_text(activity.second.name)).to_be_visible()
     expect(details.get_by_text("aster first")).to_have_count(0)
+
+
+@pytest.fixture
+def first_users_group(admin, activity) -> str:
+    """A group holding only the first user, made before the dashboard loads its groups."""
+    group_id = make_group(admin, [activity.first])
+    with admin.client() as client:
+        return client.get(f"/api/v1/groups/id/{group_id}").json()["name"]
+
+
+@pytest.mark.regression
+def test_a_models_chats_keep_to_the_user_group_picked(
+    activity, first_users_group, dashboard, presets
+):
+    """#33207 (fix 02821c505): the Chats tab listed every user's chats with a group picked."""
+    _, settings = dashboard
+    _, birch = presets
+    group_picker(settings).select_option(label=first_users_group)
+    # the table follows the group before the row is opened
+    expect(_row(settings, birch).get_by_role("cell").nth(3)).to_have_text("1")
+
+    details = open_model_details(settings, birch)
+    details.get_by_role("button", name="Chats", exact=True).click()
+    chats = details.get_by_role("link")
+    expect(chats.filter(has_text="birch first")).to_have_count(1)
+    expect(chats).to_have_count(1)
+    expect(details.get_by_text(activity.second.name)).to_have_count(0)
 
 
 def test_a_user_is_sent_back_to_the_chat_and_refused_the_api(page_for, make_user):
