@@ -5,7 +5,8 @@ function calling, the context was compacted only before a reply started. Now, on
 passes the token threshold between two tool rounds, the older rounds are summarized: the chat
 shows the Context compacted notice mid-reply, the next request carries the question, the summary
 and the recent rounds with every call next to its results, and the reply still finishes. The
-stored reply keeps every round, so a reload shows the answer and the next turn is answered.
+stored reply keeps every round and, since dev f465a4be1, each Context compacted notice between the
+rounds it summarized, so a reload shows the answer and the next turn is answered.
 Between two compactions every request only appends, as the provider's prefix cache needs.
 Twin of integration/chat/test_compaction_tool_rounds.py.
 
@@ -164,8 +165,12 @@ def test_a_long_tool_run_is_compacted_mid_reply_and_the_chat_carries_on(
 
     page.reload()
     expect_reply(page, ANSWER)
-    # consecutive calls are grouped under one line that counts them
-    expect(conversation(page).get_by_text(f"{2 * ROUNDS} read_log")).to_be_visible()
+    # consecutive calls are grouped under one line that counts them, and each compaction stays
+    # in the reply between the rounds it summarized: three rounds, two, then the last one
+    chat = conversation(page)
+    for calls in (6, 4, 2):
+        expect(chat.get_by_text(f"Explored {calls} read_log")).to_be_visible()
+    expect(chat.get_by_role("button", name="Context compacted")).to_have_count(2)
 
     follow_up = f"which page was longest? [{uuid.uuid4().hex[:6]}]"
     upstream.queue(reply.text("They were all the same.", match=answering(follow_up)))

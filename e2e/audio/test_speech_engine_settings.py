@@ -137,7 +137,9 @@ def save_admin_audio(page: Page, settings: Locator) -> None:
 
 def pick_engines(settings: Locator, speech_to_text: str, text_to_speech: str) -> None:
     """The speech-to-text engine first: saving local Whisper would load a model, offline."""
-    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label=speech_to_text)
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(
+        label=speech_to_text
+    )
     settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(
         label=text_to_speech
     )
@@ -248,7 +250,9 @@ def test_azure_transcribes_a_dictation_through_the_admin_tab(
 ):
     serve_azure(listener)
     settings = open_admin_audio(admin_page)
-    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="Azure AI Speech")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(
+        label="Azure AI Speech"
+    )
     settings.get_by_role("textbox", name="API Key", exact=True).fill(AZURE_KEY)
     settings.get_by_role("textbox", name="leave blank for eastus").fill("westus")
     settings.get_by_role("textbox", name="leave blank for auto-detect").fill("en-US,fr-FR")

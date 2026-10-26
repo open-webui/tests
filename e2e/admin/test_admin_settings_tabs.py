@@ -194,9 +194,7 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
     _save(admin_page, settings)
 
     settings = _open_tab(admin_page, "audio")
-    expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value(
-        "openai"
-    )
+    expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value("openai")
     expect(settings.get_by_role("combobox", name="Select a voice")).to_have_value(VOICE)
 
     spoken = f"The ferry leaves at noon, pier {uuid.uuid4().hex[:4]}."

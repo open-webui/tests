@@ -37,8 +37,9 @@ def first_suggestion(page: Page) -> Locator:
 
 
 def click_uncovered(target: Locator) -> None:
-    # the popup grows in with a transition; measure it once it has settled
-    target.page.evaluate("Promise.all(document.getAnimations().map((a) => a.finished))")
+    # the popup grows in with a transition; measure it once it has settled. A transition the
+    # page cancels (a tooltip leaving) rejects its promise, which counts as settled too
+    target.page.evaluate("Promise.allSettled(document.getAnimations().map((a) => a.finished))")
     point = target.evaluate(UNCOVERED_POINT)
     assert point is not None, "the open menu covers the whole suggestion"
     target.click(position=point)

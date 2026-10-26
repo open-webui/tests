@@ -112,9 +112,7 @@ def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
 ):
     admin_page = page_for(create_user(hosted, role="admin"))
     settings = audio_settings(admin_page)
-    settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(
-        label="ElevenLabs"
-    )
+    settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(label="ElevenLabs")
     settings.get_by_role("textbox", name="API Key").fill(ELEVENLABS_KEY)
     settings.get_by_role("combobox", name="Select a voice").fill(ADMIN_VOICE)
     settings.get_by_role("combobox", name="Select a model").fill(MODEL)
