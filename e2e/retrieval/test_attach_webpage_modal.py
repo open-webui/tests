@@ -12,10 +12,11 @@ local service, on an instance that may fetch loopback addresses.
 
 Discriminates: passes on the 176d31d1d build; with the link validation removed the refused-text
 test goes red, with the de-duplication removed the several-links test does, with the handoff to
-the chat or the modal's close button removed the attachment, refusal and close tests do, and with
-the permission check removed from the menu entry the no-permission test does; in a build of dev
-22102e4a2 that ignores the `load-url` parameter its test goes red. In the pre-fix build of 0.12.4
-(bb8d49ff3 reverted) the attached page vanishes from the composer without file upload.
+the chat or the modal's close button removed the attachment, refusal and close tests do, with a
+refused page left in the composer the refusal test does, and with the permission check removed
+from the menu entry the no-permission test does; in a build of dev 22102e4a2 that ignores the
+`load-url` parameter its test goes red. In the pre-fix build of 0.12.4 (bb8d49ff3 reverted) the
+attached page vanishes from the composer without file upload.
 """
 
 from __future__ import annotations
@@ -86,6 +87,11 @@ def attach(page: Page, *links: str) -> None:
 
 def open_chat(page_for, launched) -> Page:
     return page_for(create_user(launched))
+
+
+def composer(page: Page):
+    """The chat input box with its attachments; the refusal toast also names the link."""
+    return page.locator("#message-input-container")
 
 
 def test_a_link_becomes_an_attachment_and_its_text_reaches_the_model(
@@ -175,7 +181,7 @@ def test_a_page_the_server_cannot_read_is_refused_and_not_attached(
     attach(page, missing)
 
     expect(page.get_by_text(REFUSED)).to_be_visible(timeout=30_000)
-    expect(page.get_by_text(missing)).to_have_count(0)
+    expect(composer(page).get_by_text(missing)).to_have_count(0)
 
 
 def test_the_modal_closes_without_attaching_anything(page_for, fetching_instance, pages):
