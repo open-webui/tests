@@ -19,6 +19,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from utils.chat_ui import expect_reply, send
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -70,7 +71,7 @@ def test_a_global_filter_from_the_editor_signs_the_reply_with_its_valve(page_for
     ).click()
     expect(page).to_have_url(re.compile(r"/admin/functions$"))
 
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(f"^filter {name}"))
+    card = item_row(page, name)
     card.get_by_role("switch").click()
     expect(card.get_by_role("switch")).to_be_checked()
     card.get_by_role("button", name="Function Menu").first.click()

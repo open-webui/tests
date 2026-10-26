@@ -190,8 +190,7 @@ def test_the_feedback_tab_can_be_narrowed_to_one_model(duel, admin, page_for):
     expect(_feedback_row(page, rater, first_id)).to_have_count(1)
     expect(_feedback_row(page, rater, second_id)).to_have_count(1)
 
-    page.get_by_role("button", name="All").click()
-    page.get_by_role("button", name=second_id, exact=True).click()
+    _narrow_to(page, second_id)
 
     expect(_feedback_row(page, rater, second_id)).to_have_count(1)
     expect(_feedback_row(page, rater, first_id)).to_have_count(0)
@@ -202,7 +201,7 @@ def test_an_admin_deletes_a_rating_from_the_feedback_tab(duel, admin, page_for):
     page = _open_evaluations(admin, page_for, "feedback")
     expect(_feedback_row(page, rater, first_id)).to_have_count(1)
 
-    _feedback_row(page, rater, second_id).locator("button").click()
+    _feedback_row(page, rater, second_id).get_by_role("button", name="More").click()
     page.get_by_role("button", name="Delete").click()
 
     expect(page.get_by_text("Feedback deleted successfully")).to_be_visible()
@@ -349,7 +348,9 @@ def _export(page: Page, choice: str) -> str:
 
 def _narrow_to(page: Page, model_id: str) -> None:
     page.get_by_role("button", name="All").click()
-    page.get_by_role("button", name=model_id, exact=True).click()
+    # each row names its model in a button too; the filter's choices are the pressable ones
+    choice = page.get_by_role("button", name=model_id, exact=True)
+    choice.and_(page.locator("[aria-pressed]")).click()
 
 
 def test_the_json_export_holds_the_chosen_models_ratings(duel, admin, page_for):

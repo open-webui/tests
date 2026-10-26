@@ -63,7 +63,7 @@ def make_public(page: Page, form: Locator) -> None:
 def share_with_group(page: Page, form: Locator, group_name: str) -> None:
     access = open_access_control(page, form)
     access.get_by_role("button", name="Add Access").click()
-    picker = page.get_by_role("dialog").filter(has=page.get_by_role("button", name="Add"))
+    picker = page.get_by_role("dialog").filter(has_text="Add Access").last
     picker.get_by_placeholder("Search").fill(group_name)
     picker.get_by_role("button", name=group_name).click()
     picker.get_by_role("button", name="Add", exact=True).click()

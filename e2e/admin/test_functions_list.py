@@ -13,7 +13,6 @@ baseline fails.
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.plugins import installed_function
 from utils.chat_ui import expect_reply, last_reply, send
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -46,7 +46,7 @@ def signing_filter(admin):
 
 def function_card(page: Page, function_id: str) -> Locator:
     page.goto("/admin/functions")
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(f"^filter {function_id}"))
+    card = item_row(page, function_id)
     expect(card).to_be_visible()
     return card
 

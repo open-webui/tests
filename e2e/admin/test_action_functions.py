@@ -24,8 +24,6 @@ action.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
@@ -33,6 +31,7 @@ from harness import upstream as reply
 from harness.plugins import installed_function
 from utils.chat_ui import expect_reply, last_reply, send
 from utils.valves import customise, valve
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -150,7 +149,7 @@ def action_button(page: Page, name: str) -> Locator:
 def function_card(page: Page, kind: str, function_id: str) -> Locator:
     page.goto("/admin/functions")
     page.get_by_placeholder("Search Functions").fill(function_id)
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(f"^{kind} {function_id}"))
+    card = item_row(page, function_id).filter(has_text=kind)
     expect(card).to_be_visible()
     return card
 

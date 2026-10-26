@@ -50,7 +50,8 @@ def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None
 def pick(editor: Locator, label: str, name: str, ticked: bool = True) -> None:
     """Tick or untick `name` in the search list behind the editor's `label` row (Tools, Skills,
     Filters, Actions)."""
-    trigger = editor.get_by_role("button", name=label, exact=True)
+    # the row is named by its label followed by what it holds ("Tools None", "Filters a, b")
+    trigger = editor.get_by_role("button", name=re.compile(rf"^{label}\b"))
     trigger = trigger.and_(editor.locator("button[aria-expanded]"))
     trigger.click()
     editor.page.get_by_placeholder(f"Search {label.lower()}").fill(name)

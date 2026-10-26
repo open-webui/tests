@@ -40,6 +40,7 @@ from harness.plugins import installed_function
 from utils.cached_chat import turn_on_tool
 from utils.chat_ui import chat_input, expect_reply, integration_row, send
 from utils.valves import customise, valve
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -184,7 +185,7 @@ def _create_tool(owner, name: str, content: str, access_grants: list[dict] | Non
 def open_tool_valves(page: Page, name: str) -> Locator:
     page.goto("/workspace/tools")
     page.get_by_role("textbox", name="Search Tools").fill(name)
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(name))
+    card = item_row(page, name)
     card.get_by_role("button", name="Valves").click()
     return page.get_by_role("dialog").filter(has_text="Valves")
 
@@ -246,7 +247,7 @@ def test_tool_valves_of_every_field_type_are_saved_and_reach_the_tool(
 def open_function_valves(page: Page, function_id: str) -> Locator:
     page.goto("/admin/functions")
     page.get_by_placeholder("Search Functions").fill(function_id)
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(f"^pipe {function_id}"))
+    card = item_row(page, function_id)
     card.get_by_role("button", name="Valves").click()
     return page.get_by_role("dialog").filter(has_text="Valves")
 

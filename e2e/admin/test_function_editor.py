@@ -32,6 +32,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.listener import text_answer
 from harness.plugins import installed_function
 from utils.chat_ui import expect_reply, send
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -84,7 +85,7 @@ def ask_pipe(page: Page, pipe_id: str, question: str, answer: str) -> None:
 def pipe_card(page: Page, pipe_id: str) -> Locator:
     page.goto("/admin/functions")
     page.get_by_placeholder("Search Functions").fill(pipe_id)
-    card = page.get_by_role("main").get_by_role("button", name=re.compile(f"^pipe {pipe_id}"))
+    card = item_row(page, pipe_id)
     expect(card).to_be_visible()
     return card
 

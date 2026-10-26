@@ -17,7 +17,6 @@ the pre-fix build of 0.12.4 (46cdd70d7 reverted): the user is offered the knob.
 
 from __future__ import annotations
 
-import re
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
@@ -31,6 +30,7 @@ from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 from utils.tooltips import tooltip_button
 from utils.valves import customise, valve
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -153,9 +153,7 @@ def test_a_pipe_switched_off_leaves_the_model_selector(page_for, admin, make_use
 
         admin_page = page_for(admin, path="/admin/functions")
         admin_page.get_by_placeholder("Search Functions").fill(pipe_id)
-        card = admin_page.get_by_role("main").get_by_role(
-            "button", name=re.compile(f"^pipe {name}")
-        )
+        card = item_row(admin_page, name)
         card.get_by_role("switch").click()
         expect(card.get_by_role("switch")).not_to_be_checked()
 

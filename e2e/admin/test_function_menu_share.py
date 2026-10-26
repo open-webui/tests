@@ -15,6 +15,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.plugins import installed_function
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -35,7 +36,7 @@ def _set_community_sharing(admin, enabled: bool) -> None:
 
 def _function_menu(page: Page, function_id: str):
     page.goto("/admin/functions")
-    card = page.get_by_role("main").get_by_role("button", name=function_id).first
+    card = item_row(page, function_id)
     card.get_by_role("button", name="Function Menu").first.click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("button", name="Edit")).to_be_visible()
