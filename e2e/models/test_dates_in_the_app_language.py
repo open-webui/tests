@@ -23,6 +23,7 @@ from playwright.sync_api import Page, expect
 
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
+from utils.automations_page import automation_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -74,9 +75,7 @@ def test_a_schedule_is_worded_in_the_chosen_language(page_for, scheduler, kind):
 
     page.goto("/automations")
     page.get_by_role("textbox", name="Automatisierungen suchen").fill(automation["name"])
-    row = page.get_by_role("button", name="Automatisierung öffnen").filter(
-        has_text=automation["name"]
-    )
+    row = automation_row(page, automation["name"])
     expect(row).to_contain_text(f"{worded} · Neuer Chat")
 
     row.click()

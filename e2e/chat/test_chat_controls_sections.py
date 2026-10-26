@@ -48,8 +48,10 @@ def section(panel: Locator, title: str) -> Locator:
 
 
 def listed_file(panel: Locator, name: str) -> Locator:
-    # only the Files section lists a chat file with a remove button
-    return panel.get_by_role("button", name=re.compile(rf"^{re.escape(name)}.*Remove File$"))
+    # only the Files section lists a chat file with a remove button, which sits beside the
+    # file's own button: the item is the element holding both
+    remove = panel.get_by_role("button", name="Remove File", exact=True)
+    return remove.locator("xpath=../..").filter(has_text=name)
 
 
 def remove_listed_file(panel: Locator, name: str) -> None:

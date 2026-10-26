@@ -176,7 +176,7 @@ def test_without_the_restriction_the_key_reaches_every_endpoint(keyed_account):
 def test_an_account_signing_up_lands_in_the_default_group(admin_page, page, default_group):
     group_name, _ = default_group
     settings = _authentication_settings(admin_page)
-    settings.get_by_role("combobox", name="Select a group").select_option(label=group_name)
+    settings.get_by_role("combobox", name="Default Group").select_option(label=group_name)
     _save(admin_page, settings)
     name, email = _new_visitor()
 

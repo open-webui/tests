@@ -83,7 +83,7 @@ def test_local_whisper_picked_and_loaded_in_the_audio_tab_transcribes_dictation(
 ):
     admin_page = page_for(make_user(role="admin"), path="/admin/settings/audio")
     settings = admin_page.get_by_role("dialog")
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="Whisper (Local)")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="Whisper (Local)")
     settings.get_by_role("textbox", name="Set whisper model").fill(str(tiny_whisper))
     with admin_page.expect_response(_is_audio_settings_save) as saved:
         settings.get_by_role("button", name="Update model").click()

@@ -86,8 +86,7 @@ def expect_no_sideways_scroll(page: Page) -> None:
 
 
 def open_note_menu(page: Page) -> Locator:
-    # the "..." has no name; its menu trigger wraps the icon's padded box
-    tap_on_screen(page.get_by_role("main").locator("[aria-haspopup=true] > div.p-1"))
+    tap_on_screen(page.get_by_role("main").get_by_role("button", name="Note Menu"))
     return page.get_by_role("menu")
 
 

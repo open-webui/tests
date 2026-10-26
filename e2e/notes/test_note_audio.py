@@ -100,14 +100,12 @@ def _open_note(page: Page, note_id: str) -> None:
     expect(_note_editor(page)).to_contain_text(NOTE_TEXT)
 
 
-def _open_audio_menu(page: Page) -> None:
-    triggers = page.get_by_role("main").locator("[aria-haspopup=true]")
-    index = triggers.evaluate_all(
-        "(triggers) => triggers.findIndex("
-        "(trigger) => trigger.firstElementChild?._tippy?.props.content === 'Record')"
-    )
-    assert index >= 0, "the note header shows no microphone button"
-    triggers.nth(index).click()
+def _open_audio_menu(page: Page) -> Locator:
+    """Opens the microphone menu in the note's header, whose first entry is named Record too."""
+    microphone = page.get_by_role("main").get_by_role("button", name="Record", exact=True)
+    expect(microphone, "the note header shows no microphone button").to_be_visible()
+    microphone.click()
+    return page.get_by_role("menu")
 
 
 def _upload_memo(page: Page, tmp_path: Path) -> None:
@@ -197,8 +195,7 @@ def test_recording_with_the_microphone_attaches_the_recording_with_its_transcrip
     page = voice_page_for(author)
     _open_note(page, note_id)
 
-    _open_audio_menu(page)
-    page.get_by_role("button", name="Record", exact=True).click()
+    _open_audio_menu(page).get_by_role("button", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
     page.get_by_role("button", name="Confirm recording").click()
 
@@ -214,8 +211,7 @@ def test_escape_while_recording_attaches_nothing(voice_page_for, make_user, spee
     note_id = _create_note(author)
     page = voice_page_for(author)
     _open_note(page, note_id)
-    _open_audio_menu(page)
-    page.get_by_role("button", name="Record", exact=True).click()
+    _open_audio_menu(page).get_by_role("button", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
 
     page.keyboard.press("Escape")

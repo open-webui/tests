@@ -145,7 +145,7 @@ def test_an_admin_sets_up_the_openai_engine_and_it_draws(
     admin_page = page_for(make_user(role="admin"))
     settings = image_settings(admin_page)
     settings.get_by_role("switch", name="Image Generation").click()
-    settings.get_by_role("combobox", name="Select Engine").first.select_option(
+    settings.get_by_role("combobox", name="Image Generation Engine").select_option(
         label="Default (Open AI)"
     )
     settings.get_by_role("combobox", name="Select a model").fill("dall-e-2")
@@ -157,7 +157,7 @@ def test_an_admin_sets_up_the_openai_engine_and_it_draws(
 
     settings = image_settings(admin_page)
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()
-    expect(settings.get_by_role("combobox", name="Select Engine").first).to_have_value("openai")
+    expect(settings.get_by_role("combobox", name="Image Generation Engine")).to_have_value("openai")
     expect(settings.get_by_role("textbox", name="API Base URL").first).to_have_value(
         listener.base_url
     )

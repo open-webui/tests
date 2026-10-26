@@ -94,7 +94,7 @@ def save(page: Page, settings: Locator) -> None:
 
 def use_openai_transcription(settings: Locator, base_url: str) -> None:
     # local Whisper would load a model on save, which an offline instance cannot
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="OpenAI")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="OpenAI")
     transcription = section(settings, "Speech-to-Text")
     transcription.get_by_role("textbox", name="API Base URL").fill(base_url)
     transcription.get_by_role("textbox", name="API Key").fill(API_KEY)
@@ -175,7 +175,7 @@ def test_the_realtime_speech_engine_reads_a_reply_with_the_admins_prompt(
     use_openai_transcription(settings, provider.base_url)
     speech = section(settings, "Text-to-Speech")
 
-    speech.get_by_role("combobox", name="Select a mode", exact=True).select_option(
+    speech.get_by_role("combobox", name="Text-to-Speech Engine").select_option(
         label="OpenAI Realtime"
     )
 
@@ -190,7 +190,7 @@ def test_the_realtime_speech_engine_reads_a_reply_with_the_admins_prompt(
     save(admin_page, settings)
 
     speech = section(open_audio_tab(admin_page), "Text-to-Speech")
-    expect(speech.get_by_role("combobox", name="Select a mode", exact=True)).to_have_value(
+    expect(speech.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value(
         "openai-realtime"
     )
     expect(field(speech, "Prompt Template")).to_have_value(prompt)

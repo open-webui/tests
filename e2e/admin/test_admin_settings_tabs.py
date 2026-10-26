@@ -125,7 +125,7 @@ def test_a_saved_search_engine_answers_the_models_web_search(
     )
     settings = _open_tab(admin_page, "web")
     settings.get_by_role("switch", name="Web Search", exact=True).click()
-    settings.get_by_role("combobox", name="Select a engine").first.select_option("external")
+    settings.get_by_role("combobox", name="Web Search Engine").select_option("external")
     settings.get_by_role("textbox", name="Enter External Web Search URL").fill(
         f"{listener.base_url}/search"
     )
@@ -135,7 +135,7 @@ def test_a_saved_search_engine_answers_the_models_web_search(
 
     settings = _open_tab(admin_page, "web")
     expect(settings.get_by_role("switch", name="Web Search", exact=True)).to_be_checked()
-    expect(settings.get_by_role("combobox", name="Select a engine").first).to_have_value("external")
+    expect(settings.get_by_role("combobox", name="Web Search Engine")).to_have_value("external")
 
     question = "how many kestrels are there?"
     upstream.queue(
@@ -183,8 +183,8 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
     engine = serve_audio_engine(listener)
     settings = _open_tab(admin_page, "audio")
     # local Whisper would load a model on save, which an offline instance cannot
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="OpenAI")
-    settings.get_by_role("combobox", name="Select a mode", exact=True).select_option(label="OpenAI")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="OpenAI")
+    settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(label="OpenAI")
     for base_url_box in settings.get_by_role("textbox", name="API Base URL").all():
         base_url_box.fill(engine.base_url)
     for key_box in settings.get_by_role("textbox", name="API Key").all():
@@ -194,7 +194,7 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
     _save(admin_page, settings)
 
     settings = _open_tab(admin_page, "audio")
-    expect(settings.get_by_role("combobox", name="Select a mode", exact=True)).to_have_value(
+    expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value(
         "openai"
     )
     expect(settings.get_by_role("combobox", name="Select a voice")).to_have_value(VOICE)
@@ -217,7 +217,7 @@ def test_a_saved_image_engine_draws_the_models_picture(admin_page, preserve, lis
     serve_gemini(listener)
     settings = _open_tab(admin_page, "images")
     settings.get_by_role("switch", name="Image Generation").click()
-    settings.get_by_role("combobox", name="Select Engine").first.select_option(label="Gemini")
+    settings.get_by_role("combobox", name="Image Generation Engine").select_option(label="Gemini")
     settings.get_by_role("combobox", name="Select a model").fill(IMAGEN_MODEL)
     # the first pair is image generation's, the second image editing's
     settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
@@ -226,7 +226,7 @@ def test_a_saved_image_engine_draws_the_models_picture(admin_page, preserve, lis
 
     settings = _open_tab(admin_page, "images")
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()
-    expect(settings.get_by_role("combobox", name="Select Engine").first).to_have_value("gemini")
+    expect(settings.get_by_role("combobox", name="Image Generation Engine")).to_have_value("gemini")
 
     question = "draw a red square"
     upstream.queue(

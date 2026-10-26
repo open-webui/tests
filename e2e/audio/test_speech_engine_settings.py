@@ -126,7 +126,7 @@ def admin_page(make_user, page_for) -> Page:
 def open_admin_audio(page: Page) -> Locator:
     page.goto("/admin/settings/audio")
     settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("combobox", name="Select an engine")).to_be_visible()
+    expect(settings.get_by_role("combobox", name="Speech-to-Text Engine")).to_be_visible()
     return settings
 
 
@@ -137,8 +137,8 @@ def save_admin_audio(page: Page, settings: Locator) -> None:
 
 def pick_engines(settings: Locator, speech_to_text: str, text_to_speech: str) -> None:
     """The speech-to-text engine first: saving local Whisper would load a model, offline."""
-    settings.get_by_role("combobox", name="Select an engine").select_option(label=speech_to_text)
-    settings.get_by_role("combobox", name="Select a mode", exact=True).select_option(
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label=speech_to_text)
+    settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(
         label=text_to_speech
     )
 
@@ -248,7 +248,7 @@ def test_azure_transcribes_a_dictation_through_the_admin_tab(
 ):
     serve_azure(listener)
     settings = open_admin_audio(admin_page)
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="Azure AI Speech")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="Azure AI Speech")
     settings.get_by_role("textbox", name="API Key", exact=True).fill(AZURE_KEY)
     settings.get_by_role("textbox", name="leave blank for eastus").fill("westus")
     settings.get_by_role("textbox", name="leave blank for auto-detect").fill("en-US,fr-FR")
@@ -292,7 +292,7 @@ def test_mistral_transcribes_a_dictation_through_the_admin_tab(
 ):
     serve_mistral(listener)
     settings = open_admin_audio(admin_page)
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="MistralAI")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="MistralAI")
     settings.get_by_role("textbox", name="API Base URL").fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill(MISTRAL_KEY)
     settings.get_by_role("textbox", name="voxtral-mini-latest").fill("voxtral-test-model")
@@ -376,7 +376,7 @@ def test_the_admins_speech_to_text_model_is_the_one_the_engine_is_asked_for(
 ):
     engine = serve_audio_engine(listener)
     settings = open_admin_audio(admin_page)
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="OpenAI")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="OpenAI")
     settings.get_by_role("textbox", name="API Base URL").fill(engine.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill("sk-audio")
     settings.get_by_role("combobox", name="Select a model").fill("whisper-test-model")

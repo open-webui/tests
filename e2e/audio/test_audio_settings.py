@@ -194,8 +194,8 @@ def test_the_web_api_engines_hide_their_controls_for_the_admin_and_the_user(
 ):
     admin_page = page_for(make_user(role="admin"), path="/admin/settings/audio")
     settings = admin_page.get_by_role("dialog")
-    tts_engine = settings.get_by_role("combobox", name="Select a mode", exact=True)
-    stt_engine = settings.get_by_role("combobox", name="Select an engine")
+    tts_engine = settings.get_by_role("combobox", name="Text-to-Speech Engine")
+    stt_engine = settings.get_by_role("combobox", name="Speech-to-Text Engine")
     expect(tts_engine).to_have_value("openai")
     expect(stt_engine).to_have_value("openai")
     expect(settings.get_by_role("textbox", name="API Base URL")).to_have_count(2)

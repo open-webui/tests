@@ -406,16 +406,16 @@ def test_a_chat_rows_menu_in_the_drawer_fits_the_screen(page_for, make_user, ups
     _, menu = open_chat_row_menu(page_for, make_user, upstream)
 
     for entry in ("Share", "Download", "Rename", "Pin", "Clone", "Archive", "Delete"):
-        expect_on_screen(menu.get_by_role("button", name=entry, exact=True))
+        expect_on_screen(menu.get_by_role("menuitem", name=entry, exact=True))
 
 
 def test_the_download_choices_of_a_chat_rows_menu_fit_the_screen(page_for, make_user, upstream):
     page, menu = open_chat_row_menu(page_for, make_user, upstream)
-    download = menu.get_by_role("button", name="Download", exact=True)
+    download = menu.get_by_role("menuitem", name="Download", exact=True)
     expect_on_screen(download)
 
     # the click of a tap, without the emulated pointer leaving the trigger afterwards
     download.dispatch_event("click")
 
     for choice in ("Export chat (.json)", "Plain text (.txt)", "PDF document (.pdf)"):
-        expect_on_screen(page.get_by_role("button", name=choice), CUT_OFF)
+        expect_on_screen(page.get_by_role("menuitem", name=choice), CUT_OFF)

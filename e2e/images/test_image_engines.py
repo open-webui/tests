@@ -121,8 +121,8 @@ def save(page: Page, settings: Locator) -> None:
 
 def pick_engine(settings: Locator, engine: str, editing: bool = False) -> None:
     """Pick `engine` in Create Image's engine select, or in Edit Image's."""
-    selects = settings.get_by_role("combobox", name="Select Engine")
-    (selects.last if editing else selects.first).select_option(label=engine)
+    name = "Image Edit Engine" if editing else "Image Generation Engine"
+    settings.get_by_role("combobox", name=name).select_option(label=engine)
 
 
 def open_image_chat(page: Page) -> None:
@@ -321,7 +321,7 @@ def test_the_gemini_endpoint_method_picked_in_the_tab_is_the_one_called(
     settings.get_by_role("combobox", name="Select a model").first.fill(GEMINI_IMAGE_MODEL)
     settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key").first.fill(GEMINI_API_KEY)
-    settings.get_by_role("combobox", name="Select Method").select_option("generateContent")
+    settings.get_by_role("combobox", name="Gemini Endpoint Method").select_option("generateContent")
     save(admin_page, settings)
 
     page = page_for(make_user())

@@ -250,7 +250,7 @@ def test_an_external_reranker_picks_the_cited_passage(
 ):
     field(documents, "Top K").fill("6")
     set_switch(documents, "Hybrid Search", turn_on=True)
-    documents.get_by_role("combobox", name="Select a reranking model engine").select_option(
+    documents.get_by_role("combobox", name="Reranking Engine").select_option(
         "external"
     )
     # the embedding engine's URL and key fields carry the same labels

@@ -83,7 +83,7 @@ def audio_settings(page: Page) -> Locator:
     """Admin Settings > Audio, freshly loaded from the server."""
     page.goto("/admin/settings/audio")
     settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("combobox", name="Select a mode", exact=True)).to_be_visible()
+    expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_be_visible()
     return settings
 
 
@@ -112,7 +112,7 @@ def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
 ):
     admin_page = page_for(create_user(hosted, role="admin"))
     settings = audio_settings(admin_page)
-    settings.get_by_role("combobox", name="Select a mode", exact=True).select_option(
+    settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(
         label="ElevenLabs"
     )
     settings.get_by_role("textbox", name="API Key").fill(ELEVENLABS_KEY)
@@ -150,7 +150,7 @@ def test_deepgram_from_the_audio_tab_transcribes_dictation_in_the_users_language
 ):
     admin_page = page_for(create_user(hosted, role="admin"))
     settings = audio_settings(admin_page)
-    settings.get_by_role("combobox", name="Select an engine").select_option(label="Deepgram")
+    settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="Deepgram")
     settings.get_by_role("textbox", name="API Key").fill(DEEPGRAM_KEY)
     settings.get_by_placeholder("Select a model (optional)").fill("nova-3")
     save(admin_page, settings)
