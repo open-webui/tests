@@ -19,8 +19,8 @@ open-webui 0.11.1 and 0.11.2 fixes, each pinned where a user or the provider see
 * `e92638dc7` (PR #32991): the per-kind sharing switches (models, knowledge,
   prompts, tools, skills, notes, folders) only hid the Access button, so a user with sharing off
   could still create an item shared with a group or share an existing one over the API. The
-  server now drops such grants the way it drops public grants without public sharing. These
-  narrow tests stay red until that fix merges.
+  server now drops such grants on create, and the access route refuses them outright with a 403
+  and leaves the stored grants as they were.
 
 The router-level half of `ad8c79f686` (#27766, a partial settings save serialized every default)
 is no longer visible on its own: the settings store now patches `ui` field by field, so a
@@ -36,7 +36,8 @@ search tests; the partial-save test fails with `ad8c79f686` and the store's fiel
 patching (98a920168) both reverted. The positive tests, image editing with generation off among
 them, and the all-off round trip pass on both. The 13 "without sharing" tests fail on dev
 2ea6bf436 (the group grant is stored) and pass with `e92638dc7`; the group-allowed, admin and
-private tests pass on both.
+private tests pass on both. On dev 302b8cfd5 the access route refuses the share with a 403; letting
+it through there fails all 7 "cannot share" tests.
 """
 
 from __future__ import annotations
@@ -178,7 +179,7 @@ def _create_item(actor, kind: str, grants: list[dict] | None = None) -> str:
     return created.json()["id"]
 
 
-def _share_item(actor, kind: str, item_id: str, grants: list[dict]) -> None:
+def _share_item(actor, kind: str, item_id: str, grants: list[dict], status: int = 200) -> None:
     """Save the grants the way the item's Access dialog does."""
     paths = {
         "models": "/api/v1/models/model/access/update",
@@ -194,7 +195,7 @@ def _share_item(actor, kind: str, item_id: str, grants: list[dict]) -> None:
         body |= {"id": item_id, "name": item_id}
     with actor.client() as client:
         saved = client.post(paths[kind], json=body)
-    assert saved.status_code == 200, saved.text
+    assert saved.status_code == status, saved.text
 
 
 def _stored_grants(admin, kind: str, item_id: str) -> list[tuple]:
@@ -262,11 +263,12 @@ def test_a_user_without_sharing_cannot_share_their_item(
     owner = make_user()
     grants, group_grant = _shared_with(admin, make_user)
     item_id = _create_item(owner, kind)
+    before = _stored_grants(admin, kind, item_id)
 
-    _share_item(owner, kind, item_id, grants)
+    _share_item(owner, kind, item_id, grants, status=403)
 
     stored = _stored_grants(admin, kind, item_id)
-    assert group_grant not in stored, (
+    assert stored == before and group_grant not in stored, (
         f"a user with {kind} sharing switched off shared their item with a group, because only "
         f"the interface checked the switch: {stored}"
     )
