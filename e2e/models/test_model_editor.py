@@ -66,7 +66,7 @@ from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.member_picker import pick_member
-from utils.model_editor import pick, section, set_checkbox
+from utils.model_editor import pick, section, selector_row, set_checkbox
 from utils.model_selector import model_search
 from utils.setting_rows import setting_button
 from utils.speech_audio import silent_wav
@@ -451,9 +451,7 @@ def test_a_default_filter_starts_switched_on_in_a_new_chat(
         page = page_for(builder)
         editor = open_editor(page, preset)
         pick(editor, "Filters", filter_id)
-        editor.get_by_role("button", name="Filters", exact=True).and_(
-            editor.locator("button[aria-expanded]")
-        ).click()
+        selector_row(editor, "Filters").click()
         page.get_by_role("switch", name="Start enabled in new chats").click()
         page.get_by_role("button", name="Done").click()
         save(editor)
@@ -533,8 +531,9 @@ def test_a_new_model_is_private_until_shared_with_a_group(page_for, builder, cre
     pick_member(picker, re.compile(re.escape(group_name)))
     picker.get_by_role("button", name="Add", exact=True).click()
     expect(access.get_by_text(group_name)).to_be_visible()
+    # a saved model's access is stored as soon as it changes, not by Save & Update
+    expect(page.get_by_text("Saved", exact=True)).to_be_visible()
     page.keyboard.press("Escape")
-    save(editor)
 
     member_page = page_for(member)
     member_page.get_by_role("button", name=re.compile("^Selected model")).click()

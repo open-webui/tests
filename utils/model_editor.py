@@ -47,13 +47,17 @@ def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None
     expect(switch).to_have_attribute("aria-checked", str(checked).lower())
 
 
+def selector_row(editor: Locator, label: str) -> Locator:
+    """The editor's `label` row (Tools, Skills, Filters, Actions) that opens its search list."""
+    # the row is named by its label followed by what it holds ("Tools None", "Filters a, b")
+    trigger = editor.get_by_role("button", name=re.compile(rf"^{label}\b"))
+    return trigger.and_(editor.locator("button[aria-expanded]"))
+
+
 def pick(editor: Locator, label: str, name: str, ticked: bool = True) -> None:
     """Tick or untick `name` in the search list behind the editor's `label` row (Tools, Skills,
     Filters, Actions)."""
-    # the row is named by its label followed by what it holds ("Tools None", "Filters a, b")
-    trigger = editor.get_by_role("button", name=re.compile(rf"^{label}\b"))
-    trigger = trigger.and_(editor.locator("button[aria-expanded]"))
-    trigger.click()
+    selector_row(editor, label).click()
     editor.page.get_by_placeholder(f"Search {label.lower()}").fill(name)
     item = editor.page.get_by_role("button", name=name, exact=True)
     if (item.get_attribute("aria-pressed") == "true") != ticked:
