@@ -2,21 +2,25 @@
 
 The mcp SDK connects to an MCP tool server when an admin verifies the connection and lists its
 tools, and calls a tool when the model asks for one, over an httpx client Open WebUI builds: it
-sends the connection's bearer key, follows a server that moved, and checks the server's certificate
-unless `AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL` is off. validators decides which links a page fetch
-accepts (a bare hostname only with local fetch on) and which search results survive a domain filter
-(twin of unit/deps/test_validators.py), BeautifulSoup reads the fetched page (its text, and the
-title, description and language stored with it; a `.xml` link through its XML parser), black formats
-code for the code editor, and opentelemetry exports request traces to an OTLP/HTTP collector
-(requests carries them there, as it carries a document to Tika) or, by default, over gRPC, where a
-busy collector's `RetryInfo` (googleapis-common-protos) tells the exporter when to try again. The
+sends the connection's bearer key, follows a server that moved within its own address (a 307 on
+the same scheme, host and port) but never to another address (since mcp 2 the connection fails
+there, without a single request to the new address), and checks the server's certificate unless
+`AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL` is off. validators decides which links a page fetch accepts
+(a bare hostname only with local fetch on) and which search results survive a domain filter (twin
+of unit/deps/test_validators.py), BeautifulSoup reads the fetched page (its text, and the title,
+description and language stored with it; a `.xml` link through its XML parser), black formats code
+for the code editor, and opentelemetry exports request traces to an OTLP/HTTP collector (requests
+carries them there, as it carries a document to Tika) or, by default, over gRPC, where a busy
+collector's `RetryInfo` (googleapis-common-protos) tells the exporter when to try again. The
 collector's address is only read at boot, so each tracing test boots an instance of its own; the
 gRPC collector is `harness/otlp_collector.py`.
 
 Discriminates: passes on dev bbfa876af; in a backend copy, skipping `session.initialize()` fails the
-MCP verification, building the httpx client without `headers`, with `follow_redirects=False` or with
-`verify=False` always fails the bearer, moved and certificate tests in turn, taking an `isError`
-result for a success fails the failing tool test, and so does raising the `isError` content list
+MCP verification, building the httpx client without `headers` or with `verify=False` always fails
+the bearer and certificate tests in turn. On dev 302b8cfd5, an SDK that counts every redirect as
+within the origin (following it as mcp 1 with redirects on did) fails the other-address test, and
+one that counts none as within it fails the same-address test. Taking an `isError` result for a
+success fails the failing tool test, and so does raising the `isError` content list
 in place of its text (#32918, red on dev 63eed95c8), dropping the `validators.url` check lets the
 malformed link through to the fetch, calling it without `simple_host` refuses the bare hostname,
 dropping it from the search result filter keeps the malformed results, a loader that stores no page
@@ -129,15 +133,24 @@ def test_the_connection_key_reaches_an_mcp_server_that_requires_it(admin):
     assert check.key in check.presented
 
 
-def test_an_mcp_server_that_moved_is_followed(admin, listener):
-    with serving_mcp() as url:
-        for method in ("GET", "POST", "DELETE"):
-            listener.route(method, "/old/mcp", (307, {"Location": url}, b""))
-        verified = _verify_mcp(admin, f"{listener.base_url}/old/mcp")
+def test_an_mcp_server_that_moved_within_its_address_is_followed(admin):
+    with serving_mcp(moved_from="/old/mcp") as url:
+        verified = _verify_mcp(admin, url.replace("/mcp", "/old/mcp"))
 
     assert verified.status_code == 200, verified.text
     assert [spec["name"] for spec in verified.json()["specs"]] == ["echo"]
+
+
+def test_an_mcp_server_that_moved_to_another_address_is_not_followed(admin, listener):
+    with listening() as new_home:
+        for method in ("GET", "POST", "DELETE"):
+            listener.route(method, "/old/mcp", (307, {"Location": f"{new_home.base_url}/mcp"}, b""))
+        verified = _verify_mcp(admin, f"{listener.base_url}/old/mcp")
+
+    assert verified.status_code == 400, verified.text
+    assert verified.json()["detail"] == "Failed to create MCP client"
     assert listener.requests_to("/old/mcp"), "the old address was never asked"
+    assert not new_home.received, "the connection followed the server to another address"
 
 
 def test_an_mcp_server_with_an_untrusted_certificate_is_refused(admin):

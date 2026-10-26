@@ -16,7 +16,9 @@ list as one JSON text block and as structured content under `result`); with `com
 branches (a page `id`, or a `path` with its `locale`), answering with the arguments it received
 as JSON. `tls=True` serves it over
 HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
-plain 401, the way a server keyed by an API key answers (no OAuth metadata).
+plain 401, the way a server keyed by an API key answers (no OAuth metadata). With `moved_from` a
+request to that path gets a 307 to `/mcp` on the same server, the way a server that moved within
+its own address answers.
 `mcp_connection(...)` is the admin's connection to it without auth; save it through
 `TOOL_SERVERS` after `preserve(TOOL_SERVERS)`. Given MCPServer's `auth` settings and a
 `token_verifier`, the SDK guards it the way a real OAuth-protected MCP server is guarded: a
@@ -119,6 +121,18 @@ def _requiring_bearer(app, bearer_key: str):
     return guarded
 
 
+def _moved(app, old_path: str):
+    async def redirecting(scope, receive, send) -> None:
+        if scope["type"] == "http" and scope["path"] == old_path:
+            headers = [(b"location", b"/mcp"), (b"content-length", b"0")]
+            await send({"type": "http.response.start", "status": 307, "headers": headers})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await app(scope, receive, send)
+
+    return redirecting
+
+
 def _echo_server(
     media: bool = False,
     failing: bool = False,
@@ -212,6 +226,7 @@ def serving_mcp(
     host: str = "127.0.0.1",
     name: str | None = None,
     bearer_key: str | None = None,
+    moved_from: str | None = None,
     **auth: Any,
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to MCPServer."""
@@ -222,6 +237,8 @@ def serving_mcp(
     app = server.streamable_http_app(transport_security=transport_security)
     if bearer_key:
         app = _requiring_bearer(app, bearer_key)
+    if moved_from:
+        app = _moved(app, moved_from)
     with tempfile.TemporaryDirectory(prefix="owui-mcp-") as certificates:
         certificate = {}
         if tls:
