@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from playwright.sync_api import Locator
+from playwright.sync_api import Locator, expect
 
 
 def visibility(dialog: Locator) -> Locator:
     """The button that shows the current visibility (Private, Public or Open) and opens the menu."""
     # its name now reads "Visibility" then the current choice, so match the word it starts with
     return dialog.get_by_role("button", name="Visibility")
+
+
+def expect_visibility(dialog: Locator, label: str) -> None:
+    """The visibility button shows `label` as the current choice."""
+    expect(visibility(dialog)).to_have_accessible_name(f"Visibility {label}")
 
 
 def choose_visibility(dialog: Locator, label: str) -> None:

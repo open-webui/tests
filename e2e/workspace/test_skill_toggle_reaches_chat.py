@@ -22,6 +22,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from utils.chat_ui import chat_input
+from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -59,7 +60,7 @@ def _switch_in_workspace(page: Page, name: str) -> None:
     page.get_by_role("link", name="Workspace", exact=True).click()
     page.get_by_role("link", name=re.compile(r"^Skills")).click()
     expect(page).to_have_url(re.compile(r"/workspace/skills$"))
-    row = page.get_by_role("button").filter(has_text=name)
+    row = item_row(page, name)
     switch = row.get_by_role("switch")
     was_on = switch.get_attribute("aria-checked") == "true"
     switch.click()

@@ -31,7 +31,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.access_control import choose_visibility, visibility
+from utils.access_control import choose_visibility, expect_visibility
 from utils.chat_ui import expect_reply, send
 from utils.member_picker import pick_member
 
@@ -108,7 +108,7 @@ def test_a_new_link_after_deleting_a_public_one_shows_private(owner_page):
 
     relink(dialog)
 
-    expect(visibility(dialog)).to_have_text("Private")
+    expect_visibility(dialog, "Private")
     expect(dialog.get_by_text(PRIVATE_HINT)).to_be_visible()
     expect(dialog.get_by_text(PUBLIC_HINT)).to_have_count(0)
 
@@ -134,7 +134,7 @@ def test_a_reopened_dialog_still_shows_the_links_real_access(owner_page):
 
     dialog = share_dialog(owner_page)
 
-    expect(visibility(dialog)).to_have_text("Public")
+    expect_visibility(dialog, "Public")
 
 
 def test_the_dialog_says_a_new_link_starts_private(owner_page):
@@ -144,4 +144,4 @@ def test_the_dialog_says_a_new_link_starts_private(owner_page):
     expect(dialog.get_by_text(OLD_NOTE)).to_have_count(0)
 
     create_link(dialog)
-    expect(visibility(dialog)).to_have_text("Private")
+    expect_visibility(dialog, "Private")

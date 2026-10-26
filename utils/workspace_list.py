@@ -10,8 +10,9 @@ from playwright.sync_api import Locator, Page
 
 def item_rows(page: Page) -> Locator:
     """Every item row in the list: the presentation rows that hold an item link."""
-    main = page.get_by_role("main")
-    return main.locator("div[role='presentation']").filter(has=main.get_by_role("link"))
+    # `has` is queried from inside each row, so the link locator must not start from main
+    rows = page.get_by_role("main").locator("div[role='presentation']")
+    return rows.filter(has=page.get_by_role("link"))
 
 
 def item_row(page: Page, name: str) -> Locator:

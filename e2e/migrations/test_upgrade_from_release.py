@@ -43,6 +43,7 @@ from utils.notes_page import note_rows
 from utils.sidebar_chats import chat_menu, chat_row
 from utils.sidebar_folders import folder_row
 from utils.user_menu import open_settings
+from utils.workspace_list import item_row
 
 pytestmark = [
     pytest.mark.journey,
@@ -280,8 +281,8 @@ def test_group_and_default_permissions_shape_the_workspace_and_chat_menu(open_as
     live_title = upgraded.manifest["chats"]["live"]["title"]
     menu = chat_menu(_sidebar(member), live_title)
 
-    expect(menu.get_by_role("button", name="Archive")).to_be_visible()
-    expect(menu.get_by_role("button", name="Delete")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Archive")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Delete")).to_have_count(0)
 
 
 def test_prompts_insert_their_text_by_their_command_for_their_readers(open_as, upgraded):
@@ -343,7 +344,7 @@ def test_the_filter_function_is_still_on(open_as, upgraded):
     function = upgraded.manifest["function"]
     page = open_as("admin", "/admin/functions")
 
-    row = page.get_by_role("main").get_by_role("button", name=re.compile(function["name"]))
+    row = item_row(page, function["name"])
 
     expect(row.get_by_role("switch")).to_be_checked()
 

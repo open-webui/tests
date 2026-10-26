@@ -28,7 +28,9 @@ the visibility from a menu: they pass on dev 3dd1db147, a build whose visibility
 change fails the public tests, and one that always offers Public fails the group switch and
 public-to-private tests. The group switch test was retargeted for ac12b04aa (#32979), which hides
 the Access button from users without the sharing permission; it passes on dev 72d86c6b1 and fails
-on ac12b04aa^ (the outsider's base shows the button).
+on ac12b04aa^ (the outsider's base shows the button). The public model and revoked model tests
+were retargeted for 5f95008ab, where a saved model's Access dialog saves each change itself through
+the sharing route; they pass on dev 8889e8d6a.
 """
 
 from __future__ import annotations
@@ -47,7 +49,12 @@ from harness.actors import Actor
 from harness.knowledge_bases import add_text_file
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.access_control import choose_visibility, remove_access, visibility, visibility_choices
+from utils.access_control import (
+    choose_visibility,
+    expect_visibility,
+    remove_access,
+    visibility_choices,
+)
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 
@@ -135,14 +142,18 @@ def _access_dialog(page: Page) -> Locator:
     return page.get_by_role("dialog").filter(has_text="Access Control")
 
 
+def _access_saved(response) -> bool:
+    return "/access/update" in response.url
+
+
 def _publish_model(page: Page, item: dict) -> None:
     page.goto(f"/workspace/models/edit?id={item['id']}")
     editor = page.get_by_role("main")
     expect(editor.get_by_placeholder("Model Name")).to_have_value(item["name"])
-    choose_visibility(_access_dialog(page), "Public")
-    page.keyboard.press("Escape")
-    editor.get_by_role("button", name="Save & Update").click()
-    expect(page).to_have_url(re.compile(r"/workspace/models/?$"))
+    # a saved model's Access dialog saves each change itself, leaving Save & Update disabled
+    with page.expect_response(_access_saved) as saved:
+        choose_visibility(_access_dialog(page), "Public")
+    assert saved.value.ok
 
 
 def _publish_on_page(path: str) -> Callable[[Page, dict], None]:
@@ -227,7 +238,7 @@ def test_a_base_revoked_while_attached_sends_none_of_its_text(owner, make_user, 
     expect(reader_page.get_by_role("button", name=base["name"])).to_be_visible()
 
     owner_page = page_for(owner, path=f"/workspace/knowledge/{base['id']}")
-    with owner_page.expect_response(lambda response: "/access/update" in response.url) as saved:
+    with owner_page.expect_response(_access_saved) as saved:
         _revoke_in_dialog(_access_dialog(owner_page), reader)
     assert saved.value.ok
 
@@ -282,10 +293,9 @@ def test_a_model_revoked_while_its_chat_is_open_refuses_the_next_message(
     expect_reply(reader_page, "All clear.")
 
     owner_page = page_for(owner, path=f"/workspace/models/edit?id={model['id']}")
-    _revoke_in_dialog(_access_dialog(owner_page), reader)
-    owner_page.keyboard.press("Escape")
-    owner_page.get_by_role("main").get_by_role("button", name="Save & Update").click()
-    expect(owner_page).to_have_url(re.compile(r"/workspace/models/?$"))
+    with owner_page.expect_response(_access_saved) as saved:
+        _revoke_in_dialog(_access_dialog(owner_page), reader)
+    assert saved.value.ok
 
     second = "and now?"
     upstream.queue(reply.text("Still clear.", match=reply.answering(second)))
@@ -369,13 +379,13 @@ def test_an_owner_without_public_sharing_can_make_a_public_base_private_but_not_
 
     page = page_for(base_owner)
     dialog = _base_access(page, base)
-    expect(visibility(dialog)).to_have_text("Public")
+    expect_visibility(dialog, "Public")
     choices = visibility_choices(dialog)
     expect(choices).to_have_text(["Private", "Public"])
-    with page.expect_response(lambda response: "/access/update" in response.url) as saved:
+    with page.expect_response(_access_saved) as saved:
         choices.filter(has_text="Private").click()
     assert saved.value.ok
-    expect(visibility(dialog)).to_have_text("Private")
+    expect_visibility(dialog, "Private")
     expect(visibility_choices(dialog)).to_have_text(["Private"])
 
     with make_user().client() as client:
