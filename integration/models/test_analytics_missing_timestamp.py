@@ -4,11 +4,16 @@ Fix f25708484 (PR #31888, issue #27316). A chat stored through the API with a nu
 `timestamp` wrote the first such message with no time and failed on the rest, so the replies after
 it never reached analytics. A message row left without a time then failed
 `GET /api/v1/analytics/daily` without a date range (the dashboard's All time) with a 500, as every
-row's time is turned into a date. Such messages now get the time they were saved, and a row already
-stored without a time counts on today.
+row's time is turned into a date. Since dev 7b303cf49 such a message is stored with its time
+unknown: the chart, which places every message on a day, leaves it out, while the All time totals
+per model and in the summary still count it, and any dated window leaves it out too. A row already
+stored with no time at all is treated the same.
 
-Discriminates: passes on dev b859124f9, fails with f25708484 reverted (All time answers 500 once a
-stored message has no time, and a reply saved without a timestamp is counted nowhere).
+Discriminates: passes on dev 8889e8d6a; in a backend copy, with the chart's day bucket taking the
+raw time unchecked and no longer skipping rows of unknown time (the #27316 shape) both All time
+tests fail (500 on the row with no time, a day of 1970 for the untimed reply), with only the skip
+dropped they fail with the reply put on today, and with an untimed message stored at the time it
+was saved the All time and dated-window tests fail (the reply counts in the last day).
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from typing import Iterator
 
 import pytest
 
+from harness.access import make_group
 from harness.actors import Actor
 from harness.backends import write_rows
 from harness.chat_history import seed_chat
@@ -74,15 +80,24 @@ def seed_answered(owner: Actor, model_id: str, timestamp: int | None) -> str:
     return chat_id
 
 
-def daily_counts(admin: Actor, model_id: str, **window) -> dict[str, int]:
+def analytics(admin: Actor, path: str, **params) -> dict:
     with admin.client() as client:
-        response = client.get("/api/v1/analytics/daily", params=window)
-    assert response.status_code == 200, f"the daily chart failed to load: {response.text}"
+        response = client.get(f"/api/v1/analytics/{path}", params=params)
+    assert response.status_code == 200, f"{path} failed to load: {response.text}"
+    return response.json()
+
+
+def daily_counts(admin: Actor, model_id: str, **window) -> dict[str, int]:
     return {
         entry["date"]: entry["models"][model_id]
-        for entry in response.json()["data"]
+        for entry in analytics(admin, "daily", **window)["data"]
         if model_id in entry["models"]
     }
+
+
+def model_count(admin: Actor, model_id: str, **window) -> int:
+    models = analytics(admin, "models", **window)["models"]
+    return sum(entry["count"] for entry in models if entry["model_id"] == model_id)
 
 
 def last_day() -> dict[str, int]:
@@ -90,16 +105,24 @@ def last_day() -> dict[str, int]:
     return {"start_date": now - DAY, "end_date": now + 3600}
 
 
-def test_all_time_loads_with_a_message_saved_without_a_timestamp(admin, owner, counted_model):
+def test_all_time_loads_and_counts_a_message_saved_without_a_timestamp(admin, owner, counted_model):
     seed_answered(owner, counted_model, timestamp=None)
 
-    assert daily_counts(admin, counted_model) == {date.today().isoformat(): 1}
+    assert daily_counts(admin, counted_model) == {}, "a reply of unknown time was put on a day"
+    assert model_count(admin, counted_model) == 1
+
+    group_id = make_group(admin, [owner])
+    summary = analytics(admin, "summary", group_id=group_id)
+    assert (summary["total_messages"], summary["total_chats"]) == (1, 1), summary
 
 
-def test_a_message_saved_without_a_timestamp_counts_in_the_last_day(admin, owner, counted_model):
+def test_a_message_saved_without_a_timestamp_stays_out_of_the_last_day(admin, owner, counted_model):
     seed_answered(owner, counted_model, timestamp=None)
 
-    assert sum(daily_counts(admin, counted_model, **last_day()).values()) == 1
+    assert daily_counts(admin, counted_model, **last_day()) == {}
+    assert model_count(admin, counted_model, **last_day()) == 0
+    # the same reply is there once no window applies
+    assert model_count(admin, counted_model) == 1
 
 
 def test_all_time_loads_with_a_message_already_stored_without_a_time(
@@ -112,7 +135,8 @@ def test_all_time_loads_with_a_message_already_stored_without_a_time(
         [{"chat_id": chat_id}],
     )
 
-    assert daily_counts(admin, counted_model) == {date.today().isoformat(): 1}
+    assert daily_counts(admin, counted_model) == {}, "a reply with no time was put on a day"
+    assert model_count(admin, counted_model) == 1
 
 
 # ---------------------------------------------------------------- nearby
