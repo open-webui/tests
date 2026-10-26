@@ -89,3 +89,25 @@ def point_details(page: Page, point: Locator, heading: str) -> Locator:
 
 def model_row(settings: Locator, name: str) -> Locator:
     return settings.get_by_role("row").filter(has_text=name)
+
+
+def model_details(page: Page) -> Locator:
+    """The model's details; Settings also has an Overview switch, but tabs as well."""
+    return (
+        page.get_by_role("dialog")
+        .filter(has=page.get_by_role("button", name="Overview", exact=True))
+        .filter(has_not=page.get_by_role("tab"))
+    )
+
+
+def open_model_details(settings: Locator, name: str) -> Locator:
+    """Click the model's row and return its details, opened on the Overview tab."""
+    model_row(settings, name).click()
+    details = model_details(settings.page)
+    expect(details.get_by_text("Feedback Activity")).to_be_visible()
+    return details
+
+
+def close_model_details(details: Locator) -> None:
+    details.get_by_role("button", name="Close").last.click()
+    expect(details).to_be_hidden()

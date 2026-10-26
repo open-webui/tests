@@ -31,7 +31,13 @@ from harness.access import make_group
 from harness.actors import Actor
 from harness.chat import ask
 from harness.upstream import MOCK_MODEL_ID
-from utils.analytics import group_picker, leaderboard_tab, period_picker, summary_figure
+from utils.analytics import (
+    group_picker,
+    leaderboard_tab,
+    open_model_details,
+    period_picker,
+    summary_figure,
+)
 from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -200,10 +206,8 @@ def test_a_date_range_before_the_chats_empties_the_dashboard(activity, dashboard
 def test_a_model_row_opens_the_models_chats_with_who_had_them(activity, dashboard, presets):
     page, settings = dashboard
     _, birch = presets
-    _row(settings, birch).click()
-    details = page.get_by_role("dialog").filter(has=page.get_by_role("button", name="Overview"))
+    details = open_model_details(settings, birch)
     expect(details.get_by_text(birch)).to_be_visible()
-    expect(details.get_by_text("Feedback Activity")).to_be_visible()
     details.get_by_role("button", name="Chats", exact=True).click()
     chats = details.get_by_role("link")
     expect(chats).to_have_count(2)

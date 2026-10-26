@@ -26,7 +26,7 @@ from datetime import datetime
 from typing import Iterator
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Page, expect
 
 from harness.access import make_group
 from harness.actors import Actor
@@ -35,11 +35,13 @@ from harness.upstream import MOCK_MODEL_ID
 from utils.analytics import (
     chart_interval,
     chart_point,
+    close_model_details,
     count_by,
     dashboard,
     day_label,
     hour_label,
     model_row,
+    open_model_details,
     period_picker,
     point_details,
     summary_figure,
@@ -203,34 +205,22 @@ def test_the_model_table_sorts_by_tokens_and_shows_each_models_share(history, ad
     expect(model_row(settings, aster).get_by_role("cell").nth(7)).to_have_text("45")
 
 
-def open_model_details(page: Page, settings: Locator, name: str) -> Locator:
-    model_row(settings, name).click()
-    details = page.get_by_role("dialog").filter(has=page.get_by_role("button", name="Overview"))
-    expect(details.get_by_text("Feedback Activity")).to_be_visible()
-    return details
-
-
-def close_model_details(details: Locator) -> None:
-    details.get_by_role("button", name="Close").last.click()
-    expect(details).to_be_hidden()
-
-
 def test_a_models_overview_counts_the_tags_of_its_chats(history, admin_page, presets):
     aster, birch = presets
     settings = dashboard(admin_page, history.group_name, "Last 30 days")
 
-    details = open_model_details(admin_page, settings, aster)
+    details = open_model_details(settings, aster)
 
     expect(details.get_by_text(f"{history.tag} 2")).to_be_visible()
     close_model_details(details)
-    other = open_model_details(admin_page, settings, birch)
+    other = open_model_details(settings, birch)
     expect(other.get_by_text(history.tag)).to_have_count(0)
 
 
 def test_a_models_chat_list_keeps_to_the_period_picked(history, admin_page, presets):
     aster, _ = presets
     settings = dashboard(admin_page, history.group_name, "Last 7 days")
-    details = open_model_details(admin_page, settings, aster)
+    details = open_model_details(settings, aster)
     details.get_by_role("button", name="Chats", exact=True).click()
 
     chats = details.get_by_role("link")
@@ -241,7 +231,7 @@ def test_a_models_chat_list_keeps_to_the_period_picked(history, admin_page, pres
 
     close_model_details(details)
     period_picker(settings).select_option(label="All time")
-    details = open_model_details(admin_page, settings, aster)
+    details = open_model_details(settings, aster)
     details.get_by_role("button", name="Chats", exact=True).click()
     expect(details.get_by_role("link")).to_have_count(4)
     expect(details.get_by_role("link").filter(has_text="aster long ago")).to_have_count(1)
