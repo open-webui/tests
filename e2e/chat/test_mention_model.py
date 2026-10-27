@@ -1,13 +1,15 @@
 """Journey: a model picked with @ in the composer answers in place of the chat's model.
 
 Typing @ and part of a model's name in the message box lists matching models; the one picked shows
-above the box and answers the next messages, with its own system prompt, under its own name, until
-the pick is cleared with Escape. The chat's own model is left as it was and answers again after
-that.
+above the box and answers the next message, with its own system prompt, under its own name. Sending
+makes it the chat's model (dev 3aaecdd0e): the selector shows it and it answers the messages after,
+until another model is chosen in the selector. A pick cleared with Escape before sending leaves the
+chat's own model answering.
 
-Discriminates: passes on dev 30f3f6a8f; in a frontend build that sends every message to the chat's
-selected model whatever was picked with @ the first test fails, and in one where Escape keeps the
-pick both fail.
+Discriminates: passes on dev 34d360134; in a frontend build that sends every message to the chat's
+selected model whatever was picked with @ both tests' first replies come from the wrong model, in
+one where the pick stays a one-off above the box (dev cac14f985) the first test fails, and in one
+where Escape keeps the pick the second fails.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.model_selector import select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -71,7 +74,7 @@ def _system_text(request: dict) -> str:
     )
 
 
-def test_the_picked_model_answers_until_the_pick_is_cleared(page_for, harbour_master, upstream):
+def test_the_picked_model_becomes_the_chats_model_once_sent(page_for, harbour_master, upstream):
     account, name = harbour_master
     page = page_for(account)
     _pick(page, name)
@@ -79,12 +82,13 @@ def test_the_picked_model_answers_until_the_pick_is_cleared(page_for, harbour_ma
     first = _ask(page, upstream, "High water at noon, skipper.")
     assert HARBOUR_PROMPT in _system_text(first)
     expect(conversation(page).get_by_text(name, exact=True).last).to_be_visible()
+    expect(page.get_by_role("button", name="Remove Selected Model")).to_have_count(0)
+    expect(page.get_by_role("button", name=f"Selected model: {name}")).to_be_visible()
     second = _ask(page, upstream, "Low water at six, skipper.")
     assert HARBOUR_PROMPT in _system_text(second)
 
-    chat_input(page).click()
-    page.keyboard.press("Escape")
-    expect(page.locator("form").get_by_text(name, exact=True)).to_have_count(0)
+    select_model(page, MOCK_MODEL_ID)
+    expect(page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID}")).to_be_visible()
     third = _ask(page, upstream, "Around six in the evening.")
     assert HARBOUR_PROMPT not in _system_text(third)
     assert third["model"] == MOCK_MODEL_ID
