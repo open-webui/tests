@@ -59,6 +59,7 @@ CATEGORIES = {
         "search_knowledge_files",
         "query_knowledge_files",
         "view_knowledge_file",
+        "display_file",
     },
     "tasks": {"create_tasks", "update_task"},
     "automations": {

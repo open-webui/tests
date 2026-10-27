@@ -6,7 +6,9 @@ characters and query the chunks. A model with knowledge attached gets `list_know
 scoped search in their place, and still shows a knowledge base only to accounts that may read
 it; an attached note comes back whole. On a model that reads attached files through tools
 (`file_context` off) the chat's own files are listed, grepped and queried, and a file the
-account cannot read is left out even when the chat names it.
+account cannot read is left out even when the chat names it. `display_file` (#33263) is offered
+wherever a knowledge base or chat file can be read and shows a file the account can read, at the
+asked page; anyone else's file, or a missing one, answers "File not found".
 
 The scripted model calls each tool and the test reads the result it was sent back.
 
@@ -15,7 +17,10 @@ stranger read red; `grep_knowledge_files` searching without the account filter t
 test red; `list_knowledge` listing attached bases without the read check turned the attached
 stranger test red; `search_knowledge_files` skipping the attachment check turned the attached
 search test red; `_get_accessible_chat_files` skipping `_has_read_access_to_file` turned the
-foreign chat file test red; and the knowledge toggle ignored turned the toggle test red.
+foreign chat file test red; and the knowledge toggle ignored turned the toggle test red. Against
+the #33263 branch 73fca05b3: `display_file` skipping its access check turned the cannot-read
+test red; dropping it from the attached-knowledge, every-knowledge-base or chat-file tools, or
+offering it always, turned the offered test red; and dropping the page turned the page test red.
 """
 
 from __future__ import annotations
@@ -396,3 +401,97 @@ def test_a_chat_naming_someone_elses_file_cannot_read_it(library, file_reader, u
 
     assert listed == [], f"a foreign file was listed as the chat's own: {listed}"
     assert grepped == {"error": "No accessible files found"}
+
+
+# --- showing a file in the chat (#33263) -----------------------------------------------------
+
+
+def upload(actor, filename: str, text: str) -> str:
+    """Upload `text` as a file of `actor`'s own, in no knowledge base; returns its id."""
+    with actor.client() as client:
+        uploaded = client.post(
+            "/api/v1/files/",
+            params={"process": "true", "process_in_background": "false"},
+            files={"file": (filename, text.encode(), "text/plain")},
+        )
+    assert uploaded.status_code == 200, f"uploading {filename} failed: {uploaded.text}"
+    return uploaded.json()["id"]
+
+
+def test_display_file_is_offered_only_with_knowledge_files_or_chat_files(attached, admin, upstream):
+    reader, files = attached["reader"], chat_files(attached["herons"])
+    knowledge_off = {"knowledge": False}
+    note_only = [{"type": "note", "id": attached["note_id"], "name": "Lake note"}]
+    capabilities = {"file_upload": True, "file_context": False}
+    with (
+        preset(admin, [], builtinTools=knowledge_off, capabilities=capabilities) as files_only,
+        preset(admin, note_only) as notes_only,
+        reader.client() as client,
+    ):
+        offered = {
+            "every knowledge base": offered_tools(client, upstream),
+            "an attached knowledge base": offered_tools(client, upstream, model=attached["model"]),
+            "chat files": offered_tools(client, upstream, model=files_only, chat_files=files),
+            "knowledge off, no chat files": offered_tools(client, upstream, model=files_only),
+            "only a note attached": offered_tools(client, upstream, model=notes_only),
+        }
+
+    shown_with = {case for case, tools in offered.items() if "display_file" in tools}
+    assert shown_with == {"every knowledge base", "an attached knowledge base", "chat files"}, (
+        f"display_file was offered with {sorted(shown_with)}"
+    )
+    assert "view_note" in offered["only a note attached"]
+
+
+def test_a_readable_file_is_displayed_at_the_asked_page(library, file_reader, upstream):
+    reader = library["reader"]
+    own_file = upload(reader, "tide-table.txt", "high water at noon")
+
+    from_knowledge = call(reader, upstream, "display_file", file_id=library["herons"], page=2)
+    from_the_chat = call(
+        reader,
+        upstream,
+        "display_file",
+        model=file_reader,
+        chat_files=chat_files(own_file),
+        file_id=own_file,
+    )
+
+    assert from_knowledge == {
+        "type": "file",
+        "source": "open_webui",
+        "displayed": True,
+        "id": library["herons"],
+        "name": f"herons-{library['tag']}.md",
+        "content_type": "text/plain",
+        "page": 2,
+    }, f"a knowledge file the account can read was not displayed: {from_knowledge}"
+    assert (from_the_chat.get("id"), from_the_chat.get("name")) == (own_file, "tide-table.txt"), (
+        f"the account's own chat file was not displayed: {from_the_chat}"
+    )
+    assert "page" not in from_the_chat
+
+
+def test_display_file_shows_nothing_the_account_cannot_read(library, file_reader, upstream):
+    reader, stranger = library["reader"], library["stranger"]
+    strangers_file = upload(stranger, "private-log.txt", "not for the reader")
+
+    refused = {
+        "another account's knowledge file": call(
+            reader, upstream, "display_file", file_id=library["ledger"]
+        ),
+        "another account's chat file": call(
+            reader,
+            upstream,
+            "display_file",
+            model=file_reader,
+            chat_files=chat_files(strangers_file),
+            file_id=strangers_file,
+        ),
+        "a missing file": call(reader, upstream, "display_file", file_id=str(uuid.uuid4())),
+    }
+
+    shown = {
+        case: result for case, result in refused.items() if result != {"error": "File not found"}
+    }
+    assert not shown, f"display_file answered other than 'File not found': {shown}"
