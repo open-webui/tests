@@ -3,10 +3,11 @@
 The Chat button in the note header opens a chat panel. Its suggested prompts summarize the note
 or pull action items out of it: the answer shows in the panel and the note stays as written. With
 text selected in the editor, "Rewrite the selected text." sends that text along, and the model's
-range edit replaces only that part of the note, in the open editor and in the stored note. The
-panel is also a plain chat: a model picked by searching its name answers a typed question, the
-note stays as written, and the answer's "Insert into note" button puts the answer into the note,
-which stores it.
+range edit replaces only that part of the note, in the open editor and in the stored note.
+Since dev b34885efc the note tool edits only a note the model read in the same turn, so the
+scripted model reads it with `view_note` first. The panel is also a plain chat: a model picked
+by searching its name answers a typed question, the note stays as written, and the answer's
+"Insert into note" button puts the answer into the note, which stores it.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the suggested prompts for a summary and for action items renamed, the panel not sending
@@ -143,6 +144,12 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
     start = len(kept) + 1  # the editor stores paragraphs one newline apart
     upstream.queue(
         reply.tool_call(
+            "view_note",
+            {"note_id": note_id},
+            call_id="call_view",
+            match=reply.answering(REWRITE_PROMPT),
+        ),
+        reply.tool_call(
             "replace_note_content",
             {
                 "note_id": note_id,
@@ -156,6 +163,7 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
                     }
                 ],
             },
+            call_id="call_edit",
             match=reply.answering(REWRITE_PROMPT),
         ),
         reply.text("Rewrote the selected line.", match=reply.answering(REWRITE_PROMPT)),

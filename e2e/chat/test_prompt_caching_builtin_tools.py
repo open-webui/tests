@@ -310,6 +310,8 @@ def test_the_note_and_chat_history_tools_only_append(page_for, cached_setup, mak
         upstream,
         "find that note and change it",
         calling("search_notes", {"query": "Ferry"}),
+        # since dev b34885efc the note tool edits only a note read in the same turn
+        calling("view_note", {"note_id": note_id}),
         calling("replace_note_content", {"note_id": note_id, "content": "06:50 from pier 7"}),
         calling("view_note", {"note_id": note_id}),
         reply.text("Changed to 06:50."),

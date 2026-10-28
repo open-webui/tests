@@ -9,6 +9,9 @@ after a reload.
 
 Discriminates: passes on dev a5bc78300; with the frontend change of #31513 reverted, the pasted
 back content holds the text but no image.
+
+Since dev b34885efc the note keeps a pasted picture inline as a data URL instead of a `data://`
+address beside a file list, and the test reads it there.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from PIL import Image
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.note_content import note_images
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -45,19 +49,24 @@ def _red_square_png() -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
-def _stored_html(author: Actor, note_id: str) -> str:
+def _stored_note(author: Actor, note_id: str) -> dict:
     with author.client() as client:
-        note = client.get(f"/api/v1/notes/{note_id}").json()
-    return str(((note.get("data") or {}).get("content") or {}).get("html"))
+        return client.get(f"/api/v1/notes/{note_id}").json()
+
+
+def _holds_text_and_image(note: dict) -> bool:
+    markdown = str(((note.get("data") or {}).get("content") or {}).get("md"))
+    images = note_images(note)
+    return TEXT in markdown and len(images) == 1 and images[0].startswith("data:image/png")
 
 
 def _wait_until_stored_image(author: Actor, note_id: str, timeout: float = 15.0) -> None:
     deadline = time.monotonic() + timeout
-    html = _stored_html(author, note_id)
-    while not ('src="data://' in html and TEXT in html) and time.monotonic() < deadline:
+    note = _stored_note(author, note_id)
+    while not _holds_text_and_image(note) and time.monotonic() < deadline:
         time.sleep(0.2)
-        html = _stored_html(author, note_id)
-    assert 'src="data://' in html and TEXT in html, f"the note never stored the image: {html}"
+        note = _stored_note(author, note_id)
+    assert _holds_text_and_image(note), f"the note never stored the image: {note.get('data')}"
 
 
 def _note_with_pasted_image(page: Page, author: Actor) -> tuple[str, Locator]:

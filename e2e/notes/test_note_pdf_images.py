@@ -12,6 +12,8 @@ note's PDF has no red pixels, while the text-only note passes on both.
 The pasted image test is red now and then on dev 22102e4a2: when an earlier save of the note is
 echoed back to the tab after the paste, the paste is stored with an empty file list and the PDF
 has no picture (open-webui/open-webui#32123, fixed by 93838060b).
+
+Since dev b34885efc the note keeps a pasted picture inline as a data URL, where the test reads it.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from playwright.sync_api import Page, expect
 from pypdf import PdfReader
 
 from harness.actors import Actor
+from utils.note_content import note_images
 from utils.notes_page import note_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -63,10 +66,11 @@ def _wait_until_stored(
     deadline = time.monotonic() + timeout
     data: dict = {}
     while time.monotonic() < deadline:
-        data = _stored_note(author, note_id).get("data") or {}
-        html = str((data.get("content") or {}).get("html"))
-        pasted = html.count('src="data://')
-        if text in html and pasted == image_count and len(data.get("files") or []) == image_count:
+        note = _stored_note(author, note_id)
+        data = note.get("data") or {}
+        markdown = str((data.get("content") or {}).get("md"))
+        pasted = [src for src in note_images(note) if src.startswith("data:image/")]
+        if text in markdown and len(pasted) == image_count:
             return
         time.sleep(0.2)
     raise AssertionError(

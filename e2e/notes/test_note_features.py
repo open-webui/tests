@@ -1,8 +1,9 @@
 """Journey: what a note offers beyond writing in it, and what a shared note looks like to others.
 
 Asking the chat beside a note to enhance it runs the model with the note's id in its context;
-the model rewrites the note through its note tool and the new text shows in the open editor and
-is stored. A note shared read-only opens for the reader marked Read-Only Access with an editor
+the model reads the note and rewrites it through its note tools (since dev b34885efc the edit is
+refused for a note not read in the same turn) and the new text shows in the open editor and is
+stored. A note shared read-only opens for the reader marked Read-Only Access with an editor
 that takes no typing, a note shared for writing through a group takes the writer's typing, and
 an account it was never shared with is sent away from it. A note downloads as plain text and as
 Markdown with its title as the file name, the search on the Notes page keeps only the notes
@@ -104,8 +105,15 @@ def test_asking_the_note_chat_to_enhance_rewrites_the_open_note(page_for, make_u
     enhanced = "Meeting on Tuesday. Bring the slides."
     upstream.queue(
         reply.tool_call(
+            "view_note",
+            {"note_id": note_id},
+            call_id="call_view",
+            match=reply.answering(ENHANCE_PROMPT),
+        ),
+        reply.tool_call(
             "replace_note_content",
             {"note_id": note_id, "content": enhanced},
+            call_id="call_edit",
             match=reply.answering(ENHANCE_PROMPT),
         ),
         reply.text("The note is tidied up.", match=reply.answering(ENHANCE_PROMPT)),

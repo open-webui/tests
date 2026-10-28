@@ -1,6 +1,6 @@
 """Journey: files on a note, as its owner, a reader and a writer meet them.
 
-Upload files in the note's menu puts a file on the note as a chip above the text; the chip opens
+Upload files in the note's menu puts a file into the note as a chip in its text; the chip opens
 the file's text, and the note's chat is given that text on every message. A reader of the shared
 note sees the chip and opens it but cannot detach it, and the note's chat is the reader's to use
 as well; a writer detaches the file for everyone. A file over the admin's Max Upload Size is
@@ -31,6 +31,11 @@ while a file was still uploading, the server's echo of that save replaced the pa
 and the finished upload then updated an entry no longer in it. The note kept the file as
 uploading with no id, even after a reload. The upload is held until the echo arrives. It passes
 on the dev 5032e834e build and fails on that build with 998ad4c9f reverted.
+
+Since dev b34885efc a note keeps its files as blocks in its text and its pasted pictures inline
+as data URLs, where the tests now read them; an upload still in flight stays out of the saved
+note until it finishes. The reader's chip test is red on dev b34885efc: the chip in the
+reader's read-only editor offers its remove button.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ from harness.access import grant
 from harness.actors import Actor
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import expect_reply, send
+from utils.note_content import note_files, note_images
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -85,10 +91,13 @@ def create_note(owner: Actor, grants: list[dict] | None = None) -> str:
     return created.json()["id"]
 
 
-def stored_files(owner: Actor, note_id: str) -> list[dict]:
+def stored_note(owner: Actor, note_id: str) -> dict:
     with owner.client() as client:
-        note = client.get(f"/api/v1/notes/{note_id}").json()
-    return (note.get("data") or {}).get("files") or []
+        return client.get(f"/api/v1/notes/{note_id}").json()
+
+
+def stored_files(owner: Actor, note_id: str) -> list[dict]:
+    return note_files(stored_note(owner, note_id))
 
 
 def eventually(read: Callable[[], object], expected: object, timeout: float = 15.0) -> None:
@@ -255,8 +264,8 @@ def _is_upload(request: Request) -> bool:
     return request.method == "POST" and urlparse(request.url).path == "/api/v1/files/"
 
 
-def stored_upload_states(owner: Actor, note_id: str) -> list[tuple[str, bool]]:
-    return [(entry["status"], bool(entry["id"])) for entry in stored_files(owner, note_id)]
+def stored_uploads(owner: Actor, note_id: str) -> list[tuple[str, bool]]:
+    return [(entry.get("name"), bool(entry.get("id"))) for entry in stored_files(owner, note_id)]
 
 
 def _wait_on_page(page: Page, check: Callable[[], bool]) -> None:
@@ -303,9 +312,9 @@ def test_a_file_still_uploading_when_the_note_saves_finishes_attaching(page_for,
         upload.continue_()
 
     page.unroute("**/api/v1/files/**")
-    _wait_on_page(page, lambda: stored_upload_states(owner, note_id) == [("uploaded", True)])
-    assert stored_upload_states(owner, note_id) == [("uploaded", True)], (
-        "the note keeps the file as still uploading, with no file id"
+    _wait_on_page(page, lambda: stored_uploads(owner, note_id) == [(FILE_NAME, True)])
+    assert stored_uploads(owner, note_id) == [(FILE_NAME, True)], (
+        "the finished upload never reached the note with its file id"
     )
     open_note(page, note_id)
     file_chip(page, FILE_NAME).click()
@@ -337,10 +346,10 @@ def buoy_png() -> str:
 
 
 def stored_image_size(owner: Actor, note_id: str) -> tuple[int, int] | None:
-    images = [entry for entry in stored_files(owner, note_id) if entry.get("type") == "image"]
-    if not images:
+    images = note_images(stored_note(owner, note_id))
+    if not images or not images[0].startswith("data:image/"):
         return None
-    encoded = images[0]["url"].split(",", 1)[1]
+    encoded = images[0].split(",", 1)[1]
     return Image.open(io.BytesIO(base64.b64decode(encoded))).size
 
 
@@ -363,12 +372,6 @@ def test_a_picture_pasted_into_a_note_is_shrunk_by_the_persons_image_compression
     eventually(lambda: stored_image_size(owner, note_id), (24, 16))
 
 
-def stored_html(owner: Actor, note_id: str) -> str:
-    with owner.client() as client:
-        note = client.get(f"/api/v1/notes/{note_id}").json()
-    return str(((note.get("data") or {}).get("content") or {}).get("html"))
-
-
 @pytest.mark.regression
 def test_a_picture_picked_with_upload_files_shows_in_the_note(page_for, make_user):
     # open-webui/open-webui#32793, fix 4604f2a3b
@@ -383,6 +386,9 @@ def test_a_picture_picked_with_upload_files_shows_in_the_note(page_for, make_use
     expect(
         editor.locator("img"), "the picture picked with Upload files is not in the note"
     ).to_have_count(1)
-    eventually(lambda: 'src="data://' in stored_html(owner, note_id), True)
+    eventually(
+        lambda: [src.startswith("data:image/") for src in note_images(stored_note(owner, note_id))],
+        [True],
+    )
     page.reload()
     expect(editor.locator("img")).to_have_count(1)

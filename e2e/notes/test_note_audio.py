@@ -2,11 +2,11 @@
 
 The microphone menu in the note header offers Upload Audio, Record and Capture Audio. An uploaded
 audio file and a finished recording both go to the server, which transcribes them with the
-admin's speech-to-text engine. The audio then sits in the note as a file chip above the text, the
-note's own text stays as written, and the note stores the file with its transcript. Opening the
-chip, also after a reload, shows the transcript. Capture Audio asks the browser for the audio of
-a screen or tab, and the capture is attached like a recording. Pressing Escape while recording
-attaches nothing.
+admin's speech-to-text engine. The audio then sits in the note as a file chip in its text, the
+note's own text stays as written, and the note stores the file, whose record holds the
+transcript. Opening the chip, also after a reload, shows the transcript. Capture Audio asks the
+browser for the audio of a screen or tab, and the capture is attached like a recording. Pressing
+Escape while recording attaches nothing.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the note not saving after a file upload, a finished recording not being uploaded, Capture
@@ -32,6 +32,7 @@ from e2e.audio.conftest import SPOKEN_TURN
 from e2e.conftest import _close_context, _dismiss_first_run_modals, _new_context, _signed_in_page
 from harness.actors import Actor
 from harness.audio_engine import TRANSCRIPT
+from utils.note_content import note_files
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -78,7 +79,7 @@ def _create_note(owner: Actor) -> str:
 def _stored_files(owner: Actor, note_id: str) -> list[dict]:
     with owner.client() as client:
         note = client.get(f"/api/v1/notes/{note_id}").json()
-    return (note.get("data") or {}).get("files") or []
+    return note_files(note)
 
 
 def _wait_for_stored_files(owner: Actor, note_id: str, timeout: float = 15.0) -> list[dict]:
@@ -121,9 +122,15 @@ def _file_chip(page: Page, name: str | re.Pattern) -> Locator:
     return page.get_by_role("main").get_by_text(name)
 
 
-def _assert_stored_with_transcript(files: list[dict], content_type: str) -> None:
+def _note_text(page: Page) -> Locator:
+    """The note's own paragraphs, without the file chips that sit between them."""
+    return _note_editor(page).locator("p")
+
+
+def _assert_stored_with_transcript(owner: Actor, files: list[dict], content_type: str) -> None:
     assert len(files) == 1, files
-    stored = files[0]["file"]
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/files/{files[0]['id']}").json()
     assert stored["meta"]["content_type"].startswith(content_type), stored["meta"]
     assert stored["data"]["content"] == TRANSCRIPT, stored["data"]
 
@@ -161,8 +168,8 @@ def test_uploading_audio_attaches_it_to_the_note_with_its_transcript(
     _upload_memo(page, tmp_path)
 
     expect(_file_chip(page, "memo.wav")).to_be_visible()
-    expect(_note_editor(page)).to_have_text(NOTE_TEXT)
-    _assert_stored_with_transcript(_wait_for_stored_files(author, note_id), "audio/wav")
+    expect(_note_text(page)).to_have_text([NOTE_TEXT])
+    _assert_stored_with_transcript(author, _wait_for_stored_files(author, note_id), "audio/wav")
     assert len(speech_engine.transcription_requests()) == 1
 
 
@@ -201,8 +208,8 @@ def test_recording_with_the_microphone_attaches_the_recording_with_its_transcrip
 
     expect(_file_chip(page, RECORDING_NAME)).to_be_visible()
     expect(page.get_by_role("button", name="Confirm recording")).to_have_count(0)
-    expect(_note_editor(page)).to_have_text(NOTE_TEXT)
-    _assert_stored_with_transcript(_wait_for_stored_files(author, note_id), "audio/webm")
+    expect(_note_text(page)).to_have_text([NOTE_TEXT])
+    _assert_stored_with_transcript(author, _wait_for_stored_files(author, note_id), "audio/webm")
     assert len(speech_engine.transcription_requests()) == 1
 
 
@@ -244,7 +251,9 @@ def test_capturing_audio_attaches_the_capture_with_its_transcript(
         page.get_by_role("button", name="Confirm recording").click()
 
         expect(_file_chip(page, RECORDING_NAME)).to_be_visible()
-        _assert_stored_with_transcript(_wait_for_stored_files(author, note_id), "audio/webm")
+        _assert_stored_with_transcript(
+            author, _wait_for_stored_files(author, note_id), "audio/webm"
+        )
         assert page.evaluate("window.displayMediaRequests") == 1
     finally:
         _close_context(browser_context, request.node, "capture")

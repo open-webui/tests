@@ -5,7 +5,7 @@ the address opens the note. Copy to clipboard puts the note's Markdown there as 
 its formatting as HTML. Download as plain text saves what the editor holds under the note's
 title, and the Markdown download keeps a table cell of two lines inside its row
 (open-webui/open-webui#31539, issue #31538). Upload files attaches a file to the note as a chip
-above the text, stored with the note and still there after a reload, and the chip's close
+in its text, stored with the note and still there after a reload, and the chip's close
 button detaches it again. Delete asks for a confirmation, then goes to the Notes page where the
 note is no longer listed, and the API no longer finds it. The Access button opens Access Control,
 where an owner allowed to share notes adds a person or a group from the access list at Read or
@@ -17,6 +17,9 @@ The table-cell download test is red with Redis (`OWUI_TEST_REDIS=1`) on dev 0f5a
 handles the editor's live updates concurrently, so an update that arrives early can cancel the save
 of a later one and store its older text last, and the note keeps missing the last characters typed
 (open-webui/open-webui#31585, fix PR #31596 open).
+
+The editor's Delete test is red on dev b34885efc: leaving the deleted note first tries to save it,
+which fails with "Failed to save page" and keeps the deleted note open instead of the Notes page.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the copied link pointing at the Notes page (editor and list), the clipboard's plain text
@@ -47,6 +50,7 @@ from harness.actors import Actor
 from utils.access_control import choose_visibility
 from utils.chat_ui import chat_input
 from utils.member_picker import pick_member
+from utils.note_content import note_files
 from utils.notes_page import note_row, note_rows
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -245,8 +249,7 @@ def _attach_file(page: Page, name: str, text: bytes) -> None:
 
 
 def _stored_file_names(owner: Actor, note_id: str) -> list[str]:
-    files = (_stored_note(owner, note_id).get("data") or {}).get("files") or []
-    return [file.get("name") for file in files]
+    return [file.get("name") for file in note_files(_stored_note(owner, note_id))]
 
 
 def test_a_file_uploaded_into_a_note_is_attached_and_kept(page_for, make_user):
