@@ -4,7 +4,10 @@ The notes tools are offered while notes are switched on and the account may use 
 the model writes is private to the account, `search_notes` and `view_note` see only notes the
 account owns or was granted, and `replace_note_content` needs write access, edits only a note the
 model read with `view_note` in the same reply, and applies whole replacements or offset ranges,
-refusing a range whose expected text no longer matches. The chat tools search and read the
+refusing a range whose expected text no longer matches. Since v0.12.4 it also finds and replaces
+exact text: a single match is replaced, several matches change nothing and come back with each
+position and its surroundings unless the model picks an occurrence or asks for every match, and
+a missing text or a find mixed with offsets is refused. The chat tools search and read the
 account's own earlier chats and never the one being answered.
 
 The scripted model calls each tool and the test reads the result it was sent back, and the
@@ -15,8 +18,12 @@ red; `_has_write_access_to_note` asking for read in place of write turned the re
 red; dropping the expected-text check turned the mismatch test red; dropping the read-first check
 turned the unread edit test red; applying ranges front to back turned the two-range test red;
 `search_chats` keeping the current chat turned the exclusion test red; `view_chat` not reversing
-the walk turned the order test red; and the notes gate ignoring the permission turned the
-barred-account test red.
+the walk turned the order test red; the notes gate ignoring the permission turned the
+barred-account test red; and for the text form, dropping the ambiguity check turned the
+several-matches test red, ignoring occurrence or taking only the first match under replace_all
+turned the matching chosen-match case red, skipping a missing text turned text_not_found red,
+letting find win over start/end turned invalid_operation red, and refusing replace_text without
+find turned its two-range case red.
 """
 
 from __future__ import annotations
@@ -157,19 +164,74 @@ def test_replacing_the_whole_note_keeps_the_title_unless_given(make_user, upstre
     assert (stored["title"], stored["data"]["content"]["md"]) == ("Renamed", "v2")
 
 
-def span(start: int, end: int, content: str, **extra) -> dict:
-    return {"action": "replace_range", "start": start, "end": end, "content": content, **extra}
+def span(start: int, end: int, content: str, action: str = "replace_range", **extra) -> dict:
+    return {"action": action, "start": start, "end": end, "content": content, **extra}
 
 
-def test_two_ranges_are_applied_against_the_original_offsets(make_user, upstream):
+def swap(find: str, content: str, **extra) -> dict:
+    return {"action": "replace_text", "find": find, "content": content, **extra}
+
+
+# replace_range is the older name of the start/end form of replace_text
+@pytest.mark.parametrize("action", ["replace_range", "replace_text"])
+def test_two_ranges_are_applied_against_the_original_offsets(make_user, upstream, action):
     owner = make_user()
     note_id = create_note(owner, "Counts", "one heron, two geese")
-    operations = [span(0, 3, "three", expected="one"), span(11, 14, "four")]
+    operations = [span(0, 3, "three", action, expected="one"), span(11, 14, "four", action)]
 
     result = edit(owner, upstream, note_id, operations=operations)
 
     assert result["applied_operation_count"] == 2, result
     assert stored_note(owner, note_id)["data"]["content"]["md"] == "three heron, four geese"
+
+
+def test_text_found_once_is_replaced(make_user, upstream):
+    owner = make_user()
+    note_id = create_note(owner, "Counts", "one heron, two geese")
+
+    result = edit(owner, upstream, note_id, operations=[swap("two geese", "three swans")])
+
+    assert result.get("status") == "success", result
+    assert result["applied_ranges"] == [{"start": 11, "end": 20}], result
+    assert stored_note(owner, note_id)["data"]["content"]["md"] == "one heron, three swans"
+
+
+def test_text_found_several_times_is_left_alone_and_each_match_is_shown(make_user, upstream):
+    owner = make_user()
+    first = "A heron fished at dawn by the reed bed."
+    filler = " The wind dropped and the water went still." * 3
+    body = first + filler + " A heron rested at dusk on the jetty."
+    second_start = body.index("A heron", 1)
+    note_id = create_note(owner, "Lake log", body)
+
+    result = edit(owner, upstream, note_id, operations=[swap("A heron", "An egret")])
+
+    assert result.get("code") == "ambiguous_match", f"an ambiguous find was applied: {result}"
+    matches = result["matches"]
+    spans = [(match["start"], match["end"]) for match in matches]
+    assert spans == [(0, 7), (second_start, second_start + 7)], result
+    assert "fished at dawn" in matches[0]["context"], matches[0]
+    assert "dusk" not in matches[0]["context"], matches[0]
+    assert "rested at dusk" in matches[1]["context"], matches[1]
+    assert "dawn" not in matches[1]["context"], matches[1]
+    assert stored_note(owner, note_id)["data"]["content"]["md"] == body
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected"),
+    [
+        ({"occurrence": 1}, "heron, egret, heron"),
+        ({"replace_all": True}, "egret, egret, egret"),
+    ],
+)
+def test_a_chosen_match_or_every_match_is_replaced(make_user, upstream, choice, expected):
+    owner = make_user()
+    note_id = create_note(owner, "Counts", "heron, heron, heron")
+
+    result = edit(owner, upstream, note_id, operations=[swap("heron", "egret", **choice)])
+
+    assert result.get("status") == "success", result
+    assert stored_note(owner, note_id)["data"]["content"]["md"] == expected
 
 
 BAD_EDITS = {
@@ -178,6 +240,9 @@ BAD_EDITS = {
     "range_out_of_bounds": [span(0, 999, "x")],
     "invalid_operations": [{"action": "replace", "content": "a"}, span(0, 1, "b")],
     "invalid_action": [{"action": "append", "content": "x"}],
+    "text_not_found": [swap("swan", "x")],
+    "invalid_operation": [swap("heron", "x", start=4, end=9)],
+    "invalid_occurrence": [swap("heron", "x", occurrence=1)],
 }
 
 
