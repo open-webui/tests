@@ -14,7 +14,10 @@ shared folder. The rename takes a title alone, trimmed, and refuses a blank one 
 anything more (history, other chat fields, variables, a folder) with 401. The move stays inside
 the shared folder's tree: a private folder above it, any other folder of the owner's or the
 member's, and no folder at all are refused. Other members, a stranger and the admin get neither,
-and the owner's move leaves the member's chat as read or unread as it was.
+and the owner's move leaves the member's chat as read or unread as it was, and pinned.
+
+The pin test is red on dev 948432b43: the owner's move unpins the member's chat
+(open-webui/open-webui#33341, fix PR #33342 open).
 
 Discriminates: in a backend copy, asking for `read` instead of `write` in the folder rename
 handler's shared-access check turns the `/update` rows red (the reader gets 200 and the name
@@ -29,6 +32,7 @@ turns the blank title rows red, taking the topmost folder as the tree whatever i
 the two private parent rows red, letting any folder owner pass the tree walk turns every other
 account's move row red, looking the folder up without its owner in the update handler turns every
 other account's rename row red, and marking the chat read on any move turns the unread test red.
+The pin test passes with the fix of #33342 and fails on dev, where any move unpins the chat.
 """
 
 from __future__ import annotations
@@ -434,3 +438,26 @@ def test_a_move_by_the_owner_leaves_the_members_chat_unread(harbour):
     # the member's own move does mark it read
     assert _move(member, chat_id, harbour["shared"]).status_code == OK
     assert _members_view(harbour)["last_read_at"] > 0
+
+
+def _members_pin(harbour: dict) -> bool:
+    with harbour["accounts"].writer.client() as client:
+        listed = client.get("/api/v1/chats/pinned")
+    assert listed.status_code == OK, listed.text
+    return any(chat["id"] == harbour["chat_id"] for chat in listed.json())
+
+
+def test_a_move_by_the_owner_keeps_the_members_pin(harbour):
+    member, chat_id = harbour["accounts"].writer, harbour["chat_id"]
+    with member.client() as client:
+        pinned = client.post(f"/api/v1/chats/{chat_id}/pin")
+    assert pinned.status_code == OK, pinned.text
+    assert _members_pin(harbour)
+
+    moved = _move(harbour["accounts"].owner, chat_id, harbour["sub_folder"])
+
+    assert moved.status_code == OK, moved.text
+    assert _members_pin(harbour), "the owner's move unpinned the member's chat"
+    # the member's own move does unpin it
+    assert _move(member, chat_id, harbour["shared"]).status_code == OK
+    assert not _members_pin(harbour)
