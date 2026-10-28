@@ -3,8 +3,8 @@
 The server speaks the part of RFC 4511 that ldap3 uses for a sign-in: simple binds, a search
 matched against the people it holds and unbind, decoded and encoded with ldap3's own ASN.1
 models. A service account binds first; `add_person(...)` puts someone in the directory, with the
-groups their `memberOf` names. `binds` and `searches` record what the instance asked for, each
-search with the DNs it `found`.
+groups their `memberOf` names, and `with_mail=False` without an address. `binds` and `searches`
+record what the instance asked for, each search with the DNs it `found`.
 
 `serve_directory()` starts it for a block, and `save_ldap_settings(client, directory)` points the
 admin's LDAP settings at it and switches LDAP sign-in on. `serve_directory(tls=True)` speaks
@@ -135,14 +135,19 @@ class Directory:
         mail: str | None = None,
         cn: str | None = None,
         groups: tuple[str, ...] = (),
+        with_mail: bool = True,
     ) -> Person:
-        """Someone under `PEOPLE_DN` who signs in as `uid`, a member of each group in `groups`."""
+        """Someone under `PEOPLE_DN` who signs in as `uid`, a member of each group in `groups`.
+
+        `with_mail=False` leaves out the mail attribute, as a directory without addresses does.
+        """
         attributes = {
             "objectClass": ["inetOrgPerson"],
             "uid": [uid],
             "cn": [cn or uid.title()],
-            "mail": [mail or f"{uid}@example.org"],
         }
+        if with_mail:
+            attributes["mail"] = [mail or f"{uid}@example.org"]
         if groups:
             attributes["memberOf"] = [f"cn={escape_rdn(group)},{GROUPS_DN}" for group in groups]
         person = Person(dn=f"uid={uid},{PEOPLE_DN}", password=password, attributes=attributes)
@@ -336,6 +341,7 @@ def save_ldap_settings(client: httpx.Client, directory: Directory, **changes) ->
         "use_tls": False,
         "certificate_path": None,
         "validate_cert": False,
+        "default_email_domain": "",
         **changes,
     }
     saved = client.post(LDAP_SERVER_CONFIG[1], json=settings)

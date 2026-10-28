@@ -7,13 +7,19 @@ management on, the groups their `memberOf` names are created and joined. ldap3 d
 its `escape_filter_chars` turns the typed uid into a literal in the search filter, so a uid
 holding `*`, `(` or `)` finds exactly that person and a bare `*` finds no one, and with LDAPS on
 its `Tls` checks the directory's certificate against the one the admin names, or skips the check
-when told to.
+when told to. A person without a mail attribute is refused unless the admin set a default email
+domain (v0.12.4); then they sign in as uid@domain, into the account that already holds that
+address, while a person with an address keeps it. `LDAP_DEFAULT_EMAIL_DOMAIN` sets the default.
 
 Discriminates: fails with the person's bind in `ldap_auth` given the service account's password
 (the directory refuses it, so the sign-in is a 400 and no account appears); without
 `escape_filter_chars` the filter-character uids are refused and the bare star finds the person;
 building `Tls` with `CERT_NONE` whatever the setting lets the untrusted directory in, and
-`use_ssl=False` fails both LDAPS sign-ins.
+`use_ssl=False` fails both LDAPS sign-ins. Skipping the default domain fallback fails the two
+uid@domain sign-ins; dropping `default_email_domain` from the saved LDAP keys fails those and the
+env read-back; ignoring the env var fails the env read-back; applying the domain even when a mail
+attribute exists fails the mail-wins test; removing the no-address refusal creates an account and
+fails the refusal test.
 """
 
 from __future__ import annotations
@@ -24,8 +30,10 @@ from typing import Iterator
 import httpx
 import pytest
 
+from harness.actors import admin_of
 from harness.ldap_server import (
     LDAP_CONFIG,
+    LDAP_SERVER_CONFIG,
     PEOPLE_DN,
     SERVICE_DN,
     SERVICE_PASSWORD,
@@ -35,6 +43,8 @@ from harness.ldap_server import (
 )
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
+
+DEFAULT_DOMAIN = "corp.example"
 
 
 @pytest.fixture
@@ -146,6 +156,80 @@ def test_a_bare_star_finds_no_one(instance, directory):
     [search] = directory.searches
     assert search.found == [], "the star was sent as a wildcard and matched the directory"
     assert directory.user_binds() == []
+
+
+def test_without_a_mail_attribute_the_person_signs_in_at_the_default_domain(
+    instance, admin, directory
+):
+    uid = new_uid()
+    directory.add_person(uid, "directory-pass-1", with_mail=False)
+    with admin.client() as client:
+        save_ldap_settings(client, directory, default_email_domain=DEFAULT_DOMAIN)
+        saved = client.get(LDAP_SERVER_CONFIG[0]).json()
+    assert saved["default_email_domain"] == DEFAULT_DOMAIN, f"read back: {saved}"
+
+    response = sign_in(instance, uid, "directory-pass-1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == f"{uid}@{DEFAULT_DOMAIN}"
+    with instance.client(response.json()["token"]) as client:
+        assert client.get("/api/v1/auths/").json()["email"] == f"{uid}@{DEFAULT_DOMAIN}"
+
+
+def test_without_the_default_domain_a_person_without_mail_is_refused(instance, admin, directory):
+    uid = new_uid()
+    directory.add_person(uid, "directory-pass-1", with_mail=False)
+
+    response = sign_in(instance, uid, "directory-pass-1")
+
+    assert response.status_code == 400, response.text
+    assert "valid email" in response.json()["detail"]
+    with admin.client() as client:
+        listed = client.get("/api/v1/users/", params={"query": uid}).json()["users"]
+    assert listed == [], f"an account was created for a person without an address: {listed}"
+
+
+def test_the_default_domain_signs_into_the_existing_account_with_that_address(
+    instance, admin, make_user, directory
+):
+    uid = new_uid()
+    existing = make_user(email=f"{uid}@{DEFAULT_DOMAIN}")
+    directory.add_person(uid, "directory-pass-1", with_mail=False)
+    with admin.client() as client:
+        save_ldap_settings(client, directory, default_email_domain=DEFAULT_DOMAIN)
+
+    # the uid as typed in other case still finds the same account
+    for typed in (uid, uid.upper()):
+        response = sign_in(instance, typed, "directory-pass-1")
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == existing.id, (
+            f"signing in as {typed!r} landed in {response.json()['email']}, not {existing.email}"
+        )
+
+
+def test_a_mail_attribute_wins_over_the_default_domain(instance, admin, make_user, directory):
+    uid = new_uid()
+    mail = f"own-{uuid.uuid4().hex[:8]}@example.org"
+    other = make_user(email=f"{uid}@{DEFAULT_DOMAIN}")
+    directory.add_person(uid, "directory-pass-1", mail=mail)
+    with admin.client() as client:
+        save_ldap_settings(client, directory, default_email_domain=DEFAULT_DOMAIN)
+
+    response = sign_in(instance, uid, "directory-pass-1")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["email"] == mail
+    assert response.json()["id"] != other.id, (
+        "a person with an address landed in the domain account"
+    )
+
+
+@pytest.mark.slow
+def test_the_default_domain_env_var_sets_the_saved_setting(instance_with):
+    configured = instance_with({"LDAP_DEFAULT_EMAIL_DOMAIN": "env.example"})
+    with admin_of(configured).client() as client:
+        settings = client.get(LDAP_SERVER_CONFIG[0]).json()
+    assert settings["default_email_domain"] == "env.example", f"read back: {settings}"
 
 
 @pytest.fixture
