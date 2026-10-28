@@ -13,6 +13,15 @@ then names both of them as the people who wrote in that chat. Only the owner sha
 and sets its mode: a member with a write grant is refused, while their ordinary Edit Folder save
 still works.
 
+A folder reader who may reply also regenerates the owner's reply and edits the owner's question
+(v0.12.3, 788a61180): the new reply is stored as theirs, the owner's question keeps its content
+and models, and the edit becomes a sibling branch; saving over the owner's question stays
+refused. Regenerating from an answer's id is refused with 403, and a Clone only reader or a
+reader of a folder without Allow replies is refused with 404. Every joined tab gets a
+`chat:presence` list of the people with the chat open, carrying only their id and name; leaving,
+closing the tab, leaving the group or losing the folder grant takes the person off it, and a tab
+refused at join neither shows up in it nor receives it.
+
 Discriminates: passes on dev a9adb2b78; in a backend copy, `get_event_emitter` skipping the
 shared room emit (`if shared_event:` made false) fails the live turn test and the group removal
 test, the `events:chat` join handler skipping the access check fails the join test, the group
@@ -25,6 +34,14 @@ the folder `share_mode == 'continue'` condition fails the folder reply test,
 and the folder update route skipping its share mode check fails the same test. On dev
 b704d0613, `get_shared_folder_chats` listing only the chat's owner as its participant fails the
 folder reply test.
+
+On dev 948432b43, in a backend copy: 788a61180 reverted fails both regenerate tests (the reader
+is refused regenerating the owner's reply); `insert_chat_turn` taking the reader's models onto
+the owner's question fails the regenerate and edit test; dropping its user-message role check
+fails the refusal test; `publish_chat_presence` sending nothing fails the join, group removal,
+presence and folder grant removal tests, as does it sending the whole socket session in place of
+id and name; `disconnect` not publishing presence fails the presence and group removal tests;
+`refresh_chat_access` not publishing it fails the folder grant removal test.
 """
 
 from __future__ import annotations
@@ -36,9 +53,10 @@ import pytest
 
 from harness import upstream as reply
 from harness.access import grant, make_group
-from harness.chat import ask, send_message
+from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, ask, send_message, wait_for_reply
 from harness.chat_history import seed_chat
 from harness.socket_client import SocketSession, connected
+from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -180,6 +198,80 @@ def _grant_keys(folder: dict) -> set[tuple[str, str, str]]:
     }
 
 
+def _people(*accounts) -> list[dict]:
+    """The presence list naming these accounts, as the server sorts it."""
+    return sorted(({"id": a.id, "name": a.name} for a in accounts), key=lambda p: p["id"])
+
+
+def _presence_lists(session: SocketSession, chat_id: str) -> list[list[dict]]:
+    return [
+        entry["data"]["data"]["users"]
+        for entry in _shared_entries(session, chat_id, "chat:presence")
+    ]
+
+
+def _wait_for_presence(
+    session: SocketSession, chat_id: str, people: list[dict], after: int = 0, timeout=30.0
+) -> None:
+    """Wait for a presence list naming exactly `people`, among those after the first `after`."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if people in _presence_lists(session, chat_id)[after:]:
+            return
+        time.sleep(0.05)
+    raise AssertionError(
+        f"no presence list {people} within {timeout}s; got {_presence_lists(session, chat_id)}"
+    )
+
+
+def _messages_of(account, chat_id: str) -> dict:
+    with account.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+    assert stored.status_code == 200, stored.text
+    return stored.json()["chat"]["history"]["messages"]
+
+
+def _regenerate(account, chat_id: str, question: dict, models: list[str]):
+    """Regenerate the reply to the stored `question` as the web client does; returns the
+    response and the new reply's id. The client sends its own model picks on the question."""
+    reply_id = str(uuid.uuid4())
+    with account.client() as client:
+        response = client.post(
+            "/api/chat/completions",
+            json={
+                "model": MOCK_MODEL_ID,
+                "messages": [{"role": "user", "content": question["content"]}],
+                "stream": True,
+                "chat_id": chat_id,
+                "parent_id": question["parentId"],
+                "id": reply_id,
+                "user_message": {**question, "models": models},
+                "session_id": f"harness-{uuid.uuid4().hex[:8]}",
+                "background_tasks": NO_BACKGROUND_TASKS,
+            },
+        )
+    return response, reply_id
+
+
+def _owner_chat_with_two_turns(owner, upstream, folder_id: str) -> tuple[str, list[str]]:
+    """The owner's chat of two answered questions, filed in the folder; returns the chat id and
+    the ids of question one, answer one, question two and answer two."""
+    first = f"when does the ferry leave? {uuid.uuid4().hex[:6]}"
+    chat_id, first_reply = _start_chat(owner, upstream, first)
+    second = f"and when does it come back? {uuid.uuid4().hex[:6]}"
+    turn, _ = _reply_in(owner, upstream, chat_id, first_reply, second)
+    with owner.client() as client:
+        moved = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
+    assert moved.status_code == 200, moved.text
+    first_question = _messages_of(owner, chat_id)[first_reply]["parentId"]
+    return chat_id, [
+        first_question,
+        first_reply,
+        turn.user_message_id,
+        turn.assistant_message_id,
+    ]
+
+
 def test_the_owner_sees_a_members_turn_live_and_the_member_sees_the_owners(make_user, upstream):
     owner, member = make_user(), make_user()
     chat_id, reply_id = _start_chat(owner, upstream, "which tide table do you keep?")
@@ -243,8 +335,20 @@ def test_only_accounts_that_can_read_the_live_chat_may_join_it(make_user, upstre
         assert _join(clone_only_tab, clone_chat) is False
         assert _join(open_tab, open_chat) is False
 
+        # a refused tab neither shows up in the presence list nor receives it
+        _wait_for_presence(owner_tab, live_chat, _people(owner, live_member))
+        time.sleep(QUIET_SECONDS)
+        allowed = {owner.id, live_member.id}
+        for people in _presence_lists(owner_tab, live_chat):
+            assert {person["id"] for person in people} <= allowed, people
+        for refused_tab in (clone_only_tab, stranger_tab, open_tab):
+            for chat_id in (live_chat, clone_chat, open_chat):
+                assert _presence_lists(refused_tab, chat_id) == []
 
-def test_removing_a_member_from_the_group_cuts_their_live_feed(admin, make_user, upstream):
+
+def test_removing_a_member_from_the_group_cuts_their_live_feed_and_presence(
+    admin, make_user, upstream
+):
     owner, leaver, stayer = make_user(), make_user(), make_user()
     group_id = make_group(admin, [leaver, stayer])
     chat_id, reply_id = _start_chat(owner, upstream, "who is on the pier?")
@@ -258,12 +362,15 @@ def test_removing_a_member_from_the_group_cuts_their_live_feed(admin, make_user,
         assert _join(owner_tab, chat_id) is True
         assert _join(leaver_tab, chat_id) is True
         assert _join(stayer_tab, chat_id) is True
+        _wait_for_presence(stayer_tab, chat_id, _people(owner, leaver, stayer))
+        seen = len(_presence_lists(stayer_tab, chat_id))
 
         with admin.client() as client:
             removed = client.post(
                 f"/api/v1/groups/id/{group_id}/users/remove", json={"user_ids": [leaver.id]}
             )
         assert removed.status_code == 200, removed.text
+        _wait_for_presence(stayer_tab, chat_id, _people(owner, stayer), after=seen)
 
         turn, _ = _reply_in(owner, upstream, chat_id, reply_id, "is the pier clear now?")
         assert _entry_for_turn(owner_tab, chat_id, turn.user_message_id) is not None
@@ -325,19 +432,135 @@ def test_a_folder_reader_replies_only_while_the_folder_allows_replies(admin, mak
     assert not [m for m in after.values() if m.get("content") == "one more thing"]
 
 
-def test_taking_a_grant_off_a_folder_cuts_the_readers_live_feed(admin, make_user, upstream):
+def test_a_folder_reader_regenerates_and_edits_the_owners_turns_into_new_branches(
+    admin, make_user, upstream
+):
+    owner = _folder_owner(make_user, admin)
+    reader = make_user()
+    folder_id = _create_folder(owner)
+    chat_id, (_, first_reply, question_id, owner_reply) = _owner_chat_with_two_turns(
+        owner, upstream, folder_id
+    )
+    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], "continue")
+    before = _messages_of(owner, chat_id)
+    question = before[question_id]
+    assert question["models"] == [MOCK_MODEL_ID]
+
+    upstream.queue(reply.text("the reader's answer", match=reply.answering(question["content"])))
+    regenerated, new_reply = _regenerate(
+        reader, chat_id, question, [MOCK_MODEL_ID, "the-readers-pick"]
+    )
+    assert regenerated.status_code == 200, (
+        f"the reader could not regenerate the owner's reply: {regenerated.text}"
+    )
+    with reader.client() as client:
+        stored_reply = wait_for_reply(client, ChatTurn(chat_id, question_id, new_reply))
+
+    assert stored_reply["content"] == "the reader's answer"
+    assert stored_reply["user_id"] == reader.id
+    assert stored_reply["parentId"] == question_id
+    after = _messages_of(owner, chat_id)
+    assert after[question_id]["childrenIds"] == [owner_reply, new_reply]
+    unchanged = {key: value for key, value in after[question_id].items() if key != "childrenIds"}
+    assert unchanged == {key: value for key, value in question.items() if key != "childrenIds"}, (
+        "regenerating changed the owner's question"
+    )
+    assert after[owner_reply] == before[owner_reply]
+
+    edited = f"and the last ferry back? {uuid.uuid4().hex[:6]}"
+    turn, edited_reply = _reply_in(reader, upstream, chat_id, first_reply, edited)
+
+    after_edit = _messages_of(owner, chat_id)
+    branch = after_edit[turn.user_message_id]
+    assert branch["content"] == edited
+    assert branch["parentId"] == first_reply
+    assert branch["user"] == {"id": reader.id, "name": reader.name}
+    assert after_edit[first_reply]["childrenIds"] == [question_id, turn.user_message_id]
+    assert after_edit[question_id]["content"] == question["content"]
+    assert after_edit[turn.assistant_message_id]["content"] == edited_reply["content"]
+
+    # Saving an edit in place stays the author's own: the reader's Save is refused
+    with reader.client() as client:
+        in_place = client.post(
+            f"/api/v1/chats/{chat_id}/messages/{question_id}", json={"content": "rewritten"}
+        )
+    assert in_place.status_code in {401, 403}, in_place.text
+    assert _messages_of(owner, chat_id)[question_id]["content"] == question["content"]
+
+
+def test_only_a_reader_of_a_chat_open_for_replies_regenerates_and_only_from_a_question(
+    admin, make_user, upstream
+):
+    owner = _folder_owner(make_user, admin)
+    reader, clone_only_reader = make_user(), make_user()
+    folder_id = _create_folder(owner)
+    chat_id, (_, first_reply, question_id, _) = _owner_chat_with_two_turns(
+        owner, upstream, folder_id
+    )
+    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], "continue")
+    _share_continue(owner, chat_id, grant("user", clone_only_reader.id, "read"), share_mode=None)
+    before = _messages_of(owner, chat_id)
+    question, answer = before[question_id], before[first_reply]
+
+    on_an_answer, _ = _regenerate(reader, chat_id, {**answer, "role": "user"}, [MOCK_MODEL_ID])
+    clone_only, _ = _regenerate(clone_only_reader, chat_id, question, [MOCK_MODEL_ID])
+    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], None)
+    read_only, _ = _regenerate(reader, chat_id, question, [MOCK_MODEL_ID])
+
+    assert on_an_answer.status_code == 403, on_an_answer.text
+    assert "You can only regenerate replies to user messages." in on_an_answer.text
+    assert clone_only.status_code == 404, f"a Clone only reader regenerated: {clone_only.text}"
+    assert read_only.status_code == 404, f"a read-only folder reader regenerated: {read_only.text}"
+    assert _messages_of(owner, chat_id) == before
+
+
+def test_joined_tabs_see_who_has_the_chat_open_until_they_leave(make_user, upstream):
+    owner, member = make_user(), make_user()
+    chat_id, _ = _start_chat(owner, upstream, "who is on watch tonight?")
+    _share_continue(owner, chat_id, grant("user", member.id, "read"))
+
+    with connected(owner) as owner_tab:
+        assert _join(owner_tab, chat_id) is True
+        _wait_for_presence(owner_tab, chat_id, _people(owner))
+
+        with connected(member) as member_tab:
+            seen = len(_presence_lists(owner_tab, chat_id))
+            assert _join(member_tab, chat_id) is True
+            _wait_for_presence(owner_tab, chat_id, _people(owner, member), after=seen)
+            _wait_for_presence(member_tab, chat_id, _people(owner, member))
+
+            seen = len(_presence_lists(owner_tab, chat_id))
+            assert member_tab.call("events:chat", {"chat_id": chat_id, "data": {"type": "leave"}})
+            _wait_for_presence(owner_tab, chat_id, _people(owner), after=seen)
+
+            seen = len(_presence_lists(owner_tab, chat_id))
+            assert _join(member_tab, chat_id) is True
+            _wait_for_presence(owner_tab, chat_id, _people(owner, member), after=seen)
+            seen = len(_presence_lists(owner_tab, chat_id))
+
+        # the member's tab closed
+        _wait_for_presence(owner_tab, chat_id, _people(owner), after=seen)
+
+
+def test_taking_a_grant_off_a_folder_cuts_the_readers_live_feed_and_presence(
+    admin, make_user, upstream
+):
     owner = _folder_owner(make_user, admin)
     reader = make_user()
     folder_id = _create_folder(owner)
     chat_id, last_id = _filed_chat(owner, folder_id)
     _share_folder(owner, folder_id, [grant("user", reader.id, "read")], "continue")
 
-    with connected(reader) as reader_tab:
+    with connected(owner) as owner_tab, connected(reader) as reader_tab:
+        assert _join(owner_tab, chat_id) is True
         assert _join(reader_tab, chat_id) is True
+        _wait_for_presence(owner_tab, chat_id, _people(owner, reader))
+        seen = len(_presence_lists(owner_tab, chat_id))
 
         _share_folder(owner, folder_id, [], "continue")
 
         assert _wait_for_access_event(reader_tab, chat_id), "no chat:access event for the reader"
+        _wait_for_presence(owner_tab, chat_id, _people(owner), after=seen)
         assert _join(reader_tab, chat_id) is False
         with reader.client() as client:
             read = client.get(f"/api/v1/chats/{chat_id}")
