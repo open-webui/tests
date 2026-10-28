@@ -25,6 +25,9 @@ its own address answers.
 request without a token the verifier accepts gets a 401 pointing at the protected-resource
 metadata it also serves. `host` is the address it listens on and `name` the host its URL
 carries (the address by default), so a test can reach it by a name.
+`serving_legacy_mcp(protocol_version)` is a hand-written server from before the 2026-07-28
+protocol: it offers only `echo`, knows only the `initialize` handshake at that one version and
+records every request it received.
 """
 
 from __future__ import annotations
@@ -37,7 +40,9 @@ import json
 import tempfile
 import threading
 import time
+import uuid
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -244,24 +249,130 @@ def serving_mcp(
         if tls:
             certificate_path, key_path = self_signed_certificate(Path(certificates))
             certificate = {"ssl_certfile": str(certificate_path), "ssl_keyfile": str(key_path)}
-        # log_config=None keeps uvicorn from reconfiguring the test process's logging
-        config = uvicorn.Config(
-            app, host=host, port=port, log_config=None, log_level="warning", **certificate
-        )
-        runner = uvicorn.Server(config)
-        thread = threading.Thread(target=runner.run, daemon=True)
-        thread.start()
-        deadline = time.monotonic() + 30
-        while not runner.started:
-            if not thread.is_alive() or time.monotonic() > deadline:
-                raise RuntimeError("the MCP server did not start")
-            time.sleep(0.05)
-        try:
+        with _running(app, host, port, **certificate):
             url_host = name or (f"[{host}]" if ":" in host else host)
             yield f"{'https' if tls else 'http'}://{url_host}:{port}/mcp"
-        finally:
-            runner.should_exit = True
-            thread.join(timeout=10)
+
+
+@contextlib.contextmanager
+def _running(app, host: str, port: int, **certificate: str) -> Iterator[None]:
+    # log_config=None keeps uvicorn from reconfiguring the test process's logging
+    config = uvicorn.Config(
+        app, host=host, port=port, log_config=None, log_level="warning", **certificate
+    )
+    runner = uvicorn.Server(config)
+    thread = threading.Thread(target=runner.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not runner.started:
+        if not thread.is_alive() or time.monotonic() > deadline:
+            raise RuntimeError("the MCP server did not start")
+        time.sleep(0.05)
+    try:
+        yield
+    finally:
+        runner.should_exit = True
+        thread.join(timeout=10)
+
+
+@dataclass
+class LegacyRequest:
+    method: str
+    protocol_version: str | None
+    session_id: str | None
+
+
+@contextlib.contextmanager
+def serving_legacy_mcp(protocol_version: str) -> Iterator[tuple[str, list[LegacyRequest]]]:
+    """An echo server that knows only the `initialize` handshake at `protocol_version`.
+
+    It answers the way an MCP SDK 1.x server does in its default stateful mode: a request
+    before `initialize` gets 400 for the missing session, so it cannot answer the
+    2026-07-28 `server/discover`, and a request at any other protocol version gets 400.
+    Yields its URL and every JSON-RPC request it received, in order.
+    """
+    received: list[LegacyRequest] = []
+    session_id = uuid.uuid4().hex
+
+    def answer(message: dict) -> dict:
+        method, params = message["method"], message.get("params") or {}
+        if method == "initialize":
+            return {
+                "protocolVersion": protocol_version,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "legacy-harness-mcp", "version": "1.0.0"},
+            }
+        if method == "tools/list":
+            schema = {
+                "type": "object",
+                "properties": {"text": {"type": "string"}},
+                "required": ["text"],
+            }
+            tool = {"name": "echo", "description": ECHO_DESCRIPTION, "inputSchema": schema}
+            return {"tools": [tool]}
+        if method == "tools/call" and params.get("name") == "echo":
+            text = params["arguments"]["text"]
+            return {"content": [{"type": "text", "text": text}], "isError": False}
+        raise LookupError(method)
+
+    async def app(scope, receive, send) -> None:
+        if scope["type"] != "http":
+            return
+        headers = {key.decode(): value.decode() for key, value in scope["headers"]}
+
+        async def respond(status: int, body: dict | None = None, **extra: str) -> None:
+            content = json.dumps(body).encode() if body is not None else b""
+            response_headers = [(b"content-type", b"application/json")]
+            response_headers += [(key.encode(), value.encode()) for key, value in extra.items()]
+            await send(
+                {"type": "http.response.start", "status": status, "headers": response_headers}
+            )
+            await send({"type": "http.response.body", "body": content})
+
+        def error(code: int, text: str, request_id=None) -> dict:
+            return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": text}}
+
+        if scope["method"] == "DELETE":
+            await respond(200)
+            return
+        if scope["method"] != "POST":
+            await respond(405)
+            return
+        body = b""
+        while True:
+            chunk = await receive()
+            body += chunk.get("body", b"")
+            if not chunk.get("more_body"):
+                break
+        message = json.loads(body)
+        version = headers.get("mcp-protocol-version")
+        received.append(LegacyRequest(message["method"], version, headers.get("mcp-session-id")))
+        if message["method"] == "initialize":
+            await respond(
+                200,
+                {"jsonrpc": "2.0", "id": message["id"], "result": answer(message)},
+                **{"mcp-session-id": session_id},
+            )
+            return
+        if headers.get("mcp-session-id") != session_id:
+            await respond(400, error(-32600, "Bad Request: Missing session ID", "server-error"))
+            return
+        if version not in (None, protocol_version):
+            text = f"Bad Request: Unsupported protocol version: {version}"
+            await respond(400, error(-32600, text, "server-error"))
+            return
+        if "id" not in message:
+            await respond(202)
+            return
+        try:
+            result = {"jsonrpc": "2.0", "id": message["id"], "result": answer(message)}
+        except LookupError:
+            result = error(-32601, "Method not found", message["id"])
+        await respond(200, result)
+
+    port = free_port()
+    with _running(app, "127.0.0.1", port):
+        yield f"http://127.0.0.1:{port}/mcp", received
 
 
 TOOL_SERVERS = ("/api/v1/configs/tool_servers", "/api/v1/configs/tool_servers")
