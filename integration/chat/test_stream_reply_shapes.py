@@ -19,8 +19,8 @@ import pytest
 
 from harness import upstream as reply
 from harness.actors import admin_of
-from harness.chat import ask
-from harness.inflight import start_slow_reply, wait_until_no_reply_runs, wait_until_streaming
+from harness.chat import ask, wait_for_reply
+from harness.inflight import start_slow_reply, wait_until_streaming
 from harness.socket_client import connected
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -110,11 +110,9 @@ def test_an_admin_stops_a_reply_and_keeps_what_arrived(admin, upstream):
         stopped = client.post(f"/api/tasks/stop/{task_id}")
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["status"] is True
-        # the stopped reply is saved before its task is let go
-        wait_until_no_reply_runs(client, turn.chat_id)
-        stored = client.get(f"/api/v1/chats/{turn.chat_id}").json()
+        # with Redis the stop answers before the stopped reply is saved
+        message = wait_for_reply(client, turn)
 
-    message = stored["chat"]["history"]["messages"][turn.assistant_message_id]
     assert message["content"].startswith("part-0 ")
     assert "part-19" not in message["content"]
     assert [item["status"] for item in message["output"]] == ["incomplete"]
