@@ -9,7 +9,8 @@ picker after a confirmation, and the current version offers no delete. On the Sk
 takes a ZIP of skill folders and opens a dialog listing each skill with its file count; Import
 selected saves them with all their files. A skill that already exists is listed to be skipped, and
 choosing Replace saves the upload as a new version of it. A row's Export ZIP downloads the skill's
-folder with every file, and Clone opens a new skill holding the same files.
+folder with every file, its Export .skill downloads `<id>.skill`, which imports back from disk
+with every file, and Clone opens a new skill holding the same files.
 
 Discriminates: passes on the dev 178de3666 build. In a frontend copy, a code editor that ignores
 the read-only flag (an old version takes typing) or a file row that starts a rename on double
@@ -24,7 +25,9 @@ b130fec73, where the comparison became a panel of its own showing removed and ad
 side: the version picker test passes on b130fec73. Retargeted for 24ee1cb16, where an old version is
 set as production in place of being restored as a copy: the set production test passes there and
 goes red in a frontend build that sets the current version in place of the picked one; the version
-delete test goes red in a build whose rows offer no delete.
+delete test goes red in a build whose rows offer no delete. The Export .skill test passes on a
+dev 948432b43 build against the dev 226dca18c backend and goes red in a backend copy whose import
+refuses `.skill` files or whose .skill export writes only SKILL.md.
 """
 
 from __future__ import annotations
@@ -287,6 +290,46 @@ def test_a_rows_export_json_holds_the_skill_with_its_files(page_for, owner):
     assert {entry["path"]: entry["content"] for entry in exported["files"]}[
         "references/symbols.md"
     ] == ("Rocks are crosses.\n")
+
+
+def test_a_rows_export_skill_downloads_a_skill_file_that_imports_back(page_for, owner):
+    skill_id = new_id("charts")
+    create(
+        owner,
+        {
+            "SKILL.md": skill_md(skill_id, "Plot the course."),
+            "references/symbols.md": "Rocks are crosses.\n",
+        },
+        skill_id=skill_id,
+        name=f"Charts {skill_id}",
+    )
+    page = page_for(owner)
+
+    with page.expect_download() as download:
+        _row_menu(page, f"Charts {skill_id}", "Export .skill")
+    assert download.value.suggested_filename == f"{skill_id}.skill"
+    exported = download.value.path().read_bytes()
+    with zipfile.ZipFile(io.BytesIO(exported)) as archive:
+        names = set(archive.namelist())
+    assert names == {f"{skill_id}/SKILL.md", f"{skill_id}/references/symbols.md"}
+
+    with owner.client() as client:
+        client.delete(f"/api/v1/skills/id/{skill_id}/delete").raise_for_status()
+    page.goto("/workspace/skills")
+    page.get_by_label("Open create menu").click()
+    with page.expect_file_chooser() as chooser:
+        page.get_by_role("button", name="Import", exact=True).click()
+    chooser.value.set_files(
+        files=[{"name": f"{skill_id}.skill", "mimeType": "application/zip", "buffer": exported}]
+    )
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("textbox", name="Skill ID")).to_have_value(skill_id)
+    expect(dialog.get_by_text("2 files")).to_be_visible()
+    dialog.get_by_role("button", name="Import selected").click()
+
+    expect(dialog.get_by_text("saved")).to_be_visible()
+    assert set(files(owner, skill_id)) == {"SKILL.md", "references/symbols.md"}
+    assert read(owner, skill_id, "references/symbols.md") == b"Rocks are crosses.\n"
 
 
 def test_clone_opens_a_new_skill_with_the_same_files(page_for, owner):
