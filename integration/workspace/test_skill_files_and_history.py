@@ -10,9 +10,10 @@ an old version as production brings its files back without adding a version, and
 can be deleted while the current one cannot. The Skills page imports a ZIP
 holding skill folders, a folder picked from disk, a single SKILL.md, or a JSON export, with a
 preview that names each skill from its front matter and offers to replace one that exists. A
-skill's own ZIP export holds every file under the skill's name, Clone copies the files into a new
-private skill, and deleting a skill takes its history with it. A chat that mentions a skill gets
-its SKILL.md with the list of its other files.
+skill's own ZIP export holds every file under the skill's name. A .skill export takes exactly
+one skill, downloads as `<id>.skill` with every file, and imports back like a ZIP. Clone copies
+the files into a new private skill, and deleting a skill takes its history with it. A chat that
+mentions a skill gets its SKILL.md with the list of its other files.
 
 Who may read or change a shared skill's files and history, and the upgrade of skills saved
 before files existed, are covered elsewhere.
@@ -31,7 +32,9 @@ production in place of being restored as a copy and old versions can be deleted:
 and version delete tests pass on that build, and go red in a backend copy whose version switch keeps
 the current files or whose version delete answers true without deleting. Retargeted for
 c7193760b, where the mentioned skill's tag no longer carries a `version_id`; passes on dev
-c7193760b.
+c7193760b. The .skill tests pass on dev 226dca18c; in a backend copy, a .skill export that writes
+only SKILL.md, is named `skills.zip`, or an import that refuses `.skill` turns the round trip test
+red, and dropping the one-skill check turns the exactly-one test red.
 """
 
 from __future__ import annotations
@@ -388,6 +391,58 @@ def test_a_skills_zip_export_holds_every_file_under_its_name(owner):
         f"{skill['id']}/scripts/check.py",
     }
     assert tables == b"High water at noon.\n"
+
+
+def test_a_skill_file_export_holds_one_skill_and_imports_back_with_every_file(owner):
+    skill = _tide_skill(owner)
+    encoded = base64.b64encode(PNG).decode()
+    saved = save(
+        owner,
+        skill,
+        [{"op": "put", "path": "assets/flag.png", "content": encoded, "encoding": "base64"}],
+    )
+    assert saved.status_code == 200, saved.text
+    original = {path: read(owner, skill["id"], path) for path in files(owner, skill["id"])}
+
+    with owner.client() as client:
+        exported = client.get(
+            "/api/v1/skills/export", params={"format": "skill", "ids": [skill["id"]]}
+        )
+
+    assert exported.status_code == 200, exported.text
+    disposition = exported.headers.get("content-disposition", "")
+    assert f'filename="{skill["id"]}.skill"' in disposition, disposition
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        names = set(archive.namelist())
+    assert names == {f"{skill['id']}/{path}" for path in original}, names
+
+    # the downloaded file goes back in on a fresh workspace under its own name
+    with owner.client() as client:
+        client.delete(f"/api/v1/skills/id/{skill['id']}/delete").raise_for_status()
+    upload = {f"{skill['id']}.skill": exported.content}
+    (item,) = preview(owner, upload)
+    assert item["id"] == skill["id"] and item["id_taken"] is False, item
+    results = import_skills(
+        owner, upload, [{"action": "create", "id": item["id"], "name": item["name"]}]
+    )
+
+    assert results == [{"status": "saved", "id": skill["id"]}]
+    restored = {path: read(owner, skill["id"], path) for path in files(owner, skill["id"])}
+    assert restored == original
+
+
+def test_a_skill_file_export_takes_exactly_one_skill(owner):
+    first, second = _tide_skill(owner), _tide_skill(owner)
+
+    with owner.client() as client:
+        both = client.get(
+            "/api/v1/skills/export", params={"format": "skill", "ids": [first["id"], second["id"]]}
+        )
+        none = client.get("/api/v1/skills/export", params={"format": "skill"})
+        one = client.get("/api/v1/skills/export", params={"format": "skill", "ids": [first["id"]]})
+
+    assert (both.status_code, none.status_code) == (400, 400), (both.text, none.text)
+    assert one.status_code == 200, one.text
 
 
 def test_an_old_version_exports_with_its_own_files(owner):

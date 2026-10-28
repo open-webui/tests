@@ -6,8 +6,8 @@ permission. Copying one needs read access to it and the same permission, and the
 copier's own and private. Import and its preview need the import permission; an imported skill
 is private whatever the package says, and replacing an existing skill through an import needs
 write access to it. Export needs the export permission and only carries skills the account may
-read, old versions included. A public grant is kept only for an account with the public sharing
-permission.
+read, old versions included, as JSON, ZIP or .skill. A public grant is kept only for an account
+with the public sharing permission.
 
 Discriminates: passes on dev 178de3666. In a backend copy, dropping the create permission check
 turned the create and copy tests red; copying the current version whatever version is asked
@@ -15,10 +15,10 @@ turned the old version copy test red; dropping the import permission check turne
 permission test red; dropping the write checks on an import's replace turned the replace test
 red (the reader's package replaced the owner's files); dropping the export permission check
 turned the export permission test red; exporting listed skills without an access check turned
-the foreign export test red; looking a history entry up by its id alone turned the old version
-export test red; letting every public grant through turned the three public grant rows red;
-and keeping the source's grants on a copy, or a public grant on an import, turned the private
-copy test red.
+the foreign export test red (also checked for the .skill export on dev 226dca18c); looking a
+history entry up by its id alone turned the old version export test red; letting every public
+grant through turned the three public grant rows red; and keeping the source's grants on a copy,
+or a public grant on an import, turned the private copy test red.
 """
 
 from __future__ import annotations
@@ -276,8 +276,12 @@ def test_export_needs_the_export_permission(admin, make_user):
     refused = _export(without, ids=[skill["id"]])
     exported = _export(exporter, ids=[skill["id"]])
     archive = _export(exporter, ids=[skill["id"]], format="zip")
+    refused_skill_file = _export(without, ids=[skill["id"]], format="skill")
+    skill_file = _export(exporter, ids=[skill["id"]], format="skill")
 
     assert refused.status_code == 403 and SECRET not in refused.text
+    assert refused_skill_file.status_code == 403, refused_skill_file.text
+    assert SECRET.encode() not in refused_skill_file.content
     assert exported.status_code == 200, exported.text
     assert {f["path"]: f["content"] for f in exported.json()["files"]}[
         "references/order.md"
@@ -285,6 +289,10 @@ def test_export_needs_the_export_permission(admin, make_user):
     with zipfile.ZipFile(io.BytesIO(archive.content)) as bundle:
         names = bundle.namelist()
     assert sorted(name.split("/", 1)[1] for name in names) == ["SKILL.md", "references/order.md"]
+    assert skill_file.status_code == 200, skill_file.text
+    with zipfile.ZipFile(io.BytesIO(skill_file.content)) as bundle:
+        order = bundle.read(f"{skill['id']}/references/order.md").decode()
+    assert order == SECRET
 
 
 def test_an_export_carries_only_skills_the_account_may_read(admin, make_user):
@@ -295,11 +303,14 @@ def test_an_export_carries_only_skills_the_account_may_read(admin, make_user):
 
     named = _export(exporter, ids=[private["id"]])
     named_with_shared = _export(exporter, ids=[shared["id"], private["id"]])
+    named_skill_file = _export(exporter, ids=[private["id"]], format="skill")
     everything = _export(exporter)
     by_admin = _export(admin, ids=[private["id"]])
 
     assert (named.status_code, named_with_shared.status_code) == (403, 403)
     assert SECRET not in named.text + named_with_shared.text
+    assert named_skill_file.status_code == 403, named_skill_file.text
+    assert SECRET.encode() not in named_skill_file.content
     exported_ids = {package["id"] for package in everything.json()}
     assert shared["id"] in exported_ids and private["id"] not in exported_ids
     assert SECRET not in everything.text
