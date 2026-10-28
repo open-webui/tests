@@ -1,7 +1,7 @@
 """Regression: an account whose access was revoked still got a channel's or note's live updates.
 
 Fix `e93a59f4d` (0.11.5): a socket joins the rooms of the channels and notes its account may
-read (`channel:{id}` through `user-join`, `note:{id}` through `join-note`, `doc_note:{id}` when
+read (`channel:{id}` through `user-join`, `note:{id}` through `note:join`, `doc_note:{id}` when
 the editor opens the note), and nothing made it leave them again. Once the owner took the grant
 away, the open tab still got every new channel message, every edit of the note and every
 keystroke in its live document. Saving grants that drop someone now makes that account's sessions
@@ -151,7 +151,7 @@ def _share_note(owner, note_id: str, *readers) -> None:
 
 def _follow_note(session: SocketSession, account, note_id: str) -> None:
     """Open the note the way the note page does: follow its edits and its live document."""
-    session.call("join-note", {"auth": {"token": account.token}, "note_id": note_id})
+    session.call("note:join", {"auth": {"token": account.token}, "note_id": note_id})
     session.join_note(note_id)
 
 

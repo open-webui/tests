@@ -2,7 +2,7 @@
 
 A note's live document serves and accepts edits only from an account the note is shared with:
 a stranger who joins under either spelling of the document id is served nothing, cannot follow
-the note's HTTP edits through `join-note` and cannot push cursor updates to the owner's tab, and
+the note's HTTP edits through `note:join` and cannot push cursor updates to the owner's tab, and
 neither a stranger's nor a reader's edit reaches the owner's open tab, a later tab or the saved
 note. The routes that push an event into a chat owner's `user:{id}` room (a message event, a
 message edit) take the chat id from the caller, so a stranger naming someone else's chat is
@@ -14,7 +14,7 @@ stranger cases of the served test (both spellings) and the cursor test red;
 `normalize_document_id` returning its input turned both `note_` cases of the served test red;
 dropping the write check from `yjs_document_update` turned the reader case of the open-tab test
 red, and together with the join check the stranger-edit test too; dropping the read check from
-`join_note` turned the join-note test red; dropping the room check from `yjs_awareness_update`
+`join_note` turned the note:join test red; dropping the room check from `yjs_awareness_update`
 turned the cursor test red; dropping the owner check from the message event route and from the
 message edit route each turned that route's stranger case red.
 """
@@ -167,14 +167,14 @@ def test_join_note_follows_the_note_only_for_a_shared_account(make_user, permiss
 
     with connected(visitor) as visitors_tab:
         arrived = _flag_on(visitors_tab, "events:note")
-        visitors_tab.call("join-note", {"auth": {"token": visitor.token}, "note_id": note_id})
+        visitors_tab.call("note:join", {"auth": {"token": visitor.token}, "note_id": note_id})
         with owner.client() as client:
             edited = client.post(f"/api/v1/notes/{note_id}/update", json={"title": "renamed"})
         assert edited.status_code == 200, edited.text
         received = _arrives(arrived, shared)
 
     assert received == shared, (
-        f"after join-note the owner's edits {'did not arrive' if shared else 'reached a stranger'}"
+        f"after note:join the owner's edits {'did not arrive' if shared else 'reached a stranger'}"
     )
 
 

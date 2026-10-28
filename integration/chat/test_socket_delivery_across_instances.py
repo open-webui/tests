@@ -20,7 +20,7 @@ admin change that drops the account's socket, a tab closing and coming back, a s
 and a dozen accounts streaming at once; a channel's messages, edits, reactions, thread replies,
 deletions and typing, a direct message, a member removed, a reader's grant revoked, a deleted
 channel and a model answering in a channel; a note's live edits, cursors, joins and leaves, its
-edits followed through `join-note` and a collaborator removed; a model shown as in use; and a
+edits followed through `note:join` and a collaborator removed; a model shown as in use; and a
 Redis that drops every subscription or restarts. A test client subscribed to every Redis channel
 records which channel carried a chat's events. That an instance with nobody in the room skips the
 message is only visible as CPU and is not pinned.
@@ -743,7 +743,7 @@ def _shared_note(owner: Actor, *grants: dict) -> str:
 
 def _follow_note(tab: SocketSession, account: Actor, note_id: str) -> None:
     """Open the note the way the note page does: follow its edits and its live document."""
-    tab.call("join-note", {"auth": {"token": account.token}, "note_id": note_id})
+    tab.call("note:join", {"auth": {"token": account.token}, "note_id": note_id})
     tab.join_note(note_id)
 
 
@@ -812,7 +812,8 @@ def test_a_note_edited_on_one_instance_reaches_the_tabs_that_joined_it_on_the_ot
         [1, 2, 3],
     )
     joined = {event["user_id"]: event for event in writer_heard["ydoc:user:joined"]}
-    assert joined["owners-tab"]["user_name"] == "Owner"
+    assert "owners-tab" not in joined, "a tab named itself in the join event"
+    assert joined[owner.id]["user_name"] == owner.name
     [left] = writer_heard["ydoc:user:left"]
     assert (left["document_id"], left["user_id"]) == (document_id, owner.id)
     assert late_document == "<paragraph>edited on near</paragraph>"
@@ -848,9 +849,14 @@ def test_a_notes_http_edit_reaches_the_tabs_that_followed_it_on_the_other_instan
 
     [seen] = writer_heard["events:note"]
     assert (seen["id"], seen["title"]) == (note_id, "Fahrplan")
-    assert seen["data"] == {"content": {"md": "Zug nach Graz um 8:15"}}
+    assert seen["data"]["content"]["md"] == "Zug nach Graz um 8:15"
     assert owner_heard["events:note"] == [seen]
     assert _heard_nothing(strangers_tab, stranger_heard), "an account without access heard it"
+
+
+def _titles(heard: dict[str, list]) -> list[str]:
+    """The titles of the note's HTTP edits; a save of typed text carries the page instead."""
+    return [event["title"] for event in heard["events:note"] if "title" in event]
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -878,12 +884,14 @@ def test_a_collaborator_removed_on_one_instance_stops_hearing_the_note_on_the_ot
         _retitle(owner, note_id, "after the removal")
         owners_tab.edit_note(note_id, "after the removal")
         assert _wait_until(lambda: kept_tab.document_updates), "the kept tab lost the edit"
-        assert _wait_until(lambda: len(kept_heard["events:note"]) == 2)
+        assert _wait_until(lambda: len(_titles(kept_heard)) == 2)
+        assert _wait_until(lambda: any("page" in event for event in kept_heard["events:note"])), (
+            "the kept tab never heard the typed edit being saved"
+        )
         time.sleep(QUIET_PERIOD)
 
-    titles = [event["title"] for event in kept_heard["events:note"]]
-    assert titles == ["while shared", "after the removal"]
-    assert [event["title"] for event in removed_heard["events:note"]] == ["while shared"], (
+    assert _titles(kept_heard) == ["while shared", "after the removal"]
+    assert [event.get("title") for event in removed_heard["events:note"]] == ["while shared"], (
         "a removed collaborator's tab on the other instance still gets the note's edits"
     )
     assert removed_tab.document_updates == [], "a removed collaborator still gets the live edits"

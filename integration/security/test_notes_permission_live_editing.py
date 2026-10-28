@@ -3,7 +3,7 @@
 Fix `6d409da9d` (#31552): the notes routes refuse a user whose Notes permission the admin took
 away, but the socket that carries live note editing never asked. Such a user still opened a
 note's live document (`ydoc:document:join`), received what others typed, had their own typing
-saved to the note, and followed the note's changes through `join-note`. Both socket events now
+saved to the note, and followed the note's changes through `note:join`. Both socket events now
 check the Notes permission first. A user whose group grants Notes and an admin still edit live.
 
 Discriminates: passes on dev a5bc78300; with 6d409da9d reverted in a backend copy the restricted
@@ -98,7 +98,7 @@ def _renames(session: SocketSession, title: str) -> threading.Event:
 
 def _follow_note(session: SocketSession, account, note_id: str) -> None:
     """Open the note the way the note page does: follow its changes and its live document."""
-    session.call("join-note", {"auth": {"token": account.token}, "note_id": note_id})
+    session.call("note:join", {"auth": {"token": account.token}, "note_id": note_id})
     session.join_note(note_id)
 
 
@@ -158,7 +158,7 @@ def test_a_user_without_the_permission_gets_no_live_edits_of_a_shared_note(
         "a reader without the Notes permission received the owner's live typing (#31552)"
     )
     assert not restricted_renamed, (
-        "a reader without the Notes permission followed the note's changes through join-note "
+        "a reader without the Notes permission followed the note's changes through note:join "
         "(#31552)"
     )
 

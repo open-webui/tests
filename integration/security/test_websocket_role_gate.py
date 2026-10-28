@@ -1,7 +1,7 @@
 """Regression: a deactivated account kept its live WebSocket access.
 
 open-webui 0.11.0 fix `f517cc717` (PR #27537): the Socket.IO handlers (`connect`, `user-join`,
-`join-channels`, `join-note`) and the terminal WebSocket each authenticated a raw token as
+`join-channels`, `note:join`) and the terminal WebSocket each authenticated a raw token as
 decode, revocation check and user lookup, without the role check `get_verified_user` applies on
 every HTTP route. An account moved to `pending` got 401 over HTTP while its unexpired token still
 opened a socket session, its channel and note rooms and a terminal. The fix resolves every
@@ -171,7 +171,7 @@ def test_join_note_joins_only_a_verified_account(instance, admin, make_user, rol
     verified = role in VERIFIED_ROLES
 
     with _socket(instance, listen=("events:note",)) as (client, arrived):
-        client.call("join-note", {"auth": {"token": owner.token}, "note_id": note_id}, timeout=30)
+        client.call("note:join", {"auth": {"token": owner.token}, "note_id": note_id}, timeout=30)
         with admin.client() as admin_client:
             edited = admin_client.post(
                 f"/api/v1/notes/{note_id}/update", json={"title": "edited by the admin"}
@@ -180,7 +180,7 @@ def test_join_note_joins_only_a_verified_account(instance, admin, make_user, rol
         received = _arrives(arrived["events:note"], verified)
 
     assert received == verified, (
-        f"after join-note with a {role} account's token the live edits of its note "
+        f"after note:join with a {role} account's token the live edits of its note "
         f"{'arrived' if received else 'did not arrive'} (#27537)"
     )
 

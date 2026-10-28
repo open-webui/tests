@@ -81,12 +81,12 @@ def test_an_update_that_keeps_the_role_leaves_the_socket_connected(admin, make_u
 SAVE_WAIT = 5.0
 
 
-def _note_content(client, note_id: str) -> dict:
-    return client.get(f"/api/v1/notes/{note_id}").json()["data"]["content"]
+def _note_markdown(client, note_id: str) -> str:
+    return client.get(f"/api/v1/notes/{note_id}").json()["data"]["content"]["md"]
 
 
-def _edit_then(account, followed_by: dict) -> dict:
-    """Edit a note over its live document, then send `followed_by`; the content saved after."""
+def _edit_then(account, followed_by: dict) -> str:
+    """Edit a note over its live document, then send `followed_by`; the markdown saved after."""
     with account.client() as client:
         note = client.post(
             "/api/v1/notes/create", json={"title": "draft", "data": {"content": {"md": "old"}}}
@@ -101,17 +101,17 @@ def _edit_then(account, followed_by: dict) -> dict:
 
             deadline = time.monotonic() + SAVE_WAIT
             while time.monotonic() < deadline:
-                content = _note_content(client, note.json()["id"])
-                if content != {"md": "old"}:
-                    return content
+                markdown = _note_markdown(client, note.json()["id"])
+                if markdown != "old":
+                    return markdown
                 time.sleep(0.2)
-            return content
+            return markdown
 
 
 def test_a_resync_update_keeps_the_pending_note_save(make_user):
-    content = _edit_then(make_user(), followed_by={"update": [4, 5, 6]})
+    markdown = _edit_then(make_user(), followed_by={"update": [4, 5, 6]})
 
-    assert content == {"md": "edited"}, (
+    assert markdown == "edited", (
         "the content-less resync update cancelled the pending save of the edit (PR #28669)"
     )
 
@@ -119,7 +119,7 @@ def test_a_resync_update_keeps_the_pending_note_save(make_user):
 def test_a_later_edit_replaces_the_pending_note_save(make_user):
     later = {"update": [4, 5, 6], "data": {"content": {"md": "edited again"}}}
 
-    assert _edit_then(make_user(), followed_by=later) == {"md": "edited again"}
+    assert _edit_then(make_user(), followed_by=later) == "edited again"
 
 
 EVENT_CALL_TIMEOUT = 2
