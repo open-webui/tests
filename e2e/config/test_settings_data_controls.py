@@ -5,21 +5,31 @@ account shared by link: unsharing one there closes its link at once, so the acco
 with is sent home from it, and Unshare All Shared Chats closes every link. Manage Files lists the
 files the account uploaded and no one else's, with their number, narrows them by a search on part of
 the name and opens one to show its text; a file deleted there is gone, at once and without asking
-when Shift is held.
+when Shift is held. An admin sees only their own files there too. Several files, picked one by one
+or every file matching the search, are deleted together with a count of what was deleted, what
+failed and what was left, or downloaded as one zip of exactly those files; a single file downloads
+under its own name, and Stop ends either operation before the rest is done.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose unshare and Unshare All handlers
 skip their requests and whose file delete skips its request, every test up to the deleted file
 fails. On dev ebc6add67, in a frontend build whose Manage Files search ignores the query, whose rows
-open nothing and whose Shift delete still asks, the search, open and Shift tests fail.
+open nothing and whose Shift delete still asks, the search, open and Shift tests fail. On dev
+226dca18c, in a frontend build that lists every file the admin can reach, counts a failed delete as
+deleted, whose Select all matching ignores the search, whose zip takes every listed file, whose
+single download is named files.zip and whose Stop is ignored, each of the seven tests after the
+Shift test fails.
 """
 
 from __future__ import annotations
 
+import io
+import pathlib
 import re
 import uuid
+import zipfile
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from harness.access import grant
 from utils.chat_ui import conversation
@@ -206,3 +216,216 @@ def test_a_file_deleted_with_shift_held_goes_without_asking(page_for, make_user)
     expect(files.get_by_text("old-chart.txt")).to_have_count(0)
     with account.client() as client:
         assert client.get(f"/api/v1/files/{file_id}").status_code == 404
+
+
+def test_an_admin_sees_only_their_own_files_in_manage_files(page_for, make_user):
+    admin, other = make_user(role="admin"), make_user()
+    upload(admin, "admin-logbook.txt", "the admin's own")
+    upload(other, "crew-roster.txt", "not the admin's")
+    page = page_for(admin)
+    files = open_manage_files(page)
+
+    expect(files.get_by_text("admin-logbook.txt", exact=True)).to_be_visible()
+    expect(files.get_by_text("crew-roster.txt")).to_have_count(0)
+    expect(files.get_by_text("1", exact=True)).to_be_visible()
+
+
+def selection_action(page: Page, files: Locator, action: str) -> None:
+    files.get_by_role("button", name="Selection actions").click()
+    page.get_by_role("menu").get_by_role("button", name=action).click()
+
+
+def confirm_delete(page: Page, count: int) -> None:
+    confirming = page.get_by_role("dialog").filter(has_text=f"Delete {count} files?")
+    confirming.get_by_role("button", name="Delete", exact=True).click()
+
+
+def own_file_names(account) -> list[str]:
+    with account.client() as client:
+        listed = client.get("/api/v1/files/user/search", params={"limit": 1000})
+    assert listed.status_code == 200, listed.text
+    return sorted(file["filename"] for file in listed.json())
+
+
+def test_deleting_picked_files_counts_what_was_deleted_and_what_failed(page_for, make_user):
+    account = make_user()
+    ids = {name: upload(account, name, name) for name in ("keel.txt", "mast.txt", "sail.txt")}
+    upload(account, "rudder.txt", "kept")
+    page = page_for(account)
+    files = open_manage_files(page)
+    for name in ids:
+        files.get_by_role("checkbox", name=f"Select {name}").click()
+    expect(files.get_by_text("3 selected")).to_be_visible()
+    # gone before the page deletes it, so its delete fails
+    with account.client() as client:
+        assert client.delete(f"/api/v1/files/{ids['sail.txt']}").status_code == 200
+
+    selection_action(page, files, "Delete")
+    confirm_delete(page, 3)
+
+    expect(page.get_by_text("2 deleted, 1 failed, 0 not processed.")).to_be_visible()
+    expect(files.get_by_text("rudder.txt", exact=True)).to_be_visible()
+    expect(files.get_by_text("keel.txt")).to_have_count(0)
+    assert own_file_names(account) == ["rudder.txt"]
+
+
+def test_select_all_matching_takes_only_the_files_matching_the_search(page_for, make_user):
+    account = make_user()
+    # one more than the 50 a page loads, so Select all matching is offered
+    for index in range(51):
+        upload(account, f"buoy-{index:02}.txt", "a buoy")
+    for index in range(2):
+        upload(account, f"anchor-{index}.txt", "an anchor")
+    page = page_for(account)
+    files = open_manage_files(page)
+    expect(files.get_by_text("53", exact=True)).to_be_visible()
+
+    files.get_by_placeholder("Search Files").fill("buoy")
+    # while searching the count is the matches loaded so far, a page of 50
+    expect(files.get_by_text("50", exact=True)).to_be_visible()
+    expect(files.get_by_text("anchor-")).to_have_count(0)
+    files.get_by_role("checkbox", name="Select loaded files").click()
+    expect(files.get_by_text("50 selected")).to_be_visible()
+    files.get_by_role("button", name="Select all matching files").click()
+    expect(files.get_by_text("51 selected")).to_be_visible()
+    selection_action(page, files, "Delete")
+    confirm_delete(page, 51)
+
+    expect(page.get_by_text("51 deleted, 0 failed, 0 not processed.")).to_be_visible()
+    assert own_file_names(account) == ["anchor-0.txt", "anchor-1.txt"]
+
+
+def test_downloading_picked_files_zips_exactly_those_files(page_for, make_user):
+    account = make_user()
+    texts = {"first log": "log.txt", "second log": "log.txt", "the chart": "chart.txt"}
+    for text, name in texts.items():
+        upload(account, name, text)
+    upload(account, "skip-me.txt", "not picked")
+    page = page_for(account)
+    files = open_manage_files(page)
+    files.get_by_role("checkbox", name="Select loaded files").click()
+    files.get_by_role("checkbox", name="Select skip-me.txt").click()
+    expect(files.get_by_text("3 selected")).to_be_visible()
+
+    with page.expect_download() as downloaded:
+        selection_action(page, files, "Download")
+
+    assert downloaded.value.suggested_filename == "files.zip"
+    zipped = pathlib.Path(downloaded.value.path()).read_bytes()
+    with zipfile.ZipFile(io.BytesIO(zipped)) as archive:
+        names = archive.namelist()
+        contents = sorted(archive.read(name).decode() for name in names)
+    assert contents == sorted(texts), f"the zip held {names} with {contents}"
+    assert "chart.txt" in names and len(set(names)) == 3, f"the zip's names were {names}"
+
+
+def test_a_single_downloaded_file_keeps_its_name(page_for, make_user):
+    account = make_user()
+    upload(account, "tide table 2026.txt", "high water at noon")
+    page = page_for(account)
+    files = open_manage_files(page)
+
+    files.get_by_role("button", name="Actions for tide table 2026.txt").click()
+    with page.expect_download() as downloaded:
+        page.get_by_role("menu").get_by_role("button", name="Download").click()
+
+    assert downloaded.value.suggested_filename == "tide table 2026.txt"
+    assert pathlib.Path(downloaded.value.path()).read_bytes() == b"high water at noon"
+
+
+class HeldRequests:
+    """Holds the page's requests that `wanted` picks until `release`, then lets later ones pass."""
+
+    def __init__(self, wanted):
+        self.wanted, self.held, self.released = wanted, [], False
+
+    def __call__(self, route: Route) -> None:
+        if self.wanted(route.request) and not self.released:
+            self.held.append(route)
+        else:
+            route.continue_()
+
+    def release(self) -> None:
+        self.released = True
+        for route in self.held:
+            route.continue_()
+
+
+def running_operation(page: Page) -> Locator:
+    """Manage Files while an operation runs, when its progress takes the search box's place."""
+    return page.get_by_role("dialog", name="Files", exact=True)
+
+
+def is_file_delete(request) -> bool:
+    return request.method == "DELETE" and "/api/v1/files/" in request.url
+
+
+def test_stop_ends_a_bulk_delete_and_leaves_the_rest(page_for, make_user):
+    account = make_user()
+    for index in range(6):
+        upload(account, f"pier-{index}.txt", "a pier")
+    page = page_for(account)
+    files = open_manage_files(page)
+    files.get_by_role("checkbox", name="Select loaded files").click()
+    expect(files.get_by_text("6 selected")).to_be_visible()
+    deletes: list[str] = []
+
+    def record_delete(request) -> None:
+        if is_file_delete(request):
+            deletes.append(request.url)
+
+    page.on("request", record_delete)
+    holding = HeldRequests(is_file_delete)
+    page.route("**/api/v1/files/*", holding)
+
+    selection_action(page, files, "Delete")
+    with page.expect_request(is_file_delete):
+        confirm_delete(page, 6)
+    running = running_operation(page)
+    expect(running.get_by_role("status").filter(has_text="Processed 0 of 6")).to_be_visible()
+    running.get_by_role("button", name="Stop", exact=True).click()
+    expect(running.get_by_role("button", name="Stopping...")).to_be_visible()
+    holding.release()
+
+    report = page.get_by_text(re.compile(r"\d+ deleted, 0 failed, \d+ not processed\."))
+    expect(report).to_be_visible()
+    counts = re.fullmatch(r"(\d+) deleted, 0 failed, (\d+) not processed\.", report.inner_text())
+    assert counts, report.inner_text()
+    deleted, remaining = int(counts[1]), int(counts[2])
+    assert (deleted, remaining) == (len(deletes), 6 - len(deletes)), report.inner_text()
+    assert remaining > 0, "Stop let every file be deleted"
+    assert len(own_file_names(account)) == remaining
+
+
+def test_stop_ends_a_download_without_saving_anything(page_for, make_user):
+    account = make_user()
+    for name in ("north.txt", "south.txt"):
+        upload(account, name, name)
+    page = page_for(account)
+    files = open_manage_files(page)
+    files.get_by_role("checkbox", name="Select loaded files").click()
+    expect(files.get_by_text("2 selected")).to_be_visible()
+    downloads: list[str] = []
+
+    def record_download(download) -> None:
+        downloads.append(download.suggested_filename)
+
+    page.on("download", record_download)
+
+    def is_file_content(request) -> bool:
+        return "/content" in request.url and "/api/v1/files/" in request.url
+
+    holding = HeldRequests(is_file_content)
+    page.route("**/api/v1/files/**", holding)
+
+    with page.expect_request(is_file_content):
+        selection_action(page, files, "Download")
+    running = running_operation(page)
+    expect(running.get_by_role("status").filter(has_text="Preparing 0 of 2")).to_be_visible()
+    running.get_by_role("button", name="Stop", exact=True).click()
+    expect(running.get_by_role("button", name="Stopping...")).to_be_visible()
+    holding.release()
+
+    expect(files.get_by_placeholder("Search Files")).to_be_visible()
+    page.wait_for_timeout(1000)  # a download the stop missed would show up by now
+    assert downloads == [], "a stopped download still saved a file"
