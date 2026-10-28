@@ -13,6 +13,16 @@ a tool's files event, an HTML embed, and pictures from `generate_image` and `edi
 as files. The source list the citations template adds after a sourced round is the same, and
 the next turn replays `call_tool`. Added with dev 7b47c3b22.
 
+The admin settings decide which tools are held back. A tool goes into the `<available_tools>`
+list only when its definition, as compact JSON, is longer than the Deferral Threshold in
+characters; one at the threshold is sent in full. An Always Loaded pattern such as `github_*`
+keeps the tools it matches in full, and with Defer Built-in Tools off the built-in tools stay in
+full too. The list names each held-back tool in name order with its description on one line, cut
+to 100 characters ending in `…`. `search_tools` searches only the held-back tools and returns
+their full definitions, for an exact name or a keyword. With Tool Search off, or no tool over the
+threshold, the model gets every tool, no dispatch tools and no list. The admin chat settings
+store all four settings, with a negative threshold saved as 0 and blank patterns dropped.
+
 Approvals treat a dispatched tool as the tool itself: under every approval setting (Ask, Full
 access, no choice, the admin switch off, a model preset that asks) it is asked exactly when a
 direct call is. In a round mixing dispatched, direct and refused calls each call waits for its own
@@ -37,6 +47,15 @@ temporary chat's confirmation for a dispatched call fails the temporary chat tes
 pending call approved on one approval fails the mixed round and allow-once tests; letting a
 Continue run pending calls fails the pending Continue test; and resuming with full access after
 an approval fails the mixed round, second round and allow-once tests.
+
+In backend copies of dev 948432b43, deferring a tool at the threshold fails the threshold test;
+ignoring Always Loaded fails the pattern and search tests; deferring built-in tools regardless
+fails the built-in and list tests; a 200-character cut fails the list test and an uncollapsed
+description the built-in and list tests; searching every tool or returning only names and
+descriptions fails the search test; ignoring the Tool Search switch fails the threshold,
+built-in, search and off tests; adding the dispatch tools with nothing held back fails the
+nothing-over-the-threshold case; and saving the threshold and patterns as sent fails the
+settings test.
 
 Since 93ba628f3 (#32680, issue #32678) a picture the model draws after the user answered its
 `ask_user` question or approved or rejected a tool call is stored on the reply. Resolving the
@@ -965,6 +984,318 @@ def test_a_filter_tool_with_another_name_keeps_tool_search_on(tool_search, admin
             ask(client, "hello")
 
     assert set(offered(upstream.chat_requests()[-1])) == DISPATCH_NAMES | {"harbour_beacon"}
+
+
+TIDE_DESCRIPTION = (
+    "Look up the tides of a harbour for a whole week, with the height and time of every high and"
+    " low water, the moon phase, the swell and the wind at each one."
+)
+WEATHER_DESCRIPTION = (
+    "Report the weather at a harbour: the wind, the sea state, the visibility"
+    " and the rain over the hour."
+)
+
+HARBOUR_DESK_TOOLS = '''
+class Tools:
+    def harbour_lights(self, harbour: str) -> str:
+        """Report whether the lights of a harbour are lit.
+
+        :param harbour: Name of the harbour
+        """
+        return f"lit at {harbour}"
+
+    def tide_table(self, harbour: str, days: int = 7) -> str:
+        """TIDE_DESCRIPTION
+
+        :param harbour: Name of the harbour
+        :param days: How many days to list
+        """
+        return "high water at noon"
+
+    def beacon_status(self, harbour: str) -> str:
+        """Report whether the beacon
+        of a harbour is flashing.
+
+        :param harbour: Name of the harbour
+        """
+        return "flashing"
+
+    def weather_report(self, harbour: str) -> str:
+        """WEATHER_DESCRIPTION
+
+        :param harbour: Name of the harbour
+        """
+        return "calm"
+'''.replace("TIDE_DESCRIPTION", TIDE_DESCRIPTION).replace(
+    "WEATHER_DESCRIPTION", WEATHER_DESCRIPTION
+)
+DESK_NAMES = ["beacon_status", "harbour_lights", "tide_table", "weather_report"]
+
+FORGE_TOOLS = '''
+class Tools:
+    def github_create_issue(self, title: str) -> str:
+        """Open an issue on GitHub.
+
+        :param title: Title of the issue
+        """
+        return "opened"
+
+    def github_list_repos(self) -> str:
+        """List the GitHub repositories of the account."""
+        return "none"
+
+    def gitlab_create_issue(self, title: str) -> str:
+        """Open an issue on GitLab.
+
+        :param title: Title of the issue
+        """
+        return "opened"
+
+    def my_github_sync(self) -> str:
+        """Sync the mirror of a GitHub repository."""
+        return "synced"
+'''
+
+
+def offered_specs(request: dict) -> dict[str, dict]:
+    return {tool["function"]["name"]: tool["function"] for tool in request.get("tools") or []}
+
+
+def schema_size(spec: dict) -> int:
+    """Characters of the definition as compact JSON, the unit of the Deferral Threshold."""
+    return len(json.dumps(spec, separators=(",", ":"), ensure_ascii=False))
+
+
+def listed_tools(request: dict) -> list[tuple[str, str]] | None:
+    """The (name, description) pairs of the `<available_tools>` list, or None without a list."""
+    system = "\n".join(
+        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
+    )
+    block = re.search(r"<available_tools>\n.*?</available_tools>", system, re.DOTALL)
+    if block is None:
+        return None
+    return re.findall(
+        r"<tool>\n<name>(.*?)</name>\n<description>(.*?)</description>\n</tool>\n",
+        block.group(0),
+    )
+
+
+def listed_names(request: dict) -> list[str]:
+    listed = listed_tools(request)
+    assert listed is not None, f"the request has no <available_tools> list: {request['messages']}"
+    return [name for name, _ in listed]
+
+
+def request_with(client: httpx.Client, upstream, tool_ids: list[str]) -> dict:
+    """The request the model receives for a fresh chat with these tools."""
+    upstream.queue(reply.text("ok"))
+    ask(client, "what is going on at the harbour?", tool_ids=tool_ids)
+    return upstream.chat_requests()[-1]
+
+
+def test_a_tool_is_held_back_only_when_its_definition_is_longer_than_the_threshold(
+    chat_settings, admin, make_user, upstream
+):
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        chat_settings(ENABLE_TOOL_SEARCH=False)
+        full = offered_specs(request_with(client, upstream, [tool_id]))
+        small, large = schema_size(full["harbour_lights"]), schema_size(full["tide_table"])
+        assert small < large, (small, large)
+
+        chat_settings(
+            ENABLE_TOOL_SEARCH=True,
+            TOOL_SEARCH_DEFER_THRESHOLD=small,
+            TOOL_SEARCH_ALWAYS_LOADED=[],
+            TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False,
+        )
+        at_threshold = request_with(client, upstream, [tool_id])
+        chat_settings(TOOL_SEARCH_DEFER_THRESHOLD=small - 1)
+        over_threshold = request_with(client, upstream, [tool_id])
+
+    sent = offered_specs(at_threshold)
+    assert sent.get("harbour_lights") == full["harbour_lights"], (
+        f"a {small}-character tool at a {small} threshold was not sent in full: {sorted(sent)}"
+    )
+    assert DISPATCH_NAMES <= set(sent) and "tide_table" not in sent, sorted(sent)
+    assert "harbour_lights" not in listed_names(at_threshold)
+    assert "tide_table" in listed_names(at_threshold)
+
+    sent = offered_specs(over_threshold)
+    assert "harbour_lights" not in sent, (
+        f"a {small}-character tool at a {small - 1} threshold was sent in full"
+    )
+    assert "harbour_lights" in listed_names(over_threshold)
+
+
+def test_an_always_loaded_pattern_keeps_its_matching_tools_in_full(
+    tool_search, admin, make_user, upstream
+):
+    tool_search(TOOL_SEARCH_ALWAYS_LOADED=["github_*"])
+    with python_tool(admin, FORGE_TOOLS) as tool_id, make_user().client() as client:
+        request = request_with(client, upstream, [tool_id])
+
+    sent = offered_specs(request)
+    assert {"github_create_issue", "github_list_repos"} <= set(sent), sorted(sent)
+    assert sent["github_create_issue"]["parameters"]["properties"].keys() == {"title"}
+    assert not {"gitlab_create_issue", "my_github_sync"} & set(sent), sorted(sent)
+    listed = listed_names(request)
+    assert {"gitlab_create_issue", "my_github_sync"} <= set(listed), listed
+    assert not {"github_create_issue", "github_list_repos"} & set(listed), listed
+
+
+def test_builtin_tools_stay_in_full_with_defer_builtin_tools_off(
+    chat_settings, admin, make_user, upstream
+):
+    with python_tool(admin, HARBOUR_TOOLS) as tool_id, make_user().client() as client:
+        chat_settings(ENABLE_TOOL_SEARCH=False)
+        full = offered_specs(request_with(client, upstream, [tool_id]))
+        builtins = set(full) - {"harbour_lights"}
+        assert "get_current_timestamp" in builtins, sorted(full)
+
+        chat_settings(
+            ENABLE_TOOL_SEARCH=True,
+            TOOL_SEARCH_DEFER_THRESHOLD=0,
+            TOOL_SEARCH_ALWAYS_LOADED=[],
+            TOOL_SEARCH_DEFER_BUILTIN_TOOLS=True,
+        )
+        deferring = request_with(client, upstream, [tool_id])
+        chat_settings(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
+        keeping = request_with(client, upstream, [tool_id])
+
+    assert set(offered(deferring)) == DISPATCH_NAMES
+    assert set(listed_names(deferring)) == builtins | {"harbour_lights"}
+
+    kept = offered_specs(keeping)
+    assert set(kept) == builtins | DISPATCH_NAMES, sorted(kept)
+    assert {name: kept[name] for name in builtins} == {name: full[name] for name in builtins}
+    assert listed_names(keeping) == ["harbour_lights"]
+
+
+def test_the_list_names_each_held_back_tool_with_its_description_cut_to_100_characters(
+    tool_search, admin, make_user, upstream
+):
+    tool_search(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        request = request_with(client, upstream, [tool_id])
+
+    cut = TIDE_DESCRIPTION[:99] + "…"
+    assert len(cut) == 100
+    assert listed_tools(request) == [
+        ("beacon_status", "Report whether the beacon of a harbour is flashing."),
+        ("harbour_lights", "Report whether the lights of a harbour are lit."),
+        ("tide_table", cut),
+        ("weather_report", WEATHER_DESCRIPTION),
+    ]
+    assert TIDE_DESCRIPTION not in json.dumps(request), "the held-back definition was sent"
+
+
+def search_call(call_id: str, query: str) -> dict:
+    arguments = json.dumps({"query": query})
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "search_tools", "arguments": arguments},
+    }
+
+
+def test_search_tools_returns_the_full_definition_by_exact_name_and_by_keyword(
+    chat_settings, admin, make_user, upstream
+):
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        chat_settings(ENABLE_TOOL_SEARCH=False)
+        full = offered_specs(request_with(client, upstream, [tool_id]))
+
+        chat_settings(
+            ENABLE_TOOL_SEARCH=True,
+            TOOL_SEARCH_DEFER_THRESHOLD=0,
+            TOOL_SEARCH_ALWAYS_LOADED=["harbour_lights"],
+            TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False,
+        )
+        searches = [
+            search_call("by_name", "tide_table"),
+            search_call("by_keyword", "flashing"),
+            search_call("sent_in_full", "harbour_lights"),
+        ]
+        upstream.queue(Reply(tool_calls=searches), reply.text("found them"))
+        ask(client, "which tools are there?", tool_ids=[tool_id])
+
+    results = {
+        call_id: json.loads(content)
+        for call_id, content in tool_messages(upstream.chat_requests()[-1]).items()
+    }
+    assert results["by_name"]["tools"] == [full["tide_table"]], results["by_name"]
+    assert results["by_keyword"]["tools"] == [full["beacon_status"]], results["by_keyword"]
+    # only held-back tools are searched, so its name only matches the others as keywords
+    found = [tool["name"] for tool in results["sent_in_full"]["tools"]]
+    assert found and "harbour_lights" not in found, found
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        pytest.param({"ENABLE_TOOL_SEARCH": False, "TOOL_SEARCH_DEFER_THRESHOLD": 0}, id="off"),
+        pytest.param(
+            {"ENABLE_TOOL_SEARCH": True, "TOOL_SEARCH_DEFER_THRESHOLD": 1_000_000},
+            id="nothing-over-the-threshold",
+        ),
+    ],
+)
+def test_without_a_held_back_tool_every_tool_is_sent_and_there_is_no_search_or_list(
+    chat_settings, admin, make_user, upstream, settings
+):
+    chat_settings(**settings, TOOL_SEARCH_ALWAYS_LOADED=[], TOOL_SEARCH_DEFER_BUILTIN_TOOLS=True)
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        request = request_with(client, upstream, [tool_id])
+
+    names = set(offered(request))
+    assert {*DESK_NAMES, "get_current_timestamp"} <= names, sorted(names)
+    assert not DISPATCH_NAMES & names, sorted(names)
+    assert "<available_tools>" not in json.dumps(request["messages"])
+
+
+TOOL_SEARCH_SETTINGS = [
+    "ENABLE_TOOL_SEARCH",
+    "TOOL_SEARCH_DEFER_THRESHOLD",
+    "TOOL_SEARCH_ALWAYS_LOADED",
+    "TOOL_SEARCH_DEFER_BUILTIN_TOOLS",
+]
+
+
+def test_the_admin_chat_settings_store_the_tool_search_settings(admin, user, preserve):
+    preserve(CHAT_CONFIG)
+    saves = [
+        (
+            {
+                "ENABLE_TOOL_SEARCH": True,
+                "TOOL_SEARCH_DEFER_THRESHOLD": 1234,
+                "TOOL_SEARCH_ALWAYS_LOADED": [" github_* ", "", "jira_create_issue"],
+                "TOOL_SEARCH_DEFER_BUILTIN_TOOLS": False,
+            },
+            [True, 1234, ["github_*", "jira_create_issue"], False],
+        ),
+        (
+            {
+                "ENABLE_TOOL_SEARCH": False,
+                "TOOL_SEARCH_DEFER_THRESHOLD": -5,
+                "TOOL_SEARCH_ALWAYS_LOADED": [],
+                "TOOL_SEARCH_DEFER_BUILTIN_TOOLS": True,
+            },
+            [False, 0, [], True],
+        ),
+    ]
+    with admin.client() as client:
+        for changes, expected in saves:
+            current = client.get(CHAT_CONFIG[0]).json()
+            saved = client.post(CHAT_CONFIG[1], json={**current, **changes})
+            assert saved.status_code == 200, saved.text
+            stored = client.get(CHAT_CONFIG[0]).json()
+            assert [stored[key] for key in TOOL_SEARCH_SETTINGS] == expected, stored
+            assert [saved.json()[key] for key in TOOL_SEARCH_SETTINGS] == expected
+
+    with user.client() as client:
+        assert client.get(CHAT_CONFIG[0]).status_code == 401
+        refused = client.post(CHAT_CONFIG[1], json={"ENABLE_TOOL_SEARCH": True})
+        assert refused.status_code == 401, refused.text
 
 
 def test_a_builtin_tool_writes_a_note_through_call_tool(tool_search, make_user, upstream):
