@@ -87,7 +87,10 @@ def test_the_functions_page_opens_only_while_functions_are_on(page_for, switched
     page = page_for(admin, path="/admin/functions")
 
     if off:
-        expect(page).to_have_url(re.compile(r"/admin/users$"))
+        # /admin/users forwards on to its first tab, so wait for the users page to show
+        expect(page.get_by_role("main").get_by_role("button", name="Add User")).to_be_visible()
+        expect(page).to_have_url(re.compile(r"/admin/users(/[^/]+)?$"))
+        expect(page.get_by_placeholder("Search Functions")).to_have_count(0)
     else:
         expect(page.get_by_placeholder("Search Functions")).to_be_visible()
         expect(page).to_have_url(re.compile(r"/admin/functions$"))

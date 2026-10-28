@@ -4,7 +4,9 @@ Since 0.12.0 an admin can turn off workspace Tools, Functions or external tool s
 MCP and terminal servers) on their own, under the older ENABLE_PLUGINS. Each switch hides and
 withholds its own kind and leaves the other two working. One instance per switch joins the
 shared instance's database, so the tool, the global filter and the servers the shared admin
-saved are all there for it to hide or keep. `/api/config` reports the switches to the web client.
+saved are all there for it to hide or keep. In a Redis run each keeps a Redis of its own, where
+an instance holds the tool servers it loaded first, so the tool servers are saved through it once
+more before it is used. `/api/config` reports the switches to the web client.
 
 Discriminates: passes on dev 948432b43. In backend copies of it: with the ENABLE_TOOLS checks
 dropped from the tools router, the chat's tool resolution and the tool loader, the Tools test
@@ -62,13 +64,13 @@ class Filter:
 
 
 @pytest.fixture(scope="module")
-def switched_off(instance, instance_with) -> Callable[[str | None], LaunchedInstance]:
+def switched_off(instance, instance_with, admin) -> Callable[[str | None], LaunchedInstance]:
     """`switched_off(TOOLS)` is an instance with that switch off, on the shared database."""
 
     def boot(switch: str | None) -> LaunchedInstance:
         if switch is None:
             return instance
-        return instance_with(
+        switched = instance_with(
             {
                 switch: "false",
                 "DATABASE_URL": instance.database_url,
@@ -77,12 +79,24 @@ def switched_off(instance, instance_with) -> Callable[[str | None], LaunchedInst
                 "OPENAI_API_BASE_URLS": instance.upstream.base_url,
             }
         )
+        _reload_tool_servers(_on(switched, admin))
+        return switched
 
     return boot
 
 
 def _on(target: LaunchedInstance, actor: Actor) -> Actor:
     return dataclasses.replace(actor, base_url=target.base_url)
+
+
+def _reload_tool_servers(admin_there: Actor) -> None:
+    """Saves the stored tool servers again through this instance, so its Redis copy holds them."""
+    read_path, write_path = TOOL_SERVERS
+    with admin_there.client() as client:
+        saved = client.get(read_path)
+        assert saved.status_code == 200, saved.text
+        reloaded = client.post(write_path, json=saved.json())
+        assert reloaded.status_code == 200, reloaded.text
 
 
 @dataclass(frozen=True)
