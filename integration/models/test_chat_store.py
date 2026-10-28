@@ -11,6 +11,10 @@
   is shared with reads the live chat only when it is shared to continue, so that is the share.
 * `1c13fedb1` (#28742) `update_chat_by_id` wrote back the whole blob it was given, so a save that
   named only `files` dropped the conversation and a stale writer dropped newer messages.
+* `b4a58be19` (#32755, 0.12.4) a change in a chat's Controls saved the tab's whole settings
+  object, so a copy of the chat open elsewhere wiped settings changed since. The client now
+  sends `PATCH /api/v1/chats/{id}/params` with the one setting, merged into the stored ones
+  under the chat's row lock.
 
 * `ce22e0bb1` (#28820) only `message['content']` was sanitized, so a null byte in any other field
   of a message reached the message's separate record raw, and PostgreSQL refused
@@ -30,11 +34,15 @@ delete by timeout, the three tag readers and both partial saves) and the nine ne
 On dev ef67cc3fa, the message upsert back on cleaning `content` alone (and the whole chat
 blob) fails the sources test, and `get_message_list` back on the `id` field
 fails the looping walk; the content, plain-message and plain-chain tests pass on both.
+On dev 948432b43, a param save that replaces the stored settings with the sent ones fails the
+two merge tests and the same-time test, and a merge read and written without the row lock fails
+the same-time test alone; the route does not exist before b4a58be19.
 """
 
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -364,6 +372,73 @@ def test_a_save_to_a_missing_chat_is_refused(client):
         client.post(f"/api/v1/chats/{uuid.uuid4()}", json={"chat": {"title": "x"}}).status_code
         == 401
     )
+
+
+# --- b4a58be19: a Chat Controls change saves only that setting -----------------------------
+
+STORED_PARAMS = {"system": "You answer like a lighthouse keeper.", "temperature": 0.3}
+
+
+def save_param(client: httpx.Client, chat_id: str, params: dict) -> httpx.Response:
+    return client.patch(f"/api/v1/chats/{chat_id}/params", json=params)
+
+
+def test_a_param_save_keeps_the_other_settings_and_the_conversation(client):
+    chat_id = create_chat(
+        client,
+        {
+            "models": ["gpt-4"],
+            "params": STORED_PARAMS,
+            "history": history("m1", message("m1", None, [], "user")),
+        },
+    )
+
+    saved = save_param(client, chat_id, {"seed": 4242})
+
+    assert saved.status_code == 200, saved.text
+    assert saved.json() == {**STORED_PARAMS, "seed": 4242}
+    stored = read_chat(client, chat_id)
+    assert stored["params"] == {**STORED_PARAMS, "seed": 4242}, (
+        f"saving one setting changed the others: {stored['params']} (#32755)"
+    )
+    assert "m1" in stored["history"]["messages"]
+    assert stored["models"] == ["gpt-4"]
+
+
+def test_a_param_save_replaces_only_the_setting_it_names(client):
+    chat_id = create_chat(client, {"params": STORED_PARAMS})
+
+    assert save_param(client, chat_id, {"temperature": 0.9}).is_success
+    assert save_param(client, chat_id, {"system": None}).is_success
+
+    assert read_chat(client, chat_id)["params"] == {"system": None, "temperature": 0.9}
+
+
+def test_settings_saved_at_the_same_time_are_all_kept(client):
+    chat_id = create_chat(client, {"params": STORED_PARAMS})
+    changes = [{f"custom_{index}": index} for index in range(8)]
+
+    with ThreadPoolExecutor(max_workers=len(changes)) as pool:
+        answers = list(pool.map(lambda change: save_param(client, chat_id, change), changes))
+
+    assert [answer.status_code for answer in answers] == [200] * len(changes)
+    stored = read_chat(client, chat_id)["params"]
+    expected = {**STORED_PARAMS}
+    for change in changes:
+        expected.update(change)
+    assert stored == expected, f"settings saved at the same time were lost: {stored}"
+
+
+def test_a_param_save_starts_params_on_a_chat_without_any(client):
+    chat_id = create_chat(client, {"history": history(None)})
+
+    assert save_param(client, chat_id, {"system": "Be\x00 brief."}).is_success
+
+    assert read_chat(client, chat_id)["params"] == {"system": "Be brief."}
+
+
+def test_a_param_save_to_a_missing_chat_is_refused(client):
+    assert save_param(client, str(uuid.uuid4()), {"seed": 1}).status_code == 401
 
 
 # --- ce22e0bb1: null bytes are cleaned from every field of a saved message -----------------

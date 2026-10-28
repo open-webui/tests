@@ -8,7 +8,8 @@ effort and the logit bias (`token:bias` pairs sent as a map). A custom parameter
 there is sent under its name, its value read as JSON when it is JSON and kept as text when it is
 not. The chat's own system prompt is sent in place of none, again after a reload. A new chat
 starts from the defaults again, and going back and forth between two chats in the sidebar keeps
-each chat's values to itself.
+each chat's values to itself. Two tabs open on one chat that each change a different setting
+keep both, and the chat opened again shows and sends both (#32755, b4a58be19).
 
 The parameters an account saves under Settings > General > Advanced Parameters are sent with
 every chat that sets none of its own; a value set in the chat's Controls wins over them, and a
@@ -26,19 +27,24 @@ sends the stop field as one word the sampling test fails. In the pre-fix build o
 (fdb304be2 reverted) a stop sequence holding `%` keeps the message from sending, so the percent
 sign test gets no reply. In a backend copy that keeps custom
 values as text both custom parameter tests fail, and one that drops the parameters from a saved
-account setting fails the three account tests.
+account setting fails the three account tests. On dev 948432b43, a backend copy whose param save
+replaces the chat's stored settings with the sent one fails the two tabs test (the system prompt
+is gone).
 """
 
 from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from harness.chat import ask
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, conversation, expect_reply, send
 from utils.setting_rows import setting_button
 
@@ -227,6 +233,51 @@ def test_a_chats_system_prompt_is_kept_after_a_reload_and_stays_in_that_chat(
     page.get_by_role("link", name="New Chat").first.click()
     expect(page).not_to_have_url(re.compile(r"/c/"))
     assert _system_prompts(_ask(page, upstream)) == []
+
+
+@contextmanager
+def _saved_setting(page: Page) -> Iterator[None]:
+    """Waits until the chat's Controls change the block makes is stored."""
+    with page.expect_response(
+        lambda response: response.url.endswith("/params") and response.request.method == "PATCH"
+    ) as saved:
+        yield
+    assert saved.value.ok, saved.value.text()
+
+
+def test_two_tabs_changing_different_settings_keep_both(page_for, make_user, upstream):
+    account = make_user()
+    opener = f"good morning {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Fog again.", match=reply.answering(opener)))
+    with account.client() as client:
+        turn, _ = ask(client, opener)
+    first = page_for(account, path=f"/c/{turn.chat_id}")
+    second = page_for(account, path=f"/c/{turn.chat_id}")
+    expect_reply(first, "Fog again.")
+    expect_reply(second, "Fog again.")
+
+    _advanced_params(first)
+    prompt_box = first.get_by_role("textbox", name="Enter system prompt")
+    with _saved_setting(first):
+        prompt_box.fill(CHAT_PROMPT)
+        prompt_box.blur()
+    panel = _advanced_params(second)
+    with _saved_setting(second):
+        setting_button(panel, "Temperature").click()
+
+    with account.client() as client:
+        stored = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"].get("params", {})
+    assert (stored.get("system"), stored.get("temperature")) == (CHAT_PROMPT, 0.8), (
+        f"one tab's change wiped the other's: {stored} (#32755)"
+    )
+
+    reopened = page_for(account, path=f"/c/{turn.chat_id}")
+    expect_reply(reopened, "Fog again.")
+    panel = _advanced_params(reopened)
+    expect(reopened.get_by_role("textbox", name="Enter system prompt")).to_have_value(CHAT_PROMPT)
+    expect(panel.get_by_role("spinbutton", name="Temperature")).to_have_value("0.8")
+    request = _ask(reopened, upstream)
+    assert (_system_prompts(request), request.get("temperature")) == ([CHAT_PROMPT], 0.8)
 
 
 # --------------------------------------------------------------------------- account defaults

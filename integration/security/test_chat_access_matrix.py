@@ -5,13 +5,16 @@ stores (the reader and the writer, read plus write, are stored the same way). Si
 a share that is not to continue opens only through its link, so on the chat's own routes the
 reader and the writer are refused like a stranger, who is refused everything. An admin reaches
 every chat while `ENABLE_ADMIN_CHAT_ACCESS` is on and is refused like a stranger on the read and
-owner routes while it is off. Every refused write leaves the owner's copy as it was.
+owner routes while it is off. Saving a chat's Controls settings, like saving the chat itself, is
+the owner's alone, admin included. Every refused write leaves the owner's copy as it was.
 
 Discriminates: in a backend copy, reading the chat with `Chats.get_chat_by_id` in place of the
 owner lookup in the update handler turns the `POST /api/v1/chats/{id}` rows red (the stranger,
 reader and writer get 200), dropping the non-owner check from the message update handler turns
 its rows red (the stranger rewrites the owner's message), and toggling the pin before the owner
-check turns the pin rows red on the refused-but-changed check alone. On dev 62f70a844, letting a
+check turns the pin rows red on the refused-but-changed check alone. On dev 948432b43, reading
+the chat with `Chats.get_chat_by_id` in the params handler turns its three rows red (the stranger,
+reader and writer save the owner's settings). On dev 62f70a844, letting a
 read grant open the live chat again whatever the share mode turns the two `GET` rows red.
 """
 
@@ -96,6 +99,7 @@ MATRIX = [
     ("GET", "/api/v1/chats/{id}/tags", None, None, READ, ALLOWED),
     ("GET", "/api/v1/chats/{id}/pinned", None, None, OWNER, REFUSED),
     ("POST", "/api/v1/chats/{id}", {"chat": {"title": "renamed"}}, None, OWNER, REFUSED),
+    ("PATCH", "/api/v1/chats/{id}/params", {"temperature": 0.9}, None, OWNER, REFUSED),
     ("POST", "/api/v1/chats/{id}/pin", None, None, OWNER, REFUSED),
     ("POST", "/api/v1/chats/{id}/tags", {"name": "added"}, None, OWNER, REFUSED),
     ("DELETE", "/api/v1/chats/{id}/tags", {"name": "kept"}, _tagged, OWNER, REFUSED),
