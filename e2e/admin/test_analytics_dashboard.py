@@ -1,12 +1,14 @@
 """Journey: the admin analytics dashboard counts what two users did with two models.
 
 Two fresh users chat with two presets of the scripted model, each reply carrying a token count.
-The dashboard's model table then shows each preset's messages, users, chats and tokens, the user
-table (narrowed to the two users' group) shows each user's messages and tokens with the totals
-above it, a custom date range from before the chats empties the dashboard and the last day
-brings it back, a model row opens the model's chats with the user who had each and, with a
-group picked, only the chats of that group's users (#33207), and a plain user is sent back to the
-chat by the analytics page and refused its API.
+The dashboard's model table then shows each preset's messages, users, chats and input, output and
+total tokens, the user table (narrowed to the two users' group) shows the same per user with the
+totals above it, the Input, Output and Total headers of both tables sort the rows either way (the
+replies are sized so input and output rank the two rows oppositely), a custom date range from
+before the chats empties the dashboard and the last day brings it back, a model row opens the
+model's chats with the user who had each and, with a group picked, only the chats of that group's
+users (#33207), and a plain user is sent back to the chat by the analytics page and refused its
+API.
 
 Discriminates: passes on dev 21f770fb7 (the user table and date range mutations proven there, the
 rest on 176d31d1d); in a backend copy, with `/api/v1/analytics/models` reporting `unique_users=0`
@@ -16,10 +18,14 @@ table test fails, with `/api/v1/analytics/models` ignoring the dates the date ra
 drill-down test fails, and with `/api/v1/analytics/summary` open to verified users the access test
 fails (HTTP 200). On dev 8889e8d6a, with the dashboard no longer passing the group to the model's
 details (02821c505's frontend half reverted) the group drill-down test fails (both chats listed).
+On dev 226dca18c, in a frontend copy, with both tables sorting by total tokens whichever token
+header was clicked, both sorting tests fail (Output keeps the larger total first), and with the
+input and output cells swapped in both tables the model and user table tests fail.
 """
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from datetime import date, timedelta
@@ -102,12 +108,12 @@ def activity(admin, make_user, upstream, presets) -> Activity:
     chat_ids = {}
     with first.client() as client:
         upstream.queue(
-            reply.text("aster one", usage=_usage(100, 10), match=reply.answering("aster first"))
+            reply.text("aster one", usage=_usage(150, 5), match=reply.answering("aster first"))
         )
         turn, _ = ask(client, "aster first", model=aster)
         chat_ids["aster"] = turn.chat_id
         upstream.queue(
-            reply.text("aster two", usage=_usage(100, 20), match=reply.answering("aster again"))
+            reply.text("aster two", usage=_usage(150, 10), match=reply.answering("aster again"))
         )
         ask(
             client,
@@ -121,13 +127,13 @@ def activity(admin, make_user, upstream, presets) -> Activity:
             ],
         )
         upstream.queue(
-            reply.text("birch one", usage=_usage(100, 30), match=reply.answering("birch first"))
+            reply.text("birch one", usage=_usage(20, 15), match=reply.answering("birch first"))
         )
         turn, _ = ask(client, "birch first", model=birch)
         chat_ids["birch by first"] = turn.chat_id
     with second.client() as client:
         upstream.queue(
-            reply.text("birch two", usage=_usage(100, 40), match=reply.answering("birch second"))
+            reply.text("birch two", usage=_usage(20, 200), match=reply.answering("birch second"))
         )
         turn, _ = ask(client, "birch second", model=birch)
         chat_ids["birch by second"] = turn.chat_id
@@ -153,6 +159,15 @@ def _cells(row: Locator, *expected: str) -> None:
         expect(row.get_by_role("cell").nth(2 + offset)).to_have_text(value)
 
 
+def _sort_by(settings: Locator, column: str, *names_in_order: str) -> None:
+    """Click a column's header and wait for the named rows to stand in that order."""
+    settings.get_by_role("columnheader", name=column, exact=True).click()
+    rows = settings.get_by_role("row").filter(
+        has_text=re.compile("|".join(re.escape(name) for name in names_in_order))
+    )
+    expect(rows, f"rows after sorting by {column}").to_contain_text(list(names_in_order))
+
+
 def test_the_model_table_counts_each_presets_messages_users_chats_and_tokens(
     activity, dashboard, presets
 ):
@@ -160,10 +175,8 @@ def test_the_model_table_counts_each_presets_messages_users_chats_and_tokens(
     aster, birch = presets
     expect(_row(settings, aster)).to_have_count(1)
     # messages, users, chats, then input, output and total tokens
-    _cells(_row(settings, aster), "2", "1", "1")
-    _cells(_row(settings, birch), "2", "2", "2")
-    expect(_row(settings, aster).get_by_role("cell").nth(7)).to_have_text("230")
-    expect(_row(settings, birch).get_by_role("cell").nth(7)).to_have_text("270")
+    _cells(_row(settings, aster), "2", "1", "1", "300", "15", "315")
+    _cells(_row(settings, birch), "2", "2", "2", "40", "215", "255")
 
 
 def test_the_user_table_and_summary_count_the_groups_messages_and_tokens(activity, dashboard):
@@ -172,14 +185,43 @@ def test_the_user_table_and_summary_count_the_groups_messages_and_tokens(activit
     leaderboard_tab(settings, "Users").click()
     expect(_row(settings, activity.first.name)).to_have_count(1)
     # messages, then input, output and total tokens
-    _cells(_row(settings, activity.first.name), "3")
-    _cells(_row(settings, activity.second.name), "1")
-    expect(_row(settings, activity.first.name).get_by_role("cell").nth(5)).to_have_text("360")
-    expect(_row(settings, activity.second.name).get_by_role("cell").nth(5)).to_have_text("140")
+    _cells(_row(settings, activity.first.name), "3", "320", "30", "350")
+    _cells(_row(settings, activity.second.name), "1", "20", "200", "220")
     expect(summary_figure(settings, "Messages")).to_have_text("4")
-    expect(summary_figure(settings, "Tokens")).to_have_text("500")
+    expect(summary_figure(settings, "Tokens")).to_have_text("570")
     expect(summary_figure(settings, "Chats")).to_have_text("3")
     expect(summary_figure(settings, "Users")).to_have_text("2")
+
+
+def test_the_model_tables_token_columns_sort_the_rows_both_ways(activity, dashboard, presets):
+    _, settings = dashboard
+    aster, birch = presets
+    group_picker(settings).select_option(label=activity.group_name)
+    # aster has 300 in, 15 out, 315 in total; birch 40 in, 215 out, 255 in total
+    expect(_row(settings, birch).get_by_role("cell").nth(3)).to_have_text("2")
+    for column, larger_first in (
+        ("Input", (aster, birch)),
+        ("Output", (birch, aster)),
+        ("Total", (aster, birch)),
+    ):
+        _sort_by(settings, column, *larger_first)
+        _sort_by(settings, column, *reversed(larger_first))
+
+
+def test_the_user_tables_token_columns_sort_the_rows_both_ways(activity, dashboard):
+    _, settings = dashboard
+    first, second = activity.first.name, activity.second.name
+    group_picker(settings).select_option(label=activity.group_name)
+    leaderboard_tab(settings, "Users").click()
+    # the first user has 320 in, 30 out, 350 in total; the second 20 in, 200 out, 220 in total
+    expect(_row(settings, second).get_by_role("cell").nth(2)).to_have_text("1")
+    for column, larger_first in (
+        ("Input", (first, second)),
+        ("Output", (second, first)),
+        ("Total", (first, second)),
+    ):
+        _sort_by(settings, column, *larger_first)
+        _sort_by(settings, column, *reversed(larger_first))
 
 
 def test_a_date_range_before_the_chats_empties_the_dashboard(activity, dashboard, presets):
