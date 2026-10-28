@@ -8,12 +8,20 @@ is read back after a reload, so what shows is what the server stored. The archiv
 unarchives every chat back into the sidebar and exports the archived chats alone, and Delete All
 also closes the account's share links, so someone it shared a chat with is sent home.
 
+In the sidebar a shift-click starts a selection of chats, a further shift-click extends it over the
+range and a plain click adds one chat. Archiving a range archives exactly those chats, deleting a
+selection asks first and removes exactly that set, an account without the chat delete permission
+gets no Delete for its selection, and Escape clears it.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy each test fails when its control does
 nothing: the archive, delete and unarchive buttons skipping their request, the confirmation
 dialog confirming on cancel, the archive search ignoring its text and the export saving an empty
 list or the import dropping the file. On dev ebc6add67 a frontend copy whose Unarchive All skips
 its request and whose archive export saves an empty list turns those two tests red, and a
 backend copy whose delete-all leaves the account's shares in place turns the share link test red.
+The four sidebar selection tests pass on dev 226dca18c and each fails in a frontend copy where a
+shift-click adds only the clicked chat instead of the range, the selection's Delete deletes without
+asking, that Delete ignores the chat delete permission, or Escape leaves the selection in place.
 """
 
 from __future__ import annotations
@@ -346,3 +354,107 @@ def test_delete_all_closes_the_accounts_share_links(owner, make_user, page_for):
     setting_button(settings, "Shared Chats").click()
     shared = page.get_by_role("dialog").filter(has_text="Unshare All Shared Chats")
     expect(shared.get_by_text("No results found")).to_be_visible()
+
+
+def _sidebar_order(sidebar: Locator, titles: list[str]) -> list[str]:
+    """The titles top to bottom, as the sidebar lists them."""
+    for title in titles:
+        expect(sidebar.get_by_role("button", name=title)).to_be_visible()
+    return sorted(titles, key=lambda t: sidebar.get_by_role("button", name=t).bounding_box()["y"])
+
+
+def _checkbox(sidebar: Locator, title: str) -> Locator:
+    return sidebar.get_by_role("checkbox", name=f"Select {title}")
+
+
+def _expect_selected(sidebar: Locator, chosen: list[str], others: list[str]) -> None:
+    expect(sidebar.get_by_role("status")).to_have_text(f"{len(chosen)} selected")
+    for title in chosen:
+        expect(_checkbox(sidebar, title)).to_have_attribute("aria-checked", "true")
+    for title in others:
+        expect(_checkbox(sidebar, title)).to_have_attribute("aria-checked", "false")
+
+
+def test_a_shift_click_range_archives_exactly_the_selected_chats(owner, page_for):
+    marker = uuid.uuid4().hex[:6]
+    titles = [f"Range {n} {marker}" for n in "ABCDE"]
+    _seed_chats(owner, *titles)
+    sidebar = _open_sidebar(page_for(owner))
+    first, second, third, fourth, fifth = _sidebar_order(sidebar, titles)
+
+    sidebar.get_by_role("button", name=second).click(modifiers=["Shift"])
+    _expect_selected(sidebar, [second], [first, third, fourth, fifth])
+    sidebar.get_by_role("button", name=fourth).click(modifiers=["Shift"])
+    _expect_selected(sidebar, [second, third, fourth], [first, fifth])
+
+    sidebar.get_by_role("button", name="Archive selected chats").click()
+    expect(sidebar.page.get_by_text("3 chats archived.")).to_be_visible()
+    expect(sidebar.get_by_role("button", name=third)).to_have_count(0)
+    expect(sidebar.get_by_role("status")).to_have_count(0)
+    assert _titles(owner) == {first, fifth}, "archiving a range touched other chats"
+    assert _titles(owner, archived=True) == {second, third, fourth}
+
+
+def test_deleting_a_selection_asks_first_and_removes_exactly_those_chats(owner, page_for):
+    marker = uuid.uuid4().hex[:6]
+    titles = [f"Doomed {n} {marker}" for n in "ABC"]
+    _seed_chats(owner, *titles)
+    page = page_for(owner)
+    sidebar = _open_sidebar(page)
+    first, kept, last = _sidebar_order(sidebar, titles)
+
+    sidebar.get_by_role("button", name=first).click(modifiers=["Shift"])
+    _expect_selected(sidebar, [first], [kept, last])
+    # once a selection exists, a plain click adds to it instead of opening the chat
+    sidebar.get_by_role("button", name=last).click()
+    _expect_selected(sidebar, [first, last], [kept])
+
+    sidebar.get_by_role("button", name="Delete selected chats").click()
+    confirm = page.get_by_role("dialog", name="Delete 2 chats?")
+    expect(confirm).to_be_visible()
+    assert _titles(owner) == set(titles), "the selection was deleted before it was confirmed"
+
+    confirm.get_by_role("button", name="Delete").click()
+    expect(page.get_by_text("2 chats deleted.")).to_be_visible()
+    expect(sidebar.get_by_role("button", name=first)).to_have_count(0)
+    assert _titles(owner) == {kept}
+    assert _titles(owner, archived=True) == set()
+
+
+def test_without_the_delete_permission_a_selection_offers_no_delete(
+    admin, make_user, page_for, preserve
+):
+    preserve("permissions")
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"]["delete"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+    owner = make_user()
+    title = f"Undeletable {uuid.uuid4().hex[:6]}"
+    _seed_chats(owner, title)
+    sidebar = _open_sidebar(page_for(owner))
+
+    sidebar.get_by_role("button", name=title).click(modifiers=["Shift"])
+    _expect_selected(sidebar, [title], [])
+    expect(sidebar.get_by_role("button", name="Archive selected chats")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="Delete selected chats")).to_have_count(0)
+
+
+def test_escape_clears_the_selection(owner, page_for):
+    marker = uuid.uuid4().hex[:6]
+    titles = [f"Escaped {n} {marker}" for n in "AB"]
+    _seed_chats(owner, *titles)
+    page = page_for(owner)
+    sidebar = _open_sidebar(page)
+    first, second = _sidebar_order(sidebar, titles)
+
+    sidebar.get_by_role("button", name=first).click(modifiers=["Shift"])
+    sidebar.get_by_role("button", name=second).click(modifiers=["Shift"])
+    _expect_selected(sidebar, [first, second], [])
+
+    page.keyboard.press("Escape")
+    expect(sidebar.get_by_role("status")).to_have_count(0)
+    expect(sidebar.get_by_role("checkbox")).to_have_count(0)
+    expect(sidebar.get_by_role("button", name="Archive selected chats")).to_have_count(0)
+    assert _titles(owner) == set(titles)
