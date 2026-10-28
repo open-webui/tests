@@ -16,7 +16,8 @@ writing mojibake or orjson request parsing that mangles non-ASCII turns every cr
 orjson side red and the stdlib codec writing mojibake every crossing with a stdlib side, leaving
 the stdlib-only and orjson-only crossings green respectively; the analytics summary counting one
 extra message with the switch on turns the analytics test red. Retargeted for 9bbb95048, where a
-skill's export holds its instructions as the file SKILL.md.
+skill's export holds its instructions as the file SKILL.md, and for b34885efc, where a note keeps
+its versions on its page.
 """
 
 from __future__ import annotations
@@ -213,6 +214,14 @@ class Family:
     id_field: str = "id"
     omit: tuple[str, ...] = ()
     created_omit: tuple[str, ...] = ()
+    stored: Callable[[dict], dict] = lambda sent: sent
+
+
+def _stored_note(sent: dict) -> dict:
+    """A note keeps its versions on the page they belong to, here its only page."""
+    content, versions = sent["data"]["content"], sent["data"]["versions"]
+    page = {"id": "main", "content": content, "versions": versions}
+    return {**sent, "data": {"content": content, "pages": [page]}}
 
 
 def _model_form(tag: str) -> dict:
@@ -391,6 +400,7 @@ FAMILIES = [
         items=lambda body: body["items"],
         list_params=lambda form: {"query": form["title"]},
         list_keys=("title", "meta"),
+        stored=_stored_note,
         update_path="/api/v1/notes/{id}/update",
         changes=lambda form: {
             "title": f"{MIXED_TEXT['hindi']} {form['title'].split()[-1]}",
@@ -577,7 +587,7 @@ def test_a_resource_reads_and_updates_the_same_across_the_switch(admins, family,
         form["calendar_id"] = next(item["id"] for item in calendars if item["is_default"])
 
     created = _ok(_send(admins[writer], family, form), f"creating {family.name}").json()
-    _covers(_pick(form, family, None, *family.created_omit), created)
+    _covers(family.stored(_pick(form, family, None, *family.created_omit)), created)
     _covers(_pick(form, family, family.list_keys), _read(admins[reader], family, created))
     listed = _one_of(_list(admins[reader], family, form, created), created, family)
     _covers(_pick(form, family, family.list_keys), listed)

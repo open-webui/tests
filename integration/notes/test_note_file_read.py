@@ -9,7 +9,8 @@ and readers after the file is detached or the note unshared, are refused as befo
 
 Discriminates: passes on dev b5a20423e; in a backend copy with b612c8847's change to
 utils/access_control/files.py undone every test but the stranger's fails, since the reader is
-refused the owner's file from the start.
+refused the owner's file from the start. Retargeted for b34885efc, where a note's files are
+attachments in its page body.
 """
 
 from __future__ import annotations
@@ -35,25 +36,25 @@ def upload(owner: Actor, name: str = "pilot.txt") -> dict:
     return uploaded.json()
 
 
-def note_entry(uploaded: dict) -> dict:
-    """The file the way the note editor stores an upload on the note."""
-    return {
-        "type": "file",
-        "id": uploaded["id"],
-        "url": uploaded["id"],
-        "name": uploaded["filename"],
-        "status": "uploaded",
-        "size": len(FILE_TEXT),
-        "collection_name": f"file-{uploaded['id']}",
-        "file": uploaded,
-    }
+def note_content(*uploads: dict) -> dict:
+    """A note body with the files attached the way the note editor stores them in the page."""
+    blocks = [{"type": "paragraph", "content": [{"type": "text", "text": "see the file"}]}]
+    html = "<p>see the file</p>"
+    for uploaded in uploads:
+        attrs = {"id": uploaded["id"], "name": uploaded["filename"], "size": len(FILE_TEXT)}
+        blocks.append({"type": "fileAttachment", "attrs": attrs})
+        html += (
+            f'<div data-file-id="{attrs["id"]}" data-file-size="{attrs["size"]}">'
+            f'<a href="/api/v1/files/{attrs["id"]}/content">{attrs["name"]}</a></div>'
+        )
+    return {"json": {"type": "doc", "content": blocks}, "html": html, "md": "see the file"}
 
 
-def save_files(actor: Actor, note_id: str, entries: list[dict]) -> None:
+def save_files(actor: Actor, note_id: str, *uploads: dict) -> None:
     with actor.client() as client:
         saved = client.post(
             f"/api/v1/notes/{note_id}/update",
-            json={"title": "Harbour", "data": {"files": entries}},
+            json={"title": "Harbour", "data": {"content": note_content(*uploads)}},
         )
     assert saved.status_code == 200, saved.text
 
@@ -94,7 +95,7 @@ def shared_note(make_user) -> tuple[Actor, Actor, str, dict]:
             "/api/v1/notes/create",
             json={
                 "title": f"Harbour {uuid.uuid4().hex[:6]}",
-                "data": {"content": {"md": "see the file"}, "files": [note_entry(uploaded)]},
+                "data": {"content": note_content(uploaded)},
                 "access_grants": [grant("user", reader.id, "read")],
             },
         )
@@ -118,7 +119,7 @@ def test_a_reader_is_refused_again_once_the_owner_detaches_the_file(shared_note)
     owner, reader, note_id, uploaded = shared_note
     assert read_file(reader, uploaded["id"]) == FILE_TEXT
 
-    save_files(owner, note_id, [])
+    save_files(owner, note_id)
 
     statuses = opens_chip(reader, uploaded["id"])
     assert all(status >= 400 for status in statuses), statuses
@@ -142,7 +143,7 @@ def test_a_file_a_writer_attaches_from_their_own_account_stays_closed_to_readers
             "/api/v1/notes/create",
             json={
                 "title": f"Harbour {uuid.uuid4().hex[:6]}",
-                "data": {"content": {"md": "see the file"}, "files": [note_entry(owners_file)]},
+                "data": {"content": note_content(owners_file)},
                 "access_grants": [
                     grant("user", reader.id, "read"),
                     grant("user", writer.id, "read"),
@@ -154,7 +155,7 @@ def test_a_file_a_writer_attaches_from_their_own_account_stays_closed_to_readers
     note_id = created.json()["id"]
     writers_file = upload(writer, "tide.txt")
 
-    save_files(writer, note_id, [note_entry(owners_file), note_entry(writers_file)])
+    save_files(writer, note_id, owners_file, writers_file)
 
     assert read_file(reader, owners_file["id"]) == FILE_TEXT
     statuses = opens_chip(reader, writers_file["id"])

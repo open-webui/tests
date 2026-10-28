@@ -195,7 +195,7 @@ def test_a_compressed_response_is_recorded_readable(observed):
     title = f"compressed-{uuid.uuid4().hex[:8]}"
     with admin_of(observed).client() as client:
         # between the compression threshold and the audit body cap, so it is both
-        created = _create_note(client, title, words=80, headers={"Accept-Encoding": "gzip"})
+        created = _create_note(client, title, words=30, headers={"Accept-Encoding": "gzip"})
     assert created.headers.get("content-encoding") == "gzip", "the response was not compressed"
 
     audited = _eventually(

@@ -577,7 +577,11 @@ def test_a_builtin_tool_returns_the_same_mixed_text_result(pair, owner):
         ]
         [found] = json.loads(results[-1])
         kept = {key: value for key, value in found.items() if key not in ("id", "updated_at")}
-        return {**kept, "snippet": kept["snippet"].replace(word, "WORD")}
+        return {
+            **kept,
+            "snippet": kept["snippet"].replace(word, "WORD"),
+            "url": kept["url"].replace(found["id"], "ID"),
+        }
 
     outcomes = on_both(pair, owner, search)
 

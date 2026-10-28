@@ -19,7 +19,8 @@ Discriminates: passes on dev bbfa876af; fails with each fix reverted (the note s
 no-op, the folder check back on `ilike`, the skill id check removed, the public grant dropped
 from the read-only filter, the ORDER BY removed from either folder query): the note body comes
 back a dict, "Notes_" is refused, "my/skill" is stored, the public note is not listed and the
-renamed folder is not listed first.
+renamed folder is not listed first. Retargeted for b34885efc, where a note's data holds its
+body on each page and its versions on the page they belong to.
 """
 
 from __future__ import annotations
@@ -75,7 +76,8 @@ def test_note_data_that_is_plain_text_becomes_the_body(make_user):
     with make_user().client() as client:
         data = _stored_note_data(client, "just some text")
 
-    assert data == {"content": {"md": "just some text"}}
+    assert data["content"] == {"md": "just some text"}
+    assert [page["content"] for page in data["pages"]] == [{"md": "just some text"}]
 
 
 def test_an_update_with_a_dict_body_is_rendered_too(make_user):
@@ -92,8 +94,10 @@ def test_an_update_with_a_dict_body_is_rendered_too(make_user):
         assert updated.status_code == 200, updated.text
         data = client.get(f"/api/v1/notes/{note_id}").json()["data"]
 
+    [page] = data["pages"]
     assert data["content"]["md"] == '```json\n{\n  "a": "über"\n}\n```'
-    assert (data["versions"], data["content"]["html"]) == ([1], "<p>x</p>")
+    assert page["content"]["md"] == data["content"]["md"]
+    assert (page["versions"], data["content"]["html"]) == ([1], "<p>x</p>")
 
 
 @pytest.mark.parametrize(
@@ -103,7 +107,12 @@ def test_an_update_with_a_dict_body_is_rendered_too(make_user):
 )
 def test_well_formed_note_data_is_stored_as_sent(make_user, data):
     with make_user().client() as client:
-        assert _stored_note_data(client, data) == data
+        stored = _stored_note_data(client, data)
+
+    # a note without a body gets the empty one the editor starts from
+    body = data.get("content", {"json": None, "html": "", "md": ""})
+    assert stored["content"] == body
+    assert [page["content"] for page in stored["pages"]] == [body]
 
 
 # ---------------------------------------------------------------- folder names
