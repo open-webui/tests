@@ -29,6 +29,11 @@ open-webui 0.11.0 fixes, each read where an operator reads it:
   The license hosts are fixed, so the instance reaches them through a local HTTPS proxy that
   refuses the first host and holds the connection to the second.
 
+open-webui 0.12.4 journey (commit 52e155019): with `/chat` audited, every model call of a chat
+request writes a `model_usage` audit entry with the model and its input, output and total tokens,
+linked to the request's own entry by `request_id`. A tool call run writes one per round; a reply
+that reports no usage writes none.
+
 The header, audit and webhook tests run on an instance of their own, booted with security
 headers, request-and-response auditing, an emptied exclusion list and a legacy `WEBHOOK_URL` on
 loopback, which the webhook sender refuses.
@@ -43,7 +48,10 @@ reverting 0671b7a the webhook test, dropping the rejection log line the provider
 transcription test, defaulting `LOGURU_DIAGNOSE` to true the traceback
 test, fetching the license inline (or awaiting it without a timeout) the readiness test and
 letting the first host's error escape the fetch the fall-through test. The header, GET, sign-in
-and opted-in diagnose tests pass on both.
+and opted-in diagnose tests pass on both. The model usage tests pass on dev 948432b43; returning
+early from `log_model_usage` fails the chat, tool call and API usage tests, dropping the usage
+write after a tool call follow-up round fails the tool call test, and writing an entry for empty
+usage fails the no-usage test.
 """
 
 from __future__ import annotations
@@ -70,6 +78,7 @@ from harness.instance import ADMIN_EMAIL, ADMIN_PASSWORD
 from harness.listener import ReceivedRequest, json_answer
 from harness.plugins import installed_function
 from harness.prepared_data import serving
+from harness.python_tools import python_tool
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [
@@ -226,6 +235,139 @@ def test_a_get_is_not_audited_and_a_sign_in_is(observed):
     assert sign_ins, "a sign-in was not audited"
     assert ADMIN_PASSWORD not in sign_ins[-1]["request_object"]
     assert _audit_entries(observed, "/api/v1/notes/") == []
+
+
+# model usage in the audit log
+
+ADD_TOOL = '''
+class Tools:
+    def add(self, a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+'''
+
+
+def _tokens(prompt: int, completion: int) -> dict:
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
+def _audited_chat_request(instance, prompt: str) -> dict:
+    """The HTTP audit entry of the chat request that carried `prompt`."""
+    entries = _eventually(
+        lambda: [
+            entry
+            for entry in _audit_entries(instance, "/api/chat/completions")
+            if entry["extra"].get("event") != "model_usage" and prompt in entry["request_object"]
+        ]
+    )
+    assert len(entries) == 1, f"the chat request was audited {len(entries)} times: {entries}"
+    return entries[0]
+
+
+def _model_usage_entries(instance, request_id: str) -> list[dict]:
+    return [
+        entry
+        for entry in _audit_entries(instance, "/api/chat/completions")
+        if entry["extra"].get("event") == "model_usage"
+        and entry["extra"].get("request_id") == request_id
+    ]
+
+
+def _usage_of(prompt: int, completion: int) -> dict:
+    return {
+        "input_tokens": prompt,
+        "output_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
+def test_a_chat_reply_writes_its_model_usage_linked_to_the_request(observed):
+    prompt = f"count my tokens {uuid.uuid4().hex[:8]}"
+    observed.upstream.queue(
+        reply.text("counted", usage=_tokens(11, 7), match=reply.answering(prompt))
+    )
+
+    with admin_of(observed).client() as client:
+        ask(client, prompt)
+    request = _audited_chat_request(observed, prompt)
+    usages = _eventually(lambda: _model_usage_entries(observed, request["id"]))
+
+    assert len(usages) == 1, (
+        f"a reply with usage wrote {len(usages)} model usage entries for its request, not one"
+    )
+    assert usages[0]["model_id"] == MOCK_MODEL_ID, usages[0]
+    assert usages[0]["usage"] == _usage_of(11, 7), (
+        f"the model usage entry did not carry the reply's token counts: {usages[0]['usage']}"
+    )
+    assert usages[0]["id"] != request["id"]
+    assert usages[0]["user"]["email"] == ADMIN_EMAIL
+
+
+def test_each_tool_call_round_writes_its_own_model_usage(observed):
+    prompt = f"add two and three {uuid.uuid4().hex[:8]}"
+    answering = reply.answering(prompt)
+    owner = admin_of(observed)
+
+    with python_tool(owner, ADD_TOOL, name="Adder") as tool_id, owner.client() as client:
+        observed.upstream.queue(
+            reply.tool_call("add", {"a": 2, "b": 3}, usage=_tokens(20, 5), match=answering),
+            reply.text("five", usage=_tokens(30, 2), match=answering),
+        )
+        _, message = ask(client, prompt, tool_ids=[tool_id])
+    assert message["content"] == "five", message
+    request = _audited_chat_request(observed, prompt)
+    _eventually(lambda: len(_model_usage_entries(observed, request["id"])) >= 2)
+    usages = _model_usage_entries(observed, request["id"])
+
+    assert [entry["usage"] for entry in usages] == [_usage_of(20, 5), _usage_of(30, 2)], (
+        "a tool call run did not write one model usage entry per round with that round's "
+        f"tokens: {usages}"
+    )
+    assert all(entry["model_id"] == MOCK_MODEL_ID for entry in usages), usages
+
+
+def test_a_reply_without_usage_writes_no_model_usage(observed):
+    prompt = f"no counts here {uuid.uuid4().hex[:8]}"
+    observed.upstream.queue(reply.text("uncounted", match=reply.answering(prompt)))
+
+    with admin_of(observed).client() as client:
+        _, message = ask(client, prompt)
+    assert message["content"] == "uncounted", message
+    request = _audited_chat_request(observed, prompt)
+    # nothing more is expected; the pause gives a late entry time to land
+    time.sleep(1)
+
+    assert _model_usage_entries(observed, request["id"]) == [], (
+        "a reply that reported no usage still wrote a model usage entry"
+    )
+
+
+@pytest.mark.parametrize("stream", [True, False])
+def test_an_api_completion_writes_its_model_usage(observed, stream):
+    prompt = f"api tokens {uuid.uuid4().hex[:8]}"
+    observed.upstream.queue(
+        reply.text("counted", usage=_tokens(13, 4), match=reply.answering(prompt))
+    )
+    request = {
+        "model": MOCK_MODEL_ID,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": stream,
+    }
+
+    with admin_of(observed).client() as client:
+        answered = client.post("/api/chat/completions", json=request)
+    assert answered.status_code == 200, answered.text
+    audited = _audited_chat_request(observed, prompt)
+    usages = _eventually(lambda: _model_usage_entries(observed, audited["id"]))
+
+    assert [entry["usage"] for entry in usages] == [_usage_of(13, 4)], (
+        f"an API completion (stream={stream}) did not write its model usage once: {usages}"
+    )
+    assert usages[0]["model_id"] == MOCK_MODEL_ID, usages[0]
 
 
 # server log
