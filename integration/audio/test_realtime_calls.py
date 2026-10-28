@@ -46,6 +46,16 @@ provider knows who is calling; with it off a call sends none.
 
 Discriminates: on dev f36490bf2, a backend copy with c7e159bdd reverted turns the forwarded user
 info case red (the call carries no user headers).
+
+Since 00f12c0e4 (v0.12.1) the admin's Input Parameters, a JSON object saved with the call settings
+or set by AUDIO_REALTIME_INPUT_PARAMS, are merged into the audio input settings of the call
+session: a key the admin adds (noise reduction) joins them, the default server VAD turn detection
+stays unless the object names `turn_detection`, which then replaces it whole.
+
+Discriminates: on dev 948432b43, a backend copy that leaves the input parameters out of the
+session turns the noise reduction, turn detection override and env cases red, one that applies
+them before the default turn detection turns the override case red, and one that ignores the env
+var turns the env case red.
 """
 
 from __future__ import annotations
@@ -83,13 +93,15 @@ from harness.voice_avatars import animation, avatar, upload
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
+ENV_NOISE_REDUCTION = {"noise_reduction": {"type": "far_field"}}
 # only the environment credential, unset here, so no token is fetched and nothing leaves the host;
-# one boot also serves the user info forwarding test
-ENTRA_ID_ON_AZURE_ENV = {
+# one boot also serves the user info forwarding and env input parameters tests
+CALL_SETTINGS_ENV = {
     "AUDIO_REALTIME_PROVIDER": "azure",
     "AUDIO_REALTIME_AUTH_TYPE": "microsoft_entra_id",
     "AZURE_TOKEN_CREDENTIALS": "EnvironmentCredential",
     "ENABLE_FORWARD_USER_INFO_HEADERS": "true",
+    "AUDIO_REALTIME_INPUT_PARAMS": json.dumps(ENV_NOISE_REDUCTION),
 }
 USER_INFO_HEADERS = (
     "x-openwebui-user-id",
@@ -98,6 +110,17 @@ USER_INFO_HEADERS = (
     "x-openwebui-user-role",
 )
 DEFAULT_PROMPT_START = "You are the assistant in this chat, speaking with the user."
+# the bridge asks for each answer itself, once the transcript is final
+DEFAULT_TURN_DETECTION = {
+    "type": "server_vad",
+    "interrupt_response": False,
+    "create_response": False,
+}
+DEFAULT_AUDIO_INPUT = {
+    "format": {"type": "audio/pcm", "rate": 24000},
+    "transcription": {"model": TRANSCRIPTION_MODEL},
+    "turn_detection": DEFAULT_TURN_DETECTION,
+}
 
 
 @pytest.fixture
@@ -222,7 +245,7 @@ def test_saved_call_settings_are_read_back_and_published_without_the_key(
         provider,
         PROVIDER="azure",
         AUTH_TYPE="microsoft_entra_id",
-        INPUT_PARAMS=None,
+        INPUT_PARAMS={"noise_reduction": {"type": "near_field"}},
         REALTIME_CALL_PROMPT_TEMPLATE="Speak briefly.",
     )
     save_realtime(realtime_settings_restored, settings)
@@ -287,7 +310,9 @@ def test_a_call_opens_the_provider_session_the_admin_configured(
 ):
     with (
         admin.client() as client,
-        using_realtime(client, provider, PROVIDER=provider_name, AUTH_TYPE="api_key"),
+        using_realtime(
+            client, provider, PROVIDER=provider_name, AUTH_TYPE="api_key", INPUT_PARAMS=None
+        ),
         open_call(make_user()) as session,
     ):
         ready = next_event(session, "bridge.ready")
@@ -306,8 +331,7 @@ def test_a_call_opens_the_provider_session_the_admin_configured(
     assert forwarded == {}, f"user info went out with forwarding off: {forwarded}"
     session = call.session
     assert session["instructions"].startswith(DEFAULT_PROMPT_START)
-    assert session["audio"]["input"]["transcription"] == {"model": TRANSCRIPTION_MODEL}
-    assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert session["audio"]["input"] == DEFAULT_AUDIO_INPUT
     assert session["audio"]["output"]["voice"] == VOICE
     assert [tool["name"] for tool in session["tools"]] == ["generate_chat_completion"]
 
@@ -322,6 +346,34 @@ def test_a_custom_prompt_template_is_the_session_instructions(admin, provider, m
             next_event(session, "bridge.ready")
 
     assert provider.calls[0].session["instructions"] == prompt
+
+
+@pytest.mark.parametrize(
+    ("input_params", "audio_input"),
+    [
+        (
+            {"noise_reduction": {"type": "near_field"}},
+            {**DEFAULT_AUDIO_INPUT, "noise_reduction": {"type": "near_field"}},
+        ),
+        (
+            {"turn_detection": {"type": "semantic_vad", "eagerness": "low"}},
+            {**DEFAULT_AUDIO_INPUT, "turn_detection": {"type": "semantic_vad", "eagerness": "low"}},
+        ),
+    ],
+    ids=["noise-reduction-joins", "turn-detection-override"],
+)
+def test_the_admins_input_parameters_join_the_sessions_audio_input(
+    admin, provider, make_user, input_params, audio_input
+):
+    with (
+        admin.client() as client,
+        using_realtime(client, provider, INPUT_PARAMS=input_params),
+        open_call(make_user()) as session,
+    ):
+        next_event(session, "bridge.ready")
+
+    sent = provider.calls[0].session["audio"]["input"]
+    assert sent == audio_input, f"the session's audio input settings were {sent}"
 
 
 def test_a_models_own_voice_replaces_the_admins(realtime, model_with_voice, make_user):
@@ -590,7 +642,7 @@ def test_an_unknown_provider_from_an_imported_config_ends_the_call(admin, provid
 
 @pytest.mark.slow
 def test_the_env_sets_entra_id_on_azure_and_a_missing_token_ends_the_call(instance_with, provider):
-    env_admin = admin_of(instance_with(ENTRA_ID_ON_AZURE_ENV))
+    env_admin = admin_of(instance_with(CALL_SETTINGS_ENV))
     with env_admin.client() as client:
         stored = client.get(AUDIO_CONFIG[0]).json()["realtime"]
         with using_realtime(client, provider):
@@ -604,7 +656,7 @@ def test_the_env_sets_entra_id_on_azure_and_a_missing_token_ends_the_call(instan
 @pytest.mark.slow
 def test_with_forwarding_on_a_call_sends_the_user_info_headers(instance_with, provider):
     """#32733: calls reached the provider without the user info headers chat requests carry."""
-    forwarding = instance_with(ENTRA_ID_ON_AZURE_ENV)
+    forwarding = instance_with(CALL_SETTINGS_ENV)
     caller = create_user(forwarding, name="Harbour Pilot")
     with (
         admin_of(forwarding).client() as client,
@@ -622,6 +674,26 @@ def test_with_forwarding_on_a_call_sends_the_user_info_headers(instance_with, pr
         "x-openwebui-user-role": "user",
     }, f"the call carried {sent}"
     assert call.headers.get("authorization") == f"Bearer {API_KEY}"
+
+
+@pytest.mark.slow
+def test_the_env_sets_the_input_parameters_a_call_sends(instance_with, provider):
+    env_instance = instance_with(CALL_SETTINGS_ENV)
+    caller = create_user(env_instance)
+    with admin_of(env_instance).client() as client:
+        stored = client.get(AUDIO_CONFIG[0]).json()["realtime"]["INPUT_PARAMS"]
+        # saved without INPUT_PARAMS, so the env value stays
+        with (
+            using_realtime(client, provider, PROVIDER="openai", AUTH_TYPE="api_key"),
+            realtime_call(caller.base_url, caller.token, MOCK_MODEL_ID) as session,
+        ):
+            next_event(session, "bridge.ready")
+
+    assert stored == ENV_NOISE_REDUCTION
+    sent = provider.calls[0].session["audio"]["input"]
+    assert sent == {**DEFAULT_AUDIO_INPUT, **ENV_NOISE_REDUCTION}, (
+        f"the session's audio input settings were {sent}"
+    )
 
 
 def test_each_chat_snapshot_replaces_the_one_before(realtime, make_user):
