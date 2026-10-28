@@ -1,4 +1,4 @@
-"""Journey: who may read, change, share and delete someone else's chat.
+"""Journey: who may read, fork, change, share and delete someone else's chat.
 
 A chat belongs to its owner. The only grant a chat takes is the read share the share dialog
 stores (the reader and the writer, read plus write, are stored the same way). Since de73bb830
@@ -14,8 +14,10 @@ reader and writer get 200), dropping the non-owner check from the message update
 its rows red (the stranger rewrites the owner's message), and toggling the pin before the owner
 check turns the pin rows red on the refused-but-changed check alone. On dev 948432b43, reading
 the chat with `Chats.get_chat_by_id` in the params handler turns its three rows red (the stranger,
-reader and writer save the owner's settings). On dev 62f70a844, letting a
-read grant open the live chat again whatever the share mode turns the two `GET` rows red.
+reader and writer save the owner's settings), and the fork route looking the chat up without
+the access check turns its rows red (the stranger, reader and writer fork it). On dev 62f70a844,
+letting a read grant open the live chat again whatever the share mode turns the two `GET` rows
+red.
 """
 
 from __future__ import annotations
@@ -97,6 +99,8 @@ MESSAGE = f"/api/v1/chats/{{id}}/messages/{MESSAGE_ID}"
 MATRIX = [
     ("GET", "/api/v1/chats/{id}", None, None, READ, ALLOWED),
     ("GET", "/api/v1/chats/{id}/tags", None, None, READ, ALLOWED),
+    # a fork copies what the account can read into a chat of its own
+    ("POST", "/api/v1/chats/{id}/fork", {}, None, READ, ALLOWED),
     ("GET", "/api/v1/chats/{id}/pinned", None, None, OWNER, REFUSED),
     ("POST", "/api/v1/chats/{id}", {"chat": {"title": "renamed"}}, None, OWNER, REFUSED),
     ("PATCH", "/api/v1/chats/{id}/params", {"temperature": 0.9}, None, OWNER, REFUSED),
