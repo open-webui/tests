@@ -155,6 +155,7 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `refuses_unknown_names` | skips a c-ares test of a name that does not resolve where the machine's DNS server keeps c-ares from refusing one at once |
 | `listener` | a local HTTP service for the instance to call, recording what it gets |
 | `open_terminal` | a real Open Terminal for the session (`OPEN_TERMINAL_BIN`), skipped where it is not installed |
+| `terminal_orchestrator` | a Terminals orchestrator stand-in that gives each terminal context (the shared one, `chat:<id>` per chat) a real Open Terminal of its own |
 
 `harness.chat.ask(client, "text")` sends a message the way the web client does and returns the stored reply.
 

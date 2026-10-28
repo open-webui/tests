@@ -227,6 +227,15 @@ def open_terminal() -> Generator:
 
 
 @pytest.fixture
+def terminal_orchestrator() -> Generator:
+    """A Terminals orchestrator stand-in giving each terminal context a real Open Terminal."""
+    from harness.terminal_orchestrator import serving_terminal_orchestrator
+
+    with serving_terminal_orchestrator() as orchestrator:
+        yield orchestrator
+
+
+@pytest.fixture
 def refuses_unknown_names(resolver: str) -> None:
     """Skips a c-ares test of a name that does not resolve where this machine's DNS server keeps
     c-ares from refusing one at once, naming the reason; the probe runs once per session."""
