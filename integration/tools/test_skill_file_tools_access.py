@@ -1,8 +1,9 @@
 """Journey: what the model's skill tools can read and change in a chat, for each account.
 
 In a chat the model may load a skill (`view_skill`), read one of its supporting files
-(`read_skill_file`), save file changes (`update_skill_files`) and write a new skill
-(`create_skill`), always as the account it is chatting with. It reads a skill's files only when
+(`read_skill_file`), search its files (`grep_skill_files`), save file changes
+(`update_skill_files`) and write a new skill (`create_skill`), always as the account it is
+chatting with. It reads or searches a skill's files only when
 that account may read the skill, directly, through a group or because the skill is public, and
 saves changes only with write access. A stranger's chat gets an error and none of the skill's
 text, neither in the tool result nor anywhere else in what the model is sent, and a reader
@@ -28,7 +29,9 @@ offers the file tools only in a chat that resolves a skill: every account whose 
 is granted another skill first (the admin too, whose chat lists only skills granted to it), so the
 call still reaches the tool's access check, and the admin without admin access is first checked to
 be offered none of the file tools; passes on dev 5032e834e, and offering the file tools whatever
-skills the chat resolves turns the admin test red.
+skills the chat resolves turns the admin test red. `grep_skill_files` joins the read matrix and
+the switched-off skill test; passes on dev 948432b43, and a search that loads the skill without
+the access check turned both red (the stranger's search showed the file).
 """
 
 from __future__ import annotations
@@ -124,6 +127,15 @@ def _call(actor: Actor, upstream, tool: str, **arguments) -> tuple[dict, str]:
     return json.loads(result), json.dumps(upstream.chat_requests()[-1])
 
 
+def _found(actor: Actor, upstream, skill_id: str) -> tuple[str, str]:
+    """What `grep_skill_files` showed `actor`'s model of the checklist (or the error), and
+    everything the model was sent after the call."""
+    result, sent = _call(actor, upstream, "grep_skill_files", id=skill_id, pattern="berth")
+    if "matches" not in result:
+        return result.get("error"), sent
+    return "".join(match["excerpt"] for match in result["matches"]), sent
+
+
 def _version(owner: Actor, skill_id: str) -> str:
     with owner.client() as client:
         return client.get(f"{SKILLS}/id/{skill_id}").json()["version_id"]
@@ -155,20 +167,25 @@ def test_a_skill_file_reaches_the_model_only_for_those_who_may_read_it(
         "stranger": shared.stranger,
     }
 
-    answered = {}
+    answered, found = {}, {}
     for role, actor in actors.items():
         result, sent = _call(actor, upstream, "read_skill_file", id=shared.skill_id, path=CHECKLIST)
         answered[role] = result.get("content", result.get("error"))
         if role == "stranger":
             assert shared.secret not in sent, "the stranger's model was sent the file"
+        found[role], sent = _found(actor, upstream, shared.skill_id)
+        if role == "stranger":
+            assert shared.secret not in sent, "the stranger's search showed the file"
 
-    assert answered == {
+    expected = {
         "owner": shared.secret,
         "reader": shared.secret,
         "writer": shared.secret,
         "admin": shared.secret,
         "stranger": "Access denied",
     }
+    assert answered == expected
+    assert found == expected, "grep_skill_files does not follow read access"
 
 
 def test_view_skill_lists_the_files_only_for_those_who_may_read_it(admin, make_user, upstream):
@@ -225,8 +242,13 @@ def test_a_switched_off_skill_stays_open_to_those_who_may_edit_it(admin, make_us
         shared.writer, upstream, "read_skill_file", id=shared.skill_id, path=CHECKLIST
     )
 
+    found_by_reader, reader_search_sent = _found(shared.reader, upstream, shared.skill_id)
+    found_by_writer, _ = _found(shared.writer, upstream, shared.skill_id)
+
     assert by_reader == {"error": "Access denied"} and shared.secret not in sent
     assert by_writer.get("content") == shared.secret, by_writer
+    assert found_by_reader == "Access denied" and shared.secret not in reader_search_sent
+    assert found_by_writer == shared.secret, found_by_writer
 
 
 def test_only_write_access_saves_file_changes(admin, make_user, upstream):
