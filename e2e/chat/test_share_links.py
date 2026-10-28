@@ -17,6 +17,10 @@ and with `can_read_shared_chat` granting any signed-in account the stranger test
 dev ebc6add67 a frontend copy whose share dialog hands back the old link without sharing again
 turns the update test red.
 
+Fork chat on a reply of the link opens a chat of the account's own that holds the link's messages
+up to that reply and none the owner sent after sharing. On dev 948432b43 a backend copy whose
+fork route copies the whole branch whatever reply was chosen fails the fork test.
+
 A chat opened under `/s/`, by its link or by an admin viewing another account's chat, is fetched
 once and stays where the reader scrolls it. From 0.12.3 the page fetched it again and again and
 scrolled to the bottom after each fetch, so scrolling up was impossible
@@ -33,8 +37,9 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.chat import ask
 from harness.chat_history import seed_chat
-from utils.chat_ui import conversation, expect_reply, send
+from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.member_picker import pick_member
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -170,6 +175,53 @@ def test_updating_the_link_shares_the_messages_sent_since(
     viewer_page.reload()
     expect(conversation(viewer_page).get_by_text(LATER_ANSWER)).to_be_visible()
     expect(conversation(viewer_page).get_by_text(ANSWER)).to_be_visible()
+
+
+def test_fork_on_a_reply_of_the_link_opens_a_copy_up_to_that_reply(page_for, make_user, upstream):
+    owner, viewer = make_user(), make_user()
+    first_answer = f"herons {uuid.uuid4().hex[:6]}"
+    with owner.client() as client:
+        chat_id, last_id = seed_chat(
+            client,
+            [
+                {"role": "user", "content": QUESTION},
+                {"role": "assistant", "content": first_answer},
+                {"role": "user", "content": LATER_QUESTION},
+                {"role": "assistant", "content": LATER_ANSWER},
+            ],
+        )
+        shared = client.post(f"/api/v1/chats/{chat_id}/share")
+        assert shared.status_code == 200, shared.text
+        grant = {"principal_type": "user", "principal_id": viewer.id, "permission": "read"}
+        granted = client.post(
+            f"/api/v1/chats/shared/{chat_id}/access/update", json={"access_grants": [grant]}
+        )
+        assert granted.status_code == 200, granted.text
+        upstream.queue(reply.text("only for the owner", match=reply.answering("after sharing")))
+        ask(client, "sent after sharing", chat_id=chat_id, parent_id=last_id)
+
+    page = page_for(viewer, path=f"/s/{shared.json()['share_id']}")
+    expect(conversation(page).get_by_text(LATER_ANSWER)).to_be_visible()
+    first_reply = (
+        conversation(page)
+        .get_by_text(first_answer)
+        .locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
+    )
+    first_reply.hover()
+    with page.expect_response(lambda response: response.url.endswith("/fork")) as forked:
+        first_reply.get_by_role("button", name="Fork chat").click()
+    assert forked.value.ok, forked.value.text()
+    fork_id = forked.value.json()["id"]
+
+    expect(page).to_have_url(re.compile(rf"/c/{fork_id}$"))
+    expect_reply(page, first_answer)
+    expect(conversation(page).get_by_text(LATER_ANSWER)).to_have_count(0)
+    expect(chat_input(page)).to_be_visible()
+    with viewer.client() as client:
+        stored = client.get(f"/api/v1/chats/{fork_id}")
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["user_id"] == viewer.id
+    assert "only for the owner" not in str(stored.json()["chat"])
 
 
 AT_THE_BOTTOM = "box => box.scrollHeight - box.scrollTop - box.clientHeight < 5"

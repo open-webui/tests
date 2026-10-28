@@ -5,19 +5,26 @@ import, which kept the chat's folder only when the user owned it. For a chat of 
 folder another account shares with them for writing, the clone landed at the root of their chat
 list. The import now keeps any folder the user may write to.
 
+A reader of a folder shared only for reading opens a chat in it read-only, and Fork chat on its
+reply opens a copy of the reader's own that they can write in, outside the owner's folder.
+
 Twin of integration/security/test_fork_chat_folder_access.py.
 
 Discriminates: passes on dev a5bc78300 with its build; with d4d04dca0 reverted in the backend the
-shared folder does not list the clone and the stored clone has no folder.
+shared folder does not list the clone and the stored clone has no folder. On dev 948432b43 a
+backend copy whose fork route finds only the caller's own chats fails the fork test.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness.chat_history import seed_chat
+from utils.chat_ui import chat_input, expect_reply, last_reply
 from utils.sidebar_folders import folder_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -56,6 +63,50 @@ def shared_folder(make_user):
         )
         assert moved.status_code == 200, moved.text
     return member, name, folder_id
+
+
+def test_fork_on_a_chat_in_a_folder_shared_for_reading_opens_the_readers_own_copy(
+    page_for, make_user
+):
+    owner, reader = make_user(), make_user()
+    answer = f"Bring rope and a lamp {uuid.uuid4().hex[:6]}"
+    with owner.client() as client:
+        folder = client.post("/api/v1/folders/", json={"name": f"Trip {uuid.uuid4().hex[:6]}"})
+        assert folder.status_code == 200, folder.text
+        folder_id = folder.json()["id"]
+        grant = {"principal_type": "user", "principal_id": reader.id, "permission": "read"}
+        shared = client.post(
+            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": [grant]}
+        )
+        assert shared.status_code == 200, shared.text
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": "what do I pack?"},
+                {"role": "assistant", "content": answer},
+            ],
+        )
+        moved = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
+        assert moved.status_code == 200, moved.text
+
+    page = page_for(reader, path=f"/c/{chat_id}")
+    expect_reply(page, answer)
+    expect(chat_input(page)).to_have_count(0)
+    with page.expect_response(lambda response: response.url.endswith("/fork")) as forked:
+        last_reply(page).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]").get_by_role(
+            "button", name="Fork chat"
+        ).click()
+    assert forked.value.ok, forked.value.text()
+    fork_id = forked.value.json()["id"]
+
+    expect(page).to_have_url(re.compile(rf"/c/{fork_id}$"))
+    expect_reply(page, answer)
+    expect(chat_input(page)).to_be_visible()
+    with reader.client() as client:
+        stored = client.get(f"/api/v1/chats/{fork_id}")
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["user_id"] == reader.id
+    assert stored.json()["folder_id"] is None, "the fork was filed in the owner's folder"
 
 
 def _expanded_shared_folder(page: Page, name: str, folder_id: str) -> Locator:
