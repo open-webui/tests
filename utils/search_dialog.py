@@ -80,6 +80,34 @@ def open_selected(dialog: Locator) -> None:
     dialog.get_by_role("button", name=re.compile(r"^Open\W*$")).click()
 
 
+def answers_filter(name: str, value: str):
+    def matches(response) -> bool:
+        url = urlparse(response.url)
+        return url.path == SEARCH_PATH and parse_qs(url.query).get(name) == [value]
+
+    return matches
+
+
+def choose_content_type(dialog: Locator, label: str, kind: str) -> None:
+    """Picks `label` ("Chats", "Notes", ...) in the content type menu; waits for its answer."""
+    dialog.get_by_role("button", name=re.compile(r"^Content type:")).click()
+    choice = dialog.get_by_role("button", name=label, exact=True)
+    expect(choice).to_be_visible()
+    with dialog.page.expect_response(answers_filter("kind", kind)):
+        choice.click()
+
+
+def choose_view(dialog: Locator, label: str, sharing: str) -> None:
+    """Picks `label` ("Created by you", ...) under Filters, View; waits for its answer."""
+    page = dialog.page
+    dialog.get_by_role("button", name="Filters").click()
+    page.get_by_role("button", name=re.compile(r"^View")).click()
+    choice = page.get_by_role("button", name=label, exact=True)
+    expect(choice).to_be_visible()
+    with page.expect_response(answers_filter("sharing", sharing)):
+        choice.click()
+
+
 def open_actions(dialog: Locator) -> Locator:
     """Opens the footer's Actions menu and returns the dialog, where its entries are buttons."""
     actions = dialog.get_by_role("button", name="Actions")

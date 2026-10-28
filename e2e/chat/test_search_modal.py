@@ -1,21 +1,24 @@
-"""The chat search dialog finds a user's own chats, previews them and opens the one they pick.
+"""The search dialog finds what an account may open, previews it and opens the one picked.
 
 The dialog opens from the sidebar's Search entry or the search shortcut. Typing sends the query to
-`GET /api/v1/search` (since b4db56ae9), which matches chat titles and message text; a match in the
-text shows as a highlighted snippet. The highlighted result shows in a preview pane beside the
-list, and hovering or arrowing onto another result moves the preview there; Enter or the Open
-button opens it. "Start a new conversation" in the Actions menu opens a new chat with the typed
-text in its message box, where the person sends it (since 0ffd86967 the chat address only fills
-the box). Archived chats and another account's matching chat never appear, the Location filter
-narrows the results to one folder, and more matches than one page of 24 load as the result list
-is scrolled to its end. Since b4db56ae9 the dialog has no filter words, no filter suggestions and
-no per-result chat menu; its filter panel offers only View and Location.
+`GET /api/v1/search` (since b4db56ae9), which matches chat titles and message text, notes and
+channel messages; a match in the text shows as a highlighted snippet. The highlighted result shows
+in a preview pane beside the list, hovering or arrowing onto another result moves the preview
+there, and Ctrl+Enter hides and shows the pane; Enter or the Open button opens it. "Start a new
+conversation" in the Actions menu opens a new chat with the typed text in its message box, where
+the person sends it (since 0ffd86967 the chat address only fills the box), and "Copy link" copies
+the result's full address. Archived chats and another account's matching chat never appear, a
+chat in a folder shared with the account, its note and a message in its channel do. The content
+type menu keeps one type, the View filter the account's own or others' results and the Location
+filter one folder, and more matches than one page of 24 load as the result list is scrolled to its
+end. A channel message opens its thread scrolled to the matching reply.
 
 Two tests pin fixed bugs: Enter on a highlighted chat closed the dialog without opening the chat
 (#31003, fixed by PR #31004), and a new conversation started from the dialog dropped the text after
 an `&` because the query went into the page address unencoded (#31469, fixed by PR #31592).
 
-Twin of integration/models/test_chat_search_filters.py.
+Twins: integration/chat/test_workspace_search.py and
+integration/security/test_workspace_search_scope.py.
 
 Discriminates: passes on dev f5a26f53a. In a build of it whose Enter opens nothing, whose ArrowUp
 stays put, whose rows ignore the pointer, whose list never loads a second page, whose Location
@@ -24,6 +27,10 @@ the Enter, arrow, hover, paging, Location, both new-conversation and highlight t
 the title, no-match and other-account tests stay green. In a build that puts the query into the
 new chat's address unencoded the ampersand test goes red, and in a backend copy whose search
 reaches every account's chats or includes archived ones the other-account test goes red.
+On dev 948432b43, a backend copy that ignores `kind` turns the content type tests red, one that
+ignores `sharing` the View tests, and one whose links carry no message turns the Copy link and
+channel thread tests red; a build whose Ctrl+Enter does nothing turns the preview shortcut test
+red and one whose thread ignores the linked message turns the channel thread test red.
 """
 
 from __future__ import annotations
@@ -36,9 +43,13 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.access import grant
+from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, expect_reply
 from utils.search_dialog import (
     answers_query,
+    choose_content_type,
+    choose_view,
     no_matches,
     open_actions,
     open_search,
@@ -318,3 +329,175 @@ def test_more_matches_than_a_page_load_as_the_results_are_scrolled(page_for, mak
 
     expect(results(dialog)).to_have_count(PAGE_SIZE + 5)
     expect(result(dialog, f"Log 000 {word}")).to_be_visible()
+
+
+# --------------------------------------------------------------------------- the whole workspace
+
+
+@pytest.fixture
+def workspace(admin, preserve, make_user) -> tuple:
+    """An account whose search word matches a chat in a folder shared with it, its own note and
+    a message in its channel."""
+    preserve("admin_config")
+    enable_channels(admin)
+    account, other = make_user(), make_user()
+    word = unique_word()
+    with other.client() as client:
+        folder_id = post(client, "/api/v1/folders/", name=f"Allotment {word}")["id"]
+        post(
+            client,
+            f"/api/v1/folders/{folder_id}/access/update",
+            access_grants=[grant("user", account.id, "read")],
+        )
+        import_chat(client, f"Tools {word}", answer="Bring the spade.", folder_id=folder_id)
+    with account.client() as client:
+        post(
+            client,
+            "/api/v1/notes/create",
+            title=f"Plot {word}",
+            data={"content": {"md": "Beans by the fence."}},
+        )
+    channel_id = group_channel(account, other)
+    channel_name = _channel_name(account, channel_id)
+    post_message(other, channel_id, f"the {word} is ready to pick")
+    return account, other, word, folder_id, channel_name
+
+
+def _channel_name(account, channel_id: str) -> str:
+    with account.client() as client:
+        channel = client.get(f"/api/v1/channels/{channel_id}")
+    assert channel.status_code == 200, channel.text
+    return channel.json()["name"]
+
+
+def test_a_shared_folder_chat_a_note_and_a_channel_message_all_show(page_for, workspace):
+    account, other, word, _folder_id, channel_name = workspace
+    page = page_for(account)
+    dialog = open_search(page)
+    search(dialog, word)
+
+    expect(results(dialog)).to_have_count(3)
+    expect(result(dialog, f"Tools {word}")).to_contain_text(f"Allotment {word}")
+    expect(result(dialog, f"Plot {word}")).to_contain_text("Personal note")
+    expect(result(dialog, other.name)).to_contain_text(f"#{channel_name}")
+
+    result(dialog, f"Plot {word}").hover()
+    expect(preview(dialog)).to_contain_text("Beans by the fence.")
+    result(dialog, other.name).hover()
+    expect(preview(dialog)).to_contain_text("ready to pick")
+    result(dialog, f"Tools {word}").hover()
+    expect(preview(dialog)).to_contain_text("Bring the spade.")
+
+
+@pytest.mark.parametrize(
+    "label, kind, shown",
+    [("Chats", "chat", "Tools"), ("Notes", "note", "Plot"), ("Messages", "message", "")],
+)
+def test_the_content_type_keeps_only_that_type(page_for, workspace, label, kind, shown):
+    account, other, word, _folder_id, _channel_name = workspace
+    page = page_for(account)
+    dialog = open_search(page)
+    search(dialog, word)
+    expect(results(dialog)).to_have_count(3)
+
+    choose_content_type(dialog, label, kind)
+
+    expect(results(dialog)).to_have_count(1)
+    expect(results(dialog)).to_contain_text(f"{shown} {word}" if shown else other.name)
+    expect(dialog.get_by_role("button", name=f"Content type: {label}")).to_be_visible()
+
+
+@pytest.mark.parametrize(
+    "label, sharing, shown",
+    [("Created by you", "mine", ("Plot",)), ("Shared with you", "shared", ("Tools", ""))],
+)
+def test_the_view_filter_splits_your_own_from_what_was_shared(
+    page_for, workspace, label, sharing, shown
+):
+    account, other, word, _folder_id, _channel_name = workspace
+    page = page_for(account)
+    dialog = open_search(page)
+    search(dialog, word)
+    expect(results(dialog)).to_have_count(3)
+
+    choose_view(dialog, label, sharing)
+
+    expect(dialog.get_by_role("button", name="Remove sharing filter")).to_have_text(label)
+    expect(results(dialog)).to_have_count(len(shown))
+    for title in shown:
+        expect(result(dialog, f"{title} {word}" if title else other.name)).to_be_visible()
+
+
+def test_ctrl_enter_hides_and_shows_the_preview(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        import_chat(client, f"Trip {word}", answer="Pack a raincoat.")
+
+    page = page_for(account)
+    dialog = open_search(page)
+    type_query(dialog, word)
+    expect(results(dialog)).to_have_count(1)
+    expect(preview(dialog)).to_contain_text("Pack a raincoat.")
+    preview_button = dialog.get_by_role("button", name=re.compile(r"^Preview"))
+    expect(preview_button).to_have_attribute("aria-pressed", "true")
+
+    page.keyboard.press("Control+Enter")
+    expect(preview(dialog)).to_be_hidden()
+    expect(preview_button).to_have_attribute("aria-pressed", "false")
+    expect(dialog).to_be_visible()
+
+    page.keyboard.press("Control+Enter")
+    expect(preview(dialog)).to_contain_text("Pack a raincoat.")
+
+
+CLIPBOARD = ["clipboard-read", "clipboard-write"]
+
+
+def test_copy_link_copies_the_results_address(page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = import_chat(client, "Weather", answer=f"rain over the {word}")
+
+    page = page_for(account, permissions=CLIPBOARD)
+    dialog = open_search(page)
+    search(dialog, word)
+    expect(results(dialog)).to_have_count(1)
+
+    open_actions(dialog).get_by_role("button", name="Copy link").click()
+
+    expect(page.get_by_text("Link copied to clipboard")).to_be_visible()
+    origin = page.evaluate("location.origin")
+    assert page.evaluate("navigator.clipboard.readText()") == f"{origin}/c/{chat_id}?message=a"
+
+
+THREAD_REPLIES = 60
+
+
+def test_a_channel_result_opens_its_thread_at_the_matching_reply(
+    page_for, admin, preserve, make_user
+):
+    preserve("admin_config")
+    enable_channels(admin)
+    author, member = make_user(), make_user()
+    word = unique_word()
+    channel_id = group_channel(author, member)
+    parent_id = post_message(author, channel_id, "Who is bringing what on Saturday?")
+    post_message(author, channel_id, "first", parent_id=parent_id)
+    match = f"I will bring the {word}"
+    reply_id = post_message(member, channel_id, match, parent_id=parent_id)
+    # enough later replies that the thread opened at its newest end would not hold the match
+    for index in range(THREAD_REPLIES):
+        post_message(author, channel_id, f"later reply {index}", parent_id=parent_id)
+
+    page = page_for(member)
+    dialog = open_search(page)
+    type_query(dialog, word)
+    expect(results(dialog)).to_have_count(1)
+    page.keyboard.press("Enter")
+
+    expect(page).to_have_url(
+        re.compile(rf"/channels/{channel_id}\?thread={parent_id}&message={reply_id}$")
+    )
+    expect(page.get_by_text(match, exact=True)).to_be_in_viewport()
