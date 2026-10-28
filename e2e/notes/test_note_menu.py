@@ -19,7 +19,8 @@ of a later one and store its older text last, and the note keeps missing the las
 (open-webui/open-webui#31585, fix PR #31596 open).
 
 The editor's Delete test is red on dev b34885efc: leaving the deleted note first tries to save it,
-which fails with "Failed to save page" and keeps the deleted note open instead of the Notes page.
+which fails with "Failed to save page" and keeps the deleted note open instead of the Notes page
+(open-webui/open-webui#33278, fix PR #33280 open).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the copied link pointing at the Notes page (editor and list), the clipboard's plain text
