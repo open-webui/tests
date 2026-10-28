@@ -14,6 +14,13 @@ List closes the open chat, and only the folder's owner finds Access in its folde
 3a54306c5 someone replying in a shared chat gets no Voice mode button (the owner keeps theirs), and
 a call they left open in a chat of their own closes when they go back to the shared chat.
 
+Since v0.12.3 a folder reader who may reply regenerates the owner's reply and edits the owner's
+question into a new branch (Send, no Save), while the owner's open tab keeps the question it
+shows with the new branch one switch away. The people with the chat open see each other's
+picture in the top bar (never their own), a picture opens that person's profile card, past three
+people the rest sit in a Collaborators list whose entries open the card too, and the picture goes
+once the other person leaves the chat.
+
 Two tests are red on dev b5a20423e and name the bug. Opening an Allow replies link sends the
 account to the home page, or leaves an empty new chat on the chat's address: the shared page
 moves to the chat and then reports the share as not found, which sends it home. The other member
@@ -35,10 +42,17 @@ treating its move to the chat as done, the chat page reloading the chat when a r
 refused) passes all ten. The live view test passes on dev c31423955 and turns red with 3a54306c5
 reverted (Voice mode shows for the member) and in a build of it that only leaves out closing the
 call (the call stays open over the shared chat).
+
+The edit and presence tests pass on dev 948432b43. A frontend build whose chat page moves other
+viewers onto an edited branch and keeps one's own picture in the presence list fails all three;
+one showing Regenerate only on one's own replies fails the edit test; a backend copy whose
+`publish_chat_presence` sends nothing fails both presence tests. The Clone test, run as a
+control, passes on every mutant build.
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 import uuid
 
@@ -48,7 +62,8 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.chat_history import seed_chat
-from utils.chat_ui import chat_input, conversation, expect_reply, send
+from harness.socket_client import connected
+from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
 from utils.member_picker import pick_member
 from utils.sidebar_folders import folder_row
 from utils.voice_call import start_call
@@ -314,6 +329,76 @@ def test_a_clone_from_the_link_starts_without_the_owners_system_prompt(
     ] == [ANSWER]
 
 
+def _chat_header(page: Page) -> Locator:
+    return page.get_by_role("navigation").filter(
+        has=page.get_by_role("button", name="Controls", exact=True)
+    )
+
+
+def _present(page: Page, person) -> Locator:
+    """The picture of someone with the chat open, in the chat's top bar."""
+    return _chat_header(page).get_by_role("button", name=person.name, exact=True)
+
+
+def _profile_card(page: Page) -> Locator:
+    return page.locator("[data-link-preview-content]")
+
+
+def test_people_with_the_chat_open_see_each_others_picture_until_one_leaves(
+    page_for, make_user, upstream
+):
+    owner, member = _accounts(make_user)
+    owner_page = page_for(owner)
+    chat_id = _start_chat(owner_page, upstream)
+    _share_over_api(owner, chat_id, [grant("user", member.id, "read")], "continue")
+    member_page = page_for(member)
+    _open_live_chat(member_page, chat_id)
+
+    expect(_present(owner_page, member)).to_be_visible()
+    expect(_present(member_page, owner)).to_be_visible()
+    expect(_present(owner_page, owner)).to_have_count(0)
+    expect(_present(member_page, member)).to_have_count(0)
+
+    _present(owner_page, member).click()
+    expect(_profile_card(owner_page).get_by_title(member.name)).to_be_visible()
+
+    member_page.get_by_role("link", name="New Chat").first.click()
+    expect(chat_input(member_page)).to_be_visible()
+    expect(_present(owner_page, member)).to_have_count(0)
+    expect(_present(member_page, owner)).to_have_count(0)
+
+
+def test_the_collaborators_list_names_everyone_past_three_and_opens_their_card(
+    page_for, make_user, upstream
+):
+    owner, _ = _accounts(make_user)
+    crew = [make_user(name=f"Deckhand {n} {uuid.uuid4().hex[:6]}") for n in range(4)]
+    owner_page = page_for(owner)
+    chat_id = _start_chat(owner_page, upstream)
+    _share_over_api(owner, chat_id, [grant("user", c.id, "read") for c in crew], "continue")
+
+    with contextlib.ExitStack() as tabs:
+        for person in crew:
+            tab = tabs.enter_context(connected(person))
+            joined = tab.client.call(
+                "events:chat", {"chat_id": chat_id, "data": {"type": "join"}}, timeout=30
+            )
+            assert joined is True, f"{person.name} could not open the chat"
+
+        listed = _chat_header(owner_page).get_by_role("button", name="Collaborators")
+        expect(listed).to_have_text("+1")
+        listed.click()
+        collaborators = owner_page.get_by_role("dialog", name="Collaborators")
+        for person in crew:
+            expect(
+                collaborators.get_by_role("button", name=person.name, exact=True)
+            ).to_be_visible()
+        expect(collaborators.get_by_role("button", name=owner.name, exact=True)).to_have_count(0)
+
+        collaborators.get_by_role("button", name=crew[-1].name, exact=True).click()
+        expect(_profile_card(owner_page).get_by_title(crew[-1].name)).to_be_visible()
+
+
 # ------------------------------------------------------------------ folders shared with replies
 
 
@@ -439,6 +524,55 @@ def test_a_reader_taken_off_the_folders_access_list_loses_the_open_chat(page_for
         group_entry.get_by_role("button").last.click()
 
     _sent_home(member_page)
+
+
+def _first_question_id(owner, chat_id: str) -> str:
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+    assert stored.status_code == 200, stored.text
+    messages = stored.json()["chat"]["history"]["messages"].values()
+    return next(m["id"] for m in messages if m["role"] == "user" and m["parentId"] is None)
+
+
+def test_a_folder_reader_regenerates_and_edits_the_owners_turn_while_the_owner_keeps_theirs(
+    page_for, crew, upstream
+):
+    owner, member, group_id, _ = crew
+    folder_id, _, chat_id = _folder_with_chat(owner)
+    _share_folder_over_api(owner, folder_id, [grant("group", group_id, "read")], "continue")
+    owner_page = page_for(owner, path=f"/c/{chat_id}")
+    expect_reply(owner_page, ANSWER)
+    member_page = page_for(member, path=f"/c/{chat_id}")
+    expect_reply(member_page, ANSWER)
+
+    upstream.queue(reply.text("At ten past nine.", match=reply.answering(QUESTION)))
+    last_reply(member_page).hover()
+    conversation(member_page).get_by_role("button", name="Regenerate").last.click()
+    member_page.get_by_text("Try Again").click()
+    expect_reply(member_page, "At ten past nine.")
+    expect(conversation(member_page).get_by_text("2/2")).to_be_visible()
+
+    edited = "when does the last ferry leave?"
+    upstream.queue(reply.text("At midnight.", match=reply.answering(edited)))
+    question_id = _first_question_id(owner, chat_id)
+    question = member_page.locator(f"#message-{question_id}")
+    question.hover()
+    question.get_by_role("button", name="Edit").click()
+    # the question is the owner's: the member branches off it and cannot save over it
+    expect(question.get_by_role("button", name="Save", exact=True)).to_have_count(0)
+    question.locator("textarea").fill(edited)
+    question.get_by_role("button", name="Send").click()
+    expect_reply(member_page, "At midnight.")
+
+    # the owner's open tab keeps the question it shows, with the new branch beside it
+    owner_question = owner_page.locator(f"#message-{question_id}")
+    expect(owner_question.get_by_text("1/2")).to_be_visible()
+    expect(owner_question).to_contain_text(QUESTION)
+    expect(conversation(owner_page).get_by_text(edited)).to_have_count(0)
+    owner_question.hover()
+    owner_question.get_by_role("button", name="Next message").click()
+    expect(_user_message(owner_page, edited)).to_contain_text(member.name)
+    expect_reply(owner_page, "At midnight.")
 
 
 def test_only_the_folders_owner_finds_access_editing_it(page_for, crew):
