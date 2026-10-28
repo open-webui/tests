@@ -32,6 +32,10 @@ turns.
    model list left it out, so the chat's usage gauge measured against the global threshold and
    read a few percent right before compaction fired. The model list now carries the threshold,
    the admin default filling in where the model sets none.
+9. Temporary chats (commit d5cd7f490): a temporary chat (`temporary:` or the older `local:` id)
+   is never stored, so it was never compacted. It now compacts like a saved chat; the summary is
+   not stored on the server but sent to the page with the compaction event, naming the message
+   it belongs on, and the page sends it back on that message with the next turn.
 
 Twin of unit/chat/test_context_compaction.py.
 
@@ -46,13 +50,16 @@ dialect, under-threshold, compaction-off, clamp and normalization tests pass on 
 one-exchange cases pass with the #32781 fix (0adecf863) and fail on dev 2d9852c60 before it (no
 summary is made and the whole chat is sent, the tool output included). The model-threshold
 cases pass on dev f844f6e89 and fail on c9415a688^ (the model list carries no threshold while
-the turn still compacts at the model's).
+the turn still compacts at the model's). The temporary-chat cases pass on dev 226dca18c and fail
+with the temporary id dropped from the compaction check (no summary is made) or with the summary
+and its message dropped from the compaction event (the page has nothing to send back).
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from contextlib import closing
 from pathlib import Path
@@ -62,9 +69,10 @@ import pytest
 
 from harness import backends
 from harness import upstream as reply
-from harness.chat import ChatTurn, ask
+from harness.chat import ChatTurn, ask, send_message
 from harness.chat_history import seed_chat
 from harness.prepared_data import serving, snapshot_database
+from harness.socket_client import connected
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -557,3 +565,78 @@ def test_usage_an_upgrade_stored_in_the_provider_dialect_counts(
     assert counted == dict.fromkeys(UPGRADED_USAGE, 90_500), (
         "usage an upgrade left in a provider's own keys no longer counts toward compaction"
     )
+
+
+def wait_for_replies(socket, chat_id: str, count: int, timeout: float = 30.0) -> None:
+    """Until the tab has seen `count` finished replies in the chat."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        finished = [
+            event
+            for event in socket.events_of(chat_id)
+            if event.get("type") == "chat:completion" and (event.get("data") or {}).get("done")
+        ]
+        if len(finished) >= count:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"reply {count} of temporary chat {chat_id} never finished")
+
+
+@pytest.mark.parametrize("prefix", ["temporary:", "local:"])
+def test_a_temporary_chat_compacts_and_hands_the_summary_to_the_page(
+    make_user, upstream, compaction, prefix
+):
+    compaction()
+    person = make_user()
+    history = turns(3)
+    system = {"role": "system", "content": SYSTEM_PROMPT}
+    upstream.queue(reply.text(SUMMARY, match=is_summary_request), reply.text("answer 4"))
+    with connected(person) as socket, person.client() as client:
+        chat_id = f"{prefix}{socket.client.sid}"
+        send_message(
+            client,
+            "question 4",
+            chat_id=chat_id,
+            session_id=socket.client.sid,
+            history=[system, *history],
+        )
+        compacted = socket.wait_for(chat_id, "context_compaction", done=True)
+        wait_for_replies(socket, chat_id, 1)
+        sent = main_call(upstream)
+
+        # the page keeps the summary on the checkpoint message and sends it with the next turn
+        history[4]["contextSummary"] = compacted["data"].get("context_summary")
+        compaction(threshold=1_000_000)
+        upstream.queue(reply.text("answer 5"))
+        turn_4 = [
+            {"role": "user", "content": "question 4"},
+            {"role": "assistant", "content": "answer 4"},
+        ]
+        send_message(
+            client,
+            "question 5",
+            chat_id=chat_id,
+            session_id=socket.client.sid,
+            history=[system, *history, *turn_4],
+        )
+        wait_for_replies(socket, chat_id, 2)
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+
+    assert len(summary_requests(upstream)) == 1
+    assert [message["role"] for message in sent] == ["system", "user", "assistant", "user"]
+    assert sent[1]["content"] == history[4]["content"]
+    assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in sent[0]["content"]
+    assert compacted["data"].get("context_summary") == SUMMARY, (
+        f"the page was not given the summary of a temporary chat: {compacted['data']}"
+    )
+    assert compacted["data"].get("checkpoint_message_id") == history[4]["id"]
+    follow_up = main_call(upstream)
+    assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in follow_up[0]["content"]
+    assert [message["content"][:10] for message in follow_up[1:]] == [
+        "question 3",
+        "answer 3 a",
+        "question 4",
+        "answer 4",
+        "question 5",
+    ]
+    assert stored.status_code != 200, "a temporary chat was stored when it compacted"
