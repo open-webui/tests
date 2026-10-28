@@ -12,7 +12,9 @@ writing member's own chat is filed there, while a reading member's chat is not t
 Removing the group from the Access List takes the folder out of the member's sidebar again. Only
 the owner or an admin changes a folder's sharing (8145774e3): a writing member who opens the folder
 editor from its sidebar menu or from the menu on its page finds no Access button there, while the
-owner and an admin still find it.
+owner and an admin still find it. Since 0.12.4 (226207314) the owner renames a member's chat in
+the shared folder from Rename in its sidebar menu, and drags it into a folder inside the shared
+one, while a drag out to a private folder of the owner's is refused and the chat stays.
 
 Discriminates: passes on dev ebc6add67, and on dev b5a20423e once the read share test looks for the
 Clone Chat button that replaced the Read only label (c6dd9a451), and on dev f5a26f53a once sharing
@@ -22,7 +24,11 @@ in the dialog go red. In backend copies: listing no shared folders turns the rea
 and both drag tests red at the member's sidebar; the middleware's folder lookup returning no folder
 turns the writing member's test red (no folder prompt); reporting every shared folder as writable
 turns the read-only input and drop tests red. In a frontend copy whose folder editor shows Access
-to everyone the two tests for a writing member go red.
+to everyone the two tests for a writing member go red. The owner's rename and drag of a member's
+chat pass on dev 948432b43; both go red in a frontend copy whose folder rows never let the owner
+rename or move another account's chat (no menu, not draggable), the rename test in a backend copy
+refusing the owner in the chat update handler and the drag test in one whose chat move check
+always answers False.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from harness import upstream as reply
 from harness.access import make_group
 from harness.chat_history import seed_chat
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.sidebar_chats import chat_menu, chat_row
 from utils.sidebar_folders import folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -388,3 +395,67 @@ def test_an_admin_still_finds_access_editing_a_folder_shared_with_them(page_for,
     admins_editor = open_editor(admin_page, open_row_menu(admin_page, name), name)
 
     expect(admins_editor.get_by_role("button", name="Access", exact=True)).to_be_visible()
+
+
+def members_chat_in(member, folder_id: str, title: str) -> str:
+    chat_id = own_chat(member, title)
+    with member.client() as client:
+        filed = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
+    assert filed.status_code == 200, filed.text
+    return chat_id
+
+
+def test_the_owner_renames_a_members_chat_from_its_menu(page_for, crew):
+    owner, member, group_id, _ = crew
+    folder_id = create_folder(owner, folder_name())
+    share_over_api(owner, folder_id, group_id, "write")
+    title = f"My mooring {uuid.uuid4().hex[:6]}"
+    chat_id = members_chat_in(member, folder_id, title)
+    renamed = f"Berth 4 {uuid.uuid4().hex[:6]}"
+    owner_page = page_for(owner)
+    sidebar = open_sidebar(owner_page)
+    expect(chat_row(sidebar, title)).to_be_visible()
+
+    chat_menu(sidebar, title).get_by_role("menuitem", name="Rename").click()
+    expect(owner_page.locator(f"#chat-title-input-{chat_id}")).to_be_focused()
+    owner_page.keyboard.press("Control+A")
+    owner_page.keyboard.type(renamed)
+    with owner_page.expect_response(re.compile(f"/api/v1/chats/{chat_id}$")) as answer:
+        owner_page.keyboard.press("Enter")
+
+    assert answer.value.status == 200, f"the owner's rename got {answer.value.status}"
+    expect(chat_row(sidebar, renamed)).to_be_visible()
+    with member.client() as client:
+        assert client.get(f"/api/v1/chats/{chat_id}").json()["title"] == renamed
+
+
+def test_the_owner_drags_a_members_chat_within_the_shared_folder_but_not_out(page_for, crew):
+    owner, member, group_id, _ = crew
+    folder_id = create_folder(owner, folder_name())
+    inner_name = folder_name()
+    inner_id = create_folder(owner, inner_name)
+    with owner.client() as client:
+        nested = client.post(
+            f"/api/v1/folders/{inner_id}/update/parent", json={"parent_id": folder_id}
+        )
+    assert nested.status_code == 200, nested.text
+    private_name = folder_name()
+    create_folder(owner, private_name)
+    share_over_api(owner, folder_id, group_id, "write")
+    title = f"My mooring {uuid.uuid4().hex[:6]}"
+    chat_id = members_chat_in(member, folder_id, title)
+    owner_page = page_for(owner)
+    sidebar = open_sidebar(owner_page)
+    row = chat_row(sidebar, title)
+    expect(row).to_be_visible()
+    expect(row.locator("xpath=ancestor::div[@draggable][1]")).to_have_attribute("draggable", "true")
+
+    with owner_page.expect_response(re.compile(f"/api/v1/chats/{chat_id}/folder")) as refused:
+        drag(owner_page, row, folder_row(sidebar, private_name))
+    assert refused.value.status == 401, f"the move out got {refused.value.status}"
+    assert stored_folder_id(member, chat_id) == folder_id
+
+    with owner_page.expect_response(re.compile(f"/api/v1/chats/{chat_id}/folder")) as moved:
+        drag(owner_page, row, folder_row(sidebar, inner_name))
+    assert moved.value.status == 200, f"the move within got {moved.value.status}"
+    assert stored_folder_id(member, chat_id) == inner_id
