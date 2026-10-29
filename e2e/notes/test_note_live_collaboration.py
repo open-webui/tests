@@ -5,7 +5,8 @@ editor without a reload, both edits are still there after both pages reload and 
 note, and typing in both pages at once ends with the same text in both. An account that may only
 read the note opens it in an editor that takes no typing; a read-only editor does not join the
 live document (upstream 5078d987f), so a reader who kept the note open sees the writing once they
-reload.
+reload. Each writer's avatar shows in the other's note header (v0.12.5), and clicking it opens the
+page that writer is on.
 
 `test_a_reader_with_the_note_open_sees_the_writing_after_a_reload` failed on dev 1c010b438 in CI:
 the note was saved a few characters short (open-webui/open-webui#31585, fix PR #31596 open).
@@ -17,7 +18,9 @@ Discriminates: passes on dev 176d31d1d. In a frontend copy, the editor not apply
 updates turns the three writer tests red and the editor staying editable for a reader turns the
 reader typing test red. In a backend copy, `ydoc:document:update` not broadcasting to the room
 turns the same three red, and the live document's save handler not writing the note turns the
-stored-edits, typing-at-once and reader reload tests red.
+stored-edits, typing-at-once and reader reload tests red. On dev c5981aaea, the presence test
+fails with clicking an avatar doing nothing in a frontend copy, and with the note presence list
+never sent in a backend copy.
 """
 
 from __future__ import annotations
@@ -30,6 +33,8 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import grant
 from harness.actors import Actor
+from harness.socket_client import connected
+from utils.note_pages import create_page
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -178,3 +183,45 @@ def test_a_reader_with_the_note_open_sees_the_writing_after_a_reload(page_for, m
     reader_editor = _note_editor(reader_page)
     expect(reader_editor).to_have_text("written while you watch")
     expect(reader_editor).to_have_attribute("contenteditable", "false")
+
+
+def _wait_until_on_page(owner: Actor, note_id: str, person: Actor, page_id: str) -> None:
+    """Wait until the server places `person` on the page, as the note's presence list says."""
+    with connected(owner) as tab:
+        lists: list[dict] = []
+        tab.client.on("note:presence", lists.append)
+        tab.call("note:join", {"note_id": note_id, "auth": {"token": owner.token}})
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            placed = [
+                entry
+                for event in list(lists)
+                for entry in event["users"]
+                if entry["id"] == person.id and entry.get("page_id") == page_id
+            ]
+            if placed:
+                return
+            time.sleep(0.05)
+    raise AssertionError(f"the server never placed the writer on their page: {lists}")
+
+
+def test_the_other_writer_shows_in_the_note_and_clicking_them_opens_their_page(page_for, make_user):
+    owner, writer = make_user(), make_user()
+    note_id = _create_shared_note(owner, writer, ["read", "write"])
+    tides = create_page(owner, note_id, "Tides", "low water at six")
+    writer_page = page_for(writer, path=f"/notes/{note_id}?page={tides}")
+    expect(writer_page.get_by_role("tabpanel", name="Tides")).to_be_visible()
+    _wait_until_on_page(owner, note_id, writer, tides)
+
+    owner_page = page_for(owner, path=f"/notes/{note_id}")
+    expect(_note_editor(owner_page)).to_have_attribute("contenteditable", "true")
+    header = owner_page.get_by_role("main")
+    writer_avatar = header.get_by_role("button", name=writer.name, exact=True)
+    expect(writer_avatar).to_be_visible()
+    expect(header.get_by_role("button", name=owner.name, exact=True)).to_have_count(0)
+    expect(owner_page.get_by_role("tabpanel", name="Tides")).to_have_count(0)
+    writer_avatar.click()
+
+    expect(owner_page.get_by_role("tabpanel", name="Tides")).to_be_visible()
+    expect(_note_editor(owner_page)).to_have_text("low water at six")
+    assert f"page={tides}" in owner_page.url, owner_page.url
