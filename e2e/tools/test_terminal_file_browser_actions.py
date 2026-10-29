@@ -56,7 +56,7 @@ def _page(browser: Locator) -> Page:
 
 def _choose_action(browser: Locator, action: str) -> None:
     browser.get_by_label("Actions", exact=True).click()
-    _page(browser).get_by_role("menu").get_by_role("button", name=action).click()
+    _page(browser).get_by_role("menu").get_by_role("menuitem", name=action).click()
 
 
 def _row_menu(browser: Locator, name: str) -> Locator:
@@ -87,7 +87,7 @@ def test_new_file_makes_the_file_in_the_terminal(browser, home):
 
 
 def test_rename_renames_the_file_in_the_terminal(browser, home):
-    _row_menu(browser, "draft-letter.txt").get_by_role("button", name="Rename").click()
+    _row_menu(browser, "draft-letter.txt").get_by_role("menuitem", name="Rename").click()
     field = browser.locator("input:focus")
     expect(field).to_have_value("draft-letter.txt")
     field.fill("sent-letter.txt")
@@ -100,7 +100,7 @@ def test_rename_renames_the_file_in_the_terminal(browser, home):
 
 
 def test_delete_removes_the_file_from_the_terminal_after_a_confirm(browser, home):
-    _row_menu(browser, "old-receipt.txt").get_by_role("button", name="Delete").click()
+    _row_menu(browser, "old-receipt.txt").get_by_role("menuitem", name="Delete").click()
     assert (home / "old-receipt.txt").exists()
     _page(browser).get_by_role("button", name="Confirm").click()
 
@@ -119,10 +119,12 @@ def test_show_hidden_files_lists_a_dotfile(browser):
 
 
 def test_compare_with_selected_opens_both_files_and_swap_sides_swaps_them(browser):
-    _row_menu(browser, "draft-letter.txt").get_by_role("button", name="Select for Compare").click()
+    _row_menu(browser, "draft-letter.txt").get_by_role(
+        "menuitem", name="Select for Compare"
+    ).click()
     expect(browser.get_by_text("Comparing with draft-letter.txt")).to_be_visible()
     _row_menu(browser, "old-receipt.txt").get_by_role(
-        "button", name="Compare with Selected"
+        "menuitem", name="Compare with Selected"
     ).click()
 
     compare = _page(browser).get_by_role("dialog", name="Compare files")
@@ -132,7 +134,8 @@ def test_compare_with_selected_opens_both_files_and_swap_sides_swaps_them(browse
     expect(panes.first).to_have_text("Dear harbour master,")
     expect(panes.last).to_have_accessible_name("old-receipt.txt")
     expect(panes.last).to_have_text("two ropes, one lamp")
-    expect(panes.first).not_to_be_editable()
+    # not_to_be_editable reads only input readonly on the pinned Playwright 1.49
+    expect(panes.first).to_have_attribute("contenteditable", "false")
     expect(compare.get_by_role("status")).to_have_text("Change 1 of 1")
 
     compare.get_by_role("button", name="Swap sides").click()

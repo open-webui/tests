@@ -249,7 +249,7 @@ def add_memory_in_settings(page: Page, text: str) -> None:
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("heading", name="Personalization")).to_be_visible()
     settings.get_by_role("button", name="Actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Add Memory").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Add Memory").click()
     adding = page.get_by_role("dialog").filter(has_text="Add Memory")
     adding.get_by_role("textbox", name="Add a preference, fact, or instruction about you").fill(
         text

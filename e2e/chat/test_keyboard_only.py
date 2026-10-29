@@ -115,7 +115,7 @@ def test_shift_tab_reaches_regenerate_and_try_again_adds_a_version(keyboard_page
     keyboard_page.keyboard.press("Enter")
     menu = keyboard_page.get_by_role("menu")
     expect_focus_inside(keyboard_page, menu)
-    try_again = menu.get_by_role("button", name="Try Again")
+    try_again = menu.get_by_role("menuitem", name="Try Again")
     press_until_focused(keyboard_page, "Tab", try_again, limit=5)
     keyboard_page.keyboard.press("Enter")
 

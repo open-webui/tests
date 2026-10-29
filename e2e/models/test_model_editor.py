@@ -364,8 +364,8 @@ def test_a_knowledge_base_attached_in_the_editor_is_searched_for_the_chat(
             editor.locator("button[aria-expanded]")
         ).click()
         page.get_by_placeholder("Search knowledge").fill(base_name)
-        page.get_by_role("button", name=base_name).click()
-        page.get_by_role("button", name="Done").click()
+        page.get_by_role("menuitem", name=base_name).click()
+        page.get_by_role("menuitem", name="Done").click()
         expect(editor.get_by_text(base_name)).to_be_visible()
         save(editor)
 
@@ -453,7 +453,7 @@ def test_a_default_filter_starts_switched_on_in_a_new_chat(
         pick(editor, "Filters", filter_id)
         selector_row(editor, "Filters").click()
         page.get_by_role("switch", name="Start enabled in new chats").click()
-        page.get_by_role("button", name="Done").click()
+        page.get_by_role("menuitem", name="Done").click()
         save(editor)
 
         open_chat_on(page, preset)

@@ -54,7 +54,7 @@ def function_card(page: Page, function_id: str) -> Locator:
 def open_menu(page: Page, card: Locator) -> Locator:
     card.get_by_role("button", name="Function Menu").first.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Edit")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Edit")).to_be_visible()
     return menu
 
 
@@ -103,7 +103,7 @@ def test_a_deleted_function_leaves_the_list_and_stops_signing(
 ):
     admin_page = page_for(admin)
     card = function_card(admin_page, signing_filter)
-    open_menu(admin_page, card).get_by_role("button", name="Delete").click()
+    open_menu(admin_page, card).get_by_role("menuitem", name="Delete").click()
     admin_page.get_by_role("dialog", name="Delete function?").get_by_role(
         "button", name="Confirm"
     ).click()
@@ -121,7 +121,7 @@ def test_an_exported_function_comes_back_through_import(page_for, admin, make_us
         function_card(admin_page, function_id)
         with admin_page.expect_download() as downloaded:
             admin_page.get_by_label("Open create menu").click()
-            admin_page.get_by_role("button", name="Export JSON").click()
+            admin_page.get_by_role("menuitem", name="Export JSON").click()
         exported = json.loads(Path(downloaded.value.path()).read_text())
         [saved] = [entry for entry in exported if entry["id"] == function_id]
         assert saved["content"] == SIGNING_FILTER
@@ -131,7 +131,7 @@ def test_an_exported_function_comes_back_through_import(page_for, admin, make_us
         admin_page.goto("/admin/functions")
         with admin_page.expect_file_chooser() as chooser:
             admin_page.get_by_label("Open create menu").click()
-            admin_page.get_by_role("button", name="Import JSON").click()
+            admin_page.get_by_role("menuitem", name="Import JSON").click()
         chooser.value.set_files(
             files=[
                 {

@@ -102,7 +102,7 @@ def choose_view(dialog: Locator, label: str, sharing: str) -> None:
     page = dialog.page
     dialog.get_by_role("button", name="Filters").click()
     page.get_by_role("button", name=re.compile(r"^View")).click()
-    choice = page.get_by_role("button", name=label, exact=True)
+    choice = page.get_by_role("menuitem", name=label, exact=True)
     expect(choice).to_be_visible()
     with page.expect_response(answers_filter("sharing", sharing)):
         choice.click()

@@ -49,7 +49,7 @@ def test_a_memory_is_added_edited_used_and_deleted(page_for, make_user, upstream
     page = page_for(make_user())
     settings = _personalization(page)
     settings.get_by_role("button", name="Actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Add Memory").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Add Memory").click()
     adding = page.get_by_role("dialog").filter(has_text="Add Memory")
     adding.get_by_role("textbox", name=MEMORY_FIELD).fill(FIRST)
     adding.get_by_role("button", name="Add", exact=True).click()
@@ -146,7 +146,7 @@ def test_clearing_memory_forgets_every_memory_of_the_account(page_for, make_user
     expect(settings.get_by_text(LATER)).to_be_visible()
 
     settings.get_by_role("button", name="Actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Clear memory").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Clear memory").click()
     page.get_by_role("dialog", name="Clear Memory").get_by_role("button", name="Confirm").click()
     expect(page.get_by_text("Memory cleared successfully")).to_be_visible()
 

@@ -272,7 +272,7 @@ def test_an_exported_file_imports_back_into_an_emptied_account(owner, page_for, 
 
 def _archive_action(settings: Locator, action: str) -> None:
     settings.locator("#tab-archived-chats").get_by_role("button", name="Actions").first.click()
-    settings.page.get_by_role("menu").get_by_role("button", name=action).click()
+    settings.page.get_by_role("menu").get_by_role("menuitem", name=action).click()
 
 
 def test_unarchive_all_brings_every_archived_chat_back(owner, make_user, page_for):

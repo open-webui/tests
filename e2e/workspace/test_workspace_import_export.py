@@ -63,7 +63,7 @@ def _remove(account: Actor, path: str, **options) -> None:
 def _choose_action(page: Page, section: str, action: str) -> None:
     page.goto(f"/workspace/{section}")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name=action).click()
+    page.get_by_role("menuitem", name=action).click()
 
 
 def _export(page: Page, section: str) -> list[dict]:
@@ -167,7 +167,7 @@ def test_an_exported_skill_is_restored_by_importing_the_file(page_for, keeper):
     page.goto("/workspace/skills")
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import", exact=True).click()
+        page.get_by_role("menuitem", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[
             {

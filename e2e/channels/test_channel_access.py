@@ -20,6 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, send
+from utils.menus import late_menu_entry
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -104,7 +105,7 @@ def test_a_read_only_member_reads_live_but_cannot_post_reply_or_react(
     on_writer.hover()
     tooltip_button(on_writer, "Add Reaction").click()
     writer_page.get_by_placeholder("Search all emojis").fill("rocket")
-    writer_page.get_by_role("menu").get_by_role("button", name="1F680").click()
+    late_menu_entry(writer_page.get_by_role("menu"), "1F680").click()
     on_reader = _message(reader_page, "the pool opens at eight")
     expect(on_reader.get_by_role("button", name="rocket 1")).to_be_disabled()
     on_reader.hover()

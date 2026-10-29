@@ -341,9 +341,9 @@ def test_try_again_from_the_regenerate_menu_adds_a_version(phone, upstream):
     tap_on_screen(whole_reply(phone).get_by_role("button", name="Regenerate").last)
     menu = phone.get_by_role("menu")
     for entry in ("Try Again", "Add Details", "More Concise"):
-        expect_on_screen(menu.get_by_role("button", name=entry))
+        expect_on_screen(menu.get_by_role("menuitem", name=entry))
     expect_on_screen(menu.get_by_placeholder("Suggest a change"))
-    tap_on_screen(menu.get_by_role("button", name="Try Again"))
+    tap_on_screen(menu.get_by_role("menuitem", name="Try Again"))
 
     expect_reply(phone, "The Mekong.")
     expect_on_screen(conversation(phone).get_by_text("2/2"))
@@ -372,20 +372,20 @@ def test_the_chat_menu_in_the_header_fits_the_screen(phone, upstream):
     tap_on_screen(phone.get_by_role("button", name="Chat actions").last)
     menu = phone.get_by_role("menu")
     for entry in ("Share", "Download", "Copy", "Archive", "Delete"):
-        expect_on_screen(menu.get_by_role("button", name=entry))
+        expect_on_screen(menu.get_by_role("menuitem", name=entry))
 
 
 def test_the_download_choices_of_the_chat_menu_fit_the_screen(phone, upstream):
     ask_by_tapping(phone, upstream, f"keep a copy {uuid.uuid4().hex[:6]}", "Copy kept.")
     tap_on_screen(phone.get_by_role("button", name="Chat actions").last)
-    download = phone.get_by_role("menu").get_by_role("button", name="Download")
+    download = phone.get_by_role("menu").get_by_role("menuitem", name="Download")
     expect_on_screen(download)
 
     # the click of a tap, without the emulated pointer leaving the trigger afterwards
     download.dispatch_event("click")
 
     for choice in ("Export chat (.json)", "Plain text (.txt)", "PDF document (.pdf)"):
-        expect_on_screen(phone.get_by_role("button", name=choice), CUT_OFF)
+        expect_on_screen(phone.get_by_role("menuitem", name=choice), CUT_OFF)
 
 
 def open_chat_row_menu(page_for, make_user, upstream) -> tuple[Page, Locator]:

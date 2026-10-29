@@ -21,6 +21,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from utils.chat_ui import chat_input
+from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -70,7 +71,7 @@ def open_actions_menu(page: Page, chat_id: str) -> Locator:
 
 
 def tag_chip(menu: Locator, tag: str) -> Locator:
-    return menu.get_by_role("button", name=tag, exact=True)
+    return late_menu_entry(menu, tag, exact=True)
 
 
 def add_tag_by_typing(menu: Locator, tag: str) -> None:

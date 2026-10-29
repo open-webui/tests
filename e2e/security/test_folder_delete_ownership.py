@@ -58,7 +58,7 @@ def _delete_on_the_folder_page(page: Page, folder_id: str, delete_contents: bool
     """Delete through the folder page's options menu; returns the toast it shows."""
     page.goto(f"/folders/{folder_id}")
     page.get_by_label("Folder options").click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     dialog = page.get_by_role("dialog", name="Delete folder?")
     dialog.get_by_role("checkbox").set_checked(delete_contents)
     dialog.get_by_role("button", name="Confirm").click()

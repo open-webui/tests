@@ -147,7 +147,7 @@ def test_a_function_imported_from_a_link_is_saved_and_answers(page_for, editor_a
     listener.route("GET", f"/functions/{file_name}.py", text_answer(source, "text/x-python"))
     page = page_for(editor_admin, path="/admin/functions")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name="Import from URL").click()
+    page.get_by_role("menuitem", name="Import from URL").click()
     importing = page.get_by_role("dialog")
     importing.get_by_placeholder("Enter the URL to import").fill(
         f"{listener.base_url}/functions/{file_name}.py"

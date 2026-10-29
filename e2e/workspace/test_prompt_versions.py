@@ -297,7 +297,7 @@ def test_the_unified_layout_shows_the_change_in_one_column_and_is_kept(page_for,
     expect(layout).to_have_text("Split")
     expect(comparison.locator(".split-row")).not_to_have_count(0)
     layout.click()
-    page.get_by_role("button", name="Unified", exact=True).click()
+    page.get_by_role("menuitem", name="Unified", exact=True).click()
     expect(layout).to_have_text("Unified")
     expect(comparison.locator(".split-row")).to_have_count(0)
     expect(comparison.locator(".unified-row.deletion .line-content")).to_have_text([THREE_LINES])

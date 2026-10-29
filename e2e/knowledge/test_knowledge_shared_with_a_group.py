@@ -125,9 +125,9 @@ def test_a_reader_cites_the_shared_base_in_chat_but_cannot_change_its_files(
     # the menu's trigger wraps the labelled button
     row.get_by_role("button", name="More").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Download")).to_be_visible()
-    expect(menu.get_by_role("button", name="Rename")).to_have_count(0)
-    expect(menu.get_by_role("button", name="Remove from knowledge")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Rename")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Remove from knowledge")).to_have_count(0)
     page.keyboard.press("Escape")
     expect(base.get_by_role("button", name="Add Content")).to_have_count(0)
 
@@ -149,7 +149,7 @@ def test_a_writer_adds_a_file_that_the_owners_next_chat_cites(
     with writer_page.expect_file_chooser() as chooser:
         # the menu's trigger wraps the labelled button
         base.get_by_role("button", name="Add Content").last.click()
-        writer_page.get_by_role("menu").get_by_role("button", name="Upload files").click()
+        writer_page.get_by_role("menu").get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files(
         {"name": "fuel.txt", "mimeType": "text/plain", "buffer": b"The fuel dock opens at 7.\n"}
     )

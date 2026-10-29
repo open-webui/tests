@@ -98,7 +98,7 @@ def test_a_tool_imported_from_a_link_opens_in_the_editor_and_saves_its_source(
     listener.route("GET", "/tools/locker_desk.py", text_answer(LOCKER_TOOL, "text/x-python"))
     page = page_for(toolsmith, path="/workspace/tools")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name="Import from URL").click()
+    page.get_by_role("menuitem", name="Import from URL").click()
     importing = page.get_by_role("dialog")
     importing.get_by_placeholder("Enter the URL to import").fill(
         f"{listener.base_url}/tools/locker_desk.py"

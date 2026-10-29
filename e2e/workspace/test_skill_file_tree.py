@@ -139,7 +139,7 @@ def test_an_uploaded_picture_is_saved_with_its_bytes_and_shown(page_for, owner):
 
     page.get_by_role("main").get_by_label("Actions", exact=True).click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload", exact=True).click()
+        page.get_by_role("menuitem", name="Upload", exact=True).click()
     chooser.value.set_files(files=[{"name": "flag.png", "mimeType": "image/png", "buffer": PNG}])
     open_row(page, "flag.png")
     expect(page.get_by_role("img", name="flag.png")).to_be_visible()

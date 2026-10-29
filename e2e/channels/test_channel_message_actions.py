@@ -22,6 +22,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input
+from utils.menus import late_menu_entry
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -148,7 +149,7 @@ def test_a_joined_reaction_counts_both_names_them_and_drops_as_each_removes_it(p
 
     _message_tool(author_page, "who is coming on sunday?", "Add Reaction").click()
     author_page.get_by_placeholder("Search all emojis").fill("rocket")
-    author_page.get_by_role("menu").get_by_role("button", name="1F680").click()
+    late_menu_entry(author_page.get_by_role("menu"), "1F680").click()
     on_member = _message(member_page, "who is coming on sunday?")
     expect(on_member.get_by_role("button", name="rocket 1")).to_be_visible()
     on_member.get_by_role("button", name="rocket 1").click()

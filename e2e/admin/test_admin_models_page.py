@@ -97,7 +97,7 @@ def is_model_save(response) -> bool:
 def choose_from_menu(page: Page, row: Locator, entry: str) -> None:
     tooltip_button(row, "More").click()
     with page.expect_response(is_model_save) as saved:
-        page.get_by_role("menu").get_by_role("button", name=entry).click()
+        page.get_by_role("menu").get_by_role("menuitem", name=entry).click()
     assert saved.value.ok, saved.value.status
 
 
@@ -187,7 +187,7 @@ def test_a_provider_model_made_public_is_then_hidden_and_switched_off(
 
     tooltip_button(row, "More").click()
     with page.expect_response(is_model_save):
-        page.get_by_role("menu").get_by_role("button", name="Hide Model").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Hide Model").click()
     switch = row.get_by_role("switch")
     with page.expect_response(is_model_save):
         switch.click()
@@ -255,7 +255,7 @@ def test_a_pinned_model_shows_in_a_new_users_sidebar(page_for, admin, make_user,
 def choose_action(page: Page, action: str) -> None:
     settings = page.get_by_role("dialog")
     settings.get_by_role("button", name="Actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name=action, exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitem", name=action, exact=True).click()
 
 
 def test_disable_all_switches_off_only_the_searched_models(

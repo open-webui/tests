@@ -48,7 +48,7 @@ def test_run_now_lists_a_run_whose_chat_holds_the_answer(page_for, scheduler, up
     creating.get_by_role("button", name="Select model").first.click()
     picker = page.get_by_role("menu")
     picker.get_by_role("textbox", name="Search a model").fill("mock-model")
-    picker.get_by_role("button", name="mock-model").click()
+    picker.get_by_role("menuitem", name="mock-model").click()
     creating.get_by_role("textbox", name="Enter prompt here.").fill(prompt)
     # the dialog clears the title once its folders and channels load, so it goes in last
     creating.get_by_role("textbox", name="Automation title").fill(title)

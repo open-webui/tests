@@ -198,7 +198,7 @@ def test_an_older_version_can_be_deleted_but_the_production_one_cannot(page_for,
     expect(production_row.get_by_label("More Options")).to_have_count(0)
 
     page.get_by_label("More Options").click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     page.get_by_role("dialog", name="Delete Version").get_by_role("button", name="Delete").click()
     expect(page.get_by_text("Version deleted")).to_be_visible()
 

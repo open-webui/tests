@@ -83,7 +83,7 @@ def open_edit_dialog(page: Page) -> Locator:
     row = folder_row(sidebar, FOLDER)
     row.hover()
     row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_placeholder("Enter folder name")).to_have_value(FOLDER)
     return dialog

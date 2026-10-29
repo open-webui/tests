@@ -114,7 +114,7 @@ def _upload_memo(page: Page, tmp_path: Path) -> None:
     memo.write_bytes(_memo())
     _open_audio_menu(page)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload Audio").click()
+        page.get_by_role("menuitem", name="Upload Audio").click()
     chooser.value.set_files(memo)
 
 
@@ -202,7 +202,7 @@ def test_recording_with_the_microphone_attaches_the_recording_with_its_transcrip
     page = voice_page_for(author)
     _open_note(page, note_id)
 
-    _open_audio_menu(page).get_by_role("button", name="Record", exact=True).click()
+    _open_audio_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
     page.get_by_role("button", name="Confirm recording").click()
 
@@ -218,7 +218,7 @@ def test_escape_while_recording_attaches_nothing(voice_page_for, make_user, spee
     note_id = _create_note(author)
     page = voice_page_for(author)
     _open_note(page, note_id)
-    _open_audio_menu(page).get_by_role("button", name="Record", exact=True).click()
+    _open_audio_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
 
     page.keyboard.press("Escape")
@@ -246,7 +246,7 @@ def test_capturing_audio_attaches_the_capture_with_its_transcript(
         _open_note(page, note_id)
 
         _open_audio_menu(page)
-        page.get_by_role("button", name="Capture Audio").click()
+        page.get_by_role("menuitem", name="Capture Audio").click()
         expect(page.get_by_text("0:02", exact=True)).to_be_visible()
         page.get_by_role("button", name="Confirm recording").click()
 

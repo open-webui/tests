@@ -45,6 +45,7 @@ from harness import upstream as reply
 from harness.model_controls import LENGTH, THINKING, pick, preset_with_controls
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, replies, send
+from utils.menus import late_menu_entry
 from utils.setting_rows import setting_button
 from utils.user_menu import open_settings
 
@@ -70,7 +71,7 @@ def _open_menu(page: Page) -> Locator:
 
 
 def _control_row(page: Page, label: str) -> Locator:
-    return page.get_by_role("button", name=label, exact=True)
+    return late_menu_entry(page, label, exact=True)
 
 
 def _choices(page: Page, control_label: str) -> Locator:
@@ -243,7 +244,7 @@ def test_on_a_phone_the_options_open_in_place_with_a_way_back(page_for, make_use
     expect(_control_row(page, "Answer length")).to_have_count(0)
     with page.expect_response(re.compile(r"/api/v1/users/user/settings/update")):
         page.get_by_role("menuitemradio", name="Low", exact=True).click()
-    page.get_by_role("button", name="Back", exact=True).click()
+    late_menu_entry(page, "Back", exact=True).click()
     expect(_control_row(page, "Thinking")).to_contain_text("Low")
     expect(_control_row(page, "Answer length")).to_be_visible()
     page.keyboard.press("Escape")

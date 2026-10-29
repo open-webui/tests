@@ -140,7 +140,7 @@ def test_an_api_key_created_in_the_account_settings_works_until_it_is_deleted(
 
     # the menu's trigger is wrapped in a second element with the same name
     secrets.get_by_role("button", name="More").last.click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     confirming = page.get_by_role("dialog").filter(has_text="Delete API Key?")
     confirming.get_by_role("button", name="Delete", exact=True).click()
     expect(page.get_by_text("API Key deleted.")).to_be_visible()
@@ -177,7 +177,7 @@ def test_create_new_key_replaces_the_key_and_the_old_one_stops_working(page_for,
     key_field = secrets.get_by_role("textbox")
 
     secrets.get_by_role("button", name="More").last.click()
-    page.get_by_role("button", name="Create new key").click()
+    page.get_by_role("menuitem", name="Create new key").click()
 
     expect(key_field).not_to_have_value(old_key)
     new_key = key_field.input_value()

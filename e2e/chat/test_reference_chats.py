@@ -20,6 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -66,7 +67,7 @@ def test_a_referenced_chat_reaches_the_model_with_the_message(
 
     picker = _chat_picker(page)
     picker.get_by_placeholder("Search Chats").fill(referenced_title)
-    picker.get_by_role("button", name=referenced_title).click()
+    late_menu_entry(picker, referenced_title).click()
     send(page, question)
 
     expect_reply(page, "Be there by half past seven.")
@@ -87,4 +88,4 @@ def test_the_open_chat_is_not_offered_as_a_reference_to_itself(page_for, account
     picker = _chat_picker(page)
     picker.get_by_placeholder("Search Chats").fill(title)
     expect(picker.get_by_text("No chats found")).to_be_visible()
-    expect(picker.get_by_role("button", name=title)).to_have_count(0)
+    expect(late_menu_entry(picker, title)).to_have_count(0)

@@ -33,9 +33,9 @@ def row_menu(page: Page, name: str, item: str) -> None:
     row = file_row(page, name)
     row.hover()
     row.get_by_label("More", exact=True).click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def actions(page: Page, item: str) -> None:
     page.get_by_role("main").get_by_label("Actions", exact=True).click()
-    page.get_by_role("menu").get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitem", name=item, exact=True).click()

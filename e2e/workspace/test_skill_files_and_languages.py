@@ -74,7 +74,7 @@ def _import(page: Page, file_name: str, content: str, mime_type: str) -> None:
     page.goto("/workspace/skills")
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import", exact=True).click()
+        page.get_by_role("menuitem", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[{"name": file_name, "mimeType": mime_type, "buffer": content.encode()}]
     )
@@ -174,7 +174,7 @@ def test_a_rows_own_export_downloads_that_skill_alone_with_its_instructions(page
     row.get_by_role("button", name="Skill Menu").last.click()
 
     with page.expect_download() as download:
-        page.get_by_role("button", name="Export JSON", exact=True).click()
+        page.get_by_role("menuitem", name="Export JSON", exact=True).click()
     with open(download.value.path()) as saved:
         exported = json.load(saved)
 

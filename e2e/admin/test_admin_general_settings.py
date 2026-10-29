@@ -270,20 +270,20 @@ def edit_folder_with_files(page: Page, folder_name: str, *names: str) -> Locator
     row.hover()
     # the row's menu button carries only a tooltip
     row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
         dialog.locator("button[aria-expanded]")
     ).click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload Files").click()
+        page.get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files(
         [{"name": name, "mimeType": "text/plain", "buffer": name.encode()} for name in names]
     )
     for name in names:
         expect(page.get_by_text(name, exact=True)).to_be_visible()
     expect(page.get_by_text("Uploading")).to_have_count(0)
-    page.get_by_role("button", name="Done").click()
+    page.get_by_role("menuitem", name="Done").click()
     return dialog
 
 

@@ -89,7 +89,7 @@ def sidebar(page_for, owner, folder_id) -> Locator:
 
 
 def test_renaming_a_folder_to_spaces_is_refused(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("button", name="Edit").click()
+    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
     submit_folder_modal(sidebar.page, "   ")
 
     expect_refused(sidebar.page, owner)
@@ -108,7 +108,7 @@ def test_renaming_a_folder_in_place_to_spaces_is_refused(sidebar, owner):
 
 
 def test_a_subfolder_named_with_spaces_is_refused(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("button", name="Create Folder").click()
+    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Create Folder").click()
     submit_folder_modal(sidebar.page, "  ")
 
     expect_refused(sidebar.page, owner)
@@ -117,14 +117,14 @@ def test_a_subfolder_named_with_spaces_is_refused(sidebar, owner):
 def test_renaming_on_the_folder_page_to_spaces_is_refused(page_for, owner, folder_id):
     page = page_for(owner, path=f"/folders/{folder_id}")
     page.get_by_label("Folder options").click()
-    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     submit_folder_modal(page, "   ")
 
     expect_refused(page, owner)
 
 
 def test_surrounding_spaces_are_trimmed_from_a_new_name(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("button", name="Edit").click()
+    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
     submit_folder_modal(sidebar.page, "  Projects  ")
 
     expect(folder_row(sidebar, "Projects")).to_be_visible()
@@ -132,7 +132,7 @@ def test_surrounding_spaces_are_trimmed_from_a_new_name(sidebar, owner):
 
 
 def test_an_empty_name_is_still_refused(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("button", name="Edit").click()
+    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
     submit_folder_modal(sidebar.page, "")
 
     expect_refused(sidebar.page, owner)

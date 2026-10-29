@@ -106,7 +106,7 @@ def test_importing_txt_and_md_files_makes_a_note_of_each(page_for, make_user):
 
     page.get_by_role("main").get_by_role("button", name="Open create menu").first.click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("button", name="Import txt/md").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Import txt/md").click()
     chooser.value.set_files(
         [
             {"name": "Packing.txt", "mimeType": "text/plain", "buffer": b"tent and stove"},
@@ -322,7 +322,7 @@ def _only_notes_menu(page: Page) -> Locator:
     expect(button).to_have_count(1)
     button.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Delete")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Delete")).to_be_visible()
     return menu
 
 
@@ -341,7 +341,7 @@ def test_a_note_unpinned_from_the_sidebar_offers_pin_again_in_the_list(page_for,
     if layout == "Grid":
         _choose(page, "List", "Grid")
     menu = _only_notes_menu(page)
-    expect(menu.get_by_role("button", name="Unpin")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Unpin")).to_be_visible()
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
 
@@ -354,10 +354,10 @@ def test_a_note_unpinned_from_the_sidebar_offers_pin_again_in_the_list(page_for,
 
     menu = _only_notes_menu(page)
     expect(
-        menu.get_by_role("button", name="Pin to Sidebar"),
+        menu.get_by_role("menuitem", name="Pin to Sidebar"),
         "the list's menu still offers Unpin for a note unpinned from the sidebar (#32706)",
     ).to_be_visible()
-    expect(menu.get_by_role("button", name="Unpin")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Unpin")).to_have_count(0)
 
 
 # ---------------------------------------------------------------- global search

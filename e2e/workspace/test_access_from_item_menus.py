@@ -175,7 +175,7 @@ def _open_row_menu(row: Locator, trigger: str) -> None:
 
 def _open_access(page: Page, row: Locator, trigger: str) -> Locator:
     _open_row_menu(row, trigger)
-    page.get_by_role("button", name="Access", exact=True).click()
+    page.get_by_role("menuitem", name="Access", exact=True).click()
     dialog = page.get_by_role("dialog").filter(has_text="Access Control")
     expect(dialog).to_be_visible()
     return dialog
@@ -404,7 +404,7 @@ def test_a_note_shared_from_the_notes_list_opens_for_the_person_until_removed(
 
     row = _note_row(page, title)
     row.get_by_label("Note Menu").click()
-    page.get_by_role("button", name="Access", exact=True).click()
+    page.get_by_role("menuitem", name="Access", exact=True).click()
     dialog = page.get_by_role("dialog").filter(has_text="Access Control")
     expect(dialog).to_be_visible()
     _add_access(page, dialog, person.name)
@@ -436,8 +436,8 @@ def test_a_person_with_write_access_to_a_note_is_not_offered_access_in_its_menu(
     row = _note_row(page, title)
     row.get_by_label("Note Menu").click()
 
-    expect(page.get_by_role("button", name="Delete", exact=True)).to_be_visible()
-    expect(page.get_by_role("button", name="Access", exact=True)).to_have_count(0)
+    expect(page.get_by_role("menuitem", name="Delete", exact=True)).to_be_visible()
+    expect(page.get_by_role("menuitem", name="Access", exact=True)).to_have_count(0)
 
 
 def test_without_the_public_sharing_permission_visibility_has_no_public_choice(
@@ -510,5 +510,5 @@ def test_a_reader_has_no_menu_and_a_writer_is_offered_access(
 
     writer_page = page_for(writer)
     _open_row_menu(_list_row(writer_page, section, item["name"]), trigger)
-    expect(writer_page.get_by_role("button", name="Clone", exact=True)).to_be_visible()
-    expect(writer_page.get_by_role("button", name="Access", exact=True)).to_be_visible()
+    expect(writer_page.get_by_role("menuitem", name="Clone", exact=True)).to_be_visible()
+    expect(writer_page.get_by_role("menuitem", name="Access", exact=True)).to_be_visible()

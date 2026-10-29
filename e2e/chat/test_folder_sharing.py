@@ -140,7 +140,7 @@ def open_sidebar(page: Page) -> Locator:
 
 
 def open_editor(page: Page, menu: Locator, name: str) -> Locator:
-    menu.get_by_role("button", name="Edit").click()
+    menu.get_by_role("menuitem", name="Edit").click()
     editor = page.get_by_role("dialog").filter(has_text="Edit Folder")
     # the folder loads after the dialog opens, and with it the Access button
     expect(editor.get_by_placeholder("Enter folder name")).to_have_value(name)
@@ -333,7 +333,7 @@ def open_row_menu(page: Page, name: str) -> Locator:
     folder_link(sidebar, name).focus()
     row.get_by_role("button").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu
 
 
@@ -342,7 +342,7 @@ def open_page_menu(page: Page, folder_id: str) -> Locator:
     # the sidebar rows carry the same label, so look in the page itself
     page.get_by_role("button", name="Folder options").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu
 
 

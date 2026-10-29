@@ -119,20 +119,20 @@ def test_the_note_menu_fits_the_screen(phone):
 
     menu = open_note_menu(phone)
     for entry in ("Download", "Share", "Delete"):
-        expect_on_screen(menu.get_by_role("button", name=entry).first)
+        expect_on_screen(menu.get_by_role("menuitem", name=entry).first)
 
 
 def test_the_download_choices_of_the_note_menu_fit_the_screen(phone):
     new_note(phone)
     tap_on_screen(editor(phone))
     phone.keyboard.type("Something to keep")
-    download = open_note_menu(phone).get_by_role("button", name="Download")
+    download = open_note_menu(phone).get_by_role("menuitem", name="Download")
     expect_on_screen(download)
 
     # the click of a tap, without the emulated pointer leaving the trigger afterwards
     download.dispatch_event("click")
 
-    choices = phone.get_by_role("menu").last.get_by_role("button")
+    choices = phone.get_by_role("menu").last.get_by_role("menuitem")
     expect(choices.first).to_be_visible()
     for index in range(choices.count()):
         expect_on_screen(

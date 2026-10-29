@@ -259,7 +259,7 @@ def test_the_location_filter_narrows_the_results_to_that_folder(page_for, make_u
     expect(results(dialog)).to_have_count(2)
     dialog.get_by_role("button", name="Filters").click()
     page.get_by_role("button", name="Location").click()
-    page.get_by_role("button", name=folder).click()
+    page.get_by_role("menuitem", name=folder).click()
 
     expect(dialog.get_by_role("button", name="Remove location filter")).to_have_text(folder)
     expect(results(dialog)).to_have_count(1)

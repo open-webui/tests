@@ -55,7 +55,7 @@ def _message(page: Page, text: str) -> Locator:
 def _attach(page: Page, name: str, mime_type: str, content: bytes) -> None:
     page.get_by_role("button", name="More", exact=True).last.click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload Files").click()
+        page.get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": content})
 
 

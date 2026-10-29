@@ -135,7 +135,7 @@ def test_mark_all_as_read_clears_the_dots_of_the_folders_chats_only(make_user, p
     for title in [*inside, outside]:
         expect(_unread_dot(_entry(sidebar, title))).to_be_visible()
 
-    _folder_menu(sidebar, FOLDER_NAME).get_by_role("button", name="Mark all as read").click()
+    _folder_menu(sidebar, FOLDER_NAME).get_by_role("menuitem", name="Mark all as read").click()
 
     for title in inside:
         expect(_unread_dot(_entry(sidebar, title))).to_have_count(0)
@@ -163,7 +163,7 @@ def test_folder_export_downloads_the_folders_chats_and_no_others(make_user, page
 
     menu = _folder_menu(sidebar, FOLDER_NAME)
     with sidebar.page.expect_download() as download_info:
-        menu.get_by_role("button", name="Export").click()
+        menu.get_by_role("menuitem", name="Export").click()
     download = download_info.value
     path = tmp_path / download.suggested_filename
     download.save_as(path)
@@ -183,8 +183,8 @@ def test_header_menu_move_files_the_open_chat_into_the_chosen_folder(make_user, 
     page = page_for(account)
 
     menu = _open_header_menu(page, chat_id)
-    menu.get_by_role("button", name="Move").hover()
-    page.get_by_role("menu").get_by_role("button", name=FOLDER_NAME).click()
+    menu.get_by_role("menuitem", name="Move").hover()
+    page.get_by_role("menu").get_by_role("menuitem", name=FOLDER_NAME).click()
 
     expect(page.get_by_text("Chat moved successfully")).to_be_visible()
     assert _stored_chat_ids(account, folder_id) == {chat_id}
@@ -205,7 +205,7 @@ def test_header_menu_delete_removes_the_open_chat_for_good(make_user, page_for):
     page = page_for(account)
 
     menu = _open_header_menu(page, chat_id)
-    menu.get_by_role("button", name="Delete").click()
+    menu.get_by_role("menuitem", name="Delete").click()
     page.get_by_role("dialog", name="Delete chat?").get_by_role("button", name="Confirm").click()
 
     expect(page.get_by_text("Chat deleted.")).to_be_visible()
@@ -235,7 +235,7 @@ def test_header_menu_scroll_to_top_brings_the_first_message_into_view(make_user,
     expect(first).not_to_be_in_viewport()
 
     page.get_by_label("Chat actions").click()
-    page.get_by_role("menu").get_by_role("button", name="Scroll to Top").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Scroll to Top").click()
 
     expect(first).to_be_in_viewport()
 

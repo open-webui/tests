@@ -145,7 +145,7 @@ def _expect_listed(base: Locator, *names: str) -> None:
 def _row_menu(page: Page, row: Locator, item: str) -> None:
     # the menu's trigger wraps the labelled button
     row.get_by_role("button", name="More").last.click()
-    page.get_by_role("menu").get_by_role("button", name=item).click()
+    page.get_by_role("menu").get_by_role("menuitem", name=item).click()
 
 
 def _open_file(page: Page, base: Locator, name: str) -> Locator:
@@ -158,7 +158,7 @@ def _open_file(page: Page, base: Locator, name: str) -> Locator:
 def _add_content(page: Page, base: Locator, item: str) -> None:
     # the menu's trigger wraps the labelled button
     base.get_by_role("button", name="Add Content").last.click()
-    page.get_by_role("menu").get_by_role("button", name=item).click()
+    page.get_by_role("menu").get_by_role("menuitem", name=item).click()
 
 
 def _stored_file_names(owner: Actor, knowledge_id: str) -> list[str]:
@@ -212,7 +212,7 @@ def test_a_knowledge_base_is_created_found_in_the_list_and_deleted(page_for, cur
     expect(row).to_contain_text(DESCRIPTION)
     # the menu's trigger wraps the labelled button
     row.get_by_role("button", name="More Options").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Delete").click()
     page.get_by_role("dialog", name="Confirm your action").get_by_role(
         "button", name="Confirm"
     ).click()
@@ -586,7 +586,7 @@ def test_an_admin_exports_a_base_as_a_zip_of_its_files_and_their_text(
     row = _list_row(page, name)
     row.get_by_role("button", name="More Options").last.click()
     with page.expect_download() as download:
-        page.get_by_role("menu").get_by_role("button", name="Export").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Export").click()
     saved = tmp_path / "export.zip"
     download.value.save_as(saved)
 

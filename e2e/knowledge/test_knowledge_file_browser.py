@@ -141,7 +141,7 @@ def test_sorting_by_name_lists_the_files_in_name_order_both_ways(page_for, curat
     )
     assert listed_names(page) == ["charts.txt", "buoys.txt", "anchors.txt"]
 
-    menu.get_by_role("button", name="Descending").click()
+    menu.get_by_role("menuitem", name="Descending").click()
     expect(page.locator("button[data-knowledge-entry]").first).to_have_text(
         re.compile(r"^\s*anchors\.txt")
     )
@@ -272,7 +272,7 @@ def test_a_file_whose_upload_is_gone_opens_on_its_indexed_text(
 
     page.get_by_role("button", name="File actions").last.click()
     with page.expect_download() as download:
-        page.get_by_role("menu").get_by_role("button", name="Download").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Download").click()
     saved = tmp_path / "download"
     download.value.save_as(saved)
     assert saved.read_text() == "High tide at noon."
@@ -356,7 +356,7 @@ def stored_names(owner: Actor, knowledge_id: str, expected: list[str]) -> list[s
 def upload_through_menu(page: Page, name: str, text: bytes) -> None:
     page.get_by_role("button", name="Add Content").last.click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("button", name="Upload files").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files({"name": name, "mimeType": "text/plain", "buffer": text})
 
 
@@ -372,7 +372,7 @@ def test_a_file_removed_from_the_base_can_be_uploaded_again(page_for, curator):
     page.locator("[data-knowledge-row]").filter(has=entry(page, "tides.txt")).get_by_role(
         "button", name="More"
     ).last.click()
-    page.get_by_role("menu").get_by_role("button", name="Remove from knowledge").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Remove from knowledge").click()
     page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
     expect(entry(page, "tides.txt")).to_have_count(0)
     assert stored_names(curator, knowledge_id, []) == []
@@ -399,6 +399,6 @@ def test_a_reader_opens_files_but_is_offered_no_changes(page_for, curator, admin
         "button", name="More"
     ).last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Download")).to_be_visible()
-    expect(menu.get_by_role("button", name="Rename")).to_have_count(0)
-    expect(menu.get_by_role("button", name="Remove from knowledge")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Rename")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Remove from knowledge")).to_have_count(0)

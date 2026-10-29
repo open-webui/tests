@@ -104,7 +104,7 @@ def _row(page: Page, section: str, name: str) -> Locator:
 def _menu_item(page: Page, row: Locator, trigger: str, item: str) -> None:
     row.hover()
     row.get_by_role("button", name=trigger).last.click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def _confirm(page: Page) -> None:
@@ -116,7 +116,7 @@ def _model_menu_item(page: Page, model: dict, item: str) -> None:
     page.get_by_role("textbox", name="Search Models").fill(model["name"])
     expect(page.get_by_role("link", name=model["name"], exact=True)).to_be_visible()
     page.get_by_label(f"More: {model['name']}").click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def _model_in_selector(page: Page, name: str) -> Locator:
@@ -257,7 +257,7 @@ def test_a_version_in_the_prompt_history_can_be_deleted_but_not_the_live_one(pag
     picker.click()
     older_row = page.get_by_role("menuitemradio", name="First draft").locator("xpath=..")
     older_row.get_by_label("More Options").click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     page.get_by_role("dialog", name="Delete Version").get_by_role("button", name="Delete").click()
     expect(page.get_by_text("Version deleted")).to_be_visible()
 
@@ -266,7 +266,7 @@ def test_a_version_in_the_prompt_history_can_be_deleted_but_not_the_live_one(pag
     expect(page.get_by_role("menuitemradio", name="First draft")).to_have_count(0)
     live_row = page.get_by_role("menuitemradio", name="Live").locator("xpath=..")
     live_row.get_by_label("More Options").click()
-    expect(page.get_by_role("button", name="Delete", exact=True)).to_be_disabled()
+    expect(page.get_by_role("menuitem", name="Delete", exact=True)).to_be_disabled()
     history = _fetch(builder, f"/api/v1/prompts/id/{prompt['id']}/history")
     assert [entry["commit_message"] for entry in history] == ["Shorter"]
 

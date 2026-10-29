@@ -133,7 +133,7 @@ def test_deleting_from_the_list_menu_takes_it_off_the_list(page_for, scheduler, 
 
     row = _list_row(page, automation["name"])
     row.get_by_role("button", name="Automation Menu").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Delete").click()
     page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
     expect(page.get_by_text(f"Deleted {automation['name']}")).to_be_visible()
 

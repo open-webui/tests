@@ -48,6 +48,7 @@ from harness import upstream as reply
 from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
+from utils.menus import late_menu_entry
 from utils.sidebar_folders import folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -164,7 +165,7 @@ def test_a_folder_and_a_subfolder_created_in_the_sidebar_are_kept(page_for, make
     sidebar.get_by_role("button", name="New Folder").click()
     submit_folder_dialog(page, "Garden")
     expect(folder_row(sidebar, "Garden")).to_be_visible()
-    folder_menu(sidebar, "Garden").get_by_role("button", name="Create Folder").click()
+    folder_menu(sidebar, "Garden").get_by_role("menuitem", name="Create Folder").click()
     submit_folder_dialog(page, "Seeds")
     expect(page.get_by_text("Folder created successfully")).to_be_visible()
 
@@ -186,23 +187,23 @@ def test_the_folder_settings_reach_a_new_chat_started_in_the_folder(
     with admin.client() as client, knowledge_base(client, base_name, readable) as knowledge_id:
         page = page_for(owner)
         sidebar = open_sidebar(page)
-        folder_menu(sidebar, "Harbour").get_by_role("button", name="Edit").click()
+        folder_menu(sidebar, "Harbour").get_by_role("menuitem", name="Edit").click()
         dialog = page.get_by_role("dialog")
         dialog.get_by_placeholder(re.compile("Write your model system prompt")).fill(SYSTEM_PROMPT)
         dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
             dialog.locator("button[aria-expanded]")
         ).click()
         page.get_by_placeholder("Search knowledge").fill(base_name)
-        page.get_by_role("button", name=base_name).click()
+        page.get_by_role("menuitem", name=base_name).click()
         expect(dialog.get_by_text(base_name)).to_be_visible()
         with page.expect_file_chooser() as chooser:
-            page.get_by_role("button", name="Upload Files").click()
+            page.get_by_role("menuitem", name="Upload Files").click()
         chooser.value.set_files(
             files=[{"name": "moorings.txt", "mimeType": "text/plain", "buffer": b"Berth 4."}]
         )
         expect(dialog.get_by_text("moorings.txt")).to_be_visible()
         expect(page.get_by_text("Uploading")).to_have_count(0)
-        page.get_by_role("button", name="Done").click()
+        page.get_by_role("menuitem", name="Done").click()
         dialog.get_by_role("button", name="Save").click()
         expect(page.get_by_text("Folder updated successfully")).to_be_visible()
 
@@ -374,7 +375,7 @@ def test_a_folder_renamed_in_place_keeps_its_new_name(page_for, make_user):
 
 
 def delete_from_the_sidebar(sidebar: Locator, name: str, delete_contents: bool) -> None:
-    folder_menu(sidebar, name).get_by_role("button", name="Delete").click()
+    folder_menu(sidebar, name).get_by_role("menuitem", name="Delete").click()
     dialog = sidebar.page.get_by_role("dialog", name="Delete folder?")
     expect(dialog.get_by_text(f'Are you sure you want to delete "{name}"?')).to_be_visible()
     checkbox = dialog.get_by_role("checkbox")
@@ -467,7 +468,7 @@ def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
     page = page_for(owner)
     sidebar = open_sidebar(page)
 
-    new_chat = folder_menu(sidebar, "Voyages").get_by_role("button", name="New Chat")
+    new_chat = folder_menu(sidebar, "Voyages").get_by_role("menuitem", name="New Chat")
     expect(new_chat, "the folder's menu has no New Chat entry").to_be_visible()
     new_chat.click()
 
@@ -548,7 +549,7 @@ def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_
 
     page.get_by_label("Change folder icon").click()
     page.get_by_placeholder("Search all emojis").fill("anchor")
-    page.get_by_role("button", name="2693", exact=True).click()
+    late_menu_entry(page, "2693", exact=True).click()
     expect(page.get_by_text("Folder updated successfully")).to_be_visible()
     assert stored_folder(owner, folder_id)["meta"]["icon"] == "anchor"
 
@@ -558,7 +559,7 @@ def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_
     row = sidebar.locator(f"#folder-{folder_id}-button")
     row.hover()
     row.get_by_role("button").last.click()
-    page.get_by_role("menu").get_by_role("button", name="Edit").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     dialog.locator("#folder-background-image-input").set_input_files(picture)
     expect(dialog.get_by_role("button", name="Reset")).to_be_visible()

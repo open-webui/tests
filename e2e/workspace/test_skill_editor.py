@@ -63,7 +63,7 @@ def _skill_menu_item(page: Page, name: str, item: str) -> None:
     row = _skill_row(page, name)
     row.hover()
     row.get_by_role("button", name="Skill Menu").last.click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def _dollar_picker(page: Page, query: str) -> Locator:

@@ -221,7 +221,7 @@ def test_an_older_version_can_be_deleted_but_not_the_production_one(page_for, cu
     rows.filter(has_text=model["first_version"][:7]).get_by_label(
         "More Options", exact=True
     ).click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     page.get_by_role("dialog").filter(has_text="Delete Version").get_by_role(
         "button", name="Delete"
     ).click()

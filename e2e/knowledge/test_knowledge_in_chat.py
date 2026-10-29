@@ -53,7 +53,7 @@ def test_an_uploaded_file_is_retrieved_and_cited_in_a_chat(page_for, curator, up
     base = page.get_by_role("main")
     base.get_by_role("button", name="Add Content").first.click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("button", name="Upload files").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files(
         {"name": FILE_NAME, "mimeType": "text/plain", "buffer": FILE_TEXT.encode()}
     )

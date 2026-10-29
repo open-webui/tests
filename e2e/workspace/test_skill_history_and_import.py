@@ -110,7 +110,7 @@ def _pick_version(page: Page, label: str) -> None:
 def _skills_page_menu(page: Page, item: str) -> None:
     page.goto("/workspace/skills")
     page.get_by_label("Open create menu").click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def _row_menu(page: Page, name: str, item: str) -> None:
@@ -120,7 +120,7 @@ def _row_menu(page: Page, name: str, item: str) -> None:
     expect(row).to_be_visible()
     row.hover()
     row.get_by_role("button", name="Skill Menu").last.click()
-    page.get_by_role("button", name=item, exact=True).click()
+    page.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def test_the_version_picker_lists_saved_versions_and_compares_one_to_the_current(page_for, owner):
@@ -203,7 +203,7 @@ def test_a_zip_of_skill_folders_is_imported_through_the_dialog(page_for, owner):
 
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import", exact=True).click()
+        page.get_by_role("menuitem", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[{"name": "skills.zip", "mimeType": "application/zip", "buffer": archive}]
     )
@@ -227,7 +227,7 @@ def test_importing_an_existing_skill_offers_skip_and_replace_saves_a_new_version
 
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import", exact=True).click()
+        page.get_by_role("menuitem", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[{"name": "moor.zip", "mimeType": "application/zip", "buffer": archive}]
     )
@@ -318,7 +318,7 @@ def test_a_rows_export_skill_downloads_a_skill_file_that_imports_back(page_for, 
     page.goto("/workspace/skills")
     page.get_by_label("Open create menu").click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Import", exact=True).click()
+        page.get_by_role("menuitem", name="Import", exact=True).click()
     chooser.value.set_files(
         files=[{"name": f"{skill_id}.skill", "mimeType": "application/zip", "buffer": exported}]
     )
@@ -363,7 +363,7 @@ def test_an_old_version_is_deleted_from_the_version_picker(page_for, owner):
     expect(current_row.get_by_label("More Options")).to_have_count(0)
     old_row = page.get_by_role("menuitemradio", name="First draft").locator("xpath=..")
     old_row.get_by_label("More Options").click()
-    page.get_by_role("button", name="Delete", exact=True).click()
+    page.get_by_role("menuitem", name="Delete", exact=True).click()
     page.get_by_role("dialog", name="Delete Version").get_by_role("button", name="Delete").click()
     expect(page.get_by_text("Version deleted")).to_be_visible()
 

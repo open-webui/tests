@@ -41,6 +41,7 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import Actor
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.menus import late_menu_entry
 from utils.notes_page import note_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -203,9 +204,9 @@ def test_a_note_downloads_as_its_markdown(page_for, make_user, format_name, exte
     page = page_for(author, path="/notes")
 
     _note_card(page, title).get_by_role("button", name="Note Menu").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Download").hover()
+    page.get_by_role("menu").get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
-        page.get_by_role("button", name=format_name).click()
+        page.get_by_role("menuitem", name=format_name).click()
 
     download = download_info.value
     assert download.suggested_filename == f"{title}.{extension}"
@@ -251,7 +252,7 @@ def test_a_note_attached_in_the_composer_reaches_the_model(page_for, make_user, 
     page = page_for(author)
 
     picker = _open_note_picker(page)
-    picker.get_by_role("button", name=title).click()
+    late_menu_entry(picker, title).click()
     send(page, question)
 
     expect_reply(page, "Skip the hazelnuts.")
@@ -270,14 +271,14 @@ def test_the_composer_note_picker_finds_a_note_shared_read_only_by_name(page_for
     _create_note(reader, own, "low at dusk")
     _create_note(reader, other, "soup")
     picker = _open_note_picker(page_for(reader))
-    expect(picker.get_by_role("button", name=shared)).to_be_visible()
+    expect(late_menu_entry(picker, shared)).to_be_visible()
 
     picker.get_by_placeholder("Search Notes").fill("tide table")
 
-    expect(picker.get_by_role("button", name=other)).to_have_count(0)
-    expect(picker.get_by_role("button", name=own)).to_be_visible()
+    expect(late_menu_entry(picker, other)).to_have_count(0)
+    expect(late_menu_entry(picker, own)).to_be_visible()
     expect(
-        picker.get_by_role("button", name=shared),
+        late_menu_entry(picker, shared),
         "the read-only shared note vanished from the picker once a search was typed"
         " (open-webui/open-webui#30967)",
     ).to_be_visible()

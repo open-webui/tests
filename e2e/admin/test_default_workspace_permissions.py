@@ -146,8 +146,8 @@ def create_menu_entries(page: Page, section: str) -> tuple[Locator, Locator]:
     # skills import JSON, ZIP or Markdown files, so their entry is just Import
     import_label = "Import" if section == "skills" else "Import JSON"
     return (
-        menu.get_by_role("button", name=import_label, exact=True),
-        menu.get_by_role("button", name="Export JSON"),
+        menu.get_by_role("menuitem", name=import_label, exact=True),
+        menu.get_by_role("menuitem", name="Export JSON"),
     )
 
 

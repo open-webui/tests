@@ -135,7 +135,7 @@ def test_a_file_deleted_in_manage_files_is_gone(page_for, make_user):
     expect(files.get_by_text("harbour-map.txt", exact=True)).to_be_visible()
 
     files.get_by_role("button", name="Actions for harbour-map.txt").click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Delete").click()
     confirming = page.get_by_role("dialog").filter(has_text="Delete 1 file?")
     confirming.get_by_role("button", name="Delete", exact=True).click()
 
@@ -209,7 +209,7 @@ def test_a_file_deleted_with_shift_held_goes_without_asking(page_for, make_user)
     expect(files.get_by_text("old-chart.txt", exact=True)).to_be_visible()
 
     files.get_by_role("button", name="Actions for old-chart.txt").click()
-    page.get_by_role("menu").get_by_role("button", name="Delete").click(modifiers=["Shift"])
+    page.get_by_role("menu").get_by_role("menuitem", name="Delete").click(modifiers=["Shift"])
 
     expect(page.get_by_text("1 deleted, 0 failed, 0 not processed.")).to_be_visible()
     expect(page.get_by_role("dialog").filter(has_text="Delete 1 file?")).to_have_count(0)
@@ -232,7 +232,7 @@ def test_an_admin_sees_only_their_own_files_in_manage_files(page_for, make_user)
 
 def selection_action(page: Page, files: Locator, action: str) -> None:
     files.get_by_role("button", name="Selection actions").click()
-    page.get_by_role("menu").get_by_role("button", name=action).click()
+    page.get_by_role("menu").get_by_role("menuitem", name=action).click()
 
 
 def confirm_delete(page: Page, count: int) -> None:
@@ -327,7 +327,7 @@ def test_a_single_downloaded_file_keeps_its_name(page_for, make_user):
 
     files.get_by_role("button", name="Actions for tide table 2026.txt").click()
     with page.expect_download() as downloaded:
-        page.get_by_role("menu").get_by_role("button", name="Download").click()
+        page.get_by_role("menu").get_by_role("menuitem", name="Download").click()
 
     assert downloaded.value.suggested_filename == "tide table 2026.txt"
     assert pathlib.Path(downloaded.value.path()).read_bytes() == b"high water at noon"

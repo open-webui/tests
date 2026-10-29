@@ -39,6 +39,7 @@ from harness.access import grant
 from harness.plugins import installed_function
 from utils.cached_chat import turn_on_tool
 from utils.chat_ui import chat_input, expect_reply, integration_row, send
+from utils.menus import late_menu_entry
 from utils.valves import customise, valve
 from utils.workspace_list import item_row
 
@@ -318,7 +319,7 @@ def set_nickname_from_integrations(page: Page, tool_name: str, nickname: str) ->
     page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
     tool_row = integration_row(page.get_by_role("menu"), tool_name)
     tool_row.hover()
-    tool_row.get_by_role("button", name="Valves").click()
+    late_menu_entry(tool_row, "Valves").click()
     dialog = page.get_by_role("dialog").filter(has_text="Valves")
     nickname_valve = valve(dialog, "Nickname", "What the tool calls you")
     customise(nickname_valve)

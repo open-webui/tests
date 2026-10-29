@@ -125,7 +125,7 @@ def click_menu_item(page: Page, name: str, item: str) -> None:
     row.get_by_label("More Options", exact=True).click()
     menu = page.get_by_role("menu")
     expect(menu).to_be_visible()
-    menu.get_by_role("button", name=item, exact=True).click()
+    menu.get_by_role("menuitem", name=item, exact=True).click()
 
 
 def edit_and_save(editor: Locator) -> None:

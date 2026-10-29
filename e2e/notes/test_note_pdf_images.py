@@ -102,9 +102,9 @@ def _download_pdf(page: Page, title: str) -> tuple[str, Image.Image]:
     card = note_row(page, title)
     card.get_by_role("button", name="Note Menu").first.click()
     menu = page.get_by_role("menu")
-    menu.get_by_role("button", name="Download").hover()
+    menu.get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="PDF document (.pdf)").click()
+        page.get_by_role("menuitem", name="PDF document (.pdf)").click()
     download = download_info.value
     reader = PdfReader(download.path())
     rendered = reader.pages[0].images[0].image.convert("RGB")

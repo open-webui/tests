@@ -75,14 +75,11 @@ def _sidebar_menu(page: Page) -> Locator:
     return page.get_by_role("menu")
 
 
-def _download(page: Page, menu: Locator, entry: str, tmp_path: Path, role: str = "button") -> Path:
-    """Choose `entry` under the menu's Download and return the file the browser saved.
-
-    The header menu's entries are plain buttons; the sidebar chat menu's are menu items.
-    """
-    menu.get_by_role(role, name="Download").hover()
+def _download(page: Page, menu: Locator, entry: str, tmp_path: Path) -> Path:
+    """Choose `entry` under the menu's Download and return the file the browser saved."""
+    menu.get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
-        page.get_by_role("menu").get_by_role(role, name=entry).click()
+        page.get_by_role("menu").get_by_role("menuitem", name=entry).click()
     download = download_info.value
     saved = tmp_path / download.suggested_filename
     download.save_as(saved)
@@ -103,7 +100,7 @@ def test_the_sidebar_text_download_holds_every_message_under_its_role(
     page_for, owner, chat_id, tmp_path
 ):
     page = page_for(owner)
-    saved = _download(page, _sidebar_menu(page), "Plain text (.txt)", tmp_path, role="menuitem")
+    saved = _download(page, _sidebar_menu(page), "Plain text (.txt)", tmp_path)
 
     assert saved.name == f"chat-{TITLE}.txt"
     assert saved.read_text() == CHAT_TEXT
@@ -128,7 +125,7 @@ def test_the_header_json_export_is_the_stored_chat(page_for, owner, chat_id, tmp
 
 def test_the_sidebar_json_export_is_the_stored_chat(page_for, owner, chat_id, tmp_path):
     page = page_for(owner)
-    saved = _download(page, _sidebar_menu(page), "Export chat (.json)", tmp_path, role="menuitem")
+    saved = _download(page, _sidebar_menu(page), "Export chat (.json)", tmp_path)
 
     exported = _exported_chat(saved)
     assert exported["id"] == chat_id
@@ -137,7 +134,7 @@ def test_the_sidebar_json_export_is_the_stored_chat(page_for, owner, chat_id, tm
 
 def test_copy_puts_the_whole_chat_on_the_clipboard(page_for, owner, chat_id):
     page = page_for(owner, permissions=["clipboard-read", "clipboard-write"])
-    _header_menu(page, chat_id).get_by_role("button", name="Copy", exact=True).click()
+    _header_menu(page, chat_id).get_by_role("menuitem", name="Copy", exact=True).click()
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
     assert page.evaluate("navigator.clipboard.readText()") == CHAT_TEXT

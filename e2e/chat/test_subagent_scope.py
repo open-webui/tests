@@ -145,7 +145,7 @@ def test_the_subagents_chat_shows_in_no_ones_sidebar_or_search(
 def share_with(page: Page, reader) -> str:
     """Create the chat's share link, grant `reader` read access and return the link."""
     page.get_by_role("button", name="Chat actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Share").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Share").click()
     dialog = page.get_by_role("dialog").filter(has_text="Share Chat")
     dialog.get_by_role("button", name="Copy Link").click()
     link = dialog.get_by_role("link", name="You have shared this chat before")

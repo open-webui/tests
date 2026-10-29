@@ -122,7 +122,7 @@ def test_a_suggested_change_is_sent_after_the_question(two_turns, upstream):
     )
     menu = _regenerate_menu(page)
     menu.get_by_placeholder("Suggest a change").fill("just the city, please")
-    menu.get_by_role("button", name="Submit suggestion").click()
+    menu.get_by_role("menuitem", name="Submit suggestion").click()
 
     expect_reply(page, "Roughly 545,000 in the city.")
     expect(conversation(page).get_by_text("2/2")).to_be_visible()
@@ -132,7 +132,7 @@ def test_a_suggested_change_is_sent_after_the_question(two_turns, upstream):
 def test_more_concise_asks_the_model_for_a_shorter_reply(two_turns, upstream):
     page = two_turns
     upstream.queue(reply.text("Ten million.", match=reply.answering("More Concise")))
-    _regenerate_menu(page).get_by_role("button", name="More Concise").click()
+    _regenerate_menu(page).get_by_role("menuitem", name="More Concise").click()
 
     expect_reply(page, "Ten million.")
     assert _latest_request_messages(upstream)[-1] == ("user", "More Concise")

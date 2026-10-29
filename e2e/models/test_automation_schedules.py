@@ -59,6 +59,7 @@ from harness.backends import wait_until
 from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import automation_row
 from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -85,7 +86,7 @@ def pick_model(page: Page, dialog: Locator, name: str) -> None:
     dialog.get_by_role("button", name="Select model").first.click()
     picker = page.get_by_role("menu")
     picker.get_by_role("textbox", name="Search a model").fill(name)
-    picker.get_by_role("button", name=name).click()
+    picker.get_by_role("menuitem", name=name).click()
 
 
 def choose_schedule(page: Page, dialog: Locator, current: str, kind: str) -> None:
@@ -128,8 +129,8 @@ def set_daily(page: Page) -> None:
 
 def set_weekly(page: Page) -> None:
     page.locator('input[type="time"]').fill("08:15")
-    page.get_by_role("button", name="Mo", exact=True).click()
-    page.get_by_role("button", name="Th", exact=True).click()
+    late_menu_entry(page, "Mo", exact=True).click()
+    late_menu_entry(page, "Th", exact=True).click()
 
 
 def set_monthly(page: Page) -> None:
@@ -279,9 +280,9 @@ def test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt(
 
     dialog.get_by_role("button", name="New chat", exact=True).last.click()
     destinations = page.get_by_role("menu")
-    destinations.get_by_role("button", name="Folder", exact=True).click()
+    destinations.get_by_role("menuitem", name="Folder", exact=True).click()
     destinations.get_by_placeholder("Search folders").fill(folder)
-    destinations.get_by_role("button", name=folder).click()
+    late_menu_entry(destinations, folder).click()
     expect(dialog.get_by_role("button", name=folder).last).to_be_visible()
     automation_id = finish(page, dialog, prompt, title)
 

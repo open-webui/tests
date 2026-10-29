@@ -71,7 +71,7 @@ def header_menu(page: Page, chat_id: str) -> Locator:
     page.goto(f"/c/{chat_id}")
     page.get_by_label("Chat actions").click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Delete", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Delete", exact=True)).to_be_visible()
     return menu
 
 
@@ -114,8 +114,8 @@ def test_hidden_archive_takes_archive_and_unarchive_from_users_only(
     page = page_for(account)
 
     menu = header_menu(page, chat_id)
-    expect(menu.get_by_role("button", name="Unarchive")).to_have_count(0)
-    expect(menu.get_by_role("button", name="Archive", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Unarchive")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Archive", exact=True)).to_have_count(0)
     page.keyboard.press("Escape")
 
     page.get_by_role("button", name="Open Sidebar", exact=True).click()
@@ -137,7 +137,7 @@ def test_hidden_archive_takes_archive_and_unarchive_from_users_only(
 
     admin_chat = archived_chat(admin, f"Admin pier {uuid.uuid4().hex[:8]}")
     admin_menu = header_menu(page_for(admin), admin_chat)
-    expect(admin_menu.get_by_role("button", name="Unarchive")).to_be_visible()
+    expect(admin_menu.get_by_role("menuitem", name="Unarchive")).to_be_visible()
 
 
 def test_a_hidden_setting_keeps_the_value_the_user_saved(page_for, make_user, hide):

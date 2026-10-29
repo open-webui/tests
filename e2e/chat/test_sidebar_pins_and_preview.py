@@ -142,7 +142,7 @@ def _pin_from_notes_page(page: Page, title: str) -> None:
     page.goto("/notes")
     card = note_row(page, title)
     card.get_by_role("button", name="Note Menu").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Pin to Sidebar").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Pin to Sidebar").click()
 
 
 def _notes_section(sidebar: Locator) -> Locator:

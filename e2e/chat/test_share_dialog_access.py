@@ -69,7 +69,7 @@ def owner_page(public_sharing, page_for, make_user, upstream) -> Page:
 
 def share_dialog(page: Page) -> Locator:
     page.get_by_role("button", name="Chat actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Share").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Share").click()
     dialog = page.get_by_role("dialog").filter(has_text="Share Chat")
     expect(dialog).to_be_visible()
     return dialog

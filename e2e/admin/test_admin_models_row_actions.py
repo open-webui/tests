@@ -96,7 +96,7 @@ def _model_row(page: Page, name: str) -> Locator:
 
 def _more_menu_entry(page: Page, row: Locator, entry: str) -> Locator:
     tooltip_button(row, "More").click()
-    return page.get_by_role("menu").get_by_role("button", name=entry)
+    return page.get_by_role("menu").get_by_role("menuitem", name=entry)
 
 
 def _offered_to(page: Page, name: str) -> Locator:

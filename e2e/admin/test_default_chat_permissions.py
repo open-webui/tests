@@ -91,7 +91,7 @@ def reply_button(name: str) -> Callable[[Page], Locator]:
 def chat_menu_entry(name: str) -> Callable[[Page], Locator]:
     def locate(page: Page) -> Locator:
         page.get_by_role("button", name="Chat actions").first.click()
-        return page.get_by_role("menu").get_by_role("button", name=name, exact=True)
+        return page.get_by_role("menu").get_by_role("menuitem", name=name, exact=True)
 
     return locate
 
@@ -173,7 +173,7 @@ def folder_menu_entries(page: Page, name: str) -> Locator:
     folder_link(sidebar, name).focus()
     folder_row(sidebar, name).get_by_role("button").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Delete")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Delete")).to_be_visible()
     return menu
 
 
@@ -184,7 +184,7 @@ def archive_menu_entries(page: Page) -> Locator:
     settings.get_by_role("tab", name="Archived Chats").click()
     settings.locator("#tab-archived-chats").get_by_role("button", name="Actions").first.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Unarchive All")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Unarchive All")).to_be_visible()
     return menu
 
 
@@ -201,10 +201,10 @@ def test_folder_and_archive_export_follow_allow_chat_export(
     page = page_for(account)
     expected = 1 if allowed else 0
 
-    folder_export = folder_menu_entries(page, folder).get_by_role("button", name="Export")
+    folder_export = folder_menu_entries(page, folder).get_by_role("menuitem", name="Export")
     expect(folder_export, "a folder's Export entry").to_have_count(expected)
     page.keyboard.press("Escape")
-    archive_export = archive_menu_entries(page).get_by_role("button", name="Export")
+    archive_export = archive_menu_entries(page).get_by_role("menuitem", name="Export")
     expect(archive_export, "the Archived Chats Export entry").to_have_count(expected)
 
 

@@ -35,6 +35,7 @@ from harness import upstream as reply
 from harness.mcp_oauth import register_oauth_mcp, serving_protected_mcp
 from harness.mcp_server import TOOL_SERVERS
 from utils.chat_ui import expect_reply, integration_row, send
+from utils.menus import late_menu_entry
 from utils.tool_servers import (
     choose_auth,
     make_public,
@@ -154,7 +155,7 @@ def test_disconnecting_signs_out_and_the_next_use_signs_in_again(
     sign_in_from_the_tools_menu(page, mcp, server_id)
 
     menu = open_tools_menu(page)
-    integration_row(menu, server_id).get_by_role("button", name="Disconnect OAuth").click()
+    late_menu_entry(integration_row(menu, server_id), "Disconnect OAuth").click()
     expect(page.get_by_text("OAuth session disconnected")).to_be_visible()
     expect(menu.get_by_role("menuitem", name=server_id)).to_be_visible()
     page.keyboard.press("Escape")

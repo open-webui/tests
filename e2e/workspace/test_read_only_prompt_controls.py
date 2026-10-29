@@ -73,7 +73,7 @@ def test_a_read_only_prompt_shows_its_write_controls_as_unavailable(page_for, sh
     expect(row.get_by_role("switch")).to_be_disabled()
     _open_menu(page, row)
     for item in WRITE_ONLY_ITEMS:
-        expect(page.get_by_role("button", name=item, exact=True)).to_be_disabled()
+        expect(page.get_by_role("menuitem", name=item, exact=True)).to_be_disabled()
 
 
 # ---------------------------------------------------------------- nearby
@@ -84,7 +84,7 @@ def test_a_read_only_prompt_can_still_be_cloned(page_for, shared_prompt):
     page = page_for(reader)
     _open_menu(page, _prompt_row(page, name))
 
-    expect(page.get_by_role("button", name="Clone", exact=True)).to_be_enabled()
+    expect(page.get_by_role("menuitem", name="Clone", exact=True)).to_be_enabled()
 
 
 def test_a_writable_prompt_keeps_its_controls(page_for, shared_prompt):
@@ -95,4 +95,4 @@ def test_a_writable_prompt_keeps_its_controls(page_for, shared_prompt):
     expect(row.get_by_role("switch")).to_be_enabled()
     _open_menu(page, row)
     for item in WRITE_ONLY_ITEMS:
-        expect(page.get_by_role("button", name=item, exact=True)).to_be_enabled()
+        expect(page.get_by_role("menuitem", name=item, exact=True)).to_be_enabled()

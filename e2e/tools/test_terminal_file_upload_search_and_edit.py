@@ -45,7 +45,7 @@ def browser(page_for, make_user, admin, preserve, open_terminal):
 def test_a_chosen_file_is_uploaded_into_the_terminal(browser, open_terminal):
     browser.get_by_label("Actions", exact=True).click()
     with browser.page.expect_file_chooser() as chooser:
-        browser.page.get_by_role("button", name="Upload", exact=True).click()
+        browser.page.get_by_role("menuitem", name="Upload", exact=True).click()
     chooser.value.set_files(
         files=[{"name": "ledger-upload.txt", "mimeType": "text/plain", "buffer": b"two kegs\n"}]
     )

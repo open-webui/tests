@@ -240,7 +240,7 @@ def test_in_channel_reply_mode_the_model_answers_in_the_channel_for_everyone(
 def _attach(page: Page, name: str, text: str) -> None:
     page.get_by_role("button", name="More", exact=True).last.click()
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("button", name="Upload Files").click()
+        page.get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files({"name": name, "mimeType": "text/plain", "buffer": text.encode()})
     expect(page.locator("#message-input-container").get_by_text(name)).to_be_visible()
 

@@ -36,8 +36,9 @@ Since dev b34885efc a note keeps its files as blocks in its text and its pasted 
 as data URLs, where the tests now read them; an upload still in flight stays out of the saved
 note until it finishes. A file uploaded while a page other than the first is open is stored on
 that page and shows only there (a backend copy of dev 05e115366 whose live save stores every
-page's text on the first page turns that test red). The reader's chip test is red on dev
-b34885efc: the chip in the reader's read-only editor offers its remove button.
+page's text on the first page turns that test red). The reader's chip test was red on dev
+b34885efc (the chip in the reader's read-only editor offered its remove button) and passes on dev
+05e115366.
 """
 
 from __future__ import annotations
@@ -337,6 +338,8 @@ def test_a_file_still_uploading_when_the_note_saves_finishes_attaching(page_for,
     title = page.get_by_role("main").get_by_placeholder("Title")
     title.fill("Harbour pilots")
     title.press("Tab")
+    # the first Tab lands on Generate title, and the title saves once the focus moves on
+    page.keyboard.press("Tab")
     _wait_on_page(page, lambda: any("Harbour pilots" in frame for frame in note_echoes))
     assert any("Harbour pilots" in frame for frame in note_echoes), "the save was never echoed"
     for upload in held_uploads:

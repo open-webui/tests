@@ -39,7 +39,7 @@ def _function_menu(page: Page, function_id: str):
     card = item_row(page, function_id)
     card.get_by_role("button", name="Function Menu").first.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Edit")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Edit")).to_be_visible()
     return menu
 
 
@@ -52,4 +52,4 @@ def test_the_function_menu_offers_share_only_while_community_sharing_is_on(
     with installed_function(admin, FILTER) as function_id:
         menu = _function_menu(admin_page, function_id)
 
-        expect(menu.get_by_role("button", name="Share")).to_have_count(1 if enabled else 0)
+        expect(menu.get_by_role("menuitem", name="Share")).to_have_count(1 if enabled else 0)

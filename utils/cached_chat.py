@@ -24,6 +24,7 @@ from utils.chat_ui import (
     open_integrations_menu,
     send,
 )
+from utils.menus import late_menu_entry
 from utils.tooltips import tooltip_button
 
 CALL_NUMBERS = itertools.count(1)
@@ -43,7 +44,7 @@ def attach_from_menu(page: Page, submenu: str, name: str) -> None:
     if menu.get_by_role("menuitem", name=submenu).count() == 0:
         menu.get_by_role("menuitem").first.click()  # it reopens on the list last picked from
     menu.get_by_role("menuitem", name=submenu).click()
-    menu.get_by_role("button", name=name).first.click()
+    late_menu_entry(menu, name).first.click()
     expect(page.locator("form").get_by_text(name).first).to_be_visible()
 
 

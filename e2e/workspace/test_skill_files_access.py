@@ -163,8 +163,8 @@ def test_a_reader_reads_the_files_but_meets_a_read_only_editor(
 
     row = main.get_by_role("listitem").filter(has_text="checklist.md")
     row.get_by_role("button", name="More").first.click()
-    expect(page.get_by_role("button", name="Rename")).to_be_disabled()
-    expect(page.get_by_role("button", name="Delete")).to_be_disabled()
+    expect(page.get_by_role("menuitem", name="Rename")).to_be_disabled()
+    expect(page.get_by_role("menuitem", name="Delete")).to_be_disabled()
     page.keyboard.press("Escape")
 
     editor = main.get_by_role("textbox").filter(has_text=SECOND_CHECKLIST)
@@ -274,9 +274,9 @@ def test_export_entries_follow_the_skills_export_permission(
             page.get_by_placeholder("Search Skills").fill(skill["name"])
             expect(page.get_by_text(skill["name"])).to_be_visible()
             page.get_by_label("Skill Menu").click()
-            expect(page.get_by_role("button", name="Clone")).to_be_visible()
-            expect(page.get_by_role("button", name="Export ZIP")).to_have_count(expected)
-            expect(page.get_by_role("button", name="Export JSON")).to_have_count(expected)
+            expect(page.get_by_role("menuitem", name="Clone")).to_be_visible()
+            expect(page.get_by_role("menuitem", name="Export ZIP")).to_have_count(expected)
+            expect(page.get_by_role("menuitem", name="Export JSON")).to_have_count(expected)
         finally:
             with account.client() as client:
                 client.delete(f"/api/v1/skills/id/{skill['id']}/delete")

@@ -173,8 +173,8 @@ def listed_controls(page: Page) -> list[str]:
     """The control names the chat input's Model controls menu lists, each with its option."""
     page.get_by_label("Model controls").click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button").first).to_be_visible()
-    return [text.replace("\n", " ") for text in menu.get_by_role("button").all_inner_texts()]
+    expect(menu.get_by_role("menuitem").first).to_be_visible()
+    return [text.replace("\n", " ") for text in menu.get_by_role("menuitem").all_inner_texts()]
 
 
 def test_an_added_control_is_stored_as_entered_and_its_default_is_sent(

@@ -19,6 +19,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import ADMIN_CONFIG, enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input
+from utils.menus import late_menu_entry
 from utils.tooltips import tooltip_button
 from utils.user_menu import settings_item
 
@@ -48,7 +49,7 @@ def _set_status(page: Page, message: str) -> None:
     dialog.get_by_role("button").nth(1).click()
     page.get_by_placeholder("Search all emojis").click()
     page.keyboard.type("rocket")
-    page.get_by_role("button", name="1F680").click()
+    late_menu_entry(page, "1F680").click()
     dialog.get_by_placeholder("What's on your mind?").fill(message)
     dialog.get_by_role("button", name="Save").click()
     expect(page.get_by_text("Status updated successfully")).to_be_visible()

@@ -103,7 +103,7 @@ def manage_dialog(page: Page) -> Locator:
 def choose_manage(page: Page) -> Locator:
     """Opens the Manage dialog from the models page already showing, without a reload."""
     page.get_by_role("dialog").get_by_role("button", name="Actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Manage", exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Manage", exact=True).click()
     return page.get_by_role("dialog").filter(has_text="Manage Models")
 
 

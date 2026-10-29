@@ -147,8 +147,8 @@ def test_a_chat_moved_in_takes_the_prompt_and_dragged_out_loses_it(page_for, mak
     ask(page, upstream, "before the move?", "Still loose.")
 
     page.get_by_label("Chat actions").click()
-    page.get_by_role("menu").get_by_role("button", name="Move").hover()
-    page.get_by_role("menu").get_by_role("button", name="Harbour").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Move").hover()
+    page.get_by_role("menu").get_by_role("menuitem", name="Harbour").click()
     expect(page.get_by_text("Chat moved successfully")).to_be_visible()
     assert stored_folder_id(owner, chat_id) == folder_id
     ask(page, upstream, "after the move?", "Filed now.")

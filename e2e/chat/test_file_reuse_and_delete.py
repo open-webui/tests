@@ -25,6 +25,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from utils.cached_chat import attach, attach_from_menu
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -91,12 +92,12 @@ def test_attach_files_finds_a_file_by_part_of_its_name(page_for, make_user):
     upload(account, "ferry-plan.txt", "north pier at seven")
     page = page_for(account)
     menu = open_attach_files(page)
-    expect(menu.get_by_role("button", name="tide-table.txt")).to_be_visible()
+    expect(late_menu_entry(menu, "tide-table.txt")).to_be_visible()
 
     menu.get_by_placeholder("Search Files").fill("ferry")
 
-    expect(menu.get_by_role("button", name="tide-table.txt")).to_have_count(0)
-    expect(menu.get_by_role("button", name="ferry-plan.txt")).to_be_visible()
+    expect(late_menu_entry(menu, "tide-table.txt")).to_have_count(0)
+    expect(late_menu_entry(menu, "ferry-plan.txt")).to_be_visible()
     menu.get_by_placeholder("Search Files").fill("lighthouse")
     expect(menu.get_by_text("No files found")).to_be_visible()
 

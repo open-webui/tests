@@ -58,10 +58,10 @@ def test_an_archived_chat_is_offered_unarchive_and_is_unarchived(owner, page_for
     chat_id = _seed_chat(owner, archived=True)
     page = page_for(owner)
     menu = _open_header_menu(page, chat_id)
-    expect(menu.get_by_role("button", name="Unarchive")).to_be_visible()
-    expect(menu.get_by_role("button", name="Archive", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Unarchive")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Archive", exact=True)).to_have_count(0)
 
-    menu.get_by_role("button", name="Unarchive").click()
+    menu.get_by_role("menuitem", name="Unarchive").click()
 
     expect(page.get_by_text("Chat unarchived.")).to_be_visible()
     expect(page.get_by_text("Chat archived.")).to_have_count(0)
@@ -72,9 +72,9 @@ def test_a_normal_chat_keeps_archive_and_is_archived(owner, page_for):
     chat_id = _seed_chat(owner, archived=False)
     page = page_for(owner)
     menu = _open_header_menu(page, chat_id)
-    expect(menu.get_by_role("button", name="Unarchive")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Unarchive")).to_have_count(0)
 
-    menu.get_by_role("button", name="Archive", exact=True).click()
+    menu.get_by_role("menuitem", name="Archive", exact=True).click()
 
     expect(page.get_by_text("Chat archived.")).to_be_visible()
     assert _is_archived(owner, chat_id)

@@ -105,7 +105,7 @@ def _user_message(page: Page, text: str) -> Locator:
 
 def _share_dialog(page: Page) -> Locator:
     page.get_by_role("button", name="Chat actions").first.click()
-    page.get_by_role("menu").get_by_role("button", name="Share").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Share").click()
     return page.get_by_role("dialog").filter(has_text="Share Chat")
 
 
@@ -459,7 +459,7 @@ def _folder_menu(page: Page, name: str) -> Locator:
     row.hover()
     row.get_by_role("button").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu
 
 
@@ -467,12 +467,12 @@ def _folder_page_menu(page: Page, folder_id: str) -> Locator:
     page.goto(f"/folders/{folder_id}")
     page.get_by_label("Folder options").click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Export")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu
 
 
 def _folder_editor(page: Page, menu: Locator, name: str) -> Locator:
-    menu.get_by_role("button", name="Edit").click()
+    menu.get_by_role("menuitem", name="Edit").click()
     editor = page.get_by_role("dialog").filter(has_text="Edit Folder")
     # the folder loads after the dialog opens, and with it the Access button
     expect(editor.get_by_placeholder("Enter folder name")).to_have_value(name)

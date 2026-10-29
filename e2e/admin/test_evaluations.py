@@ -202,7 +202,7 @@ def test_an_admin_deletes_a_rating_from_the_feedback_tab(duel, admin, page_for):
     expect(_feedback_row(page, rater, first_id)).to_have_count(1)
 
     _feedback_row(page, rater, second_id).get_by_role("button", name="More").click()
-    page.get_by_role("button", name="Delete").click()
+    page.get_by_role("menuitem", name="Delete").click()
 
     expect(page.get_by_text("Feedback deleted successfully")).to_be_visible()
     expect(_feedback_row(page, rater, second_id)).to_have_count(0)
@@ -341,7 +341,7 @@ def test_a_leaderboard_row_shows_the_tags_its_ratings_were_given(duel, admin, pa
 def _export(page: Page, choice: str) -> str:
     page.get_by_role("button", name="Export", exact=True).first.click()
     with page.expect_download() as download:
-        page.get_by_role("button", name=choice).click()
+        page.get_by_role("menuitem", name=choice).click()
     with open(download.value.path(), encoding="utf-8") as saved:
         return saved.read()
 
