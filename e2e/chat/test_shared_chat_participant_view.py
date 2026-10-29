@@ -8,10 +8,13 @@ prompt with Edit (Send only, no Save in place) and Regenerate any reply, as 2a6e
 continues only their own replies and regenerates everyone's. Stop shows to the person whose reply
 is running.
 
-The Stop test is red on dev 226dca18c: while the owner's reply runs, the page of someone replying
-shows Stop as well (the composer counts any unfinished reply as theirs), and clicking it does
-nothing, since the page refuses to stop a reply it did not start. Present since the shared replies
-landed in de73bb830 (v0.12.0) (open-webui/open-webui#33343, fix PR #33344 open).
+The Stop test was red on dev 226dca18c: while the owner's reply ran, the page of someone replying
+showed Stop as well, and clicking it did nothing. Present since the shared replies landed in
+de73bb830 (v0.12.0), fixed by open-webui/open-webui#33344 (#33343).
+
+The owner's test is red on dev since 193cf225f (v0.12.5): a chat started from the home page stops
+syncing with the server, so the owner's page never learns the chat was shared with replies and
+offers no Regenerate on the member's reply (open-webui/open-webui#33376, fix PR #33377 open).
 
 Discriminates: the other four pass on dev 226dca18c. One frontend build of it with four edits
 fails each of them: the chat page ignoring typing events fails the typing test, every prompt

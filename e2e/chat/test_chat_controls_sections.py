@@ -6,6 +6,10 @@ and stays removed after a reload. The Default permissions an admin keeps under A
 Controls (Allow Chat Valves, Allow Chat System Prompt and Allow Chat Params) each take one section
 from a user's Controls when switched off, leaving the others, while an admin keeps all three.
 
+The tests that start their chat from the home page are red on dev since 193cf225f (v0.12.5): the
+new chat stops syncing with the server, so a removal under Files is never saved
+(open-webui/open-webui#33376, fix PR #33377 open).
+
 Discriminates: passes on dev ebc6add67. On a build whose Controls ignore the three permissions
 each "withdrawn" case fails; on one whose Files section keeps a removed file both removal tests
 fail; on one whose Controls never save the reload test fails; on one whose Controls show no
