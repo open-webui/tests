@@ -3,11 +3,13 @@
 Typing / lists the chat commands above the saved prompts. Fork copies the open conversation into
 a new chat that answers from it. `/model <id>` typed and sent switches the chat to that model, so
 the next message goes there, and an unknown id is refused and leaves the model alone. Model in the
-menu opens the model selector, Settings the settings dialog and Temporary turns a new chat
-temporary.
+menu opens the model selector, Settings the settings dialog, Compare text the compare view with an
+empty original once the typed `/compare` is taken out of the message, and Temporary turns a new
+chat temporary.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose / menu commands and typed /model
-do nothing every test fails.
+do nothing every test fails. The Compare text test passes on the dev 3b8205505 build and fails in
+a build of it whose / menu leaves out Compare text.
 """
 
 from __future__ import annotations
@@ -124,6 +126,17 @@ def test_settings_in_the_menu_opens_the_settings(page_for, make_user):
     menu.get_by_role("button", name=re.compile(r"^Settings")).click()
 
     expect(page.get_by_role("dialog").get_by_role("tab", name="General")).to_be_visible()
+
+
+def test_compare_text_in_the_menu_opens_the_compare_view(page_for, make_user):
+    page = page_for(make_user())
+    menu = _command_menu(page, "compare")
+    menu.get_by_role("button", name="Compare text").click()
+
+    compare = page.get_by_role("dialog", name="Compare text")
+    expect(compare.get_by_role("textbox", name="Original", exact=True)).to_have_text("")
+    expect(compare.get_by_role("button", name="Use in prompt")).to_be_visible()
+    expect(chat_input(page)).to_have_text("")
 
 
 def test_temporary_in_the_menu_turns_the_new_chat_temporary(page_for, make_user, upstream):

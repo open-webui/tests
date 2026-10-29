@@ -8,13 +8,17 @@ change, which the server keeps as a new version with that message. A picture add
 Upload is saved with its bytes and shown as a picture. In SKILL.md's preview a link to another
 file of the skill opens that file. When the skill was saved in another tab meanwhile, Save warns
 that a newer version exists and keeps the draft, and Reload latest shows the other tab's work.
+A revision written in a file's Compare revision view and applied to the draft is what Save stores
+for that file, and the file's Copy puts the open file on the clipboard.
 
 Discriminates: passes on the dev 178de3666 build. In a frontend copy, an editor that sends only
 SKILL.md on create turns the create test red; one whose save keeps a renamed file under its old
 name as well, or one that does not send deletions, turns the rename and delete test red; an upload
 sent as text turns the upload test red; a preview that leaves relative links alone turns the
 preview test red; and an editor that does not show a version conflict turns the conflict test
-red.
+red. The compare and copy tests pass on the dev 3b8205505 build; a build of it whose Apply to draft
+keeps the original turns the compare test red, and one whose Copy copies the file's saved content
+turns the copy test red.
 """
 
 from __future__ import annotations
@@ -183,3 +187,45 @@ def test_a_save_after_another_tab_saved_keeps_the_draft_and_offers_the_latest(pa
     open_row(page, "tables.md")
     expect(code_editor(page)).to_contain_text("From the other tab.")
     assert current(owner, skill["id"])["version_id"] == other.json()["version_id"]
+
+
+def _open_tables(page: Page, skill: dict) -> None:
+    _open_skill(page, skill["id"])
+    open_row(page, "references")
+    open_row(page, "tables.md")
+    expect(page.get_by_title("references/tables.md", exact=True)).to_be_visible()
+    expect(code_editor(page)).to_contain_text("High water at noon.")
+
+
+def test_a_revision_applied_from_compare_revision_is_saved_in_the_file(page_for, owner):
+    skill = _tide_skill(owner)
+    page = page_for(owner)
+    _open_tables(page, skill)
+
+    page.get_by_role("main").get_by_role("button", name="Compare revision").click()
+    compare = page.get_by_role("dialog", name="Compare revision")
+    expect(compare.get_by_role("textbox", name="Original")).to_have_text("High water at noon.")
+    compare.get_by_role("textbox", name="Proposed revision").click()
+    page.keyboard.insert_text("High water at two.\n")
+    compare.get_by_role("button", name="Apply to draft").click()
+
+    expect(compare).to_have_count(0)
+    expect(code_editor(page)).to_contain_text("High water at two.")
+    _save(page)
+    expect(page.get_by_text("Skill updated successfully")).to_be_visible()
+    assert read(owner, skill["id"], "references/tables.md") == b"High water at two.\n"
+    assert b"Read [the tables]" in read(owner, skill["id"], "SKILL.md")
+
+
+def test_copy_puts_the_open_file_on_the_clipboard(page_for, owner):
+    skill = _tide_skill(owner)
+    page = page_for(owner)
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    _open_tables(page, skill)
+    replace_text(page, "High water at three.\n")
+
+    page.get_by_role("main").get_by_role("button", name="Copy content").click()
+
+    expect(page.get_by_text("Copied to clipboard")).to_be_visible()
+    copied = page.evaluate("() => navigator.clipboard.readText()")
+    assert copied == "High water at three.\n", f"Copy put {copied!r} on the clipboard"

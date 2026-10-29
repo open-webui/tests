@@ -8,8 +8,10 @@ side, and Close returns to the old text. The Unified layout shows those lines in
 kept for the next comparison; a version that differs only in its line endings says so. Edit as new
 version makes the old text editable and saves it as a further version that is not production,
 leaving what the chat inserts unchanged. Switching versions with unsaved typing asks whether to
-discard it first, and so does leaving the editor. Ctrl+S saves the text. A user the prompt is
-shared with read only can pick and compare its versions but is offered no way to change them.
+discard it first, and so does leaving the editor. Ctrl+S saves the text. A revision written in
+the text's Compare revision view and applied to the draft is the text Save stores. A user the
+prompt is shared with read only can pick and compare its versions but is offered no way to change
+them.
 
 Discriminates: passes on dev b130fec73. In a frontend build where an old version's text box takes
 typing the read-only test goes red; where the comparison leaves out the prompt text the comparison
@@ -20,7 +22,9 @@ where an old version offers its write buttons whatever the access the reader tes
 the chosen layout is not remembered the layout test goes red; and where a change of line endings
 alone counts as no change the line endings test goes red. Retargeted for 6a7678ac7, which named the
 version picker History and the live version Live: the tests pass on dev 206bf9723, and a frontend
-build whose version switch keeps the current text turns the read-only test red.
+build whose version switch keeps the current text turns the read-only test red. The Compare
+revision test passes on the dev 3b8205505 build and fails in a build of it whose Apply to draft
+keeps the original text.
 """
 
 from __future__ import annotations
@@ -208,6 +212,26 @@ def test_ctrl_s_saves_the_prompt_text(page_for, writer):
     expect(page.get_by_text("Prompt updated successfully")).to_be_visible()
     stored = _get(writer, f"/api/v1/prompts/id/{first['id']}")
     assert stored["content"] == "Summarise this in one word."
+
+
+def test_a_revision_applied_from_compare_revision_is_the_saved_text(page_for, writer):
+    first, _ = _edited_once(writer)
+    page = page_for(writer)
+    _open(page, first["id"], ONE_LINE)
+    revised = "Summarise this in one plain sentence."
+
+    page.get_by_role("button", name="Compare revision").click()
+    compare = page.get_by_role("dialog", name="Compare revision")
+    expect(compare.get_by_role("textbox", name="Original")).to_have_text(ONE_LINE)
+    compare.get_by_role("textbox", name="Proposed revision").click()
+    page.keyboard.insert_text(revised)
+    compare.get_by_role("button", name="Apply to draft").click()
+
+    expect(compare).to_have_count(0)
+    expect(_content(page)).to_have_value(revised)
+    page.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("Prompt updated successfully")).to_be_visible()
+    assert _get(writer, f"/api/v1/prompts/id/{first['id']}")["content"] == revised
 
 
 def test_leaving_the_editor_with_unsaved_typing_asks_first(page_for, writer):
