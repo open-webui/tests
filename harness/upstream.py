@@ -7,6 +7,8 @@ provider drops halfway) that the next chat
 completions consume in order; a reply with `match` only answers a request it accepts, so a title
 or follow-up task cannot eat the reply meant for the chat.
 `requests` holds what Open WebUI actually sent, which is how a test sees the payload it built.
+`model_details` adds fields to a model's `/models` entry (context length, modalities), as a
+provider that reports them does.
 Every chat completion waits `REPLY_START_DELAY` before its reply starts, as a real provider does.
 """
 
@@ -104,6 +106,7 @@ class MockUpstream:
     requests: list[UpstreamRequest] = field(default_factory=list)
     replies: deque[Reply] = field(default_factory=deque)
     models: list[str] = field(default_factory=lambda: [MOCK_MODEL_ID])
+    model_details: dict[str, dict] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def reset(self, mode: str = "ok", **options) -> None:
@@ -112,6 +115,7 @@ class MockUpstream:
             self.replies.clear()
             self.requests.clear()
             self.models = [MOCK_MODEL_ID]
+            self.model_details = {}
 
     def queue(self, *replies: Reply) -> None:
         with self.lock:
@@ -183,7 +187,10 @@ def _handler(upstream: MockUpstream):
         def do_GET(self) -> None:
             self._record(None)
             if self.path.endswith("/models"):
-                data = [{"id": model_id, "object": "model"} for model_id in upstream.models]
+                data = [
+                    {"id": model_id, "object": "model", **upstream.model_details.get(model_id, {})}
+                    for model_id in upstream.models
+                ]
                 self._send_json(200, {"object": "list", "data": data})
             else:
                 self._send_json(404, {"error": "not found"})
