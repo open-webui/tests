@@ -6,8 +6,10 @@ view filter lists only the matching models: Hidden shows the hidden one, Visible
 Workspace Models the presets without the base models. The list opens on Available (461cc7aff):
 the models a connection offers and the presets, while settings saved for a model no connection
 offers any more wait under Unavailable. Make Public on a private model brings it back to the
-users' selector. Export in a row's More menu downloads that one model, not the list. Each test
-works as a fresh admin on presets of its own.
+users' selector. Export in a row's More menu downloads that one model, not the list. Reset in
+the More menu of a model a connection offers deletes the settings saved for it, and the model
+stays listed under Available with its own name back; Delete on a leftover model under Unavailable
+removes its settings and its row there. Each test works as a fresh admin on presets of its own.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, the clone entry opening the editor
 under the original name turns the clone test red, the Hidden and Workspace Models views listing
@@ -15,6 +17,8 @@ every model turn the filter test red, Make Public saving the grants it had turns
 red (users still do not see the model) and Export saving an empty list turns the export test red.
 With 461cc7aff reverted in a frontend build (the list opens on All, with no Available or
 Unavailable view) the Available test and the view filter test are red, the other three pass.
+On dev 3b8205505, in a frontend copy, a Reset that keeps the saved settings turns the reset test
+red, and a Delete that leaves the list as it was turns the leftover model test red.
 """
 
 from __future__ import annotations
@@ -168,6 +172,81 @@ def test_the_list_opens_on_available_models_and_keeps_unavailable_ones_apart(adm
     _choose_view(admin_page, "Unavailable", "All")
     expect(rows.filter(has_text=retired["name"])).to_have_count(1)
     expect(rows.filter(has_text=preset["name"])).to_have_count(1)
+
+
+@pytest.fixture
+def served_model(upstream, admin):
+    """A model the scripted provider serves, with settings saved for it under another name."""
+    suffix = uuid.uuid4().hex[:8]
+    model_id = f"lagoon-{suffix}"
+    upstream.models.append(model_id)
+    with admin.client() as client:
+        client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+        form = {
+            "id": model_id,
+            "name": f"Lagoon {suffix}",
+            "base_model_id": None,
+            "meta": {"description": "tuned for the harbour"},
+            "params": {"temperature": 0.2},
+            "access_grants": [EVERYONE_READS],
+        }
+        created = client.post("/api/v1/models/create", json=form)
+        assert created.status_code == 200, created.text
+        yield form
+        client.post("/api/v1/models/model/delete", json={"id": model_id})
+    upstream.models.remove(model_id)
+
+
+def _saved_settings_status(admin, model_id: str) -> int:
+    with admin.client() as client:
+        return client.get("/api/v1/models/model", params={"id": model_id}).status_code
+
+
+def _confirm(page: Page, action: str) -> None:
+    page.get_by_role("dialog", name=action, exact=True).get_by_role("button", name=action).click()
+
+
+def _settings(page: Page) -> Locator:
+    # a confirmation is a dialog too, so pick the one holding the model list
+    return page.get_by_role("dialog").filter(has=page.locator("#model-list"))
+
+
+def test_reset_on_an_available_base_model_clears_its_settings_and_keeps_it_listed(
+    admin_page, admin, served_model
+):
+    row = _model_row(admin_page, served_model["name"])
+
+    _more_menu_entry(admin_page, row, "Reset").click()
+    _confirm(admin_page, "Reset")
+
+    expect(admin_page.get_by_text("Model reset successfully")).to_be_visible()
+    assert _saved_settings_status(admin, served_model["id"]) == 404, "the settings are still saved"
+    settings = _settings(admin_page)
+    rows = settings.locator("#model-list > div")
+    settings.get_by_role("textbox", name="Search Models").fill(served_model["id"])
+    expect(settings.get_by_role("button", name="Available", exact=True)).to_be_visible()
+    expect(rows.filter(has_text=served_model["id"])).to_have_count(1)
+    expect(rows.filter(has_text=served_model["name"])).to_have_count(0)
+
+
+def test_delete_on_an_unavailable_model_removes_it_from_unavailable(admin_page, admin, presets):
+    retired = presets("Retired", base_model_id=None)
+    kept = presets("Shelved", base_model_id=None)
+    admin_page.goto("/admin/settings/models")
+    settings = _settings(admin_page)
+    rows = settings.locator("#model-list > div")
+    _choose_view(admin_page, "Available", "Unavailable")
+    row = rows.filter(has_text=retired["name"])
+    expect(row).to_have_count(1)
+
+    _more_menu_entry(admin_page, row, "Delete").click()
+    _confirm(admin_page, "Delete")
+
+    expect(admin_page.get_by_text(f"Deleted {retired['name']}")).to_be_visible()
+    assert _saved_settings_status(admin, retired["id"]) == 404, "the leftover settings are kept"
+    expect(settings.get_by_role("button", name="Unavailable", exact=True)).to_be_visible()
+    expect(rows.filter(has_text=kept["name"])).to_have_count(1)
+    expect(rows.filter(has_text=retired["name"])).to_have_count(0)
 
 
 def test_a_private_model_made_public_is_offered_to_users_again(
