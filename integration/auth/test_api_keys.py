@@ -11,13 +11,23 @@ else, and a key sent in the `x-api-key` header (for a proxy that keeps `Authoriz
 itself) acts as its owner under the same restrictions. A key acts on the account's status route:
 since 24e30d1cb the session route `/api/v1/auths/` answers a signed-in session only.
 
+Since 360d81dfe and fdaa240d4 (v0.12.5) an admin rotates or deletes an account's key from the
+Edit User dialog. A rotation hands back a new working key once, uncached, and ends the old one; it
+is refused while API keys are off or the account lacks the permission (admins exempt) and stores
+nothing then. Deleting works even with API keys off. Only the first admin manages the first
+admin's key, and an unknown account is not found.
+
 Discriminates: fails with the endpoint-restriction check in `get_current_user_by_api_key`
 removed (the key reaches a path outside the allowed list); matching an entry as a plain string
 prefix fails the segment test, and dropping the custom header from the ASGI middleware fails the
-`x-api-key` test.
+`x-api-key` test. In a backend copy on dev 05e115366, dropping the `no-store` header, the
+first-user guard, the switch and permission gate on rotation or the unknown-user check each turns
+its admin test red, as does gating the admin delete on the API keys switch.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import httpx
 import openai
@@ -212,3 +222,106 @@ def test_a_key_in_the_x_api_key_header_acts_as_its_owner_under_the_restrictions(
     assert own_account.json()["id"] == account.id
     assert allowed.status_code == 200, allowed.text
     assert outside.status_code == 403, outside.text
+
+
+def rotate_for(admin, account_id: str) -> httpx.Response:
+    with admin.client() as client:
+        return client.post(f"/api/v1/users/{account_id}/api_key/rotate")
+
+
+def delete_for(admin, account_id: str) -> httpx.Response:
+    with admin.client() as client:
+        return client.delete(f"/api/v1/users/{account_id}/api_key")
+
+
+def own_key_status(account) -> int:
+    with account.client() as client:
+        return client.get("/api/v1/auths/api_key").status_code
+
+
+def test_an_admin_rotates_an_accounts_key_and_only_the_new_one_works(
+    instance, admin, make_user, api_keys_on
+):
+    account = make_user()
+    old_key = generate_key(account)
+
+    rotated = rotate_for(admin, account.id)
+
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.headers.get("cache-control") == "no-store", rotated.headers
+    new_key = rotated.json()["api_key"]
+    assert new_key.startswith("sk-") and new_key != old_key
+    with instance.client(new_key) as client:
+        session = client.get(OWN_ACCOUNT)
+    assert session.status_code == 200, session.text
+    assert session.json()["id"] == account.id
+    assert status_with_key(instance, old_key) == 401
+    with account.client() as client:
+        assert client.get("/api/v1/auths/api_key").json()["api_key"] == new_key
+    with admin.client() as client:
+        listed = client.get(f"/api/v1/users/{account.id}")
+    assert listed.status_code == 200, listed.text
+    assert new_key not in listed.text, "the account's record shows the admin its key"
+
+
+def test_an_admin_deletes_an_accounts_key_even_with_api_keys_switched_off(
+    instance, admin, make_user, api_keys_on
+):
+    account = make_user()
+    api_key = generate_key(account)
+    save_admin_config(admin, ENABLE_API_KEYS=False)
+
+    deleted = delete_for(admin, account.id)
+
+    assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+    # with keys back on, a key that survived would answer 200 again
+    save_admin_config(admin, ENABLE_API_KEYS=True)
+    assert own_key_status(account) == 404
+    assert status_with_key(instance, api_key) == 401
+
+
+def test_an_admin_cannot_rotate_a_key_the_account_could_not_generate(admin, make_user, api_keys_on):
+    account, other_admin = make_user(), make_user(role="admin")
+
+    allow_api_keys_for_users(admin, False)
+    refused_without_permission = rotate_for(admin, account.id)
+    allowed_for_an_admin = rotate_for(admin, other_admin.id)
+    save_admin_config(admin, ENABLE_API_KEYS=False)
+    refused_while_off = rotate_for(admin, other_admin.id)
+    # the account reads its own key only with keys on and the permission granted
+    save_admin_config(admin, ENABLE_API_KEYS=True)
+    allow_api_keys_for_users(admin, True)
+
+    assert refused_without_permission.status_code == 403, refused_without_permission.text
+    assert "api_key" not in refused_without_permission.json()
+    assert own_key_status(account) == 404, "a refused rotation still stored a key"
+    assert allowed_for_an_admin.status_code == 200, allowed_for_an_admin.text
+    assert refused_while_off.status_code == 403, refused_while_off.text
+    with other_admin.client() as client:
+        stored = client.get("/api/v1/auths/api_key").json()["api_key"]
+    assert stored == allowed_for_an_admin.json()["api_key"], "a refused rotation replaced the key"
+
+
+def test_only_the_first_admin_manages_the_first_admins_key(instance, admin, make_user, api_keys_on):
+    other_admin = make_user(role="admin")
+
+    own_rotation = rotate_for(admin, admin.id)
+    rotated_by_another = rotate_for(other_admin, admin.id)
+    deleted_by_another = delete_for(other_admin, admin.id)
+    first_admin_key_status = status_with_key(instance, own_rotation.json().get("api_key", ""))
+    own_deletion = delete_for(admin, admin.id)
+
+    assert own_rotation.status_code == 200, own_rotation.text
+    assert rotated_by_another.status_code == 403, rotated_by_another.text
+    assert "api_key" not in rotated_by_another.json()
+    assert deleted_by_another.status_code == 403, deleted_by_another.text
+    assert first_admin_key_status == 200, "another admin replaced or revoked the first admin's key"
+    assert own_deletion.status_code == 200 and own_deletion.json() is True, own_deletion.text
+    assert own_key_status(admin) == 404
+
+
+def test_rotating_or_deleting_the_key_of_an_unknown_account_is_not_found(admin, api_keys_on):
+    unknown = f"no-such-user-{uuid.uuid4().hex}"
+
+    assert rotate_for(admin, unknown).status_code == 404
+    assert delete_for(admin, unknown).status_code == 404
