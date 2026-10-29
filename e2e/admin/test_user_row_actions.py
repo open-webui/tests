@@ -6,14 +6,16 @@ shared with a group show for a member and not for an account outside the group. 
 opens the edit dialog, and setting the role to Pending there sends that account to the "Account
 Activation Pending" screen on its next load. The Chats button lists the account's chats by title,
 its search narrows them, and a chat opened from it shows the conversation to the admin. A group
-named in the edit dialog links to that group's editor. Each test works as a fresh admin on
-accounts of its own.
+named in the edit dialog links to that group's editor. Rotating the account's API key in the edit
+dialog (360d81dfe, fdaa240d4) shows the new working key until the dialog closes, and deleting it
+there clears the shown key and revokes it. Each test works as a fresh admin on accounts of its own.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, the preview modal dropping the groups
 and models it loaded turns both preview tests red, the edit dialog saving the stored role turns the
 pending test red (the account stays in the chat), the chats modal sending no search query and
 linking every chat to the home page turns the chats tests red, and the group names in the edit
-dialog being plain text turns the group link test red.
+dialog being plain text turns the group link test red. On dev 05e115366, a frontend copy keeping
+the rotated key across closing the dialog and after a delete turns both API key tests red.
 """
 
 from __future__ import annotations
@@ -246,3 +248,86 @@ def test_a_group_in_the_edit_dialog_links_to_that_groups_editor(admin_page, crew
 
     expect(admin_page).to_have_url(re.compile(rf"/admin/users/groups\?id={group_id}"))
     expect(admin_page.get_by_role("dialog").filter(has_text="Edit User Group")).to_be_visible()
+
+
+@pytest.fixture
+def api_keys_on(admin, preserve):
+    preserve("admin_config", "permissions")
+    with admin.client() as client:
+        config = client.get("/api/v1/auths/admin/config").json()
+        saved = client.post("/api/v1/auths/admin/config", json={**config, "ENABLE_API_KEYS": True})
+        assert saved.status_code == 200, saved.text
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["features"]["api_keys"] = True
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+
+
+def _edit_user(page: Page, account: Actor, row: Locator | None = None) -> Locator:
+    row = row or _user_row(page, account)
+    with page.expect_response(lambda response: response.url.endswith(f"/{account.id}/groups")):
+        row.get_by_role("button", name="Edit User").click()
+    editing = page.get_by_role("dialog").filter(has_text="Edit User")
+    expect(editing.get_by_role("combobox", name="Role")).to_be_visible()
+    return editing
+
+
+def _rotate_in_dialog(page: Page, editing: Locator) -> str:
+    editing.get_by_role("button", name="Rotate", exact=True).click()
+    confirm = page.get_by_role("dialog", name="Rotate API Key?")
+    with page.expect_response(lambda response: response.url.endswith("/api_key/rotate")) as rotated:
+        confirm.get_by_role("button", name="Rotate", exact=True).click()
+    assert rotated.value.status == 200, rotated.value.text()
+    return rotated.value.json()["api_key"]
+
+
+def _stored_key_status(account: Actor) -> int:
+    with account.client() as client:
+        return client.get("/api/v1/auths/api_key").status_code
+
+
+def test_rotating_a_key_in_edit_user_shows_the_new_key_once(
+    admin_page, make_user, instance, api_keys_on
+):
+    account = make_user()
+    row = _user_row(admin_page, account)
+    editing = _edit_user(admin_page, account, row)
+
+    api_key = _rotate_in_dialog(admin_page, editing)
+
+    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_value(api_key)
+    expect(editing.get_by_role("button", name="Copy API Key")).to_be_visible()
+    with instance.client(api_key) as client:
+        signed_in = client.get("/api/v1/users/user/status")
+    assert signed_in.status_code == 200 and signed_in.json()["id"] == account.id, signed_in.text
+
+    editing.get_by_role("button", name="Close").click()
+    expect(editing).to_be_hidden()
+    # reopened from the same row, without a reload that would reset the page
+    reopened = _edit_user(admin_page, account, row)
+    expect(reopened.get_by_role("button", name="Rotate", exact=True)).to_be_visible()
+    expect(reopened.get_by_role("button", name="Copy API Key")).to_have_count(0)
+    expect(reopened.get_by_role("textbox", name="Password", exact=True)).to_have_count(0)
+
+
+def test_deleting_a_key_in_edit_user_clears_it_and_revokes_it(
+    admin_page, make_user, instance, api_keys_on
+):
+    account = make_user()
+    editing = _edit_user(admin_page, account)
+    api_key = _rotate_in_dialog(admin_page, editing)
+    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_value(api_key)
+
+    editing.get_by_role("button", name="Delete", exact=True).click()
+    confirm = admin_page.get_by_role("dialog", name="Delete API Key?")
+    with admin_page.expect_response(
+        lambda response: response.request.method == "DELETE" and response.url.endswith("/api_key")
+    ) as deleted:
+        confirm.get_by_role("button", name="Delete", exact=True).click()
+
+    assert deleted.value.status == 200, deleted.value.text()
+    expect(editing.get_by_role("button", name="Copy API Key")).to_have_count(0)
+    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_count(0)
+    assert _stored_key_status(account) == 404, "the account still holds a key"
+    with instance.client(api_key) as client:
+        assert client.get("/api/v1/users/user/status").status_code == 401
