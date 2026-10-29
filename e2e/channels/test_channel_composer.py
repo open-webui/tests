@@ -16,6 +16,13 @@ could open until dev 8a4547104 (open-webui/open-webui#31587). The mention toast 
 mention markup until PR #31601 (open-webui/open-webui#31586). After a pick the input takes focus
 back one animation frame later, so the tests wait for that before typing on.
 
+A message typed while an earlier one is still sending waits in the same queue, shown above the
+input, and the queue posts in the order typed once the earlier one is done. Before it posts, a
+queued message can be removed, or taken back into the input with Edit and sent again at the end of
+the queue. "Send now" posts a queued message ahead of one that still waits for its upload. A
+thread has a queue of its own: replies typed there while one still sends post into the thread in
+order and nothing lands in the channel's queue.
+
 A prompt picked from the "/" menu puts the prompt's text into the input, and that text is what
 posts; it put a command chip there that posted as mention markup until
 open-webui/open-webui#32713 (fix 1d0b78271).
@@ -37,6 +44,10 @@ On dev 226dca18c (frontend built from 948432b43, the same channel input), in a f
 sending without resolving typed names turns the typed model, typed channel and shared name tests
 red, a posted mention that no longer reads as one when copied turns the paste test red, and
 resolving a shared name to its first match turns the shared name test red alone.
+On dev 3b8205505, in a frontend copy, a queue that takes new messages in front turns all four
+queue tests red; in another copy, Send now that sends the first message in place of the chosen one
+turns the send now test red alone, and a Delete on a queued message that does nothing turns the
+edit test red alone.
 """
 
 from __future__ import annotations
@@ -54,6 +65,7 @@ from harness.channel_chat import enable_channels as enable_channels_with_reply_m
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input
+from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -292,6 +304,187 @@ def test_a_message_sent_while_its_file_uploads_waits_and_posts_with_the_file(peo
     on_member = _message(member_page, "tide table attached")
     expect(on_member.get_by_text("tide-table.txt")).to_be_visible()
     assert _attached_content(member, channel_id) == ["low tide at six"]
+
+
+class _HeldPosts:
+    """Holds every message post of a page until `release`, so the first one stays sending."""
+
+    def __init__(self, page: Page):
+        self.page = page
+        self.held = []
+        self.holding = True
+        page.route("**/api/v1/channels/*/messages/post", self._handle)
+
+    def _handle(self, route) -> None:
+        if self.holding:
+            self.held.append(route)
+        else:
+            route.continue_()
+
+    def send_first(self, form: Locator, text: str) -> None:
+        with self.page.expect_request(lambda request: request.url.endswith("/messages/post")):
+            _type_and_send(form, text)
+
+    def release(self) -> None:
+        """Lets every post through; the page must then be waited on, which runs the route."""
+        self.holding = False
+        for route in self.held:
+            route.continue_()
+
+
+def _form(page: Page, in_thread: bool = False) -> Locator:
+    """The channel's input form, or the open thread's, with its queue above the input."""
+    thread_input = page.get_by_label("Reply to thread...")
+    forms = page.locator("form").filter(has=page.locator("#chat-input"))
+    return forms.filter(has=thread_input) if in_thread else forms.filter(has_not=thread_input)
+
+
+def _type_and_send(form: Locator, text: str) -> None:
+    form.locator("#chat-input").click()
+    form.page.keyboard.type(text)
+    form.page.keyboard.press("Enter")
+
+
+def _queued(form: Locator, text: str) -> Locator:
+    """The queue row showing `text`: the innermost box holding the text and the row's buttons."""
+    page = form.page
+    return (
+        form.locator("div")
+        .filter(has=page.get_by_text(text, exact=True))
+        .filter(has=page.get_by_role("button", name="Delete"))
+        .last
+    )
+
+
+def _queue_rows(form: Locator) -> Locator:
+    # every queue row has one Delete button and nothing else in the form does
+    return form.get_by_role("button", name="Delete")
+
+
+def _stored_in_order(account, path: str, texts: list[str]) -> list[str]:
+    """The contents at `path` once every text in `texts` is stored, oldest first."""
+    deadline = time.monotonic() + 20
+    with account.client() as client:
+        while True:
+            listed = client.get(path)
+            listed.raise_for_status()
+            messages = sorted(listed.json(), key=lambda message: message["created_at"])
+            contents = [message["content"] for message in messages]
+            if all(text in contents for text in texts):
+                return contents
+            assert time.monotonic() < deadline, f"not all of {texts} were stored: {contents}"
+            time.sleep(0.2)
+
+
+def test_messages_typed_while_one_is_still_sending_wait_in_the_queue_and_post_in_order(
+    people, page_for
+):
+    sender, _, channel_id = people
+    page = _open_channel(page_for, sender, channel_id)
+    form = _form(page)
+    posts = _HeldPosts(page)
+
+    posts.send_first(form, "first, the anchor")
+    _type_and_send(form, "second, the oars")
+    _type_and_send(form, "third, the life vests")
+
+    expect(_queue_rows(form)).to_have_count(2)
+    for text in ("second, the oars", "third, the life vests"):
+        expect(_queued(form, text).get_by_role("button", name="Send now")).to_be_visible()
+    assert _stored(sender, channel_id) == [], "a message was posted while the first still sent"
+    posts.release()
+
+    expect(_queue_rows(form)).to_have_count(0)
+    texts = ["first, the anchor", "second, the oars", "third, the life vests"]
+    stored = _stored_in_order(sender, f"/api/v1/channels/{channel_id}/messages", texts)
+    assert stored == texts, f"the queued messages did not post in the order typed: {stored}"
+    for text in texts:
+        expect(_message(page, text)).to_be_visible()
+
+
+def test_a_queued_message_can_be_edited_or_removed_before_it_posts(people, page_for):
+    sender, _, channel_id = people
+    page = _open_channel(page_for, sender, channel_id)
+    form = _form(page)
+    posts = _HeldPosts(page)
+    posts.send_first(form, "first, the anchor")
+    for text in ("second, the oars", "third, the life vests", "fourth, the bailer"):
+        _type_and_send(form, text)
+    expect(_queue_rows(form)).to_have_count(3)
+
+    _queued(form, "third, the life vests").get_by_role("button", name="Delete").click()
+    expect(_queue_rows(form)).to_have_count(2)
+    expect(form.get_by_text("third, the life vests", exact=True)).to_have_count(0)
+
+    _queued(form, "second, the oars").get_by_role("button", name="Edit").click()
+    expect(form.locator("#chat-input")).to_have_text("second, the oars")
+    expect(_queue_rows(form)).to_have_count(1)
+    page.keyboard.press("End")
+    page.keyboard.type(" and the rudder")
+    page.keyboard.press("Enter")
+    expect(_queued(form, "second, the oars and the rudder")).to_be_visible()
+    posts.release()
+
+    expect(_queue_rows(form)).to_have_count(0)
+    texts = ["first, the anchor", "fourth, the bailer", "second, the oars and the rudder"]
+    stored = _stored_in_order(sender, f"/api/v1/channels/{channel_id}/messages", texts)
+    assert stored == texts, f"expected the removed one gone and the edited one last: {stored}"
+
+
+def test_send_now_posts_a_queued_message_ahead_of_one_waiting_for_its_upload(people, page_for):
+    sender, _, channel_id = people
+    page = _open_channel(page_for, sender, channel_id)
+    form = _form(page)
+    held_uploads = []
+    page.route("**/api/v1/files/?*", lambda route: held_uploads.append(route))
+    _attach(page, "tide-table.txt", "low tide at six")
+    _type_and_send(form, "tide table attached")
+    expect(_queued(form, "tide table attached")).to_be_visible()
+    _type_and_send(form, "leaving at seven")
+
+    waiting = _queued(form, "leaving at seven").get_by_role("button", name="Send now")
+    expect(waiting).to_be_enabled()
+    waiting.click()
+
+    expect(_queue_rows(form)).to_have_count(1)
+    expect(form.get_by_role("button", name="Waiting for upload")).to_be_visible()
+    path = f"/api/v1/channels/{channel_id}/messages"
+    assert _stored_in_order(sender, path, ["leaving at seven"]) == ["leaving at seven"]
+    for upload in held_uploads:
+        upload.continue_()
+
+    expect(_queue_rows(form)).to_have_count(0)
+    stored = _stored_in_order(sender, path, ["leaving at seven", "tide table attached"])
+    assert stored == ["leaving at seven", "tide table attached"], stored
+
+
+def test_replies_typed_in_a_thread_while_one_still_sends_queue_in_the_thread(people, page_for):
+    sender, _, channel_id = people
+    parent_id = post_message(sender, channel_id, "who brings what on saturday?")
+    page = _open_channel(page_for, sender, channel_id)
+    parent = page.locator(f"[id='message-{parent_id}']").first
+    parent.hover()
+    tooltip_button(parent, "Reply in Thread").click()
+    thread = _form(page, in_thread=True)
+    expect(thread).to_be_visible()
+    posts = _HeldPosts(page)
+
+    posts.send_first(thread, "the tent")
+    _type_and_send(thread, "the stove")
+    _type_and_send(thread, "the lantern")
+
+    expect(_queue_rows(thread)).to_have_count(2)
+    expect(_queued(thread, "the stove")).to_be_visible()
+    expect(_queue_rows(_form(page))).to_have_count(0)
+    posts.release()
+
+    expect(_queue_rows(thread)).to_have_count(0)
+    texts = ["the tent", "the stove", "the lantern"]
+    path = f"/api/v1/channels/{channel_id}/messages/{parent_id}/thread"
+    stored = _stored_in_order(sender, path, texts)
+    assert [text for text in stored if text in texts] == texts, stored
+    top_level = [message["content"] for message in _stored(sender, channel_id)]
+    assert top_level == ["who brings what on saturday?"], top_level
 
 
 def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
