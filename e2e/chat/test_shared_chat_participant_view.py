@@ -11,7 +11,7 @@ is running.
 The Stop test is red on dev 226dca18c: while the owner's reply runs, the page of someone replying
 shows Stop as well (the composer counts any unfinished reply as theirs), and clicking it does
 nothing, since the page refuses to stop a reply it did not start. Present since the shared replies
-landed in de73bb830 (v0.12.0).
+landed in de73bb830 (v0.12.0) (open-webui/open-webui#33343, fix PR #33344 open).
 
 Discriminates: the other four pass on dev 226dca18c. One frontend build of it with four edits
 fails each of them: the chat page ignoring typing events fails the typing test, every prompt
