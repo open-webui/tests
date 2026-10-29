@@ -7,19 +7,22 @@ other sees "Encrypted chat in progress" with a Join link in the conversation, an
 what each writes shows on both screens, while the conversation itself keeps no copy. Each person's
 verification code in Participants reads the same on both screens. A message over 16 KiB cannot be
 sent. Reloading the page clears that device's chat and leaves the other person in it; when the
-host leaves, the chat ends and the Join link goes away.
+host leaves, the chat ends and the Join link goes away. In a private group of three, started from
+the group's Channel options, all three see "3 participants" and everyone's messages.
 
 Discriminates: passes on dev f5a26f53a. One frontend build with three edits turns three tests red
 while the exchange and reload tests pass on it: a menu check that skips the permission (admin
 test), a 32 KiB message limit (size test) and every code shown from the first participant's key
 (verification test). In a backend copy, a relay that forwards no messages or saves each one as a
 channel message turns the exchange test red, and one that keeps the session when the host leaves
-turns the reload and leave test red.
+turns the reload and leave test red. The three people test passes on dev 3b8205505; a relay that
+sends a guest's messages only to the host turns it red while the exchange test passes.
 """
 
 from __future__ import annotations
 
 import re
+import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -82,18 +85,18 @@ def _open_conversation(page: Page, channel_id: str) -> None:
     expect(page.locator("#chat-input")).to_be_visible()
 
 
-def _conversation_menu(page: Page) -> Locator:
-    """The direct message's options menu in the conversation's header, opened."""
+def _conversation_menu(page: Page, name: str = "Conversation options") -> Locator:
+    """The conversation's options menu in its header, opened ("Channel options" in a group)."""
     # the menu's trigger wraps its button, and both carry the name
-    page.get_by_role("button", name="Conversation options").first.click()
+    page.get_by_role("button", name=name).first.click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_text("Notifications")).to_be_visible()
     return menu
 
 
-def _start(page: Page, channel_id: str) -> None:
+def _start(page: Page, channel_id: str, menu: str = "Conversation options") -> None:
     _open_conversation(page, channel_id)
-    _conversation_menu(page).get_by_role("menuitem", name="Encrypted Chat").click()
+    _conversation_menu(page, menu).get_by_role("menuitem", name="Encrypted Chat").click()
     expect(page).to_have_url(re.compile(f"/channels/{channel_id}/encrypted$"))
     expect(page.get_by_text(ACTIVE)).to_be_visible()
 
@@ -129,6 +132,21 @@ def _both_in(pair, page_for) -> tuple[Page, Page]:
     expect(host_page.get_by_role("button", name="2 participants")).to_be_visible()
     expect(guest_page.get_by_role("button", name="2 participants")).to_be_visible()
     return host_page, guest_page
+
+
+def _private_group(owner, *members) -> str:
+    with owner.client() as client:
+        created = client.post(
+            "/api/v1/channels/create",
+            json={
+                "name": f"group-{uuid.uuid4().hex[:8]}",
+                "type": "group",
+                "is_private": True,
+                "user_ids": [member.id for member in members],
+            },
+        )
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
 
 
 def _code_of(page: Page, name: str) -> str:
@@ -194,6 +212,38 @@ def test_two_people_exchange_encrypted_messages_that_the_conversation_does_not_k
     assert stored.json() == [], (
         f"the encrypted chat was saved into the conversation: {stored.json()}"
     )
+
+
+def test_three_people_in_a_private_group_all_read_each_other(
+    admin, make_user, channels_on, page_for
+):
+    _switch_encrypted_chats(admin, turn_on=True)
+    host, first_guest, second_guest = make_user(), make_user(), make_user()
+    make_group(admin, [host, first_guest, second_guest], PERMITTED)
+    channel_id = _private_group(host, first_guest, second_guest)
+    host_page = page_for(host)
+    _start(host_page, channel_id, menu="Channel options")
+    first_page = page_for(first_guest)
+    _join(first_page, channel_id)
+    expect(first_page.get_by_role("button", name="2 participants")).to_be_visible()
+    second_page = page_for(second_guest)
+    _join(second_page, channel_id)
+    pages = (host_page, first_page, second_page)
+    for page in pages:
+        expect(page.get_by_role("button", name="3 participants")).to_be_visible()
+    expect(_messages(first_page).get_by_text(f"{second_guest.name} joined")).to_be_visible()
+
+    _send(host_page, "we meet at the bridge")
+    _send(second_page, "I will be late")
+    _send(first_page, "save me a seat")
+
+    for page in pages:
+        for line in ("we meet at the bridge", "I will be late", "save me a seat"):
+            expect(_messages(page).get_by_text(line)).to_be_visible()
+    with host.client() as client:
+        stored = client.get(f"/api/v1/channels/{channel_id}/messages")
+    assert stored.status_code == 200, stored.text
+    assert stored.json() == [], f"the encrypted chat was saved into the group: {stored.json()}"
 
 
 def test_each_persons_verification_code_reads_the_same_on_both_screens(pair, page_for):

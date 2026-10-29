@@ -8,9 +8,15 @@ packets over the websocket to the other people in the chat and never saves them.
 answers only members of a direct message or private group, refuses a packet over 1 MiB, refuses
 everyone while websocket server logging is on, tells the host when someone leaves and ends the
 chat for everyone when the host leaves or disconnects, when someone is removed from the group or
-when the admin switches the feature off.
+when the admin switches the feature off. An account takes part in a session once: a second tab of
+it cannot join or start beside the first, and can join once the first has left. An account may
+start or join ten times a minute and send 4 MiB a second, counted as sent. The relay also allows
+a hundred calls a second; that limit is not pinned, as authorizing a hundred calls made at once
+takes most of a second here and a test of it would flake. A host and a guest on two instances
+sharing one database and one Redis hold one session.
 
-Discriminates: passes on dev f5a26f53a. Each of these edits in a backend copy turns the named
+Discriminates: passes on dev f5a26f53a, the second tab, limit and two instance tests on dev
+3b8205505. Each of these edits in a backend copy turns the named
 test red: the relay skipping the permission (permission tests) or the membership check (outsider
 test), letting public group channels through (channel kind test), a 2 MiB packet limit (size
 test), ignoring websocket server logging (logging test), no end of the session on a member change
@@ -20,13 +26,18 @@ packets (exchange test), an admin needing the permission (admin test), and savin
 channel message, into the settings table, into the relay's Redis state or printing it to the log
 (never stored test, the Redis case run with Redis). A settings save that drops the switch when it
 is left out, an app config that always reports it off, either default on and the permission
-variable ignored turn the switch, default and environment tests red.
+variable ignored turn the switch, default and environment tests red. An admission limit of eleven
+a minute (admission test, with and without Redis), a 5 MiB a second limit (4 MiB test, with and
+without Redis), no check for an account already in the session (second tab test) and a relay that
+keeps its sessions in memory with Redis configured (two instance test) turn those tests red.
 """
 
 from __future__ import annotations
 
 import base64
+import dataclasses
 import os
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -36,8 +47,9 @@ import pytest
 import redis
 import sqlalchemy
 
+from harness import backends
 from harness.access import make_group
-from harness.actors import Actor, create_user
+from harness.actors import Actor, admin_of, create_user
 from harness.backends import wait_until
 from harness.channel_quotes import enable_channels
 from harness.instance import LaunchedInstance
@@ -524,6 +536,186 @@ def test_removing_someone_from_the_private_group_ends_the_chat(admin, make_user,
 
     assert all(event["session"] == host_ticket["session"] for event in ended.values()), ended
     assert after["ok"] is False, "the chat went on after the group's members changed"
+
+
+def test_a_second_tab_of_the_same_account_cannot_join_twice(pair):
+    first, second = pair
+    channel_id = _direct_message(first, second)
+    with (
+        _tab(first) as host_tab,
+        _tab(second) as guest_tab,
+        _tab(first) as host_second_tab,
+        _tab(second) as guest_second_tab,
+    ):
+        host_ticket = _host(host_tab, channel_id)
+        guest_ticket = _join(host_tab, host_ticket, guest_tab)
+        session = {"channel": channel_id, "session": host_ticket["session"]}
+        answers = {
+            "the guest's second tab joining": _relay(guest_second_tab, "join", **session),
+            "the host's second tab joining": _relay(host_second_tab, "join", **session),
+            "the host's second tab starting": _relay(host_second_tab, "start", channel=channel_id),
+            "the guest's second tab sending as the first": _send(
+                guest_second_tab, guest_ticket, b"from the second tab"
+            ),
+        }
+        assert _send(guest_tab, guest_ticket, b"from the first tab")["ok"]
+        host_tab.encryption_event("mls")
+        status = _status(guest_second_tab, channel_id)
+
+        assert _relay(guest_tab, "leave", **guest_ticket)["ok"]
+        host_tab.encryption_event("departed")
+        rejoined = _relay(guest_second_tab, "join", **session)
+        _settle()
+
+    let_in = {attempt: answer for attempt, answer in answers.items() if answer["ok"] is not False}
+    assert let_in == {}, f"a second tab of an account already in the chat got in: {let_in}"
+    assert _received(host_tab) == [_encoded(b"from the first tab")], _received(host_tab)
+    candidates = [event for event in host_tab.encryption_events if event["kind"] == "candidate"]
+    assert len(candidates) == 1, f"the host was asked to admit an account twice: {candidates}"
+    assert status["available"] is True, f"the second tabs ended the running chat: {status}"
+    assert rejoined["ok"] is True, (
+        f"the second tab could not join once the first had left: {rejoined}"
+    )
+
+
+# how much one account may send
+
+
+def test_an_account_may_start_or_join_ten_times_a_minute(admin, make_user, relay_on):
+    first, second, third = make_user(), make_user(), make_user()
+    make_group(admin, [first, second, third], PERMITTED)
+    channel_id = _private_group(first, second, third)
+    with _tab(first) as tab, _tab(second) as host_tab, _tab(third) as other_tab:
+        for _ in range(5):
+            ticket = _host(tab, channel_id)
+            assert _relay(tab, "leave", **ticket)["ok"]
+        host_ticket = _host(host_tab, channel_id)
+        session = {"channel": channel_id, "session": host_ticket["session"]}
+        for _ in range(5):
+            joined = _relay(tab, "join", **session)
+            assert joined["ok"], f"a join within the first ten of the minute was refused: {joined}"
+            assert _relay(tab, "leave", **session, participation=joined["participation"])["ok"]
+
+        eleventh = _relay(tab, "join", **session)
+        status = _status(tab, channel_id)
+        other = _relay(other_tab, "join", **session)
+
+    assert eleventh["ok"] is False, (
+        f"an eleventh start or join within a minute was let in: {eleventh}"
+    )
+    assert status == {"ok": True, "available": True, "session": host_ticket["session"]}, status
+    assert other["ok"] is True, f"another account's join was refused with the first: {other}"
+
+
+def _burst(tab: SocketSession, action: str, calls: list[dict]) -> list[dict]:
+    """Make every call at once, without waiting for each answer."""
+    answers: list[dict] = []
+    answered = threading.Event()
+
+    def collect(answer: dict) -> None:
+        answers.append(answer)
+        if len(answers) == len(calls):
+            answered.set()
+
+    for data in calls:
+        tab.client.emit(f"encryption:{action}", data, callback=collect)
+    assert answered.wait(60), f"only {len(answers)} of {len(calls)} calls were answered"
+    return answers
+
+
+def _accepted(answers: list[dict]) -> int:
+    return sum(1 for answer in answers if answer["ok"])
+
+
+def _next_second() -> None:
+    # the relay counts each second from the first call in it, so let the current one run out
+    time.sleep(1.5)
+
+
+def test_an_account_may_send_four_mebibytes_a_second(pair):
+    first, second = pair
+    channel_id = _direct_message(first, second)
+    # 900 KiB is about 1.2 MiB as sent, so the fourth packet goes over 4 MiB
+    contents = [bytes([n]) * (900 * 1024) for n in range(4)]
+    with _tab(first) as host_tab, _tab(second) as guest_tab:
+        host_ticket = _host(host_tab, channel_id)
+        _join(host_tab, host_ticket, guest_tab)
+        _next_second()
+
+        packets = [
+            {**host_ticket, "kind": "mls", "packet": _encoded(content)} for content in contents
+        ]
+        answers = _burst(host_tab, "packet", packets)
+        wait_until(lambda: len(_received(guest_tab)) >= _accepted(answers), 30)
+        _settle()
+        received_in_burst = len(_received(guest_tab))
+        _next_second()
+        a_second_later = _send(host_tab, host_ticket, contents[0])
+
+    assert _accepted(answers) == 3, (
+        f"the relay let {_accepted(answers)} of 4 packets of 900 KiB through in one second"
+    )
+    assert received_in_burst == 3, f"the guest got {received_in_burst} packets of the burst"
+    assert a_second_later["ok"] is True, f"the limit still held a second later: {a_second_later}"
+
+
+# more than one instance
+
+
+@pytest.fixture(scope="module")
+def shared_redis() -> Iterator[backends.RedisProcess]:
+    server = backends.RedisProcess()
+    server.start()
+    yield server
+    server.close()
+
+
+@pytest.fixture(scope="module")
+def two_instances(shared_redis, instance_with) -> tuple[LaunchedInstance, LaunchedInstance]:
+    """Two instances on one database and one Redis, as behind a load balancer."""
+    shared = {**ON_BY_ENV, "REDIS_URL": shared_redis.url, "WEBSOCKET_MANAGER": "redis"}
+    first = instance_with({**shared, "WEBUI_NAME": "encrypted-a"})
+    second = instance_with(
+        {**shared, "WEBUI_NAME": "encrypted-b", "DATABASE_URL": first.database_url}
+    )
+    # an instance listens on Redis only once a socket has connected
+    for launched in (first, second):
+        with connected(admin_of(launched)):
+            pass
+    return first, second
+
+
+@pytest.mark.slow
+def test_a_host_and_a_guest_on_different_instances_share_one_session(two_instances):
+    near, far = two_instances
+    host = create_user(near)
+    guest = dataclasses.replace(create_user(near), base_url=far.base_url)
+    channel_id = _direct_message(host, guest)
+    with _tab(host) as host_tab, _tab(guest) as guest_tab:
+        host_ticket = _host(host_tab, channel_id)
+        invitation = {"channel": channel_id, "session": host_ticket["session"]}
+        status = _status(guest_tab, channel_id)
+        invited = wait_until(lambda: invitation in guest_tab.encryption_invitations, 30)
+        guest_ticket = _join(host_tab, host_ticket, guest_tab)
+        assert _send(host_tab, host_ticket, b"from the near instance")["ok"]
+        assert _send(guest_tab, guest_ticket, b"from the far instance")["ok"]
+        guest_tab.encryption_event("mls")
+        host_tab.encryption_event("mls")
+
+        assert _relay(host_tab, "leave", **host_ticket)["ok"]
+        ended = _wait_ended(guest_tab)
+        after = _status(guest_tab, channel_id)
+
+    assert status == {"ok": True, "available": True, "session": host_ticket["session"]}, (
+        f"the other instance does not see the running chat: {status}"
+    )
+    assert invited, (
+        f"the guest on the other instance was never told: {guest_tab.encryption_invitations}"
+    )
+    assert _received(guest_tab) == [_encoded(b"from the near instance")]
+    assert _received(host_tab) == [_encoded(b"from the far instance")]
+    assert ended["session"] == host_ticket["session"], ended
+    assert after == {"ok": True, "available": False, "session": None}, after
 
 
 def test_switching_the_feature_off_ends_a_running_chat(admin, pair):
