@@ -11,6 +11,11 @@ With #33263 the terminal's `display_file` also takes an optional `file_id` (`pat
 required): a call with one shows the chat or knowledge base file as the built-in tool does
 and never reaches the terminal, while a call with a path still goes to the terminal.
 
+A terminal's `read_file` of a PNG answers with the image itself, which the model is sent as an
+image. With the model's Vision capability off it must not be (open-webui/open-webui#32720, PR
+#33345 open): the follow-up carries no image part and the tool message notes `[image]`. That
+test is red on dev until #33345 merges.
+
 A connected fake terminal serves the tools; the scripted model calls them and the test reads
 the tool result Open WebUI sent back to the provider.
 
@@ -19,11 +24,14 @@ Twin of unit/chat/test_terminal_file_tool_result.py.
 Discriminates: passes on dev ef67cc3fa; with `inline is not True` restored to the bail-out, the
 calls without `inline: true` reach the model as the raw terminal answer. Against the #33263
 branch 73fca05b3, the terminal tool left without `file_id`, or a `file_id` call routed to the
-terminal, turned the file_id test red; it fails on dev until #33263 merges.
+terminal, turned the file_id test red; it fails on dev until #33263 merges. The Vision-off read
+passes on the #33345 branch 1a02165c1 and fails on dev 3b8205505 (the PNG is sent to a model
+that cannot read it).
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import uuid
 
@@ -32,12 +40,17 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.listener import json_answer
+from harness.model_presets import preset_with_capabilities
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.tool_calls import run_tool
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 REPORT = "/workspace/report.png"
+CHART = "/workspace/chart.png"
+CHART_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
 
 
 def _operation(operation_id: str) -> dict:
@@ -64,6 +77,13 @@ SPEC = {
 }
 
 
+def _view_file(request):
+    """The terminal's file viewer: an image file answers with its bytes, as Open Terminal does."""
+    if json.loads(request.body).get("path") == CHART:
+        return 200, {"Content-Type": "image/png"}, CHART_PNG
+    return json_answer({"exists": True, "path": REPORT})
+
+
 @pytest.fixture
 def terminal(admin, preserve):
     """A connected terminal whose `display_file` answers with `terminal.answer`."""
@@ -72,7 +92,7 @@ def terminal(admin, preserve):
         server.route("GET", "/openapi.json", json_answer(SPEC))
         server.answer = {"exists": True, "path": REPORT}
         server.route("POST", "/files/display", lambda _request: json_answer(server.answer))
-        server.route("POST", "/files/view", json_answer({"exists": True, "path": REPORT}))
+        server.route("POST", "/files/view", _view_file)
         connection = server.connection()
         with admin.client() as client:
             configure_terminals(client, connection)
@@ -191,3 +211,48 @@ def test_the_terminal_display_file_also_shows_a_chat_or_knowledge_file(terminal,
     ), f"a display_file call with a file_id did not show the Open WebUI file: {by_id}"
     assert not terminal_calls, "a display_file call with a file_id went to the terminal"
     assert (by_path.get("source"), by_path.get("path")) == ("open_terminal", REPORT), by_path
+
+
+def _image_parts(messages: list[dict]) -> list[dict]:
+    return [
+        part
+        for message in messages
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if part.get("type") in ("image_url", "input_image")
+    ]
+
+
+def _read_the_chart(terminal, admin, upstream, capabilities: dict) -> list[dict]:
+    """Have a model with `capabilities` read CHART; returns the follow-up request's messages."""
+    _, terminal_id = terminal
+    prompt = f"read the chart ({uuid.uuid4().hex[:8]})"
+    upstream.queue(
+        reply.tool_call("read_file", {"path": CHART}, match=reply.mentioning(prompt)),
+        reply.text("a chart", match=reply.mentioning(prompt)),
+    )
+    with preset_with_capabilities(admin, capabilities) as model_id, admin.client() as client:
+        ask(client, prompt, model=model_id, terminal_id=terminal_id)
+    requests = [
+        request for request in upstream.chat_requests() if reply.mentioning(prompt)(request)
+    ]
+    follow_up = requests[-1]["messages"] if requests else []
+    assert any(entry["role"] == "tool" for entry in follow_up), f"read_file never ran: {follow_up}"
+    return follow_up
+
+
+def test_with_vision_off_a_terminal_image_read_sends_no_image(terminal, admin, upstream):
+    follow_up = _read_the_chart(terminal, admin, upstream, {"vision": False})
+
+    assert _image_parts(follow_up) == [], (
+        f"a model with Vision off was sent the PNG the terminal read (#32720): "
+        f"{_image_parts(follow_up)}"
+    )
+    [tool_message] = [entry for entry in follow_up if entry["role"] == "tool"]
+    assert "[image]" in str(tool_message["content"]), tool_message
+
+
+def test_with_vision_on_a_terminal_image_read_sends_the_image(terminal, admin, upstream):
+    follow_up = _read_the_chart(terminal, admin, upstream, {"vision": True})
+
+    assert len(_image_parts(follow_up)) == 1, f"the PNG the terminal read was not sent: {follow_up}"

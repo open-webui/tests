@@ -75,6 +75,20 @@ def answering(prompt: str) -> Callable[[dict], bool]:
     return matches
 
 
+def mentioning(prompt: str) -> Callable[[dict], bool]:
+    """A `match` for the requests whose user messages contain `prompt` anywhere.
+
+    Unlike `answering` it still accepts the follow-up after a tool call that attached an image,
+    which carries the image in a user message of its own after the prompt.
+    """
+
+    def matches(body: dict) -> bool:
+        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
+        return any(prompt in str(entry.get("content")) for entry in users)
+
+    return matches
+
+
 @dataclass
 class UpstreamRequest:
     method: str
