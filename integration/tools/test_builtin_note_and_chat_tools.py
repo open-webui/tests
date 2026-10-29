@@ -7,8 +7,12 @@ model read with `view_note` in the same reply, and applies whole replacements or
 refusing a range whose expected text no longer matches. Since v0.12.4 it also finds and replaces
 exact text: a single match is replaced, several matches change nothing and come back with each
 position and its surroundings unless the model picks an occurrence or asks for every match, and
-a missing text or a find mixed with offsets is refused. The chat tools search and read the
-account's own earlier chats and never the one being answered.
+a missing text or a find mixed with offsets is refused. Since v0.12.5 (b34885efc) a note can
+hold several pages: `view_note` reads one page by `page_id` or, without it, lists the pages;
+`search_notes` names the page holding the match and links to it with `?page=`; and on a note
+with several pages `replace_note_content` edits only the named page, and refuses with
+`page_conflict` an edit without a page or of a page changed after the model read it. The chat
+tools search and read the account's own earlier chats and never the one being answered.
 
 The scripted model calls each tool and the test reads the result it was sent back, and the
 stored note or chat.
@@ -23,19 +27,25 @@ barred-account test red; and for the text form, dropping the ambiguity check tur
 several-matches test red, ignoring occurrence or taking only the first match under replace_all
 turned the matching chosen-match case red, skipping a missing text turned text_not_found red,
 letting find win over start/end turned invalid_operation red, and refusing replace_text without
-find turned its two-range case red.
+find turned its two-range case red. For pages (dev 05e115366): `view_note` ignoring `page_id`
+turned the page read test red, `matching_page` always answering the first page turned the
+search test red, an edit without a page falling back to the first page turned the named-page
+test red, and skipping the read-revision check together with the revision sent with the write
+(either one alone still refuses) turned the changed-page test red.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 
 import pytest
 
 from harness import upstream as reply
-from harness.chat import ask
+from harness.backends import wait_until
+from harness.chat import ask, send_message, wait_for_reply
 from harness.tool_calls import offered_tools, run_tool
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -289,6 +299,119 @@ def test_an_edit_of_a_note_the_model_has_not_read_is_refused(make_user, upstream
 
     assert unread.get("code") == "read_required", f"an unread note was edited: {unread}"
     assert stored_note(owner, note_id)["data"]["content"]["md"] == NOTE_BODY
+
+
+# --- note pages ---------------------------------------------------------------------------------
+
+
+def add_page(actor, note_id: str, title: str) -> str:
+    page_id = str(uuid.uuid4())
+    with actor.client() as client:
+        revision = client.get(f"/api/v1/notes/{note_id}").json()["data"]["pages_revision"]
+        created = client.post(
+            f"/api/v1/notes/{note_id}/pages/update",
+            json={"action": "create", "new_id": page_id, "title": title, "revision": revision},
+        )
+    assert created.status_code == 200, created.text
+    return page_id
+
+
+def write_page(actor, note_id: str, page_id: str, text: str) -> None:
+    with actor.client() as client:
+        written = client.post(
+            f"/api/v1/notes/{note_id}/update",
+            json={"data": {"content": {"md": text}}, "page_id": page_id},
+        )
+    assert written.status_code == 200, written.text
+
+
+def page_texts(actor, note_id: str) -> dict[str, str]:
+    pages = stored_note(actor, note_id)["data"]["pages"]
+    return {page["id"]: page["content"]["md"] for page in pages}
+
+
+@pytest.fixture
+def two_page_note(make_user) -> tuple:
+    """An account's note whose default page holds NOTE_BODY and a second page named Gulls."""
+    owner = make_user()
+    note_id = create_note(owner, "Lake log", NOTE_BODY)
+    gulls = add_page(owner, note_id, "Gulls")
+    write_page(owner, note_id, gulls, "Gull count: forty on the breakwater.")
+    return owner, note_id, gulls
+
+
+def test_view_note_reads_one_page_or_lists_the_pages(two_page_note, upstream):
+    owner, note_id, gulls = two_page_note
+
+    page = call(owner, upstream, "view_note", note_id=note_id, page_id=gulls)
+    whole = call(owner, upstream, "view_note", note_id=note_id)
+
+    assert (page["page_id"], page["page_title"]) == (gulls, "Gulls"), page
+    assert page["content"] == "Gull count: forty on the breakwater.", page
+    directory = [(entry["id"], entry["title"]) for entry in whole["pages"]]
+    assert directory == [("main", "Lake log"), (gulls, "Gulls")], whole
+    assert whole["page_id"] is None, whole
+    assert "Heron sightings" in whole["content"] and "Gull count" in whole["content"], whole
+
+
+def test_search_notes_points_at_the_page_holding_the_match(two_page_note, upstream):
+    owner, note_id, gulls = two_page_note
+
+    [found] = call(owner, upstream, "search_notes", query="breakwater")
+
+    assert (found["id"], found["page_id"], found["page_title"]) == (note_id, gulls, "Gulls"), found
+    assert found["url"] == f"/notes/{note_id}?page={gulls}", found
+    assert "forty on the breakwater" in found["snippet"], found
+
+
+def test_a_note_with_several_pages_is_edited_one_named_page_at_a_time(two_page_note, upstream):
+    owner, note_id, gulls = two_page_note
+
+    unnamed = edit(owner, upstream, note_id, content="overwritten")
+    named = edit(owner, upstream, note_id, page_id=gulls, content="Gull count: none today.")
+
+    assert unnamed.get("code") == "page_conflict", f"an edit without a page was applied: {unnamed}"
+    assert named.get("status") == "success", named
+    assert page_texts(owner, note_id) == {"main": NOTE_BODY, gulls: "Gull count: none today."}
+
+
+def test_an_edit_of_a_page_changed_after_it_was_read_is_refused(two_page_note, upstream):
+    owner, note_id, gulls = two_page_note
+    prompt = f"read then edit the page ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(prompt)
+    page_changed = threading.Event()
+    arguments = {"note_id": note_id, "page_id": gulls}
+    upstream.queue(
+        reply.tool_call("view_note", arguments, match=answering),
+        reply.tool_call(
+            "replace_note_content",
+            {**arguments, "content": "stale rewrite"},
+            "call_2",
+            match=answering,
+            hold=page_changed,
+        ),
+        reply.text("done", match=answering),
+    )
+
+    with owner.client() as client:
+        turn = send_message(client, prompt)
+        # the second request carries the view_note result, so the page has been read
+        read = wait_until(lambda: len(requests_answering(upstream, answering)) >= 2, 30.0)
+        assert read, "the model was never asked again after view_note"
+        write_page(owner, note_id, gulls, "edited by hand meanwhile")
+        page_changed.set()
+        wait_for_reply(client, turn)
+
+    final = requests_answering(upstream, answering)[-1]
+    [*_, result] = [
+        json.loads(entry["content"]) for entry in final["messages"] if entry["role"] == "tool"
+    ]
+    assert result.get("code") == "page_conflict", f"a stale page was overwritten: {result}"
+    assert page_texts(owner, note_id)[gulls] == "edited by hand meanwhile"
+
+
+def requests_answering(upstream, answering) -> list[dict]:
+    return [request for request in upstream.chat_requests() if answering(request)]
 
 
 def test_the_notes_tools_follow_the_notes_permission(make_user, upstream, admin, preserve):

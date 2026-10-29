@@ -6,7 +6,8 @@ location keeps only chats and a channel location only that channel's messages; a
 caller cannot reach answers with nothing. Archived chats and the hidden chats behind notes stay
 out. One page holds 24 results and `has_more` says another follows. A chat result links to its
 `/c/` page with `?message=` on the matching message, a channel message to its channel with
-`?thread=` (the thread's first message) and `&message=`. Since ec83763f1 (#33181) the words
+`?thread=` (the thread's first message) and `&message=`, and a note to the note with `?page=` on
+the page holding the match (since v0.12.5, b34885efc). Since ec83763f1 (#33181) the words
 `tag:`, `folder:`, `pinned:`, `shared:` and `archived:` filter the caller's own chats, and a
 query with one of them leaves out notes, messages, shared snapshots and other accounts' chats.
 
@@ -14,7 +15,8 @@ Discriminates: journey, no fix. In backend copies of dev 948432b43: ignoring `ki
 content type tests red, ignoring `sharing` the created-by tests, ignoring `scope` the two
 location tests, skipping the unknown-location check the unreachable-location test; keeping
 archived and internal chats turns the hidden-chat, paging and `archived` filter tests red; a page
-of 25 turns the paging test red; links without the message turn both link tests red; with
+of 25 turns the paging test red; links without the message turn both link tests red; a note
+link always naming the first page turns the note link test red; with
 ec83763f1 undone (no filter words), or with filter words no longer limited to the caller's own
 chats, the six filter-word tests go red.
 """
@@ -226,6 +228,33 @@ def test_a_chat_result_links_to_the_matching_message(make_user):
     assert item(answer, f"chat:{in_answer}")["url"] == f"/c/{in_answer}?message=a"
     assert word in item(answer, f"chat:{in_answer}")["snippet"]
     assert item(answer, f"chat:{in_title}")["url"] == f"/c/{in_title}"
+
+
+def test_a_note_result_links_to_the_page_holding_the_match(make_user):
+    account = make_user()
+    word = unique_word()
+    page_id = str(uuid.uuid4())
+    with account.client() as client:
+        note_id = create_note(client, "Trip", "general packing list")
+        post(
+            client,
+            f"/api/v1/notes/{note_id}/pages/update",
+            action="create",
+            new_id=page_id,
+            title="Budget",
+            revision=0,
+        )
+        post(
+            client,
+            f"/api/v1/notes/{note_id}/update",
+            data={"content": {"md": f"the {word} tour costs extra"}},
+            page_id=page_id,
+        )
+
+    result = item(search(account, word), f"note:{note_id}")
+
+    assert result["url"] == f"/notes/{note_id}?page={page_id}&search={word}", result
+    assert word in result["snippet"] and "packing" not in result["snippet"], result
 
 
 def test_a_channel_message_links_to_its_thread_and_message(admin, preserve, make_user):

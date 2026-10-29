@@ -2,10 +2,12 @@
 
 The owner shares a note with a reader (read) and a writer (read and write), directly or through
 a group, the way the share dialog does. A stranger is refused everything; the reader may open
-and pin the note but not change, share or delete it; the writer and the admin may do all of it.
+and pin the note but not change its text or pages, share or delete it; the writer and the admin
+may do all of it.
 
 Discriminates: in a backend copy, dropping the owner-or-write check from the note update
-handler turns the `/update` rows red (the stranger and the reader get 200), and asking for
+handler turns the `/update` and `/pages/update` rows red (the stranger and the reader get 200),
+and asking for
 `read` instead of `write` in the delete handler turns the `/delete` rows red (the reader gets
 200).
 """
@@ -29,12 +31,14 @@ NOTE = Shareable(
 REFUSED, ALLOWED = 403, 200
 READ = {"owner": ALLOWED, "stranger": REFUSED, "reader": ALLOWED, "writer": ALLOWED}
 WRITE = {"owner": ALLOWED, "stranger": REFUSED, "reader": REFUSED, "writer": ALLOWED}
+RENAME_PAGE = {"action": "rename", "page_id": "main", "title": "renamed page", "revision": 0}
 
 # method, path, body, what each account gets
 MATRIX = [
     ("GET", "/api/v1/notes/{id}", None, READ),
     ("POST", "/api/v1/notes/{id}/pin", None, READ),
     ("POST", "/api/v1/notes/{id}/update", {"title": "renamed"}, WRITE),
+    ("POST", "/api/v1/notes/{id}/pages/update", RENAME_PAGE, WRITE),
     ("POST", "/api/v1/notes/{id}/access/update", {"access_grants": []}, WRITE),
     ("DELETE", "/api/v1/notes/{id}/delete", None, WRITE),
 ]
