@@ -20,6 +20,12 @@ A prompt picked from the "/" menu puts the prompt's text into the input, and tha
 posts; it put a command chip there that posted as mention markup until
 open-webui/open-webui#32713 (fix 1d0b78271).
 
+A model or a channel typed by hand as "@<name>" or "#<name>", without a pick from the list, posts
+the same mention a pick does: the model answers in a thread and the channel link opens the channel.
+A name two members share stays plain text, since only a pick says which of them is meant, and a
+mention copied from a posted message and pasted into the input keeps pointing at the person it named
+even then.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, a picker that drops the mention type
 turns the person and thread model tests red, a toast that goes nowhere on click turns the person
 test red, sending the message without its files turns the file test red and a channel link
@@ -27,11 +33,16 @@ that opens nothing turns the channel link test red (checked on dev ebc6add67); i
 answering in a thread whatever the reply mode turns the channel reply mode test red.
 In the pre-fix build of the 0.12.4 changes (1d0b78271 reverted) the prompt test is red: the
 input holds a chip in place of the prompt's text.
+On dev 226dca18c (frontend built from 948432b43, the same channel input), in a frontend copy,
+sending without resolving typed names turns the typed model, typed channel and shared name tests
+red, a posted mention that no longer reads as one when copied turns the paste test red, and
+resolving a shared name to its first match turns the shared name test red alone.
 """
 
 from __future__ import annotations
 
 import re
+import time
 import uuid
 
 import pytest
@@ -40,11 +51,13 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import grant
 from harness.channel_chat import enable_channels as enable_channels_with_reply_mode
-from harness.channel_quotes import enable_channels, group_channel
+from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+
+CLIPBOARD = ["clipboard-read", "clipboard-write"]
 
 
 @pytest.fixture
@@ -144,23 +157,47 @@ def test_the_mention_toast_reads_the_name_and_not_the_mention_markup(people, pag
     expect(toast_text).not_to_contain_text(member.id)
 
 
-def _mention_model(page: Page, question: str) -> None:
-    _mention(page, MOCK_MODEL_ID, MOCK_MODEL_ID)
-    page.keyboard.type(f" {question}")
+def _mention_model(page: Page, question: str, picked: bool = True) -> None:
+    if picked:
+        _mention(page, MOCK_MODEL_ID, MOCK_MODEL_ID)
+        page.keyboard.type(f" {question}")
+    else:
+        chat_input(page).click()
+        page.keyboard.type(f"@{MOCK_MODEL_ID} {question}")
     page.keyboard.press("Enter")
 
 
-def test_a_mentioned_model_answers_in_a_thread_under_the_message(people, page_for, upstream):
+def _wait_for_thread_reply(account, channel_id: str, parent_id: str, text: str) -> None:
+    deadline = time.monotonic() + 20
+    path = f"/api/v1/channels/{channel_id}/messages/{parent_id}/thread"
+    with account.client() as client:
+        while True:
+            thread = client.get(path)
+            thread.raise_for_status()
+            if any(text in message["content"] for message in thread.json()):
+                return
+            assert time.monotonic() < deadline, f"no reply with {text!r} was stored in the thread"
+            time.sleep(0.2)
+
+
+@pytest.mark.parametrize("picked", [True, False], ids=["picked", "typed"])
+def test_a_mentioned_model_answers_in_a_thread_under_the_message(
+    people, page_for, upstream, picked
+):
     sender, _, channel_id = people
     question = f"what is the tide at noon? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("High tide, 2.4 metres", match=reply.answering(question)))
     page = _open_channel(page_for, sender, channel_id)
 
-    _mention_model(page, question)
+    _mention_model(page, question, picked)
 
     asked = _message(page, question)
     replies = asked.get_by_role("button", name="1 Replies")
     expect(replies).to_be_visible()
+    [stored] = [m for m in _stored(sender, channel_id) if question in m["content"]]
+    assert stored["content"].startswith(f"<@M:{MOCK_MODEL_ID}|"), stored["content"]
+    # a thread opened while the answer is still written can miss its end and stay blank
+    _wait_for_thread_reply(sender, channel_id, stored["id"], "High tide, 2.4 metres")
     replies.click()
     expect(page.get_by_label("Reply to thread...")).to_be_visible()
     expect(_message(page, "High tide, 2.4 metres")).to_contain_text(MOCK_MODEL_ID)
@@ -274,9 +311,20 @@ def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
 
     link = _message(member_page, "has the packing list").locator(".mention")
     expect(link).to_have_text(f"#{linked_name}")
-    [stored] = _stored(sender, channel_id)
-    assert stored["content"].startswith(f"<#C:{linked_id}|{linked_name}>")
+    # typed by hand this time, not picked from the list
+    _send(page, f"#{linked_name} has the tide table")
+
+    typed_link = _message(member_page, "has the tide table").locator(".mention")
+    expect(typed_link).to_have_text(f"#{linked_name}")
+    stored = [message["content"] for message in _stored(sender, channel_id)]
+    assert len(stored) == 2, stored
+    for content in stored:
+        assert content.startswith(f"<#C:{linked_id}|{linked_name}>"), stored
     link.click()
+    expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
+    member_page.go_back()
+    expect(member_page).to_have_url(re.compile(f"/channels/{channel_id}"))
+    typed_link.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
 
 
@@ -312,3 +360,66 @@ def test_a_prompt_picked_from_the_slash_menu_posts_its_text(people, page_for, ad
     finally:
         with admin.client() as client:
             client.delete(f"/api/v1/prompts/id/{prompt_id}/delete")
+
+
+@pytest.fixture
+def namesakes(people, make_user):
+    """Two more members of the channel who share one name."""
+    sender, member, channel_id = people
+    name = f"Robin {uuid.uuid4().hex[:6]}"
+    first, second = make_user(name=name), make_user(name=name)
+    with sender.client() as client:
+        added = client.post(
+            f"/api/v1/channels/{channel_id}/update/members/add",
+            json={"user_ids": [first.id, second.id]},
+        )
+    assert added.status_code == 200, added.text
+    return first, second
+
+
+def _wait_for_stored(account, channel_id: str, text: str) -> str:
+    """The content of the one stored message holding `text`, once the server has it."""
+    deadline = time.monotonic() + 20
+    while True:
+        found = [m["content"] for m in _stored(account, channel_id) if text in m["content"]]
+        if found:
+            [content] = found
+            return content
+        assert time.monotonic() < deadline, f"no message with {text!r} was stored"
+        time.sleep(0.2)
+
+
+def test_a_typed_name_two_members_share_stays_plain_text(people, namesakes, page_for):
+    sender, member, channel_id = people
+    first, _ = namesakes
+    page = _open_channel(page_for, sender, channel_id)
+
+    _send(page, f"@{first.name} and @{member.name} check the sails")
+
+    stored = _wait_for_stored(sender, channel_id, "check the sails")
+    expected = f"@{first.name} and <@U:{member.id}|{member.name}> check the sails"
+    assert stored == expected, (
+        f"the shared name should stay text, the other become a mention: {stored!r}"
+    )
+
+
+def test_a_mention_copied_from_a_message_keeps_its_person(people, namesakes, page_for):
+    sender, member, channel_id = people
+    first, _ = namesakes
+    post_message(member, channel_id, f"<@U:{first.id}|{first.name}> has the boat keys")
+    page = page_for(sender, path=f"/channels/{channel_id}", permissions=CLIPBOARD)
+    original = _message(page, "has the boat keys")
+    expect(original.locator(".mention")).to_have_text(f"@{first.name}")
+
+    original.get_by_text("has the boat keys").click(click_count=3)
+    page.keyboard.press("ControlOrMeta+C")
+    chat_input(page).click()
+    page.keyboard.press("ControlOrMeta+V")
+    expect(chat_input(page)).to_contain_text("has the boat keys")
+    page.keyboard.type(" today")
+    page.keyboard.press("Enter")
+
+    pasted = _wait_for_stored(sender, channel_id, "has the boat keys today")
+    assert pasted.startswith(f"<@U:{first.id}|{first.name}>"), (
+        f"the pasted mention no longer points at the person it named: {pasted!r}"
+    )

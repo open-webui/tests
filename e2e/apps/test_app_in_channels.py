@@ -1,12 +1,13 @@
 """Journey: people use an app inside a channel, from inviting it to pressing its buttons.
 
 A channel manager invites the app through Add Member in the channel's member list. People then
-mention it from the `@` picker; the app answers as an ordinary message everyone sees under its
-name. When a mention cannot be delivered, the app's "App error:" reply says why for everyone;
-only when the app cannot post (it was disabled) does the reason appear under the asker's message
-marked "Only visible to you" for them alone. Buttons on an app message call the app: a private
-answer, a download or an error shows only to whoever pressed it, an acknowledgement shows nothing,
-and the result of longer work arrives later as an ordinary app message.
+mention it, picked from the `@` list or typed by hand as "@<name>"; the app answers as an ordinary
+message everyone sees under its name. When a mention cannot be delivered, the app's "App error:"
+reply says why for everyone; only when the app cannot post (it was disabled) does the reason appear
+under the asker's message marked "Only visible to you" for them alone. Buttons on an app message
+call the app: a private answer, a download or an error shows only to whoever pressed it, an
+acknowledgement shows nothing, and the result of longer work arrives later as an ordinary app
+message.
 
 An app can name a person as `<@U:id>`; the channel shows them by name, or as Unknown when the
 account is gone.
@@ -21,7 +22,9 @@ failed delivery becomes the app's public error reply; every test passes there, t
 since 403f21ae7 (#32371) resolves a mention written without a name. With the backend's private
 fallback sent to every channel member, test_a_mention_the_app_cannot_answer_tells_only_the_asker
 turns red; with the public error reply never posted,
-test_a_mention_that_cannot_be_delivered_shows_the_app_error_to_everyone turns red.
+test_a_mention_that_cannot_be_delivered_shows_the_app_error_to_everyone turns red. On dev 226dca18c
+(frontend built from 948432b43), a frontend copy that sends without resolving typed names turns the
+`typed` case of test_a_mention_is_answered_for_everyone red.
 """
 
 from __future__ import annotations
@@ -52,12 +55,17 @@ def _open_channel(page: Page, channel_id: str) -> None:
     expect(chat_input(page)).to_be_visible()
 
 
-def _type_mention(page: Page, app_name: str, text: str, send: bool = True) -> None:
+def _type_mention(
+    page: Page, app_name: str, text: str, send: bool = True, picked: bool = True
+) -> None:
     chat_input(page).click()
-    page.keyboard.type("@" + app_name.split()[0])
-    page.get_by_role("button", name=app_name).first.click()
-    expect(chat_input(page)).to_contain_text("@" + app_name)
-    page.keyboard.type(" " + text)
+    if picked:
+        page.keyboard.type("@" + app_name.split()[0])
+        page.get_by_role("button", name=app_name).first.click()
+        expect(chat_input(page)).to_contain_text("@" + app_name)
+        page.keyboard.type(" " + text)
+    else:
+        page.keyboard.type(f"@{app_name} {text}")
     expect(chat_input(page)).to_contain_text(text)
     if send:
         page.keyboard.press("Enter")
@@ -137,15 +145,16 @@ def test_the_app_answers_a_command_for_everyone_under_its_name(
         expect(page.get_by_text(installed_app["name"]).last).to_be_visible()
 
 
-def test_a_mention_from_the_picker_is_answered_for_everyone(
-    page_for, apps_admin, make_apps_user, installed_app, reference_app
+@pytest.mark.parametrize("picked", [True, False], ids=["picked", "typed"])
+def test_a_mention_is_answered_for_everyone(
+    page_for, apps_admin, make_apps_user, installed_app, reference_app, picked
 ):
     member = make_apps_user()
     channel_id = _channel_with_app(apps_admin, installed_app, type="group", user_ids=[member.id])
     asker, watcher = page_for(apps_admin), page_for(member)
     _open_channel(asker, channel_id)
     _open_channel(watcher, channel_id)
-    _type_mention(asker, installed_app["name"], "hello")
+    _type_mention(asker, installed_app["name"], "hello", picked=picked)
     for page in (asker, watcher):
         expect(page.get_by_text("hello").last).to_be_visible()
         answer = page.locator("[id^='message-']").filter(has_text="pong:").last
