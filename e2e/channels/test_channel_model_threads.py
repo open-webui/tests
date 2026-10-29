@@ -4,7 +4,9 @@ A model mentioned from inside a thread answers in that thread, also when the adm
 answer in the channel, and it is sent what was said in the thread before. A member with the thread
 open sees the answer arrive, and the channel itself only shows the parent's reply count. Replying to
 the model's answer with "Reply" asks it again without mentioning it. An answer the provider streams
-slowly shows its first words to another member before it is finished.
+slowly shows its first words to another member before it is finished. An answer that finishes
+while its thread is still loading shows in full once the thread opens; that test is red on dev
+until open-webui/open-webui#33347 merges (#33346).
 
 Discriminates: passes on dev ebc6add67 except the streaming test, which is red there (see its
 docstring); in a backend copy, answering a thread mention outside the thread turns the thread
@@ -15,6 +17,8 @@ green.
 
 from __future__ import annotations
 
+import threading
+import time
 import uuid
 
 import pytest
@@ -89,6 +93,13 @@ def _message_ids_with(account, channel_id: str, text: str) -> list[str]:
         listed = client.get(f"/api/v1/channels/{channel_id}/messages")
     listed.raise_for_status()
     return [message["id"] for message in listed.json() if text in message["content"]]
+
+
+def _thread_replies(account, channel_id: str, parent_id: str) -> list[str]:
+    with account.client() as client:
+        listed = client.get(f"/api/v1/channels/{channel_id}/messages/{parent_id}/thread")
+    listed.raise_for_status()
+    return [message["content"] for message in listed.json() if message["id"] != parent_id]
 
 
 def test_a_model_mentioned_in_a_thread_answers_there_knowing_the_thread(
@@ -174,3 +185,44 @@ def test_a_slowly_streamed_answer_shows_its_first_words_to_another_member(
         "(open-webui/open-webui#31998)"
     )
     expect(answer).to_contain_text("and rain on sunday")
+
+
+def test_an_answer_finished_while_its_thread_loads_shows_in_full(people, page_for, upstream):
+    """Red on dev 3b8205505: the thread panel drops every update that arrives while it loads, so an
+    answer that finishes in that moment stays an empty row with the model's name until the thread
+    is opened again, though the full answer is stored (open-webui/open-webui#33346, fix PR #33347
+    open).
+
+    The test holds the thread request after the server read it, lets the model finish, then hands
+    the page the thread as it was read.
+    """
+    asker, _, channel_id = people
+    question = f"what is the tide at noon? {uuid.uuid4().hex[:6]}"
+    finish = threading.Event()
+    upstream.queue(
+        reply.text("High tide, 2.4 metres", hold=finish, match=reply.answering(question))
+    )
+    page = _open_channel(page_for, asker, channel_id)
+    _ask_model(page, chat_input(page), question)
+    replies = page.get_by_role("button", name="1 Replies")
+    expect(replies).to_be_visible()
+    [asked] = _message_ids_with(asker, channel_id, question)
+
+    held = []
+    page.route("**/thread?*", lambda route: held.append(route))
+    replies.click()
+    deadline = time.monotonic() + 10
+    while not held:
+        assert time.monotonic() < deadline, "the thread was never requested"
+        page.wait_for_timeout(100)
+    read_before_the_answer = held[0].fetch()
+    finish.set()
+    deadline = time.monotonic() + 15
+    while "High tide, 2.4 metres" not in _thread_replies(asker, channel_id, asked):
+        assert time.monotonic() < deadline, "the answer was never stored"
+        time.sleep(0.2)
+    page.wait_for_timeout(1000)  # the finished answer reaches the page while the thread loads
+    held[0].fulfill(response=read_before_the_answer)
+
+    expect(_thread_input(page)).to_be_visible()
+    expect(_in_thread(page, asked, "High tide, 2.4 metres")).to_contain_text(MOCK_MODEL_ID)
