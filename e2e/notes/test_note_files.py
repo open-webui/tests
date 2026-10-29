@@ -34,8 +34,10 @@ on the dev 5032e834e build and fails on that build with 998ad4c9f reverted.
 
 Since dev b34885efc a note keeps its files as blocks in its text and its pasted pictures inline
 as data URLs, where the tests now read them; an upload still in flight stays out of the saved
-note until it finishes. The reader's chip test is red on dev b34885efc: the chip in the
-reader's read-only editor offers its remove button.
+note until it finishes. A file uploaded while a page other than the first is open is stored on
+that page and shows only there (a backend copy of dev 05e115366 whose live save stores every
+page's text on the first page turns that test red). The reader's chip test is red on dev
+b34885efc: the chip in the reader's read-only editor offers its remove button.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ from harness.actors import Actor
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import expect_reply, send
 from utils.note_content import note_files, note_images
+from utils.note_pages import create_page, open_pages, page_tab
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -125,14 +128,14 @@ def open_note_menu(page: Page) -> Locator:
     # the "..." button has no name; it is the last menu button in the editor's header
     page.get_by_role("main").locator("[aria-haspopup=true]:visible").last.click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("button", name="Download")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
     return menu
 
 
 def upload_to_note(page: Page, name: str, content: bytes, mime_type: str = "text/plain") -> None:
     menu = open_note_menu(page)
     with page.expect_file_chooser() as chooser:
-        menu.get_by_role("button", name="Upload files").click()
+        menu.get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": content})
 
 
@@ -187,6 +190,34 @@ def test_an_uploaded_file_shows_on_the_note_and_opens_its_text(note_with_file, p
     expect(dialog.get_by_text("1 Extracted Lines")).to_be_visible()
 
 
+def page_file_names(owner: Actor, note_id: str) -> dict[str, list[str]]:
+    pages = stored_note(owner, note_id)["data"]["pages"]
+    return {
+        entry["id"]: [file.get("name") for file in note_files({"data": {"pages": [entry]}})]
+        for entry in pages
+    }
+
+
+def test_a_file_uploaded_on_a_page_stays_on_that_page(page_for, make_user):
+    owner = make_user()
+    note_id = create_note(owner)
+    tides_id = create_page(owner, note_id, "Tides", "the tide tables")
+    page = page_for(owner, path=f"/notes/{note_id}?page={tides_id}")
+    editor = page.get_by_role("main").get_by_label("Write something...")
+    expect(editor).to_contain_text("the tide tables")
+
+    upload_to_note(page, FILE_NAME, FILE_TEXT.encode())
+
+    expect(file_chip(page, FILE_NAME)).to_be_visible()
+    eventually(lambda: page_file_names(owner, note_id), {"main": [], tides_id: [FILE_NAME]})
+    open_pages(page)
+    page.get_by_role("tree", name="Pages").get_by_role("treeitem").first.click()
+    expect(editor).to_contain_text("see the file")
+    expect(page.get_by_role("main").get_by_text(FILE_NAME)).to_have_count(0)
+    page_tab(page, "Tides").click()
+    expect(file_chip(page, FILE_NAME)).to_be_visible()
+
+
 def test_the_owners_note_chat_is_given_the_notes_file(note_with_file, page_for, upstream):
     page = page_for(note_with_file.owner)
     open_note(page, note_with_file.note_id)
@@ -210,7 +241,7 @@ def test_a_reader_opens_the_notes_file_but_cannot_detach_it(note_with_file, page
     dialog = page.get_by_role("dialog").filter(has_text=FILE_NAME)
     expect(dialog.get_by_text(FILE_TEXT)).to_be_visible()
     page.keyboard.press("Escape")
-    expect(open_note_menu(page).get_by_role("button", name="Upload files")).to_have_count(0)
+    expect(open_note_menu(page).get_by_role("menuitem", name="Upload files")).to_have_count(0)
 
 
 def test_a_reader_previews_a_spreadsheet_the_owner_put_on_the_note(page_for, make_user):
