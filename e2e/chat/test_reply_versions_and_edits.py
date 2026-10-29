@@ -17,6 +17,10 @@ One test pins a fixed bug: a model added to the chat before pressing Regenerate 
 side, but a reload showed one column with its reply as another version, since the server kept
 the question's old model list (PR open-webui/open-webui#32326, fix 99a9f60b9). It fails on a
 backend copy of dev 5032e834e with 99a9f60b9 reverted (the reload shows one reply and `3/3`).
+
+In a chat comparing two models, Regenerate on a column asks the model now picked for that column
+(dev 3aaecdd0e). Discriminates: passes on dev c5981aaea, fails in a build that regenerates with
+the model that wrote the reply (the request names the replaced model).
 """
 
 from __future__ import annotations
@@ -186,10 +190,9 @@ def test_deleting_a_reply_version_leaves_the_other_one_after_a_reload(chat_page,
     expect(conversation(chat_page).get_by_text("version to delete")).to_be_hidden()
 
 
-@pytest.fixture
-def second_model(admin):
+def _shared_preset(admin, prefix: str):
     """A preset on the scripted model that every account may add to a chat."""
-    model_id = f"second-{uuid.uuid4().hex[:8]}"
+    model_id = f"{prefix}-{uuid.uuid4().hex[:8]}"
     form = {
         "id": model_id,
         "base_model_id": MOCK_MODEL_ID,
@@ -203,6 +206,16 @@ def second_model(admin):
         assert saved.status_code == 200, saved.text
         yield model_id
         client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+@pytest.fixture
+def second_model(admin):
+    yield from _shared_preset(admin, "second")
+
+
+@pytest.fixture
+def third_model(admin):
+    yield from _shared_preset(admin, "third")
 
 
 def _add_model(page: Page, model_id: str) -> None:
@@ -236,6 +249,48 @@ def test_a_model_added_before_regenerate_stays_side_by_side_after_a_reload(
     for answer in ("the left answer", "the right answer"):
         expect(conversation(chat_page).get_by_text(answer)).to_be_visible()
     expect(replies(chat_page)).to_have_count(2)
+
+
+def _column_of(page: Page, model_id: str) -> Locator:
+    """The reply written under `model_id`'s name, with its buttons."""
+    name = page.get_by_text(model_id, exact=True)
+    regenerate = page.get_by_role("button", name="Regenerate")
+    return conversation(page).locator("div").filter(has=name).filter(has=regenerate).last
+
+
+def test_regenerate_in_a_compared_chat_asks_the_model_now_picked_for_that_column(
+    chat_page, upstream, second_model, third_model
+):
+    question = f"name a mountain {uuid.uuid4().hex[:6]}"
+    upstream.queue(
+        reply.text("a first peak", match=reply.answering(question)),
+        reply.text("a second peak", match=reply.answering(question)),
+    )
+    _add_model(chat_page, second_model)
+    send(chat_page, question)
+    expect(_column_of(chat_page, second_model)).to_contain_text("peak")
+
+    chat_page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID} +1").click()
+    model_search(chat_page).fill(second_model)
+    chat_page.get_by_role("option", name=f"Select {second_model} model").click()
+    model_search(chat_page).fill(third_model)
+    chat_page.get_by_role("option", name=f"Select {third_model} model").click()
+    chat_page.keyboard.press("Escape")
+    expect(
+        chat_page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID} +1")
+    ).to_be_visible()
+
+    upstream.queue(reply.text("a third peak", match=reply.answering(question)))
+    column = _column_of(chat_page, second_model)
+    column.hover()
+    with chat_page.expect_request(
+        lambda request: request.method == "POST" and request.url.endswith("/api/chat/completions")
+    ) as sent:
+        column.get_by_role("button", name="Regenerate").click()
+        chat_page.get_by_text("Try Again").click()
+    asked = sent.value.post_data_json["model"]
+    assert asked == third_model, f"Regenerate asked {asked}, not the column's new {third_model}"
+    expect(conversation(chat_page).get_by_text("a third peak")).to_be_visible()
 
 
 def _edit_reply(page: Page, text: str) -> Locator:
