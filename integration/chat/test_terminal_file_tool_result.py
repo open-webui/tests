@@ -8,9 +8,10 @@ file on a terminal and marks it `displayed` only for `inline: true`, the flag th
 to show the file inline (since `f2cdbbebe` the flag is always present, `False` without
 `inline: true`). The model is sent that entry as the tool's result.
 
-With #33263 the terminal's `display_file` also takes an optional `file_id` (`path` no longer
-required): a call with one shows the chat or knowledge base file as the built-in tool does
-and never reaches the terminal, while a call with a path still goes to the terminal.
+Since `f2cdbbebe` the terminal's `display_file` also takes a chat or knowledge base file, named
+in `path` by its id or its `/api/v1/files/<id>/content` URL: such a call shows the Open WebUI
+file as the built-in tool does and never reaches the terminal, while a terminal path still goes
+to the terminal.
 
 A terminal's `read_file` of a PNG answers with the image itself, which the model is sent as an
 image. With the model's Vision capability off it must not be (open-webui/open-webui#32720, PR
@@ -24,11 +25,10 @@ Twin of unit/chat/test_terminal_file_tool_result.py.
 
 Discriminates: passes on dev ef67cc3fa and 05e115366; with `inline is not True` restored to the
 bail-out, the calls without `inline: true` reach the model as the raw terminal answer, and with
-`displayed` set from a truthy `inline`, the string and 1 calls are flagged as displayed. Against
-the #33263 branch 73fca05b3, the terminal tool left without `file_id`, or a `file_id` call
-routed to the terminal, turned the file_id test red; it fails on dev until #33263 merges. The
-Vision-off read passes on the #33345 branch 1a02165c1 and fails on dev 3b8205505 (the PNG is
-sent to a model that cannot read it).
+`displayed` set from a truthy `inline`, the string and 1 calls are flagged as displayed. On dev
+c5981aaea, a file id call routed to the terminal instead of the built-in tool turned the chat or
+knowledge file test red. The Vision-off read passes on the #33345 branch 1a02165c1 and fails on
+dev 3b8205505 (the PNG is sent to a model that cannot read it).
 """
 
 from __future__ import annotations
@@ -200,21 +200,25 @@ def test_the_terminal_display_file_also_shows_a_chat_or_knowledge_file(terminal,
     offered = [tool["function"] for tool in sent.get("tools") or []]
     display = [tool for tool in offered if tool["name"] == "display_file"]
     assert len(display) == 1, f"expected one display_file tool, got {display}"
-    parameters = display[0]["parameters"]
-    assert {"path", "file_id"} <= set(parameters["properties"]), parameters
-    assert "path" not in parameters.get("required", []), parameters
+    assert "path" in display[0]["parameters"]["properties"], display[0]["parameters"]
 
+    content_url = f"/api/v1/files/{file_id}/content"
     server.clear()
-    by_id = _tool_result(terminal, admin, upstream, "display_file", {"file_id": file_id, "page": 2})
+    by_id = _tool_result(terminal, admin, upstream, "display_file", {"path": file_id, "page": 2})
+    by_url = _tool_result(terminal, admin, upstream, "display_file", {"path": content_url})
     terminal_calls = server.requests_to("/files/display")
     by_path = _tool_result(terminal, admin, upstream, "display_file", {"path": REPORT})
 
-    assert (by_id.get("source"), by_id.get("id"), by_id.get("page")) == (
-        "open_webui",
-        file_id,
-        2,
-    ), f"a display_file call with a file_id did not show the Open WebUI file: {by_id}"
-    assert not terminal_calls, "a display_file call with a file_id went to the terminal"
+    for entry in (by_id, by_url):
+        assert (entry.get("source"), entry.get("path"), entry.get("name")) == (
+            "open_webui",
+            content_url,
+            "berths.txt",
+        ), f"a display_file call naming an uploaded file did not show it: {entry}"
+    assert by_id.get("page") == 2, by_id
+    assert not terminal_calls, (
+        f"a display_file call naming an uploaded file went to the terminal: {terminal_calls}"
+    )
     assert (by_path.get("source"), by_path.get("path")) == ("open_terminal", REPORT), by_path
 
 
