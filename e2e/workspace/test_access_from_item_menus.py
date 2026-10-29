@@ -1,12 +1,14 @@
-"""Journey: the Access entry in a skill, tool or note's "..." menu shares the item from its list.
+"""Journey: the Access entry in a workspace item's "..." menu shares the item from its list.
 
 The entry opens an Access dialog that loads the item's grants and saves every change at once with
 a "Saved" toast. For a skill an owner adds a person at Read, and the server then lets them read it
 and refuses their update; raising the row to Write lets them update it, and the row's X takes both
 away again. For a tool the same goes through a group. For a note the owner shares from the Notes
 list and the person opens it over the API until the X removes them; a person given write access
-to a note is not offered Access in its menu. Visibility offers Public only to an account with the
-public sharing permission for that kind: without it the choice is missing, with it the skill
+to a note is not offered Access in its menu. A model, a knowledge base and a prompt go the same
+way as the skill from their own lists: Read lets the person read it but not change it, Write lets
+them change it and the row's X takes both away. Visibility offers Public only to an account with
+the public sharing permission for that kind: without it the choice is missing, with it the skill
 becomes readable by an unrelated account. A reader of a skill or tool has no menu on the row, and
 a writer is offered Access.
 
@@ -17,18 +19,22 @@ tools case of the reader test red (no Access entry); Notes.svelte offering Acces
 turns the write-access note test red (the entry is shown); sharePublic always true turns the
 no-public test red (Public is offered); Skills.svelte showing the menu to every row turns the
 skills case of the reader test red (a reader has a menu).
+On dev 3b8205505, in a frontend copy, the Models and Knowledge lists passing no accessHandler turn
+the models and knowledge cases of the model, knowledge base or prompt test red (no Access entry),
+and a prompt Access dialog that saves nothing turns its prompts case red.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import Callable, Iterator
+from typing import Callable, Iterator, NamedTuple
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.access import make_group
 from harness.actors import Actor
+from harness.upstream import MOCK_MODEL_ID
 from utils.access_control import access_row, remove_access
 from utils.member_picker import pick_member
 from utils.notes_page import note_row
@@ -147,6 +153,21 @@ def _list_row(page: Page, section: str, name: str) -> Locator:
     return row
 
 
+def _searched_row(page: Page, section: str, name: str) -> Locator:
+    """The item's row once the list searched by `name` has loaded."""
+    page.goto(f"/workspace/{section}")
+
+    def is_search(response) -> bool:
+        return f"/api/v1/{section}/" in response.url and "query=" in response.url
+
+    # the list reloads when the search answers, which closes a menu opened before that
+    with page.expect_response(is_search):
+        page.get_by_role("textbox", name=f"Search {section.title()}").fill(name)
+    row = item_row(page, name)
+    expect(row).to_be_visible()
+    return row
+
+
 def _open_row_menu(row: Locator, trigger: str) -> None:
     row.hover()
     row.get_by_role("button", name=trigger).last.click()
@@ -238,6 +259,136 @@ def test_a_tool_shared_with_a_group_from_its_menu_reaches_the_member(
     _remove_row(page, dialog, group_name)
     assert _read_tool(member, tool) != 200
     assert _update_tool(member, tool, TOOL_SOURCE + "\n# again") != 200
+
+
+class Shared(NamedTuple):
+    """A kind of workspace item: its list, the label of its row menu and how the API handles it."""
+
+    section: str
+    trigger: str
+    create: Callable[[Actor], dict]
+    read: Callable[[Actor, dict], int]
+    update: Callable[[Actor, dict, str], int]
+    stored_text: Callable[[Actor, dict], str]
+    delete: Callable[[Actor, dict], None]
+
+
+def _created(account: Actor, path: str, form: dict) -> dict:
+    with account.client() as client:
+        created = client.post(path, json=form)
+    assert created.status_code == 200, created.text
+    return created.json()
+
+
+def _fetched(account: Actor, path: str, **params) -> dict:
+    with account.client() as client:
+        fetched = client.get(path, params=params)
+    assert fetched.status_code == 200, fetched.text
+    return fetched.json()
+
+
+def _model_form(item: dict, description: str) -> dict:
+    meta = {"description": description}
+    return {**item, "base_model_id": MOCK_MODEL_ID, "meta": meta, "params": {}}
+
+
+def _new_model(account: Actor) -> dict:
+    item = {"id": f"menu-model-{uuid.uuid4().hex[:8]}", "name": _unique("Menu model")}
+    _created(account, "/api/v1/models/create", {**_model_form(item, "tides"), "access_grants": []})
+    return item
+
+
+def _new_knowledge(account: Actor) -> dict:
+    name = _unique("Menu knowledge")
+    form = {"name": name, "description": "charts", "access_grants": []}
+    return {"id": _created(account, "/api/v1/knowledge/create", form)["id"], "name": name}
+
+
+def _new_prompt(account: Actor) -> dict:
+    suffix = uuid.uuid4().hex[:6]
+    item = {"command": f"menu-{suffix}", "name": f"Menu prompt {suffix}"}
+    form = {**item, "content": "Plot a course.", "access_grants": []}
+    return {**item, "id": _created(account, "/api/v1/prompts/create", form)["id"]}
+
+
+MODELS = Shared(
+    section="models",
+    trigger="More:",
+    create=_new_model,
+    read=lambda account, item: _status(account, "GET", f"/api/v1/models/model?id={item['id']}"),
+    update=lambda account, item, text: _status(
+        account, "POST", "/api/v1/models/model/update", _model_form(item, text)
+    ),
+    stored_text=lambda account, item: _fetched(account, "/api/v1/models/model", id=item["id"])[
+        "meta"
+    ]["description"],
+    delete=lambda account, item: _status(
+        account, "POST", "/api/v1/models/model/delete", {"id": item["id"]}
+    ),
+)
+KNOWLEDGE = Shared(
+    section="knowledge",
+    trigger="More Options",
+    create=_new_knowledge,
+    read=lambda account, item: _status(account, "GET", f"/api/v1/knowledge/{item['id']}"),
+    update=lambda account, item, text: _status(
+        account,
+        "POST",
+        f"/api/v1/knowledge/{item['id']}/update",
+        {"name": item["name"], "description": text},
+    ),
+    stored_text=lambda account, item: _fetched(account, f"/api/v1/knowledge/{item['id']}")[
+        "description"
+    ],
+    delete=lambda account, item: _status(
+        account, "DELETE", f"/api/v1/knowledge/{item['id']}/delete"
+    ),
+)
+PROMPTS = Shared(
+    section="prompts",
+    trigger="Prompt Menu",
+    create=_new_prompt,
+    read=lambda account, item: _status(account, "GET", f"/api/v1/prompts/id/{item['id']}"),
+    update=lambda account, item, text: _status(
+        account,
+        "POST",
+        f"/api/v1/prompts/id/{item['id']}/update",
+        {"command": item["command"], "name": item["name"], "content": text},
+    ),
+    stored_text=lambda account, item: _fetched(account, f"/api/v1/prompts/id/{item['id']}")[
+        "content"
+    ],
+    delete=lambda account, item: _status(
+        account, "DELETE", f"/api/v1/prompts/id/{item['id']}/delete"
+    ),
+)
+
+
+@pytest.mark.parametrize("kind", [MODELS, KNOWLEDGE, PROMPTS], ids=lambda kind: kind.section)
+def test_a_model_knowledge_base_or_prompt_shared_from_its_menu_is_readable_then_writable(
+    page_for, owner, make_user, kind
+):
+    person = make_user()
+    item = kind.create(owner)
+    try:
+        page = page_for(owner)
+        assert kind.read(person, item) != 200
+
+        dialog = _open_access(page, _searched_row(page, kind.section, item["name"]), kind.trigger)
+        _add_access(page, dialog, person.name)
+        expect(dialog.get_by_role("combobox", name="Access level")).to_have_value("read")
+        assert kind.read(person, item) == 200, "a Read grant from the menu did not let them read"
+        assert kind.update(person, item, "Steer north.") != 200, "a reader could change it"
+
+        _set_level(page, dialog, person.name, "write")
+        assert kind.update(person, item, "Steer east.") == 200, "a writer could not change it"
+        assert kind.stored_text(owner, item) == "Steer east."
+
+        _remove_row(page, dialog, person.name)
+        assert kind.read(person, item) != 200, "removing the row left the person reading it"
+        assert kind.update(person, item, "Steer west.") != 200
+    finally:
+        kind.delete(owner, item)
 
 
 def test_a_note_shared_from_the_notes_list_opens_for_the_person_until_removed(
