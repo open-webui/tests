@@ -1,4 +1,4 @@
-"""Journey: the folder menu and the chat header menu mark, export, move, delete and scroll for good.
+"""Journey: the folder menu and the chat header menu mark, export, move, rename, delete and scroll.
 
 The "More" menu on a folder's sidebar row marks every chat in the folder as read, the unread dot
 of a chat outside it stays, and the chats stay read after a reload. Its Export downloads a file
@@ -8,11 +8,19 @@ dialog: the page goes home, the sidebar and the API no longer know the chat. In 
 to scroll, left scrolled to its end, "Scroll to Top" brings the first message back into view. The
 unread dot has no text or role of its own, so it is found by its colour class.
 
+Since 0.12.5 (551b03ff9) Rename in the header menu turns the chat's title into a text box: Enter
+saves the new title, shown in the header, the sidebar and the stored chat, while a blank title is
+refused with a toast and nothing is sent. The owner of a shared folder sees a member's chat in it
+read-only yet gets Rename there and saves it (f517e528d); a member reading the owner's chat in the
+folder gets no Rename.
+
 Discriminates: passes on dev 30f3f6a8f; in a backend copy each test fails when its route answers
 without storing the change: the folder read route marking nothing read, the folder chat list
 answering empty, the chat folder route not moving the chat and the chat delete route not deleting.
 In a frontend copy of dev 30f3f6a8f the Scroll to Top entry closes the menu and leaves the chat at
-its end.
+its end. The rename tests pass on dev c5981aaea (frontend build of 05e115366, no header change
+since); in a frontend copy whose header rename never sends the title, whose blank check is dropped
+and whose menu shows Rename only on writable views, each of the three goes red.
 """
 
 from __future__ import annotations
@@ -23,6 +31,7 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness.access import make_group
 from harness.chat_history import seed_chat
 from utils.sidebar_folders import folder_link, folder_row
 
@@ -229,3 +238,121 @@ def test_header_menu_scroll_to_top_brings_the_first_message_into_view(make_user,
     page.get_by_role("menu").get_by_role("button", name="Scroll to Top").click()
 
     expect(first).to_be_in_viewport()
+
+
+def _header(page: Page) -> Locator:
+    """The bar over the open chat, holding its title and the "Chat actions" menu."""
+    return page.locator("nav").filter(has=page.get_by_label("Chat actions"))
+
+
+def _start_rename(page: Page, title: str) -> Locator:
+    """Pick Rename in the open chat's header menu; returns the text box that replaced the title."""
+    page.get_by_label("Chat actions").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Rename").click()
+    box = _header(page).get_by_role("textbox", name="Title")
+    expect(box).to_be_focused()
+    expect(box).to_have_value(title)
+    expect(_header(page).get_by_role("heading", level=1)).to_have_count(0)
+    return box
+
+
+def _save_title(page: Page, box: Locator, chat_id: str, new_title: str) -> int:
+    box.fill(new_title)
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith(f"/api/v1/chats/{chat_id}")
+        )
+    ) as answer:
+        box.press("Enter")
+    return answer.value.status
+
+
+def _stored_title(account, chat_id: str) -> str:
+    with account.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+    assert stored.status_code == 200, stored.text
+    return stored.json()["title"]
+
+
+def test_header_menu_rename_saves_the_new_title_on_enter(make_user, page_for):
+    account = make_user()
+    suffix = uuid.uuid4().hex[:6]
+    title, renamed = f"Driftwood {suffix}", f"Salvage {suffix}"
+    chat_id = _create_chat(account, title)
+    page = page_for(account, path=f"/c/{chat_id}")
+    sidebar = _open_sidebar(page)
+    _entry(sidebar, title)
+
+    box = _start_rename(page, title)
+    status = _save_title(page, box, chat_id, renamed)
+
+    assert status == 200, f"saving the new title got {status}"
+    expect(_header(page).get_by_role("heading", level=1)).to_have_text(renamed)
+    expect(box).to_have_count(0)
+    assert _stored_title(account, chat_id) == renamed
+    expect(_entry(sidebar, renamed)).to_be_visible()
+    expect(sidebar.locator("#sidebar-chat-group").filter(has_text=title)).to_have_count(0)
+
+
+def test_header_menu_rename_refuses_a_blank_title_and_keeps_the_old_one(make_user, page_for):
+    account = make_user()
+    title = f"Lantern {uuid.uuid4().hex[:6]}"
+    chat_id = _create_chat(account, title)
+    page = page_for(account, path=f"/c/{chat_id}")
+    saves = []
+    page.on(
+        "request",
+        lambda request: (
+            saves.append(request.url)
+            if request.method == "POST" and request.url.endswith(f"/api/v1/chats/{chat_id}")
+            else None
+        ),
+    )
+
+    box = _start_rename(page, title)
+    box.fill("   ")
+    box.press("Enter")
+
+    expect(page.get_by_text("Title cannot be an empty string.")).to_be_visible()
+    expect(_header(page).get_by_role("heading", level=1)).to_have_text(title)
+    assert saves == [], f"a blank title was sent to the server: {saves}"
+    assert _stored_title(account, chat_id) == title
+
+
+def test_shared_folder_owner_renames_a_members_chat_from_its_header_but_not_the_member(
+    make_user, admin, page_for
+):
+    owner, member = make_user(), make_user()
+    group_id = make_group(admin, [owner, member], {"sharing": {"folders": True}})
+    suffix = uuid.uuid4().hex[:6]
+    folder_id = _create_folder(owner, f"Harbour {suffix}")
+    grants = [
+        {"principal_type": "group", "principal_id": group_id, "permission": permission}
+        for permission in ("read", "write")
+    ]
+    with owner.client() as client:
+        shared = client.post(
+            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": grants}
+        )
+    assert shared.status_code == 200, shared.text
+    title, renamed = f"My mooring {suffix}", f"Berth 4 {suffix}"
+    members_chat = _create_chat(member, title, folder_id)
+    owners_chat = _create_chat(owner, f"Harbour log {suffix}", folder_id)
+    owner_page = page_for(owner, path=f"/c/{members_chat}")
+
+    # the owner sees the member's chat read-only, yet may rename it as the folder's owner
+    expect(owner_page.get_by_role("button", name="Clone Chat")).to_be_visible()
+    box = _start_rename(owner_page, title)
+    status = _save_title(owner_page, box, members_chat, renamed)
+
+    assert status == 200, f"the owner's rename got {status}"
+    expect(_header(owner_page).get_by_role("heading", level=1)).to_have_text(renamed)
+    assert _stored_title(member, members_chat) == renamed
+
+    # a member reading the owner's chat in the folder gets no Rename
+    member_page = page_for(member, path=f"/c/{owners_chat}")
+    expect(member_page.get_by_role("button", name="Clone Chat")).to_be_visible()
+    member_page.get_by_label("Chat actions").click()
+    menu = member_page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem", name="Copy")).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Rename")).to_have_count(0)
