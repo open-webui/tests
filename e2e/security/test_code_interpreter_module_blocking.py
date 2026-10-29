@@ -26,7 +26,6 @@ the default sandbox and pass on the persistent worker.
 
 from __future__ import annotations
 
-import json
 import re
 
 import pytest
@@ -82,32 +81,25 @@ TOOL_CHART_TIMEOUT_MS = slow_machine.scaled(REPLY_TIMEOUT_MS)
 
 
 @pytest.fixture
-def page_on(browser):
-    """`page_on(instance)` signs a new account in to that instance in a browser of its own."""
-    contexts = []
+def page_on(page_for):
+    """`page_on(instance)` is a new account's new chat on that instance, code interpreter on."""
 
-    def open_page(launched, path="/?code-interpreter=true"):
+    def open_page(launched, function_calling=None):
         if not launched.serves_frontend:
             pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
         account = create_user(launched)
-        with account.client() as client:
-            settings = {"ui": {"showChangelog": False}}
-            client.post("/api/v1/users/user/settings/update", json=settings).raise_for_status()
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080}, base_url=launched.base_url
-        )
-        context.set_default_timeout(30_000)
-        contexts.append(context)
-        page = context.new_page()
-        page.add_init_script(
-            f"try {{ localStorage.setItem('token', {json.dumps(account.token)}); }} catch (e) {{}}"
-        )
-        page.goto(path)
-        return page, account
+        if function_calling:
+            with account.client() as client:
+                settings = {"ui": {"params": {"function_calling": function_calling}}}
+                saved = client.post("/api/v1/users/user/settings/update", json=settings)
+            saved.raise_for_status()
+        page = page_for(account, path="/?code-interpreter=true")
+        # the new chat applies the URL switch after the input shows; a message sent first goes
+        # without the interpreter and its execute_code call finds no such tool
+        expect(page.get_by_role("button", name="Disable Code Interpreter")).to_be_visible()
+        return page
 
-    yield open_page
-    for context in contexts:
-        context.close()
+    return open_page
 
 
 def _tool_result(page):
@@ -122,7 +114,7 @@ def _tool_result(page):
 
 def test_the_execute_code_tool_refuses_a_blocked_import(page_on, instance_with):
     blocking = instance_with(BLOCKLIST)
-    page, _ = page_on(blocking)
+    page = page_on(blocking)
     blocking.upstream.queue(
         reply.tool_call("execute_code", {"code": IMPORTS_CELL}), reply.text("ran it")
     )
@@ -136,11 +128,7 @@ def test_the_execute_code_tool_refuses_a_blocked_import(page_on, instance_with):
 
 def test_a_code_interpreter_tag_refuses_a_blocked_import(page_on, instance_with):
     blocking = instance_with(BLOCKLIST)
-    page, account = page_on(blocking)
-    with account.client() as client:
-        legacy = {"ui": {"params": {"function_calling": "legacy"}}}
-        client.post("/api/v1/users/user/settings/update", json=legacy).raise_for_status()
-    page.reload()
+    page = page_on(blocking, function_calling="legacy")
     blocking.upstream.queue(
         reply.text(f"{TAG_FORMAT}\n{IMPORTS_CELL}\n</code_interpreter>"), reply.text("ran it")
     )
@@ -180,7 +168,7 @@ def test_a_chart_from_the_execute_code_tool_renders_with_a_blocklist(
     sandbox, page_on, instance_with
 ):
     launched = instance_with(SANDBOXES[sandbox])
-    page, _ = page_on(launched)
+    page = page_on(launched)
     launched.upstream.queue(
         reply.tool_call("execute_code", {"code": CHART_CELL}), reply.text("drew it")
     )
