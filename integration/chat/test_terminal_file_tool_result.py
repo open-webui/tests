@@ -5,7 +5,8 @@ call's `inline` was exactly `True`, so a `display_file` call made without it rea
 as the terminal's raw answer, with no file name or mime type resolved. The fix builds the
 `{'type': 'file', 'source': 'open_terminal', ...}` entry for every call that names an existing
 file on a terminal and marks it `displayed` only for `inline: true`, the flag the frontend reads
-to show the file inline. The model is sent that entry as the tool's result.
+to show the file inline (since `f2cdbbebe` the flag is always present, `False` without
+`inline: true`). The model is sent that entry as the tool's result.
 
 With #33263 the terminal's `display_file` also takes an optional `file_id` (`path` no longer
 required): a call with one shows the chat or knowledge base file as the built-in tool does
@@ -21,12 +22,13 @@ the tool result Open WebUI sent back to the provider.
 
 Twin of unit/chat/test_terminal_file_tool_result.py.
 
-Discriminates: passes on dev ef67cc3fa; with `inline is not True` restored to the bail-out, the
-calls without `inline: true` reach the model as the raw terminal answer. Against the #33263
-branch 73fca05b3, the terminal tool left without `file_id`, or a `file_id` call routed to the
-terminal, turned the file_id test red; it fails on dev until #33263 merges. The Vision-off read
-passes on the #33345 branch 1a02165c1 and fails on dev 3b8205505 (the PNG is sent to a model
-that cannot read it).
+Discriminates: passes on dev ef67cc3fa and 05e115366; with `inline is not True` restored to the
+bail-out, the calls without `inline: true` reach the model as the raw terminal answer, and with
+`displayed` set from a truthy `inline`, the string and 1 calls are flagged as displayed. Against
+the #33263 branch 73fca05b3, the terminal tool left without `file_id`, or a `file_id` call
+routed to the terminal, turned the file_id test red; it fails on dev until #33263 merges. The
+Vision-off read passes on the #33345 branch 1a02165c1 and fails on dev 3b8205505 (the PNG is
+sent to a model that cannot read it).
 """
 
 from __future__ import annotations
@@ -119,7 +121,10 @@ def test_a_display_file_call_without_inline_true_still_resolves_the_file(
     assert entry.get("type") == "file", (
         f"a display_file call without inline=true reached the model unresolved: {entry}"
     )
-    assert "displayed" not in entry, "a file never shown inline was flagged as displayed"
+    # The chat shows the file inline for any truthy `displayed`; False or absent opens the viewer.
+    assert not entry.get("displayed"), (
+        f"a file never shown inline was flagged as displayed: {entry.get('displayed')!r}"
+    )
     assert {key: entry.get(key) for key in ("source", "name", "mime_type", "path")} == {
         "source": "open_terminal",
         "name": "report.png",
