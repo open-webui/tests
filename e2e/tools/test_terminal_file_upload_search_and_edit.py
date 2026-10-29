@@ -6,14 +6,19 @@ the file chooser and it shows in the list and lands in the terminal's home. They
 search box and find one file by its contents and another by its name. They Ctrl-click two rows,
 press Select All, delete the selection and confirm: all the selected files are gone from the
 list and from the disk while an unselected one stays. They open a text file, press Edit, type new
-text and press Save: the new text is on disk.
+text and press Save: the new text is on disk. They change a code file and press Back without
+saving: the Unsaved changes prompt offers Save, Discard changes and Cancel. Save writes the change
+and leaves, Discard changes leaves the file on disk as it was, and Cancel stays on the edited file.
 
 Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler
 does nothing, its search shows no results, its bulk delete returns early and its save handler
-returns early, every test here fails.
+returns early, every test here fails. The unsaved-changes test passes on dev 3b8205505 and fails
+on a build where the file browser leaves an edited file without asking.
 """
 
 from __future__ import annotations
+
+import uuid
 
 import pytest
 from playwright.sync_api import expect
@@ -105,3 +110,50 @@ def test_an_edited_text_file_is_saved_to_the_terminal(browser, open_terminal):
 
     expect(browser.get_by_role("button", name="Edit")).to_be_visible()
     assert note.read_text() == "new words\n"
+
+
+def _leave_an_edited_file(browser, open_terminal):
+    """Change a code file, press Back without saving and return the file and the prompt."""
+    script = open_terminal.home / f"leave-me-{uuid.uuid4().hex[:8]}.py"
+    script.write_text("barrels = 4\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(script.name, exact=True).click()
+    browser.get_by_text("barrels = 4", exact=True).click()
+    browser.page.keyboard.press("End")
+    browser.page.keyboard.press("Backspace")
+    browser.page.keyboard.type("5")
+    expect(browser.get_by_text("barrels = 5", exact=True)).to_be_visible()
+
+    browser.get_by_label("Back", exact=True).click()
+    prompt = browser.page.get_by_role("dialog", name="Unsaved changes")
+    for button in ("Save", "Discard changes", "Cancel"):
+        expect(prompt.get_by_role("button", name=button, exact=True)).to_be_visible()
+    return script, prompt
+
+
+@pytest.mark.parametrize(
+    ("choice", "on_disk"),
+    [("Save", "barrels = 5\n"), ("Discard changes", "barrels = 4\n")],
+    ids=["save", "discard"],
+)
+def test_leaving_an_edited_file_saves_or_discards_as_chosen(
+    browser, open_terminal, choice, on_disk
+):
+    script, prompt = _leave_an_edited_file(browser, open_terminal)
+
+    prompt.get_by_role("button", name=choice, exact=True).click()
+
+    expect(prompt).to_have_count(0)
+    expect(browser.get_by_text(script.name, exact=True)).to_be_visible()
+    expect(browser.get_by_text("barrels = ")).to_have_count(0)
+    assert script.read_text() == on_disk, f"{choice} left the file as {script.read_text()!r}"
+
+
+def test_cancelling_the_unsaved_changes_prompt_stays_on_the_edited_file(browser, open_terminal):
+    script, prompt = _leave_an_edited_file(browser, open_terminal)
+
+    prompt.get_by_role("button", name="Cancel", exact=True).click()
+
+    expect(prompt).to_have_count(0)
+    expect(browser.get_by_text("barrels = 5", exact=True)).to_be_visible()
+    assert script.read_text() == "barrels = 4\n", "Cancel should leave the file on disk alone"

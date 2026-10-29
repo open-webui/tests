@@ -6,15 +6,21 @@ picks the terminal from the input's Terminal menu and clicks each file in the Fi
 note shows rendered and its source after the Source toggle; the sheet shows as a table; the
 document shows as a tree whose nodes fold and the broken one shows the parse error; the image
 shows with working zoom buttons whose percentage changes; the database lists its table with its
-rows; the notebook shows its cells and their outputs.
+rows; the notebook shows its cells and their outputs. Ticking a task in a Markdown note writes
+the tick into the file, and a note renders its math, its alert and its Mermaid diagram. An Excel
+workbook marks the cell that has a comment and shows the comment with its author on hover, and a
+legacy Excel 2.x .xls sheet shows as a table.
 
 Discriminates: passes on dev 30f3f6a8f; on a build with the file preview's Markdown, CSV, JSON,
 notebook and SQLite branches switched off and its three zoom button handlers removed, every test
-here fails.
+here fails. The task, math, comment and .xls tests pass on dev 3b8205505 and fail on a build where
+a ticked task is not saved, documents render without the KaTeX extension and .xlsx and .xls no
+longer open in the comment-aware preview.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import sqlite3
@@ -24,6 +30,7 @@ import zlib
 import pytest
 from playwright.sync_api import expect
 
+from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
 
@@ -46,6 +53,13 @@ NOTEBOOK = {
     ],
 }
 FARM = {"farm": {"name": "Hollow Creek", "acres": 12}, "crops": ["rye", "oats"]}
+CHORES = "# Chores\n\n- [ ] prune the pears\n- [x] press the cider\n"
+FROST = (
+    "# Frost watch\n\n"
+    "$$E = mc^2$$\n\n"
+    "> [!WARNING]\n> Cover the seedlings tonight.\n\n"
+    "```mermaid\ngraph TD\n  Pick[Pick apples] --> Press[Press juice]\n```\n"
+)
 
 
 @pytest.fixture
@@ -58,6 +72,9 @@ def home_files(open_terminal):
     (home / "broken.json").write_text('{"farm": ')
     (home / "label.png").write_bytes(png())
     (home / "log.ipynb").write_text(json.dumps(NOTEBOOK))
+    (home / "chores.md").write_text(CHORES)
+    (home / "frost.md").write_text(FROST)
+    (home / "ledger.xls").write_bytes(biff2_xls([["barrel", "litres"], ["cider", 120.0]]))
     (home / "stock.db").unlink(missing_ok=True)
     with sqlite3.connect(home / "stock.db") as database:
         database.execute("CREATE TABLE barrels (label TEXT, litres INTEGER)")
@@ -96,6 +113,39 @@ def png(width: int = 64, height: int = 48) -> bytes:
     )
 
 
+def xlsx_with_a_comment() -> bytes:
+    openpyxl = pytest.importorskip("openpyxl")
+    from openpyxl.comments import Comment
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Barrels"
+    sheet.append(["barrel", "litres"])
+    sheet.append(["cider", 120])
+    sheet["B2"].comment = Comment("Topped up after racking", "Mara")
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def biff2_xls(rows: list[list[str | float]]) -> bytes:
+    """A legacy Excel 2.x worksheet: the bare BIFF record stream, strings and numbers."""
+
+    def record(kind: int, data: bytes = b"") -> bytes:
+        return struct.pack("<HH", kind, len(data)) + data
+
+    cells = b""
+    for row_number, row in enumerate(rows):
+        for column_number, value in enumerate(row):
+            where = struct.pack("<HH", row_number, column_number) + b"\x00\x00\x00"
+            if isinstance(value, str):
+                text = value.encode("latin-1")
+                cells += record(0x0004, where + bytes([len(text)]) + text)
+            else:
+                cells += record(0x0003, where + struct.pack("<d", value))
+    return record(0x0009, struct.pack("<HH", 0x0002, 0x0010)) + cells + record(0x000A)
+
+
 def test_a_markdown_file_shows_rendered_and_as_source(browser):
     open_file(browser, "plan-notes.md")
 
@@ -106,6 +156,59 @@ def test_a_markdown_file_shows_rendered_and_as_source(browser):
 
     expect(browser.get_by_text("# Harvest plan")).to_be_visible()
     expect(browser.get_by_role("heading", name="Harvest plan")).to_have_count(0)
+
+
+def test_ticking_a_markdown_task_saves_it_to_the_file(browser, open_terminal):
+    open_file(browser, "chores.md")
+    task = (
+        browser.get_by_role("listitem").filter(has_text="prune the pears").get_by_role("checkbox")
+    )
+    expect(task).not_to_be_checked()
+
+    task.click()
+
+    expect(task).to_be_checked()
+    chores = open_terminal.home / "chores.md"
+    ticked = CHORES.replace("[ ] prune", "[x] prune")
+    assert wait_until(lambda: chores.read_text() == ticked, 10), (
+        f"the ticked task never reached the file: {chores.read_text()!r}"
+    )
+
+
+def test_a_markdown_file_renders_math_alerts_and_diagrams(browser):
+    open_file(browser, "frost.md")
+
+    expect(browser.locator("math")).to_have_count(1)
+    expect(browser.get_by_text("WARNING", exact=True)).to_be_visible()
+    expect(browser.get_by_text("Cover the seedlings tonight.")).to_be_visible()
+    expect(browser.get_by_text("[!WARNING]")).to_have_count(0)
+    expect(browser.get_by_text("Pick apples", exact=True)).to_be_visible()
+    expect(browser.get_by_text("graph TD")).to_have_count(0)
+    expect(browser.get_by_text("$$")).to_have_count(0)
+
+
+def test_a_spreadsheet_comment_shows_on_its_cell(browser, open_terminal):
+    (open_terminal.home / "barrels.xlsx").write_bytes(xlsx_with_a_comment())
+    browser.get_by_label("Refresh", exact=True).first.click()
+    open_file(browser, "barrels.xlsx")
+
+    cell = browser.get_by_role("cell", name="120")
+    expect(cell).to_contain_text("◥")
+    expect(browser.get_by_role("cell", name="cider")).not_to_contain_text("◥")
+
+    cell.hover()
+
+    comment = browser.page.get_by_role("dialog", name="Comment")
+    expect(comment).to_contain_text("Topped up after racking")
+    expect(comment).to_contain_text("Mara")
+
+
+def test_a_legacy_xls_sheet_shows_as_a_table(browser):
+    open_file(browser, "ledger.xls")
+
+    table = browser.get_by_role("table")
+    expect(table.get_by_role("cell", name="litres")).to_be_visible()
+    expect(table.get_by_role("row", name=re.compile(r"cider\s*120"))).to_be_visible()
 
 
 def test_a_csv_file_shows_as_a_table(browser):
