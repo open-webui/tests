@@ -8,6 +8,9 @@ the message "Pinned" for both and lists it under "Pinned Messages", where unpinn
 again. A reaction the second member joins counts both, names who reacted, and drops back as each
 takes theirs away.
 
+The reaction test is red on dev since 9d1b4ef36: the reaction tooltip shows only the count and no
+longer names who reacted (open-webui/open-webui#33392, fix PR open-webui/open-webui#33393).
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, saving an edit with the old content
 turns the edit test red, deleting nothing on confirm turns the delete test red, offering edit and
 delete on every message turns the someone else's message test red, offering them to nobody but the

@@ -12,9 +12,10 @@ The Stop test was red on dev 226dca18c: while the owner's reply ran, the page of
 showed Stop as well, and clicking it did nothing. Present since the shared replies landed in
 de73bb830 (v0.12.0), fixed on dev by d6610adaa (open-webui/open-webui#33343).
 
-The owner's test is red on dev since 193cf225f (v0.12.5): a chat started from the home page stops
-syncing with the server, so the owner's page never learns the chat was shared with replies and
-offers no Regenerate on the member's reply (open-webui/open-webui#33376, fix PR #33377 open).
+The owner's test was red from 193cf225f (v0.12.5): a chat started from the home page stopped
+syncing with the server, so the owner's page never learned the chat was shared with replies and
+offered no Regenerate on the member's reply (open-webui/open-webui#33376, fixed on dev by
+open-webui/open-webui#33377).
 
 Discriminates: the other four pass on dev 226dca18c. One frontend build of it with four edits
 fails each of them: the chat page ignoring typing events fails the typing test, every prompt

@@ -13,9 +13,9 @@ one where the pick stays a one-off above the box (dev cac14f985) the first test 
 where Escape keeps the pick the second fails. On dev c5981aaea, in a build that saves a chat's
 model only with a message, both reload tests fail (the chat keeps storing the old model).
 
-The reload test for a chat started on the home page fails on dev c5981aaea: since 193cf225f such a
-chat never takes in its stored state, so the selector's pick is not saved
-(open-webui/open-webui#33376, fix PR open-webui/open-webui#33377).
+The reload test for a chat started on the home page failed from 193cf225f: such a chat never took
+in its stored state, so the selector's pick was not saved (open-webui/open-webui#33376, fixed on
+dev by open-webui/open-webui#33377).
 """
 
 from __future__ import annotations
