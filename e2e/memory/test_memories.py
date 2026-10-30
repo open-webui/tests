@@ -35,7 +35,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 FIRST = "I keep bees on the roof."
 EDITED = "I keep bees and two hens on the roof."
 LATER = "I ride a bicycle to work every day."
-MEMORY_FIELD = "Add a preference, fact, or instruction about you"
+MEMORY_FIELD = "Memory"
 
 
 def _personalization(page: Page) -> Locator:
@@ -51,14 +51,14 @@ def test_a_memory_is_added_edited_used_and_deleted(page_for, make_user, upstream
     settings.get_by_role("button", name="Actions").first.click()
     page.get_by_role("menu").get_by_role("menuitem", name="Add Memory").click()
     adding = page.get_by_role("dialog").filter(has_text="Add Memory")
-    adding.get_by_role("textbox", name=MEMORY_FIELD).fill(FIRST)
+    adding.get_by_role("textbox", name=MEMORY_FIELD, exact=True).fill(FIRST)
     adding.get_by_role("button", name="Add", exact=True).click()
     expect(settings.get_by_text(FIRST)).to_be_visible()
 
     settings.get_by_role("button", name="Edit").click()
     editing = page.get_by_role("dialog").filter(has_text="Edit Memory")
-    expect(editing.get_by_role("textbox", name=MEMORY_FIELD)).to_have_value(FIRST)
-    editing.get_by_role("textbox", name=MEMORY_FIELD).fill(EDITED)
+    expect(editing.get_by_role("textbox", name=MEMORY_FIELD, exact=True)).to_have_value(FIRST)
+    editing.get_by_role("textbox", name=MEMORY_FIELD, exact=True).fill(EDITED)
     editing.get_by_role("button", name="Update").click()
     expect(settings.get_by_text(EDITED)).to_be_visible()
 

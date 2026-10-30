@@ -222,7 +222,7 @@ def test_a_chats_system_prompt_is_kept_after_a_reload_and_stays_in_that_chat(
 ):
     page = page_for(make_user())
     _advanced_params(page)
-    page.get_by_role("textbox", name="Enter system prompt").fill(CHAT_PROMPT)
+    page.get_by_role("textbox", name="System Prompt", exact=True).fill(CHAT_PROMPT)
     assert _system_prompts(_ask(page, upstream)) == [CHAT_PROMPT]
 
     expect(page).to_have_url(re.compile(r"/c/"))
@@ -257,7 +257,7 @@ def test_two_tabs_changing_different_settings_keep_both(page_for, make_user, ups
     expect_reply(second, "Fog again.")
 
     _advanced_params(first)
-    prompt_box = first.get_by_role("textbox", name="Enter system prompt")
+    prompt_box = first.get_by_role("textbox", name="System Prompt", exact=True)
     with _saved_setting(first):
         prompt_box.fill(CHAT_PROMPT)
         prompt_box.blur()
@@ -274,7 +274,9 @@ def test_two_tabs_changing_different_settings_keep_both(page_for, make_user, ups
     reopened = page_for(account, path=f"/c/{turn.chat_id}")
     expect_reply(reopened, "Fog again.")
     panel = _advanced_params(reopened)
-    expect(reopened.get_by_role("textbox", name="Enter system prompt")).to_have_value(CHAT_PROMPT)
+    expect(reopened.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value(
+        CHAT_PROMPT
+    )
     expect(panel.get_by_role("spinbutton", name="Temperature")).to_have_value("0.8")
     request = _ask(reopened, upstream)
     assert (_system_prompts(request), request.get("temperature")) == ([CHAT_PROMPT], 0.8)

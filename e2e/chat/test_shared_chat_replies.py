@@ -146,7 +146,7 @@ def _share_over_api(owner, chat_id: str, grants: list[dict], mode: str | None) -
 def _set_chat_prompt(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
     page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    page.get_by_role("textbox", name="Enter system prompt").fill(OWNER_PROMPT)
+    page.get_by_role("textbox", name="System Prompt", exact=True).fill(OWNER_PROMPT)
 
 
 def _sent_home(page: Page, message: str | None = None) -> None:
@@ -298,7 +298,7 @@ def test_someone_replying_does_not_get_the_owners_system_prompt(page_for, make_u
     member_page = page_for(member)
     _open_live_chat(member_page, chat_id)
     member_page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    expect(member_page.get_by_role("textbox", name="Enter system prompt")).to_have_value("")
+    expect(member_page.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value("")
     member_turn = _ask(member_page, upstream, "what is the toll?", "Ask at the office.")
     assert OWNER_PROMPT not in "\n".join(_system_prompts(member_turn))
 

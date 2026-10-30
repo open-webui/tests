@@ -75,7 +75,7 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     # the dialog fills its fields once its folders and channels load
     expect(title).to_have_value(automation["name"])
     title.fill(new_title)
-    editing.get_by_role("textbox", name="Enter prompt here.").fill(new_prompt)
+    editing.get_by_role("textbox", name="Instructions").fill(new_prompt)
     editing.get_by_role("button", name="Daily").first.click()
     page.get_by_role("combobox").select_option(label="Hourly")
     editing.get_by_role("button", name="Hourly").first.click()

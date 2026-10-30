@@ -56,6 +56,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.backends import wait_until
+from harness.calendar_api import set_timezone
 from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import automation_row
 from utils.chat_ui import chat_input, conversation, expect_reply
@@ -78,7 +79,7 @@ def open_create_dialog(page: Page) -> Locator:
     page.goto("/automations")
     page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
     dialog = page.get_by_role("dialog")
-    expect(dialog.get_by_role("textbox", name="Enter prompt here.")).to_be_visible()
+    expect(dialog.get_by_role("textbox", name="Instructions")).to_be_visible()
     return dialog
 
 
@@ -102,7 +103,7 @@ def close_schedule(dialog: Locator, kind: str) -> None:
 
 def finish(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     """Fill the prompt and title, press Create and return the new automation's id."""
-    dialog.get_by_role("textbox", name="Enter prompt here.").fill(prompt)
+    dialog.get_by_role("textbox", name="Instructions").fill(prompt)
     # the dialog clears the title once its folders and channels load, so it goes in last
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
@@ -315,6 +316,8 @@ def test_the_calendar_shows_an_active_automations_runs_and_opens_them(
     tomorrow = dt.datetime.now(ZoneInfo(ZONE)) + dt.timedelta(days=1)
     weekday = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][tomorrow.weekday()]
     with scheduler.client() as client:
+        # the next run is timed in the account's zone, which the page only records on load
+        set_timezone(client, ZONE)
         created = client.post(
             "/api/v1/automations/create",
             json={

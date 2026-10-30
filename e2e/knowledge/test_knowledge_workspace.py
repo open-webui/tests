@@ -198,10 +198,8 @@ def test_a_knowledge_base_is_created_found_in_the_list_and_deleted(page_for, cur
     name = _unique("Harbour")
     page = page_for(curator, path="/workspace/knowledge/create")
     creating = page.get_by_role("dialog")
-    creating.get_by_role("textbox", name="Name your knowledge base").fill(name)
-    creating.get_by_role("textbox", name="Describe your knowledge base and objectives").fill(
-        DESCRIPTION
-    )
+    creating.get_by_role("textbox", name="What are you working on?").fill(name)
+    creating.get_by_role("textbox", name="What are you trying to achieve?").fill(DESCRIPTION)
     creating.get_by_role("button", name="Create Knowledge").click()
     expect(page).to_have_url(re.compile(r"/workspace/knowledge/[0-9a-f-]+$"))
     knowledge_id = page.url.rsplit("/", 1)[-1]

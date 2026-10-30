@@ -43,7 +43,7 @@ def open_with(page_for, make_user, **ui) -> Page:
 
 def controls(page: Page) -> Locator:
     page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    prompt = page.get_by_role("textbox", name="Enter system prompt")
+    prompt = page.get_by_role("textbox", name="System Prompt", exact=True)
     expect(prompt).to_be_visible()
     return prompt
 

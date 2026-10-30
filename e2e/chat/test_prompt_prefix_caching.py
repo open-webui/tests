@@ -402,7 +402,7 @@ def test_a_temperature_and_model_description_change_mid_chat_only_append(
     ask(page, upstream, "good morning", reply.text("Morning."))
 
     page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    expect(page.get_by_role("textbox", name="Enter system prompt")).to_be_visible()
+    expect(page.get_by_role("textbox", name="System Prompt", exact=True)).to_be_visible()
     setting_button(page.locator("body"), "Temperature").click()
     page.get_by_role("spinbutton", name="Temperature").fill("0.2")
     with admin.client() as client:
