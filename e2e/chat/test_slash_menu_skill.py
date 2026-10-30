@@ -109,7 +109,10 @@ def second_skill(skill):
 
 
 def test_a_restored_skill_only_draft_sends_only_that_skill(page_for, skill, second_skill, upstream):
-    """#32690 (fix 14956af03): a skill-only draft brought back sent every skill's name."""
+    """#32690 (fix 14956af03): a skill-only draft brought back sent every skill's name.
+
+    Red on dev since b29f7781a: the draft is not brought back at all
+    (open-webui/open-webui#33397, fix PR open-webui/open-webui#33398)."""
     account, name = skill
     page = page_for(account)
     _pick_skill(page, "$", name)

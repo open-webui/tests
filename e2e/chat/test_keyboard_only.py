@@ -22,6 +22,10 @@ The settings focus test was red on dev ebc6add67: Settings opened from the user 
 focus back on closing to the menu's Settings entry, which is gone by then, so the focus fell to the
 page itself and the next Tab started over at the top of the page (open-webui/open-webui#32017, fixed
 by c7e7dbf98).
+
+The skip link test is red on dev since b29f7781a: the skip link resets the new chat, which wipes
+the typed text and puts the focus back in the message box (open-webui/open-webui#33396, fix PR
+open-webui/open-webui#33399).
 """
 
 from __future__ import annotations
