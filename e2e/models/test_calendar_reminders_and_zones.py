@@ -40,6 +40,7 @@ from harness.calendar_api import (
     events_between,
     to_ns,
 )
+from utils.calendar_month import days_showing
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -74,9 +75,8 @@ def _chip(page: Page, title: str) -> Locator:
 
 
 def _days_showing(page: Page, title: str) -> list[int]:
-    """The day numbers of the month-view cells holding the event, in grid order."""
-    cells = page.get_by_role("button").filter(has=_chip(page, title))
-    return [int(text.split()[0]) for text in cells.all_inner_texts()]
+    """The day numbers of the month-view squares holding the event, in grid order."""
+    return days_showing(page, _chip(page, title))
 
 
 def _open_editor(page: Page) -> Locator:

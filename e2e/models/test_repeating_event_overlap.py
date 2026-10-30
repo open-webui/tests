@@ -24,6 +24,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.calendar_api import HOUR_NS, create_event, default_calendar_id, set_timezone, to_ns
+from utils.calendar_month import days_showing
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -43,9 +44,8 @@ def _chip(page: Page, title: str) -> Locator:
 
 
 def _days_showing(page: Page, title: str) -> list[int]:
-    """The day numbers of the month-view cells holding the event, in grid order."""
-    cells = page.get_by_role("button").filter(has=_chip(page, title))
-    return [int(text.split()[0]) for text in cells.all_inner_texts()]
+    """The day numbers of the month-view squares holding the event, in grid order."""
+    return days_showing(page, _chip(page, title))
 
 
 def test_a_weekly_overnight_event_shows_on_the_first_day_of_the_month_view(page_for, make_user):

@@ -57,6 +57,7 @@ from harness.calendar_api import (
     to_ns,
 )
 from harness.tool_calls import run_tool
+from utils.calendar_month import day_button, days_showing
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -112,9 +113,8 @@ def _chip(page: Page, title: str) -> Locator:
 
 
 def _days_showing(page: Page, title: str) -> list[int]:
-    """The day numbers of the month-view cells holding the event, in grid order."""
-    cells = page.get_by_role("button").filter(has=_chip(page, title))
-    return [int(text.split()[0]) for text in cells.all_inner_texts()]
+    """The day numbers of the month-view squares holding the event, in grid order."""
+    return days_showing(page, _chip(page, title))
 
 
 def _open_editor(page: Page, at: dt.time = dt.time(12)) -> Locator:
@@ -229,8 +229,7 @@ def test_clicking_an_empty_day_starts_an_event_at_nine_that_day(page_for, make_u
     title = _title("Call")
     page = page_for(owner, path="/calendar")
 
-    # the sidebar's mini calendar comes first and has a "20" too
-    page.get_by_role("button", name="20", exact=True).last.click()
+    day_button(page, _this_month(20, 9).date()).click()
     editor = page.get_by_role("dialog")
     editor.get_by_placeholder("Event title").fill(title)
     _no_reminder(editor)

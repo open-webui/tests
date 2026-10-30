@@ -23,6 +23,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.calendar_api import HOUR_NS, NO_REMINDER, create_event, default_calendar_id, to_ns
+from utils.calendar_month import day_squares
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -34,7 +35,7 @@ def _this_month_at_ten(day: int) -> dt.datetime:
 
 def _day_cell(page: Page, title: str):
     """The month-view day that holds the event's chip."""
-    return page.get_by_role("button").filter(has=page.get_by_role("button", name=title))
+    return day_squares(page).filter(has=page.get_by_role("button", name=title))
 
 
 def test_an_event_moved_a_week_later_in_the_editor_shows_on_its_new_day(page_for, make_user):
