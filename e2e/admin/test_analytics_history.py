@@ -273,7 +273,8 @@ def test_the_activity_view_gives_each_model_a_lane(history, admin_page, presets)
     expect(details).to_contain_text(re.compile(r"1\s*\(100(\.0)?%\)"))
 
     # isolate the lower lane, so keeping only the top one would not pass
-    settings.get_by_role("button", name=birch, exact=True).click()
+    chart = settings.get_by_role("region", name="Usage over time")
+    chart.get_by_role("button", name=birch, exact=True).click()
     expect(activity_lane(settings, aster)).to_have_count(0)
     expect(activity_lane(settings, birch)).to_have_count(1)
 

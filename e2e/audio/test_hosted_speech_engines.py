@@ -114,8 +114,8 @@ def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
     settings = audio_settings(admin_page)
     settings.get_by_role("combobox", name="Text-to-Speech Engine").select_option(label="ElevenLabs")
     settings.get_by_role("textbox", name="API Key").fill(ELEVENLABS_KEY)
-    settings.get_by_role("combobox", name="Select a voice").fill(ADMIN_VOICE)
-    settings.get_by_role("combobox", name="Select a model").fill(MODEL)
+    settings.get_by_role("combobox", name="TTS Voice").fill(ADMIN_VOICE)
+    settings.get_by_role("combobox", name="TTS Model").fill(MODEL)
     save(admin_page, settings)
 
     owner = create_user(hosted)

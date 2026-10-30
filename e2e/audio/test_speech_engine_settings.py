@@ -227,10 +227,10 @@ def test_an_azure_voice_reads_a_reply_aloud_through_the_admin_tab(
     settings = open_admin_audio(admin_page)
     pick_engines(settings, "Web API", "Azure AI Speech")
     settings.get_by_role("textbox", name="API Key", exact=True).fill(AZURE_KEY)
-    settings.get_by_role("textbox", name="leave blank for eastus").fill("westus")
-    settings.get_by_role("textbox", name="commercial endpoint").fill(listener.base_url)
-    settings.get_by_role("combobox", name="Select a voice").fill(AZURE_VOICE)
-    settings.get_by_role("textbox", name="Select an output format").fill(AZURE_FORMAT)
+    settings.get_by_role("textbox", name="Azure Region").fill("westus")
+    settings.get_by_role("textbox", name="Endpoint URL").fill(listener.base_url)
+    settings.get_by_role("combobox", name="TTS Voice").fill(AZURE_VOICE)
+    settings.get_by_role("textbox", name="Output format").fill(AZURE_FORMAT)
     save_admin_audio(admin_page, settings)
 
     reader = make_user()
@@ -254,9 +254,9 @@ def test_azure_transcribes_a_dictation_through_the_admin_tab(
         label="Azure AI Speech"
     )
     settings.get_by_role("textbox", name="API Key", exact=True).fill(AZURE_KEY)
-    settings.get_by_role("textbox", name="leave blank for eastus").fill("westus")
-    settings.get_by_role("textbox", name="leave blank for auto-detect").fill("en-US,fr-FR")
-    settings.get_by_role("textbox", name="commercial endpoint").fill(listener.base_url)
+    settings.get_by_role("textbox", name="Azure Region").fill("westus")
+    settings.get_by_role("textbox", name="Language Locales").fill("en-US,fr-FR")
+    settings.get_by_role("textbox", name="Endpoint URL").fill(listener.base_url)
     save_admin_audio(admin_page, settings)
 
     page = voice_page_for(make_user())
@@ -278,7 +278,7 @@ def test_a_mistral_voice_reads_a_reply_aloud_through_the_admin_tab(
     pick_engines(settings, "Web API", "MistralAI")
     settings.get_by_role("textbox", name="API Base URL").fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill(MISTRAL_KEY)
-    settings.get_by_role("combobox", name="Select a voice").fill(MISTRAL_VOICE)
+    settings.get_by_role("combobox", name="TTS Voice").fill(MISTRAL_VOICE)
     save_admin_audio(admin_page, settings)
 
     reader = make_user()
@@ -299,7 +299,7 @@ def test_mistral_transcribes_a_dictation_through_the_admin_tab(
     settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="MistralAI")
     settings.get_by_role("textbox", name="API Base URL").fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill(MISTRAL_KEY)
-    settings.get_by_role("textbox", name="voxtral-mini-latest").fill("voxtral-test-model")
+    settings.get_by_role("textbox", name="STT Model").fill("voxtral-test-model")
     save_admin_audio(admin_page, settings)
 
     page = voice_page_for(make_user())
@@ -383,7 +383,7 @@ def test_the_admins_speech_to_text_model_is_the_one_the_engine_is_asked_for(
     settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="OpenAI")
     settings.get_by_role("textbox", name="API Base URL").fill(engine.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill("sk-audio")
-    settings.get_by_role("combobox", name="Select a model").fill("whisper-test-model")
+    settings.get_by_role("combobox", name="STT Model").fill("whisper-test-model")
     save_admin_audio(admin_page, settings)
 
     page = voice_page_for(make_user())
@@ -408,7 +408,7 @@ def test_a_new_admin_default_voice_replaces_the_voice_a_user_picked(
     read_aloud(page, owner, first)
 
     settings = open_admin_audio(admin_page)
-    settings.get_by_role("combobox", name="Select a voice").fill("newscaster")
+    settings.get_by_role("combobox", name="TTS Voice").fill("newscaster")
     save_admin_audio(admin_page, settings)
     second = unique_line()
     read_aloud(page, owner, second)

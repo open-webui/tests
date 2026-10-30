@@ -179,10 +179,8 @@ def test_the_realtime_speech_engine_reads_a_reply_with_the_admins_prompt(
         label="OpenAI Realtime"
     )
 
-    expect(speech.get_by_role("combobox", name="Select a voice")).to_have_value("marin")
-    expect(speech.get_by_role("combobox", name="Select a model")).to_have_value(
-        "gpt-realtime-2.1-mini"
-    )
+    expect(speech.get_by_role("combobox", name="TTS Voice")).to_have_value("marin")
+    expect(speech.get_by_role("combobox", name="TTS Model")).to_have_value("gpt-realtime-2.1-mini")
     expect(speech.get_by_text("Additional Parameters", exact=True)).to_have_count(0)
     speech.get_by_role("textbox", name="API Base URL").fill(provider.base_url)
     speech.get_by_role("textbox", name="API Key").fill(API_KEY)

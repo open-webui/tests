@@ -51,10 +51,8 @@ def test_a_knowledge_base_embedded_locally_answers_a_chat(page_for, local_instan
     name = f"Orchard {uuid.uuid4().hex[:6]}"
     page = page_for(create_user(local_instance, role="admin"), path="/workspace/knowledge/create")
     creating = page.get_by_role("dialog")
-    creating.get_by_role("textbox", name="Name your knowledge base").fill(name)
-    creating.get_by_role("textbox", name="Describe your knowledge base and objectives").fill(
-        "the orchard"
-    )
+    creating.get_by_role("textbox", name="What are you working on?").fill(name)
+    creating.get_by_role("textbox", name="What are you trying to achieve?").fill("the orchard")
     creating.get_by_role("button", name="Create Knowledge").click()
     expect(page).to_have_url(re.compile(r"/workspace/knowledge/[0-9a-f-]+$"))
 

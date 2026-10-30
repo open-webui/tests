@@ -86,7 +86,7 @@ def test_local_whisper_picked_and_loaded_in_the_audio_tab_transcribes_dictation(
     settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(
         label="Whisper (Local)"
     )
-    settings.get_by_role("textbox", name="Set whisper model").fill(str(tiny_whisper))
+    settings.get_by_role("textbox", name="STT Model").fill(str(tiny_whisper))
     with admin_page.expect_response(_is_audio_settings_save) as saved:
         settings.get_by_role("button", name="Update model").click()
     assert saved.value.ok, saved.value.text()

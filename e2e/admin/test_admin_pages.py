@@ -105,7 +105,7 @@ def test_a_new_group_keeps_the_member_ticked_in_it(admin_page, make_user, group_
     groups = _admin_main(admin_page, "/admin/users/groups")
     groups.get_by_role("button", name="New Group").click()
     creating = admin_page.get_by_role("dialog").filter(has_text="Add User Group")
-    creating.get_by_role("textbox", name="Group Name").fill(group_name)
+    creating.get_by_role("textbox", name="Name", exact=True).fill(group_name)
     creating.get_by_role("button", name="Save").click()
 
     groups.get_by_role("textbox", name="Search Groups").fill(group_name)

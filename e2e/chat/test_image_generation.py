@@ -148,8 +148,8 @@ def test_an_admin_sets_up_the_openai_engine_and_it_draws(
     settings.get_by_role("combobox", name="Image Generation Engine").select_option(
         label="Default (Open AI)"
     )
-    settings.get_by_role("combobox", name="Select a model").fill("dall-e-2")
-    # the first pair is image generation's, the second image editing's
+    # the first of each is image generation's, the second image editing's
+    settings.get_by_role("combobox", name="Model", exact=True).first.fill("dall-e-2")
     settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key").first.fill("sk-drawn")
     settings.get_by_role("button", name="Save", exact=True).click()

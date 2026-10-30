@@ -126,7 +126,7 @@ def test_a_saved_search_engine_answers_the_models_web_search(
     settings = _open_tab(admin_page, "web")
     settings.get_by_role("switch", name="Web Search", exact=True).click()
     settings.get_by_role("combobox", name="Web Search Engine").select_option("external")
-    settings.get_by_role("textbox", name="Enter External Web Search URL").fill(
+    settings.get_by_role("textbox", name="External Web Search URL").fill(
         f"{listener.base_url}/search"
     )
     settings.get_by_role("textbox", name="Enter External Web Search API Key").fill("search-key")
@@ -189,13 +189,13 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
         base_url_box.fill(engine.base_url)
     for key_box in settings.get_by_role("textbox", name="API Key").all():
         key_box.fill("sk-audio")
-    settings.get_by_role("combobox", name="Select a voice").fill(VOICE)
-    settings.get_by_role("combobox", name="Select a model").last.fill(SPEECH_MODEL)
+    settings.get_by_role("combobox", name="TTS Voice").fill(VOICE)
+    settings.get_by_role("combobox", name="TTS Model").fill(SPEECH_MODEL)
     _save(admin_page, settings)
 
     settings = _open_tab(admin_page, "audio")
     expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value("openai")
-    expect(settings.get_by_role("combobox", name="Select a voice")).to_have_value(VOICE)
+    expect(settings.get_by_role("combobox", name="TTS Voice")).to_have_value(VOICE)
 
     spoken = f"The ferry leaves at noon, pier {uuid.uuid4().hex[:4]}."
     upstream.queue(reply.text(spoken, match=reply.answering("when does the ferry leave?")))
@@ -216,9 +216,9 @@ def test_a_saved_image_engine_draws_the_models_picture(admin_page, preserve, lis
     settings = _open_tab(admin_page, "images")
     settings.get_by_role("switch", name="Image Generation").click()
     settings.get_by_role("combobox", name="Image Generation Engine").select_option(label="Gemini")
-    settings.get_by_role("combobox", name="Select a model").fill(IMAGEN_MODEL)
-    # the first pair is image generation's, the second image editing's
-    settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
+    # the first of each is image generation's, the second image editing's
+    settings.get_by_role("combobox", name="Model", exact=True).first.fill(IMAGEN_MODEL)
+    settings.get_by_role("textbox", name="Base URL", exact=True).first.fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key").first.fill(GEMINI_API_KEY)
     _save(admin_page, settings)
 

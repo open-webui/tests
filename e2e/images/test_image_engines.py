@@ -233,7 +233,7 @@ def test_automatic1111_set_up_in_the_tab_draws_on_its_checkpoint_size_and_steps(
     settings.get_by_placeholder("Enter additional parameters in JSON format").fill(
         '{"cfg_scale": 5}'
     )
-    model_box = settings.get_by_role("combobox", name="Select a model").first
+    model_box = settings.get_by_role("combobox", name="Model", exact=True).first
     model_box.fill("sketch")
     settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("640x384")
     settings.get_by_placeholder("Enter Number of Steps (e.g. 50)").fill("12")
@@ -278,7 +278,7 @@ def test_a_comfyui_workflow_and_its_node_mapping_from_the_tab_shape_the_queued_g
     mapping = {"prompt*": "6", "model": "4", "width": "5", "height": "5", "steps": "3", "seed": "3"}
     for node_type, node_ids in mapping.items():
         node_ids_box(settings, node_type).fill(node_ids)
-    settings.get_by_role("combobox", name="Select a model").first.fill(CHECKPOINTS[1])
+    settings.get_by_role("combobox", name="Model", exact=True).first.fill(CHECKPOINTS[1])
     settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("768x320")
     settings.get_by_placeholder("Enter Number of Steps (e.g. 50)").fill("9")
     save(admin_page, settings)
@@ -318,8 +318,8 @@ def test_the_gemini_endpoint_method_picked_in_the_tab_is_the_one_called(
     settings = image_settings(admin_page)
     switch_on(settings, "Image Generation")
     pick_engine(settings, "Gemini")
-    settings.get_by_role("combobox", name="Select a model").first.fill(GEMINI_IMAGE_MODEL)
-    settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
+    settings.get_by_role("combobox", name="Model", exact=True).first.fill(GEMINI_IMAGE_MODEL)
+    settings.get_by_role("textbox", name="Base URL", exact=True).first.fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key").first.fill(GEMINI_API_KEY)
     settings.get_by_role("combobox", name="Gemini Endpoint Method").select_option("generateContent")
     save(admin_page, settings)
@@ -341,7 +341,7 @@ def test_the_openai_size_version_and_extra_parameters_reach_the_engine(
         save_image_settings(client, **serve_openai_images(listener))
     admin_page = page_for(make_user(role="admin"))
     settings = image_settings(admin_page)
-    settings.get_by_role("combobox", name="Select a model").first.fill("gpt-image-1")
+    settings.get_by_role("combobox", name="Model", exact=True).first.fill("gpt-image-1")
     settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("1024x1536")
     settings.get_by_role("textbox", name="API Version").first.fill("2025-04-01")
     settings.get_by_placeholder("Enter additional parameters in JSON format").fill(
@@ -376,7 +376,7 @@ def test_an_attached_picture_is_edited_by_the_openai_edit_engine_set_up_in_the_t
     settings = image_settings(admin_page)
     switch_on(settings, "Image Edit")
     pick_engine(settings, "Default (Open AI)", editing=True)
-    settings.get_by_role("combobox", name="Select a model").last.fill("gpt-image-1")
+    settings.get_by_role("combobox", name="Model", exact=True).last.fill("gpt-image-1")
     settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").last.fill("256x256")
     settings.get_by_role("textbox", name="API Base URL").last.fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key").last.fill("sk-edits")
