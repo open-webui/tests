@@ -22,7 +22,7 @@ import struct
 import time
 import wave
 from pathlib import Path
-from typing import Generator
+from typing import Callable, Generator
 
 import pytest
 from playwright.sync_api import Browser, Locator, Page, Playwright, expect
@@ -155,6 +155,28 @@ def capturing_browser(
     browser.close()
 
 
+@pytest.fixture
+def capturing_page_for(
+    capturing_browser: Browser, config: AppConfig, request: pytest.FixtureRequest
+) -> Generator[Callable[[Actor], Page], None, None]:
+    """`capturing_page_for(actor)`: a signed-in page that counts its screen capture requests.
+
+    Its context closes after the test is reported, so a failing test keeps its trace.
+    """
+    opened = []
+
+    def open_page(actor: Actor) -> Page:
+        _dismiss_first_run_modals(actor)
+        browser_context = _new_context(capturing_browser, config, actor.base_url)
+        browser_context.add_init_script(DISPLAY_MEDIA_SPY)
+        opened.append(browser_context)
+        return _signed_in_page(browser_context, actor.token, config.navigation_timeout)
+
+    yield open_page
+    for browser_context in opened:
+        _close_context(browser_context, request.node, "capture")
+
+
 # ---------------------------------------------------------------- upload
 
 
@@ -234,26 +256,21 @@ def test_escape_while_recording_attaches_nothing(voice_page_for, make_user, spee
 
 
 def test_capturing_audio_attaches_the_capture_with_its_transcript(
-    capturing_browser, config, make_user, speech_engine, request
+    capturing_page_for, make_user, speech_engine
 ):
     author = make_user()
     note_id = _create_note(author)
-    _dismiss_first_run_modals(author)
-    browser_context = _new_context(capturing_browser, config, author.base_url)
-    browser_context.add_init_script(DISPLAY_MEDIA_SPY)
-    try:
-        page = _signed_in_page(browser_context, author.token, config.navigation_timeout)
-        _open_note(page, note_id)
+    page = capturing_page_for(author)
+    _open_note(page, note_id)
 
-        _open_audio_menu(page)
-        page.get_by_role("menuitem", name="Capture Audio").click()
-        expect(page.get_by_text("0:02", exact=True)).to_be_visible()
-        page.get_by_role("button", name="Confirm recording").click()
+    _open_audio_menu(page)
+    page.get_by_role("menuitem", name="Capture Audio").click()
+    # The timer only counts once the browser has started the capture.
+    confirm = page.get_by_role("button", name="Confirm recording")
+    expect(confirm, "the screen capture never started").to_be_visible()
+    expect(page.get_by_text("0:02", exact=True)).to_be_visible()
+    confirm.click()
 
-        expect(_file_chip(page, RECORDING_NAME)).to_be_visible()
-        _assert_stored_with_transcript(
-            author, _wait_for_stored_files(author, note_id), "audio/webm"
-        )
-        assert page.evaluate("window.displayMediaRequests") == 1
-    finally:
-        _close_context(browser_context, request.node, "capture")
+    expect(_file_chip(page, RECORDING_NAME)).to_be_visible()
+    _assert_stored_with_transcript(author, _wait_for_stored_files(author, note_id), "audio/webm")
+    assert page.evaluate("window.displayMediaRequests") == 1
