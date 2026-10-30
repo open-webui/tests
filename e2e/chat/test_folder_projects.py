@@ -49,7 +49,7 @@ from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
 from utils.menus import late_menu_entry
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -127,8 +127,7 @@ def expand_toggle(sidebar: Locator, name: str) -> Locator:
 def folder_menu(sidebar: Locator, name: str) -> Locator:
     """Open the "More" menu on the folder's row, a tooltip-only button shown on hover."""
     row = folder_row(sidebar, name)
-    row.hover()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(row)
     return sidebar.page.get_by_role("menu")
 
 
@@ -557,8 +556,7 @@ def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_
     expect(sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor")).to_be_visible()
 
     row = sidebar.locator(f"#folder-{folder_id}-button")
-    row.hover()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(row)
     page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     dialog.locator("#folder-background-image-input").set_input_files(picture)

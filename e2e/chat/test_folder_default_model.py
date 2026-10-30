@@ -27,7 +27,7 @@ from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_search
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -81,8 +81,7 @@ def open_edit_dialog(page: Page) -> Locator:
     if folders.get_attribute("aria-expanded") != "true":
         folders.click()
     row = folder_row(sidebar, FOLDER)
-    row.hover()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(row)
     page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_placeholder("Enter folder name")).to_have_value(FOLDER)

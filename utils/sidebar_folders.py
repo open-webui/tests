@@ -32,3 +32,12 @@ def folder_link(scope: Locator | Page, name: str) -> Locator:
 def folder_row(scope: Locator | Page, name: str) -> Locator:
     page = scope if isinstance(scope, Page) else scope.page
     return scope.locator(_ROWS).filter(has=page.get_by_role("button", name=_named(name)))
+
+
+def click_folder_menu_button(row: Locator) -> None:
+    """Click the row's "More" button, shown on hover, hovering the expand toggle to show it.
+
+    Hovering the name instead opens its preview after a moment, and the preview covers the button.
+    """
+    row.get_by_role("button").first.hover()
+    row.get_by_role("button").last.click()

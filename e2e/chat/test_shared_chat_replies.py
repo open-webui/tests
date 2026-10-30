@@ -65,7 +65,7 @@ from harness.chat_history import seed_chat
 from harness.socket_client import connected
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
 from utils.member_picker import pick_member
-from utils.sidebar_folders import folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.voice_call import start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -456,8 +456,7 @@ def _open_sidebar(page: Page) -> Locator:
 
 def _folder_menu(page: Page, name: str) -> Locator:
     row = folder_row(_open_sidebar(page), name)
-    row.hover()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(row)
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu

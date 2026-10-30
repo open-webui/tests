@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -64,8 +64,7 @@ def show_folders(sidebar: Locator) -> None:
 def folder_menu(sidebar: Locator, name: str) -> Locator:
     """Open the "More" menu on the folder's row, a tooltip-only button shown on hover."""
     row = folder_row(sidebar, name)
-    row.hover()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(row)
     return sidebar.page.get_by_role("menu")
 
 
