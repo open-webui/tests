@@ -7,6 +7,8 @@ disables them on rows without write access.
 
 Discriminates: passes on dev efe63bd34; with ff89756b6 reverted the reader's switch and its Edit,
 Share and Delete are enabled; the writer's row passes on both.
+Retargeted for 9d1b4ef36, whose list leaves the enable switch off rows without write access: the
+reader's row offers no usable switch, and the writer's row still shows one.
 """
 
 from __future__ import annotations
@@ -70,7 +72,7 @@ def test_a_read_only_prompt_shows_its_write_controls_as_unavailable(page_for, sh
     page = page_for(reader)
     row = _prompt_row(page, name)
 
-    expect(row.get_by_role("switch")).to_be_disabled()
+    expect(row.get_by_role("switch", disabled=False)).to_have_count(0)
     _open_menu(page, row)
     for item in WRITE_ONLY_ITEMS:
         expect(page.get_by_role("menuitem", name=item, exact=True)).to_be_disabled()

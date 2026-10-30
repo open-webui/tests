@@ -5,7 +5,7 @@ sideways next to the Create button, so each of Models, Knowledge, Prompts, Skill
 brought onto the screen and opens its own list with its search field on the screen. In the model
 editor the name, the base model picker, the system prompt and Save & Create can all be reached and
 tapped; the saved model is listed and answers a chat with its system prompt. A prompt made from the
-Prompts list on the phone is listed with its command.
+Prompts list on the phone is listed and opens with its command.
 
 Discriminates: passes on the ebc6add67 build. In a frontend build of ebc6add67 whose workspace
 section links do not scroll the lists test goes red; in a frontend build whose phone layout is 480
@@ -16,6 +16,8 @@ Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
 Retargeted for e32d2f75b, whose editor picks the base model with the chat's model selector (Select
 a base model): the editor test passes on dev b40891e0a (3 of 3) and fails in a backend copy of it
 that leaves the system prompt out of the provider payload.
+Retargeted for 9d1b4ef36, whose prompt list no longer shows each prompt's command: the prompt is
+found by its name in the list and its page shows the command.
 """
 
 from __future__ import annotations
@@ -139,13 +141,14 @@ def test_a_model_made_in_the_editor_on_a_phone_answers_with_its_system_prompt(ph
     assert messages[0] == {"role": "system", "content": system_prompt}, messages[0]
 
 
-def test_a_prompt_made_on_a_phone_is_listed_with_its_command(phone):
+def test_a_prompt_made_on_a_phone_is_listed_and_opens_with_its_command(phone):
     command = f"tidepool{uuid.uuid4().hex[:6]}"
+    name = f"Tide pools {command}"
     phone.goto("/workspace/prompts")
     tap_on_screen(phone.get_by_role("main").get_by_role("button", name="Create", exact=True))
     creating = phone.get_by_role("dialog").filter(has_text="Create Prompt")
     fields = {
-        creating.get_by_role("textbox", name="Prompt Name"): f"Tide pools {command}",
+        creating.get_by_role("textbox", name="Prompt Name"): name,
         creating.get_by_role("textbox", name="Command"): command,
         creating.get_by_role("textbox", name="Prompt Content"): "Describe a tide pool.",
     }
@@ -156,4 +159,7 @@ def test_a_prompt_made_on_a_phone_is_listed_with_its_command(phone):
     expect_reachable(save)
     save.tap()
 
-    expect_on_screen(phone.get_by_role("main").get_by_text(f"/{command}"))
+    tap_on_screen(phone.get_by_role("main").get_by_role("link", name=name, exact=True))
+    shown = phone.get_by_role("main").get_by_role("textbox", name="Command")
+    expect_on_screen(shown)
+    expect(shown).to_have_value(command)
