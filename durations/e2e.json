@@ -1941,7 +1941,7 @@
     "e2e/models/test_model_history.py::test_an_older_version_opens_read_only_beside_the_production_one[chromium]": 7.449,
     "e2e/models/test_model_history.py::test_set_as_production_brings_the_old_prompt_back_into_the_editor_and_the_chat[chromium]": 8.495,
     "e2e/models/test_model_history.py::test_unsaved_edits_are_confirmed_before_an_old_version_replaces_them[chromium]": 8.716,
-    "e2e/models/test_model_provider_details.py::test_a_base_model_reporting_nothing_shows_the_row_as_not_provided[chromium]": 6.04,
+    "e2e/models/test_model_provider_details.py::test_a_base_model_reporting_nothing_shows_no_provider_details[chromium]": 6.04,
     "e2e/models/test_model_provider_details.py::test_a_preset_shows_the_details_of_its_base_model[chromium]": 3.924,
     "e2e/models/test_model_provider_details.py::test_a_writer_who_is_no_admin_sees_no_provider_details[chromium]": 7.321,
     "e2e/models/test_model_provider_details.py::test_fields_the_provider_leaves_out_read_not_provided[chromium]": 3.91,

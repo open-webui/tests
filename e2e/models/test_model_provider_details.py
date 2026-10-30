@@ -5,18 +5,18 @@ for the model: its inputs and outputs, context window, the provider's own contex
 maximum output, and the parameters it supports. In Admin Settings > Models the row describes the
 provider model itself; in the workspace editor a preset shows the details of its base model. A
 field the provider leaves out reads "Not provided", an empty list "None reported", and a base
-model reporting nothing at all shows the row as "Not provided". A writer of the preset who is no
+model reporting nothing at all shows no row (since dev cf16073a1). A writer of the preset who is no
 admin sees no such row. No existing module serves a model with reported details, so these tests
 get one of their own.
 
 Discriminates: passes on the dev c5981aaea build (3 of 3). In a build of it whose editor reads the
 context window from the provider's limit, drops the supported parameters, opens the row even with
-nothing reported and shows it to every editor, every test fails.
+nothing reported and shows it to every editor, every test fails. The nothing-reported test passes
+on the dev 2b1fb53f4 build (5 of 5) and fails with cf16073a1 reverted (the "Not provided" row).
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 from typing import Callable, Iterator
 
@@ -161,13 +161,16 @@ def test_fields_the_provider_leaves_out_read_not_provided(page_for, builder, ser
     )
 
 
-def test_a_base_model_reporting_nothing_shows_the_row_as_not_provided(page_for, builder, preset_on):
-    editor = workspace_editor(page_for, builder, preset_on(MOCK_MODEL_ID))
+def test_a_base_model_reporting_nothing_shows_no_provider_details(
+    page_for, builder, served, preset_on
+):
+    # the same admin sees the row on a reporting base, so its absence below is the base's doing
+    reported = workspace_editor(page_for, builder, preset_on(served(FULL_DETAILS)))
+    expect(reported.locator("summary").filter(has_text=TITLE)).to_be_visible()
 
-    # the row is the label and its value, with nothing to open
-    row = editor.get_by_text(TITLE, exact=True).locator("xpath=ancestor::div[1]")
-    expect(row).to_have_text(re.compile(rf"^\s*{TITLE}\s*Not provided\s*$"))
-    expect(editor.locator("summary").filter(has_text=TITLE)).to_have_count(0)
+    editor = workspace_editor(page_for, builder, preset_on(MOCK_MODEL_ID))
+    expect(editor.get_by_text("System Prompt", exact=True)).to_be_visible()
+    expect(editor.get_by_text(TITLE)).to_have_count(0)
 
 
 def test_a_writer_who_is_no_admin_sees_no_provider_details(
