@@ -19,9 +19,9 @@ member sees each change: the new name, the base marked read only with its contro
 editable. An account outside the group does not see it. Resetting the base empties it. Syncing a
 local directory into a base uploads it, and syncing it again after files changed on disk adds the
 new file, replaces the changed one and removes the deleted one, with a summary that counts each,
-so a chat that attaches the base is sent only the current text. With a Max Upload Size set, a file
-over it is refused with the limit named while the rest upload, and a directory upload names how
-many of its files failed.
+so a chat that attaches the base is sent only the current text. With a Max Upload Size set, a
+choice of files or a directory that holds a file over it is refused whole with the limit named,
+and files under the limit then upload on their own.
 
 Chromium's directory picker cannot be driven by Playwright, so the folder upload and sync tests
 hide it and the page takes the file input it offers browsers without one.
@@ -46,9 +46,8 @@ that leaves the files out of the zip fails the export test, a directory rename t
 stored fails the directory rename test, a file move that is never stored fails the file drag test,
 a directory move that is never stored fails the directory drag test and a directory delete that
 removes the files it was asked to keep fails the keep files test. In a frontend copy of dev
-ebc6add67, a sync that skips removing stale files fails the sync test, an upload without its size
-check fails the size test and a directory upload that stops counting failed files fails the
-directory size test.
+ebc6add67, a sync that skips removing stale files fails the sync test. In a backend copy of dev
+09fbbd6d6, an upload check that ignores the file size fails both size tests.
 """
 
 from __future__ import annotations
@@ -776,6 +775,7 @@ def one_megabyte_uploads(admin, preserve):
 
 
 LARGE_FILE = "x" * (2 * 1024 * 1024)
+TOO_LARGE = "is too large. Please upload a file that is less than 1 MB."
 
 
 def test_a_file_over_the_max_upload_size_is_refused_with_the_limit_named(
@@ -793,15 +793,23 @@ def test_a_file_over_the_max_upload_size_is_refused_with_the_limit_named(
             {"name": "tides.txt", "mimeType": "text/plain", "buffer": b"High tide at 06:40.\n"},
         ]
     )
+    expect(page.get_by_text(TOO_LARGE)).to_be_visible()
 
-    expect(page.get_by_text("File size should not exceed 1 MB.")).to_be_visible()
+    with page.expect_file_chooser() as chooser:
+        _add_content(page, base, "Upload files")
+    chooser.value.set_files(
+        [{"name": "berths.txt", "mimeType": "text/plain", "buffer": b"Berth 9 is free.\n"}]
+    )
     expect(page.get_by_text("File added successfully.")).to_be_visible()
-    base = _reload_once_stored(page, curator, knowledge_id, ["tides.txt"])
-    expect(_file_row(base, "tides.txt")).to_be_visible()
+
+    # the refused choice stored neither of its files, the later one alone is held
+    base = _reload_once_stored(page, curator, knowledge_id, ["berths.txt"])
+    expect(_file_row(base, "berths.txt")).to_be_visible()
+    expect(_file_row(base, "tides.txt")).to_have_count(0)
     expect(_file_row(base, "atlas.txt")).to_have_count(0)
 
 
-def test_a_directory_upload_reports_the_files_over_the_max_upload_size(
+def test_a_directory_with_a_file_over_the_max_upload_size_is_refused_with_the_limit_named(
     page_for, curator, one_megabyte_uploads, tmp_path: Path
 ):
     folder = tmp_path / "harbour"
@@ -816,6 +824,16 @@ def test_a_directory_upload_reports_the_files_over_the_max_upload_size(
     with page.expect_file_chooser() as chooser:
         _add_content(page, base, "Upload directory")
     chooser.value.set_files(str(folder))
+    expect(page.get_by_text(TOO_LARGE)).to_be_visible()
 
-    expect(page.get_by_text("Upload failed for 1 of 2 files.")).to_be_visible()
-    assert _stored_file_names(curator, knowledge_id) == ["tides.txt"]
+    small = tmp_path / "moorings"
+    small.mkdir()
+    (small / "berths.txt").write_text("Berth 9 is free.\n")
+    with page.expect_file_chooser() as chooser:
+        _add_content(page, base, "Upload directory")
+    chooser.value.set_files(str(small))
+
+    # the refused directory stored neither of its files, the later one alone is held
+    base = _reload_once_stored(page, curator, knowledge_id, ["berths.txt"])
+    expect(_entry(base, "moorings")).to_be_visible()
+    expect(_entry(base, "harbour")).to_have_count(0)
