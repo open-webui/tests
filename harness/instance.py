@@ -82,6 +82,8 @@ ISOLATED_ENV = {
     "WEBSOCKET_MANAGER": "",
     "WEBUI_ADMIN_EMAIL": "",
     "WEBUI_ADMIN_PASSWORD": "",
+    # libc asks again for a lost DNS reply only after 5s, longer than a refusal test allows
+    "RES_OPTIONS": "timeout:1 attempts:5",
 }
 
 
