@@ -120,9 +120,10 @@ def resolve_frontend_build(backend: Path) -> Path | None:
     return candidate if (candidate / "index.html").is_file() else None
 
 
-def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
+def free_port(host: str = "127.0.0.1") -> int:
+    # a port free on loopback can still be taken on the address the server binds
+    with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET) as sock:
+        sock.bind((host, 0))
         return sock.getsockname()[1]
 
 

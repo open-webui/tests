@@ -278,7 +278,7 @@ def serve_authorization_server(
     host: str = "127.0.0.1", name: str | None = None
 ) -> tuple[McpAuthorizationServer, Callable[[], None]]:
     """Start an authorization server on a daemon thread; returns it with its shutdown function."""
-    port = free_port()
+    port = free_port(host)
     server = McpAuthorizationServer(base_url=f"http://{_url_host(host, name)}:{port}")
 
     class Handler(BaseHTTPRequestHandler):
@@ -391,7 +391,7 @@ def serving_protected_mcp(
     host: str = "127.0.0.1", name: str | None = None, scopes: list[str] | None = None
 ) -> Iterator[ProtectedMcp]:
     auth_server, shutdown = serve_authorization_server(host, name)
-    port = free_port()
+    port = free_port(host)
     resource_url = f"http://{_url_host(host, name)}:{port}/mcp"
     verifier = IssuedTokenVerifier(auth_server, resource_url)
     settings = AuthSettings(

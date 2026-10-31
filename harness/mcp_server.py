@@ -235,7 +235,7 @@ def serving_mcp(
     **auth: Any,
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to MCPServer."""
-    port = port or free_port()
+    port = port or free_port(host)
     # mcp 2 moved transport security off the server onto the Streamable HTTP app.
     transport_security = auth.pop("transport_security", None)
     server = _echo_server(media, failing, slow, structured, composed, **auth)
