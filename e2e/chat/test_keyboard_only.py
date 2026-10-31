@@ -23,9 +23,9 @@ focus back on closing to the menu's Settings entry, which is gone by then, so th
 page itself and the next Tab started over at the top of the page (open-webui/open-webui#32017, fixed
 by c7e7dbf98).
 
-The skip link test is red on dev since b29f7781a: the skip link resets the new chat, which wipes
-the typed text and puts the focus back in the message box (open-webui/open-webui#33396, fix PR
-open-webui/open-webui#33399).
+The skip link test was red from b29f7781a: the skip link reset the new chat, which wiped the typed
+text and put the focus back in the message box (open-webui/open-webui#33396, fixed on dev by
+3814b7b2f; the page needs open-webui/open-webui#33459 to set itself up on a fresh load).
 """
 
 from __future__ import annotations
