@@ -10,9 +10,13 @@ what the model's knowledge search reads in the folder, and the answer shows each
 that opens on its text; the same search in a chat outside the folder never reads the folder's
 file. Each turn is read from the request the scripted provider received.
 
+Turning Temporary Chat on and off on a folder's page left for the home page, so the chat sent
+next was filed nowhere and got no folder prompt (open-webui/open-webui#33448).
+
 Discriminates: passes on dev ebc6add67; in a backend copy with the middleware's folder lookup
 returning no folder every test goes red (no prompt, no folder knowledge cited), and with the
-folder's prompt taken from its top-level ancestor the two nested tests go red.
+folder's prompt taken from its top-level ancestor the two nested tests go red. The Temporary Chat
+test passes with the #33448 fix and fails on dev 64796face (the toggle opens /?temporary-chat=true).
 """
 
 from __future__ import annotations
@@ -221,6 +225,31 @@ def test_a_subfolder_dragged_under_another_folder_keeps_its_chats_and_its_prompt
     after_move = system_sent(upstream, "still sowing beans?")
     assert after_move.startswith(SEEDS_PROMPT), after_move
     assert GARDEN_PROMPT not in after_move
+
+
+@pytest.mark.regression
+def test_toggling_temporary_chat_on_the_folder_page_keeps_the_folder(page_for, make_user, upstream):
+    """open-webui/open-webui#33448: the toggle left the folder page and the chat lost the folder."""
+    owner = make_user()
+    folder_id = create_folder(owner, "Harbour", HARBOUR_PROMPT)
+    page = page_for(owner, path=f"/folders/{folder_id}")
+    toggle = page.get_by_role("button", name="Temporary Chat")
+    temporary_label = page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)
+
+    toggle.click()
+    expect(temporary_label).to_be_visible()
+    expect(page).to_have_url(re.compile(f"/folders/{folder_id}"))
+    toggle.click()
+    expect(temporary_label).to_have_count(0)
+    expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
+    ask(page, upstream, "who keeps the harbour log?", "The harbour master.")
+
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    chat_id = page.url.rsplit("/", 1)[-1]
+    assert stored_folder_id(owner, chat_id) == folder_id, "the chat was not filed in the folder"
+    assert system_sent(upstream, "who keeps the harbour log?").startswith(HARBOUR_PROMPT), (
+        "the chat was not sent the folder's prompt"
+    )
 
 
 @pytest.fixture
