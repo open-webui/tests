@@ -18,7 +18,8 @@ MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", 
 
 def leaderboard_tab(settings: Locator, name: str, selected: bool | None = None) -> Locator:
     """The Models / Users switch above the leaderboard, shown once the dashboard has loaded."""
-    return settings.get_by_role("button", name=name, exact=True, pressed=selected)
+    # the model table below sorts by a Users column whose header is a button too
+    return settings.get_by_role("button", name=name, exact=True, pressed=selected).first
 
 
 def period_picker(settings: Locator) -> Locator:
@@ -48,7 +49,8 @@ def summary_figure(settings: Locator, label: str) -> Locator:
 
 def count_by(settings: Locator, metric: str) -> None:
     """Switch the chart and the share columns to `metric`, Tokens or Messages."""
-    switch = settings.get_by_role("button", name=metric, exact=True)
+    chart = settings.get_by_role("region", name="Usage over time")
+    switch = chart.get_by_role("button", name=metric, exact=True)
     with settings.page.expect_response(
         lambda response: (
             "/api/v1/analytics/daily?" in response.url
