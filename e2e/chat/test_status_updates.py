@@ -2,10 +2,10 @@
 
 A workspace tool reports what it is doing through its event emitter. The reply shows the latest
 status above its text, the Toggle status history button opens every status the tool sent, in
-order, and both are still there when the chat is opened again. A model with Status Updates
-unticked in its capabilities shows none of them.
+order, by click or by keyboard, and both are still there when the chat is opened again. A model
+with Status Updates unticked in its capabilities shows none of them.
 
-Discriminates: passes on dev 30f3f6a8f; in a backend copy that keeps no status updates with the
+Discriminates: passes on dev 64796face; in a backend copy that keeps no status updates with the
 reply the reload test fails, in one that drops every status event the other two fail as well, and
 in a frontend build that ignores the Status Updates capability the unticked test fails.
 """
@@ -63,11 +63,16 @@ def _status_toggle(page: Page) -> Locator:
     return conversation(page).get_by_role("button", name="Toggle status history")
 
 
-def _status_history_opens(page: Page) -> None:
+def _status_history_opens(page: Page, by_keyboard: bool = False) -> None:
     toggle = _status_toggle(page)
-    expect(toggle).to_contain_text(LAST_STATUS)
-    if toggle.get_attribute("aria-expanded") != "true":
+    expect(conversation(page).get_by_text(LAST_STATUS)).to_be_visible()
+    expect(conversation(page).get_by_text(FIRST_STATUS)).to_have_count(0)
+    expect(toggle).to_have_attribute("aria-expanded", "false")
+    if by_keyboard:
+        toggle.press("Enter")
+    else:
         toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
     expect(conversation(page).get_by_text(FIRST_STATUS)).to_be_visible()
     expect(conversation(page).get_by_text(LAST_STATUS)).to_have_count(2)
 
@@ -85,7 +90,7 @@ def test_the_status_history_is_kept_with_the_reply(page_for, make_user, upstream
 
     page.reload()
     expect_reply(page, "The tide is at 3.2 metres.")
-    _status_history_opens(page)
+    _status_history_opens(page, by_keyboard=True)
 
 
 @pytest.fixture
