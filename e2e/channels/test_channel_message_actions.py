@@ -11,11 +11,17 @@ takes theirs away.
 The reaction test is red on dev since 9d1b4ef36: the reaction tooltip shows only the count and no
 longer names who reacted (open-webui/open-webui#33392, fix PR open-webui/open-webui#33393).
 
+A keyboard user who tabs on from a message lands on the next message's actions, shown over that
+message, and its Reply quotes it. The test is red on dev since 08f197ad8: the actions of every
+message come after the message box in the Tab order (open-webui/open-webui#33552).
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, saving an edit with the old content
 turns the edit test red, deleting nothing on confirm turns the delete test red, offering edit and
 delete on every message turns the someone else's message test red, offering them to nobody but the
 author turns the admin test red (checked on dev ebc6add67), pinning with the old pinned state turns
-the pin test red and removing a reaction by adding it again turns the reaction test red.
+the pin test red and removing a reaction by adding it again turns the reaction test red. The
+keyboard test passes on the fix build (dev 1dd3793d4 with f0a1e2812) and fails on dev 3cda94d40
+(the Tab after the message lands on the next message's author name).
 """
 
 from __future__ import annotations
@@ -109,6 +115,32 @@ def test_a_member_is_offered_no_edit_or_delete_on_someone_elses_message(people, 
     assert "Reply in Thread" in on_theirs
     assert "Edit" not in on_theirs and "Delete" not in on_theirs
     assert "Edit" in on_own and "Delete" in on_own
+
+
+def test_a_keyboard_user_tabs_into_a_messages_actions_beside_that_message(people, page_for):
+    author, member, channel_id = people
+    post_message(member, channel_id, "see you at the pier")
+    post_message(author, channel_id, "bring the tickets")
+    page = _open_channel(page_for, author, channel_id)
+    _message(page, "see you at the pier").get_by_text("see you at the pier").click()
+    page.mouse.move(0, 0)
+
+    page.keyboard.press("Tab")
+    in_next = _message(page, "bring the tickets").locator(":focus")
+    expect(in_next, "Tab after a message skips the next message's actions").to_have_accessible_name(
+        "Add Reaction"
+    )
+    shown = in_next.evaluate(
+        "(button) => { const box = button.getBoundingClientRect();"
+        " return button.contains(document.elementFromPoint("
+        "box.x + box.width / 2, box.y + box.height / 2)); }"
+    )
+    assert shown, "the focused Add Reaction button is hidden or covered on the screen"
+
+    page.keyboard.press("Tab")
+    expect(in_next).to_have_accessible_name("Reply")
+    page.keyboard.press("Enter")
+    expect(page.get_by_text(f"Replying to {author.name}")).to_be_visible()
 
 
 def test_a_pinned_message_is_marked_for_both_and_listed_until_unpinned(people, page_for):
