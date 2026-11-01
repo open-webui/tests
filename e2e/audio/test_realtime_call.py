@@ -40,6 +40,12 @@ never resends the snapshot turns the typed during the call test red, and a backe
 ignores the voice record of earlier messages turns the typed after the call test red. The end
 call test passes on dev c31423955 and turns red with a9227421d reverted (no wake lock is asked
 for during the call).
+
+`test_stopping_the_chat_model_tells_the_provider_it_was_cancelled`,
+`test_interrupting_the_spoken_answer_cuts_it_short_and_saves_it_as_interrupted` and
+`test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_said` are red on dev
+c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End
+call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

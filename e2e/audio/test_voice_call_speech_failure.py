@@ -8,6 +8,9 @@ as failed: the provider's error shows once, and the call goes back to listening.
 
 Discriminates: passes on the dev efe63bd34 build, fails on that build with 24c01bd76 reverted
 (no error shows and the call never takes the next turn).
+
+Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
+and End call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

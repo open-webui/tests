@@ -26,6 +26,11 @@ cases pass there as well; integration/audio/test_realtime_calls.py proves the la
 Standard call test passes on dev c31423955 and turns red in a build of it whose Standard call
 never shows the avatar (the canvas never appears), in one that answers every gesture unavailable
 (the result is unavailable) and with a backend copy that never offers the tool.
+
+`test_the_voice_model_plays_a_gesture_on_the_avatar_and_hears_it_started` and
+`test_a_standard_call_shows_the_avatar_and_the_chat_model_plays_its_gesture` are red on dev
+c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End
+call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

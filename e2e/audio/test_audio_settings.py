@@ -23,6 +23,10 @@ hide test red. The Kokoro
 call test passes on dev c31423955 and turns red in a build of it whose call plays its audio only
 for a server speech engine, as before 78613d86f (the reply goes to speechSynthesis, no Kokoro
 audio plays).
+
+`test_a_call_speaks_with_the_users_kokoro_voice_when_the_server_has_no_speech_engine` is red on dev
+c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End
+call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

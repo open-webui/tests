@@ -12,6 +12,9 @@ longer ends the call.
 Discriminates: passes on the dev b8b3fb906 build, fails on the build of its parent 5729d7ad8,
 which is that build with b8b3fb906 reverted (the overlay reads Call disconnected with the buffer
 error).
+
+Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
+and End call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

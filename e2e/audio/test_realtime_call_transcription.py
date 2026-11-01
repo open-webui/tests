@@ -17,6 +17,10 @@ voice speaks the old "could not transcribe" status before the answer, no error s
 failed segment, and the earlier question's answer is asked for while the caller still speaks.
 The run-on test goes red on the 0.12.4 pre-fix build (25b115662 reverted among other fixes): the
 voice speaks the earlier segment's answer before the whole sentence's.
+
+`test_a_segment_that_cannot_be_transcribed_shows_an_error_and_gets_no_reply` is red on dev c4c10aa25
+(open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End call button
+when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

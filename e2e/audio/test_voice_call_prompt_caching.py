@@ -22,6 +22,10 @@ stopped appending); on dev 176d31d1d the tool list shuffled per request turned t
 The realtime tests pass on dev 4b9d31b39; a backend copy of it that adds a clock value to every
 message carrying a voice record turns both red. Retargeted for c0f56767f, where a connected
 realtime call sends the voice prompt like a classic call.
+
+`test_a_voice_call_only_appends` is red on dev c4c10aa25 (open-webui/open-webui#33557): a call
+started in a new chat loses its Voice tab and End call button when the first message saves the chat,
+and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

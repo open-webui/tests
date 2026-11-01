@@ -7,6 +7,9 @@ input now leaves focus alone while a call is open.
 
 Discriminates: passes on the dev efe63bd34 build, fails on that build with e14f24558 reverted
 (after the first turn M types into the chat box and the call stays unmuted).
+
+Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
+and End call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

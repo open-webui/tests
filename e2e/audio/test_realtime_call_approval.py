@@ -10,6 +10,9 @@ spoken request is the call's only sign of the approval. Here the provider is
 
 Discriminates: passes on the dev 4f1f38541 build; fails on a frontend copy of it whose call never
 asks the provider to speak the approval status.
+
+Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
+and End call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations

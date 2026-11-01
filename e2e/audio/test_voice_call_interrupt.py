@@ -8,6 +8,9 @@ talking over the user. Interrupting now aborts the loop.
 
 Discriminates: passes on the dev b859124f9 build, fails on that build with 7dd9fc707 reverted
 (the second sentence starts playing right after the tap).
+
+Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
+and End call button when the first message saves the chat, and a standard call's reply stays blank.
 """
 
 from __future__ import annotations
