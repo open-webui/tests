@@ -73,12 +73,13 @@ from utils.cached_chat import (
     calling,
     calling_together,
     chat_requests,
+    open_new_terminal,
     pick_terminal,
     tool_results,
     turn_on_tool,
 )
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply
-from utils.setting_rows import setting_button
+from utils.chat_controls import control_button, open_chat_controls, open_section
+from utils.chat_ui import chat_input, close_menu, conversation, expect_reply, last_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -255,9 +256,7 @@ def test_opening_a_folder_in_the_terminal_file_browser_keeps_the_prefix(terminal
 
 def test_a_reload_with_the_terminal_shell_open_keeps_the_prefix(terminal_chat, upstream):
     page = terminal_chat
-    browser = page.get_by_role("region", name="File browser")
-    browser.get_by_role("button", name="Expand terminal").click()
-    expect(browser.get_by_role("tab", name="Shell")).to_be_visible()
+    open_new_terminal(page)
     ask(page, upstream, "good morning", reply.text("Morning."))
     page.reload()
     ask(page, upstream, "anything new?", reply.text("Nothing new."))
@@ -401,10 +400,10 @@ def test_a_temperature_and_model_description_change_mid_chat_only_append(
     page = page_for(make_user(), path=f"/?models={cached_setup.id}")
     ask(page, upstream, "good morning", reply.text("Morning."))
 
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    expect(page.get_by_role("textbox", name="System Prompt", exact=True)).to_be_visible()
-    setting_button(page.locator("body"), "Temperature").click()
-    page.get_by_role("spinbutton", name="Temperature").fill("0.2")
+    panel = open_section(open_chat_controls(page), "Advanced Params")
+    control_button(panel, "Temperature").click()
+    panel.get_by_role("spinbutton", name="Temperature").fill("0.2")
+    close_menu(page)
     with admin.client() as client:
         stored = client.get("/api/v1/models/model", params={"id": cached_setup.id}).json()
         stored["meta"]["description"] = "Answers questions about the harbour"

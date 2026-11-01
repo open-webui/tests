@@ -27,6 +27,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat import ask
+from utils.chat_controls import controls_entry
 from utils.chat_ui import last_reply
 from utils.model_selector import SELECTOR_BUTTON
 from utils.sidebar_folders import folder_link, folder_row
@@ -106,7 +107,7 @@ def compare_button(page: Page) -> Locator:
 
 
 CONTROLS = {
-    "Allow Chat Controls": page_button("Controls"),
+    "Allow Chat Controls": controls_entry,
     "Allow Chat Share": chat_menu_entry("Share"),
     "Allow Chat Export": chat_menu_entry("Download"),
     "Allow Chat Delete": chat_menu_entry("Delete"),

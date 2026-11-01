@@ -6,11 +6,12 @@ option in use, and a submenu offers Default (naming the default option) and ever
 is saved to the account's settings at once, so it is sent with the next message, kept after a
 reload and in later chats, and only for the model it was made on: in a chat with two models the
 menu groups the controls by model and each model is sent its own pick, and a model without
-controls shows no button. On a phone a control's options open in place of the list, with a way
-back, and the Chat Variables button beside it still opens its own form. The picked option's
-parameters go out alongside what the chat's own Controls set. A user without the Chat Controls
-or Advanced Params permission still picks, keeps and sends the controls, while the permission
-still hides the Controls panel or its Advanced Params.
+controls offers only the chat's own Controls, open, in that menu. On a phone a control's options
+open in place of the list, with a way back, and the Chat Variables button beside it still opens
+its own form. The picked option's parameters go out alongside what the chat's own Controls (the
+last entry of the same menu) set. A user without the Chat Controls or Advanced Params permission
+still picks, keeps and sends the controls, while the permission still hides the Controls or their
+Advanced Params.
 
 Four red tests pin picks the user can no longer see or clear. Saving Settings > General throws
 every pick away (open-webui/open-webui#31997, fixed by 1be0d3412). A pick of a control the admin
@@ -31,6 +32,8 @@ Retargeted for db5b87494 (#32860), which shows the controls to everyone who can 
 passes on dev a915df8ce. The permissions test fails on a build with its button check back (no
 button), in a backend copy with its chat route check back (the default is sent) and in one with
 its settings check back (the pick is gone after the reload).
+Retargeted for 2d7cf5ec9, which moved the chat's Controls into this menu, so a model without
+controls shows the button too: passes on dev 3bd0cdd0f.
 """
 
 from __future__ import annotations
@@ -44,9 +47,9 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.model_controls import LENGTH, THINKING, pick, preset_with_controls
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, replies, send
+from utils.chat_controls import control_button, controls_entry, open_chat_controls, open_section
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, close_menu, expect_reply, replies, send
 from utils.menus import late_menu_entry
-from utils.setting_rows import setting_button
 from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -126,14 +129,18 @@ def test_the_menu_lists_each_control_with_the_option_in_use(page_for, make_user,
     expect(options.first).to_have_attribute("aria-checked", "true")
 
 
-def test_a_model_without_controls_shows_no_button(page_for, make_user, tuned):
+def test_a_model_without_controls_offers_only_the_chats_own(page_for, make_user, tuned):
     page = page_for(make_user())
     _open_chat(page, MOCK_MODEL_ID)
-    expect(page.get_by_role("button", name="Voice mode")).to_be_visible()
-    expect(_controls_button(page)).to_have_count(0)
+    menu = _open_menu(page)
+    expect(control_button(menu, "Controls")).to_have_attribute("aria-expanded", "true")
+    expect(_control_row(page, "Thinking")).to_have_count(0)
+    close_menu(page)
 
     _open_chat(page, tuned["id"])
-    expect(_controls_button(page)).to_be_visible()
+    menu = _open_menu(page)
+    expect(_control_row(page, "Thinking")).to_be_visible()
+    expect(control_button(menu, "Controls")).to_have_attribute("aria-expanded", "false")
 
 
 def test_chat_variables_and_model_controls_each_open_their_own(page_for, make_user, admin):
@@ -224,10 +231,10 @@ def test_the_chats_own_controls_are_sent_with_the_pick(page_for, make_user, tune
     page = page_for(make_user())
     _open_chat(page, tuned["id"])
     _choose(page, "Thinking", "Low")
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    expect(page.get_by_text("Temperature", exact=True)).to_be_visible()
-    setting_button(page.locator("body"), "Temperature").click()
-    page.get_by_role("spinbutton", name="Temperature").fill("0.3")
+    panel = open_section(open_chat_controls(page), "Advanced Params")
+    control_button(panel, "Temperature").click()
+    panel.get_by_role("spinbutton", name="Temperature").fill("0.3")
+    close_menu(page)
 
     sent = _ask(page, upstream)
 
@@ -328,13 +335,12 @@ WITHDRAWN = pytest.mark.parametrize("withheld", ["controls", "params"])
 
 
 def _withheld_panel(page: Page, withheld: str) -> Locator:
-    """What the withheld permission still hides: the Controls panel, or its Advanced Params."""
-    controls = page.get_by_role("navigation").get_by_role("button", name="Controls")
+    """What the withheld permission still hides: the Controls, or their Advanced Params."""
     if withheld == "controls":
-        return controls
-    controls.click()
-    expect(page.get_by_role("button", name="System Prompt", exact=True)).to_be_visible()
-    return page.get_by_role("button", name="Advanced Params", exact=True)
+        return controls_entry(page)
+    panel = open_chat_controls(page)
+    expect(control_button(panel, "System Prompt")).to_be_visible()
+    return control_button(panel, "Advanced Params")
 
 
 @WITHDRAWN

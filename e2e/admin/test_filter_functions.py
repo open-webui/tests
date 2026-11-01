@@ -5,9 +5,9 @@ until the admin switches Global on in its menu in Admin Panel > Functions; from 
 model is sent the change too. Two global filters that sign every reply sign it in the order of
 their `priority` valve, and an admin who raises one filter's priority in its Valves dialog flips
 the order on the next reply. A filter's user valve, set by each person in the chat's Controls
-under Valves > Functions, signs that person's replies and nobody else's. A filter a person can
-switch on shows a chip in the message input once on, and the chip opens the filter's user valves,
-whose value then stamps the reply.
+(in the chat input's Model controls) under Valves > Functions, signs that person's replies and
+nobody else's. A filter a person can switch on shows a chip in the message input once on, and the
+chip opens the filter's user valves, whose value then stamps the reply.
 
 Discriminates: passes on dev ebc6add67. One backend copy whose filter pipeline ignores a model's
 own filters, sorts filters by id alone and hands every filter the default user valves turned each
@@ -29,7 +29,15 @@ from harness.actors import Actor
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, expect_reply, last_reply, open_integrations_menu, send
+from utils.chat_controls import open_chat_controls, open_section
+from utils.chat_ui import (
+    chat_input,
+    close_menu,
+    expect_reply,
+    last_reply,
+    open_integrations_menu,
+    send,
+)
 from utils.tooltips import tooltip_button
 from utils.valves import customise, valve
 from utils.workspace_list import item_row
@@ -205,8 +213,7 @@ def test_filters_sign_the_reply_in_the_order_of_their_priority_valve(
 
 def set_signature(page: Page, function_id: str, signature: str) -> None:
     """Set the filter's user valve in the open chat's Controls."""
-    page.get_by_role("button", name="Controls").click()
-    page.get_by_role("button", name="Valves").click()
+    open_section(open_chat_controls(page), "Valves")
     page.get_by_role("combobox").filter(
         has=page.get_by_role("option", name="Functions")
     ).select_option(label="Functions")
@@ -220,6 +227,7 @@ def set_signature(page: Page, function_id: str, signature: str) -> None:
     signature_valve.get_by_role("textbox").fill(signature)
     signature_valve.get_by_role("textbox").press("Tab")
     expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
+    close_menu(page)
 
 
 def test_each_user_signs_their_replies_with_their_own_filter_user_valve(

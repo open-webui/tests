@@ -5,9 +5,10 @@ and saves. Each section reaches the group's members and nobody else: Prompts Acc
 Prompts gives a member the Prompts workspace with Import JSON while an outsider is sent home;
 Notes Sharing with Notes Public Sharing offers a member Add Access and Public on their own note
 while an outsider's note has no Access button; Allow Chat Controls gives a member the Controls
-button the defaults withdraw; Notes under Features reaches a member of a granting group even when
-their other group leaves it off. A group cannot take away what the defaults give: switching Allow
-File Upload off notes that the default stays enabled, and the member still attaches a file.
+(in the chat input's Model controls) the defaults withdraw; Notes under Features reaches a member
+of a granting group even when their other group leaves it off. A group cannot take away what the
+defaults give: switching Allow File Upload off notes that the default stays enabled, and the
+member still attaches a file.
 
 Changes reach a member's open tab without a reload, as the groups docs promise: Knowledge Access
 switched on puts Workspace in their user menu and switched off takes it away again (and a reload
@@ -42,6 +43,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.access import grant
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_controls import controls_entry
 from utils.chat_ui import chat_input
 from utils.model_selector import model_options, select_model
 from utils.user_menu import settings_item
@@ -222,10 +224,8 @@ def test_chat_controls_withdrawn_by_default_come_back_for_the_members(
 
     save_group_switches(admin_page, group, {"Allow Chat Controls": True})
 
-    controls = ready(page_for(member)).get_by_role("button", name="Controls", exact=True)
-    expect(controls).to_be_visible()
-    outsider_page = ready(page_for(outsider))
-    expect(outsider_page.get_by_role("button", name="Controls", exact=True)).to_have_count(0)
+    expect(controls_entry(ready(page_for(member)))).to_be_visible()
+    expect(controls_entry(ready(page_for(outsider)))).to_have_count(0)
 
 
 def test_a_member_of_two_groups_gets_notes_from_the_one_that_grants_it(

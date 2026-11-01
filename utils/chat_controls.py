@@ -27,6 +27,19 @@ def open_chat_controls(page: Page) -> Locator:
     return menu
 
 
+def controls_entry(page: Page) -> Locator:
+    """The Controls entry of the Model controls menu, opened when the chat input has the button.
+
+    On a model without model controls of its own the menu holds only the Controls, so someone
+    without Chat Controls gets no button there.
+    """
+    expect(chat_input(page)).to_be_visible()
+    button = page.get_by_role("button", name="Model controls", exact=True)
+    if button.count():
+        button.last.click()
+    return late_menu_entry(page.get_by_role("menu"), "Controls", exact=True)
+
+
 def control_button(panel: Locator, label: str) -> Locator:
     """A section title or a setting row's button inside the Controls, by its label."""
     return late_menu_entry(panel, label, exact=True)

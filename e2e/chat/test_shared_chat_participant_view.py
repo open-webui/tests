@@ -105,7 +105,9 @@ def _actions(page: Page, text: str) -> dict[str, int]:
 
 def _sees_present(page: Page, other) -> None:
     """The navbar shows `other` with the chat open, so both pages have joined it live."""
-    navbar = page.get_by_role("navigation").filter(has=page.get_by_role("button", name="Controls"))
+    navbar = page.get_by_role("navigation").filter(
+        has=page.get_by_role("button", name="Tabs", exact=True)
+    )
     # presence avatars carry no name, only the person's picture
     expect(navbar.locator(f'img[src$="/users/{other.id}/profile/image"]')).to_be_visible()
 
