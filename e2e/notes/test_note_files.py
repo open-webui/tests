@@ -62,6 +62,7 @@ from harness.actors import Actor
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import expect_reply, send
 from utils.note_content import note_files, note_images
+from utils.note_menu import open_note_menu
 from utils.note_pages import create_page, open_pages, page_tab
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -123,14 +124,6 @@ def open_note(page: Page, note_id: str) -> Locator:
     editor = page.get_by_role("main").get_by_label("Write something...")
     expect(editor).to_contain_text("see the file")
     return editor
-
-
-def open_note_menu(page: Page) -> Locator:
-    # the "..." button has no name; it is the last menu button in the editor's header
-    page.get_by_role("main").locator("[aria-haspopup=true]:visible").last.click()
-    menu = page.get_by_role("menu")
-    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
-    return menu
 
 
 def upload_to_note(page: Page, name: str, content: bytes, mime_type: str = "text/plain") -> None:

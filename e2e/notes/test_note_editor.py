@@ -33,6 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from utils.note_menu import open_note_menu
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -75,12 +76,6 @@ def _toolbar_button(page: Page, tooltip: str) -> Locator:
     toolbar = page.locator("#bubble-menu")
     expect(toolbar).to_be_visible()
     return tooltip_button(toolbar, tooltip)
-
-
-def _open_note_menu(page: Page) -> Locator:
-    # the "..." button has no name; it is the last menu button in the editor's header
-    page.get_by_role("main").locator("[aria-haspopup=true]:visible").last.click()
-    return page.get_by_role("menu")
 
 
 # ---------------------------------------------------------------- the formatting toolbar
@@ -142,7 +137,7 @@ def test_the_toolbar_turns_a_line_into_a_block(page_for, make_user, tooltip, blo
 
 
 def _set_formatting(page: Page, on: bool) -> None:
-    menu = _open_note_menu(page)
+    menu = open_note_menu(page)
     switch = menu.get_by_role("switch", name="Formatting")
     if (switch.get_attribute("aria-checked") == "true") != on:
         switch.click()

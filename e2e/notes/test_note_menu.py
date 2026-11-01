@@ -52,6 +52,7 @@ from utils.access_control import choose_visibility
 from utils.chat_ui import chat_input
 from utils.member_picker import pick_member
 from utils.note_content import note_files
+from utils.note_menu import open_note_menu
 from utils.notes_page import note_row, note_rows
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -93,14 +94,6 @@ def _open_note(page: Page, note_id: str, text: str) -> Locator:
     return editor
 
 
-def _open_note_menu(page: Page) -> Locator:
-    # the "..." button has no name; it is the last menu button in the editor's header
-    page.get_by_role("main").locator("[aria-haspopup=true]:visible").last.click()
-    menu = page.get_by_role("menu")
-    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
-    return menu
-
-
 def _share_submenu(page: Page, menu: Locator) -> None:
     menu.get_by_role("menuitem", name="Share").hover()
     expect(page.get_by_role("menuitem", name="Copy link")).to_be_visible()
@@ -129,7 +122,7 @@ def test_copy_link_in_the_editor_copies_an_address_that_opens_the_note(page_for,
     page = page_for(author, permissions=CLIPBOARD)
     _open_note(page, note_id, "reachable by link")
 
-    _share_submenu(page, _open_note_menu(page))
+    _share_submenu(page, open_note_menu(page))
     page.get_by_role("menuitem", name="Copy link").click()
 
     expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
@@ -162,7 +155,7 @@ def test_copy_to_clipboard_copies_the_markdown_and_the_formatting(page_for, make
     page = page_for(author, permissions=CLIPBOARD)
     _open_note(page, note_id, "fresh")
 
-    _share_submenu(page, _open_note_menu(page))
+    _share_submenu(page, open_note_menu(page))
     page.get_by_role("menuitem", name="Copy to clipboard").click()
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
@@ -186,7 +179,7 @@ def test_download_as_plain_text_saves_what_the_editor_holds(page_for, make_user)
     page.keyboard.type(" and flour")
     expect(editor).to_have_text("eggs and flour")
 
-    menu = _open_note_menu(page)
+    menu = open_note_menu(page)
     menu.get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
         page.get_by_role("menuitem", name="Plain text (.txt)").click()
@@ -228,7 +221,7 @@ def test_download_keeps_a_two_line_table_cell_inside_its_row(page_for, make_user
         lambda: "end of list" in str(_stored_note(author, note_id)["data"]["content"]["md"]), True
     )
 
-    menu = _open_note_menu(page)
+    menu = open_note_menu(page)
     menu.get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
         page.get_by_role("menuitem", name="Plain text (.md)").click()
@@ -243,7 +236,7 @@ def test_download_keeps_a_two_line_table_cell_inside_its_row(page_for, make_user
 
 
 def _attach_file(page: Page, name: str, text: bytes) -> None:
-    menu = _open_note_menu(page)
+    menu = open_note_menu(page)
     with page.expect_file_chooser() as chooser:
         menu.get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files([{"name": name, "mimeType": "text/plain", "buffer": text}])
@@ -299,7 +292,7 @@ def test_delete_in_the_editor_removes_the_note_from_the_list_and_the_server(page
     page = page_for(author)
     _open_note(page, doomed_id, "to be thrown out")
 
-    _open_note_menu(page).get_by_role("menuitem", name="Delete").click()
+    open_note_menu(page).get_by_role("menuitem", name="Delete").click()
     page.get_by_role("dialog", name="Delete note?").get_by_role("button", name="Confirm").click()
 
     expect(page.get_by_text("Note deleted successfully")).to_be_visible()
