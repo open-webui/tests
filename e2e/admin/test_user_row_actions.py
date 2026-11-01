@@ -295,7 +295,7 @@ def test_rotating_a_key_in_edit_user_shows_the_new_key_once(
 
     api_key = _rotate_in_dialog(admin_page, editing)
 
-    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_value(api_key)
+    expect(editing.get_by_role("textbox", name="API Key", exact=True)).to_have_value(api_key)
     expect(editing.get_by_role("button", name="Copy API Key")).to_be_visible()
     with instance.client(api_key) as client:
         signed_in = client.get("/api/v1/users/user/status")
@@ -307,7 +307,7 @@ def test_rotating_a_key_in_edit_user_shows_the_new_key_once(
     reopened = _edit_user(admin_page, account, row)
     expect(reopened.get_by_role("button", name="Rotate", exact=True)).to_be_visible()
     expect(reopened.get_by_role("button", name="Copy API Key")).to_have_count(0)
-    expect(reopened.get_by_role("textbox", name="Password", exact=True)).to_have_count(0)
+    expect(reopened.get_by_role("textbox", name="API Key", exact=True)).to_have_count(0)
 
 
 def test_deleting_a_key_in_edit_user_clears_it_and_revokes_it(
@@ -316,7 +316,7 @@ def test_deleting_a_key_in_edit_user_clears_it_and_revokes_it(
     account = make_user()
     editing = _edit_user(admin_page, account)
     api_key = _rotate_in_dialog(admin_page, editing)
-    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_value(api_key)
+    expect(editing.get_by_role("textbox", name="API Key", exact=True)).to_have_value(api_key)
 
     editing.get_by_role("button", name="Delete", exact=True).click()
     confirm = admin_page.get_by_role("dialog", name="Delete API Key?")
@@ -327,7 +327,7 @@ def test_deleting_a_key_in_edit_user_clears_it_and_revokes_it(
 
     assert deleted.value.status == 200, deleted.value.text()
     expect(editing.get_by_role("button", name="Copy API Key")).to_have_count(0)
-    expect(editing.get_by_role("textbox", name="Password", exact=True)).to_have_count(0)
+    expect(editing.get_by_role("textbox", name="API Key", exact=True)).to_have_count(0)
     assert _stored_key_status(account) == 404, "the account still holds a key"
     with instance.client(api_key) as client:
         assert client.get("/api/v1/users/user/status").status_code == 401
