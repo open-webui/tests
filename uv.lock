@@ -2126,7 +2126,7 @@ requires-dist = [
     { name = "grpcio" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "ldap3" },
-    { name = "mcp", specifier = "<2" },
+    { name = "mcp" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy" },
     { name = "openai" },

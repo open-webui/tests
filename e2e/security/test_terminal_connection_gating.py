@@ -8,8 +8,8 @@ still names the terminal, and the reply shows that it is disabled instead of the
 offered its tools.
 
 The page gets the socket events unheld (`real_socket_timing`), and the test stays red until a
-second bug is fixed (open-webui/open-webui#32550): the refusal comes before the page knows the new chat's
-id, the page drops it, and the person sees an empty reply with a Stop button that never ends.
+second bug is fixed (open-webui/open-webui#32550): the refusal comes before the page knows the new
+chat's id, the page drops it, and the person sees an empty reply with a Stop button that never ends.
 
 Discriminates: with the events held, passes on dev ef67cc3fa with its built frontend; with the
 `enabled` check removed from `get_terminal_tools` in a backend copy the model is offered the
