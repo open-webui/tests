@@ -14,8 +14,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -78,8 +78,7 @@ def test_ctrl_enter_to_send_holds_in_a_thread_reply(channel, make_user, page_for
     post_message(account, channel_id, "where do we meet?")
     page = open_channel(page_for, account, channel_id)
     question = messages(page).filter(has_text="where do we meet?").first
-    question.hover()
-    tooltip_button(question, "Reply in Thread").click()
+    message_action(question, "Reply in Thread").click()
     reply_box = page.get_by_label("Reply to thread...")
 
     type_two_lines(page, reply_box)

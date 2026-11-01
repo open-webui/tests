@@ -64,8 +64,8 @@ from harness.access import grant
 from harness.channel_chat import enable_channels as enable_channels_with_reply_mode
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.upstream import MOCK_MODEL_ID
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -463,8 +463,7 @@ def test_replies_typed_in_a_thread_while_one_still_sends_queue_in_the_thread(peo
     parent_id = post_message(sender, channel_id, "who brings what on saturday?")
     page = _open_channel(page_for, sender, channel_id)
     parent = page.locator(f"[id='message-{parent_id}']").first
-    parent.hover()
-    tooltip_button(parent, "Reply in Thread").click()
+    message_action(parent, "Reply in Thread").click()
     thread = _form(page, in_thread=True)
     expect(thread).to_be_visible()
     posts = _HeldPosts(page)

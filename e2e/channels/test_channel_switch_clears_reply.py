@@ -20,8 +20,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -77,8 +77,7 @@ def test_switching_channels_drops_the_pending_reply_and_a_message_sent_there_arr
     page = page_for(reader, path=f"/channels/{first}")
     quoted = page.locator("[id^='message-']").filter(has_text="the boat leaves at nine").first
     expect(quoted).to_be_visible()
-    quoted.hover()
-    tooltip_button(quoted, "Reply").click()
+    message_action(quoted, "Reply").click()
     banner = page.get_by_text(f"Replying to {author.name}")
     expect(banner).to_be_visible()
 

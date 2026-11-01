@@ -18,8 +18,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -49,8 +49,7 @@ def open_channel(page_for, account, channel_id: str) -> Page:
 
 def open_thread(page: Page, text: str) -> Locator:
     root = page.locator("[id^='message-']:not(#message-input-container)").filter(has_text=text)
-    root.first.hover()
-    tooltip_button(root.first, "Reply in Thread").click()
+    message_action(root.first, "Reply in Thread").click()
     return page.get_by_label("Reply to thread...")
 
 

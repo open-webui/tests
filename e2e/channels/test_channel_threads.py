@@ -23,8 +23,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import delete_message, enable_channels, group_channel, post_message
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -55,8 +55,7 @@ def _in_thread(page: Page, parent_id: str, text: str) -> Locator:
 
 def _open_thread(page: Page, parent_id: str) -> None:
     parent = _in_channel(page, parent_id)
-    parent.hover()
-    tooltip_button(parent, "Reply in Thread").click()
+    message_action(parent, "Reply in Thread").click()
     expect(_thread_input(page)).to_be_visible()
 
 
@@ -117,8 +116,7 @@ def test_an_edited_and_a_deleted_thread_reply_reach_the_other_members(people, pa
     _open_thread(member_page, parent_id)
 
     salad = _in_thread(author_page, parent_id, "I bring the salad")
-    salad.hover()
-    tooltip_button(salad, "Edit").click()
+    message_action(salad, "Edit").click()
     author_page.locator(f"[id^='message-{parent_id}-'] textarea").fill("I bring the bread")
     author_page.get_by_role("button", name="Save").click()
 
@@ -126,8 +124,7 @@ def test_an_edited_and_a_deleted_thread_reply_reach_the_other_members(people, pa
     expect(member_page.get_by_text("I bring the salad")).to_have_count(0)
 
     cake = _in_thread(author_page, parent_id, "I can bake a cake")
-    cake.hover()
-    tooltip_button(cake, "Delete").click()
+    message_action(cake, "Delete").click()
     author_page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
 
     expect(member_page.get_by_text("I can bake a cake")).to_have_count(0)

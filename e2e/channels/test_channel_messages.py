@@ -18,9 +18,9 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input, send
 from utils.menus import late_menu_entry
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -61,15 +61,13 @@ def test_a_reaction_and_a_thread_reply_reach_the_author_live(channel_pages):
     on_reader = _message(reader_page, "who brings the maps?")
     expect(on_reader).to_be_visible()
 
-    on_reader.hover()
-    tooltip_button(on_reader, "Add Reaction").click()
+    message_action(on_reader, "Add Reaction").click()
     reader_page.get_by_placeholder("Search all emojis").fill("rocket")
     late_menu_entry(reader_page.get_by_role("menu"), "1F680").click()
     on_author = _message(author_page, "who brings the maps?")
     expect(on_author.get_by_role("button", name="rocket 1")).to_be_visible()
 
-    on_reader.hover()
-    tooltip_button(on_reader, "Reply in Thread").click()
+    message_action(on_reader, "Reply in Thread").click()
     reader_page.get_by_label("Reply to thread...").click()
     reader_page.keyboard.type("I will, and a compass")
     reader_page.keyboard.press("Enter")

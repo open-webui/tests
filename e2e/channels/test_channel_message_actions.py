@@ -24,9 +24,9 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from utils.channel_messages import message_action, message_tooltips
 from utils.chat_ui import chat_input
 from utils.menus import late_menu_entry
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -51,15 +51,7 @@ def _message(page: Page, text: str) -> Locator:
 
 
 def _message_tool(page: Page, text: str, tooltip: str) -> Locator:
-    message = _message(page, text)
-    message.hover()
-    return tooltip_button(message, tooltip)
-
-
-def _tooltips(message: Locator) -> list[str]:
-    return message.get_by_role("button").evaluate_all(
-        "(buttons) => buttons.map((button) => button.parentElement?._tippy?.props.content)"
-    )
+    return message_action(_message(page, text), tooltip)
 
 
 def _stored(account, channel_id: str) -> list[dict]:
@@ -111,8 +103,8 @@ def test_a_member_is_offered_no_edit_or_delete_on_someone_elses_message(people, 
     post_message(member, channel_id, "the member's idea")
     page = _open_channel(page_for, member, channel_id)
 
-    on_theirs = _tooltips(_message(page, "the author's plan"))
-    on_own = _tooltips(_message(page, "the member's idea"))
+    on_theirs = message_tooltips(_message(page, "the author's plan"))
+    on_own = message_tooltips(_message(page, "the member's idea"))
 
     assert "Reply in Thread" in on_theirs
     assert "Edit" not in on_theirs and "Delete" not in on_theirs
@@ -137,8 +129,7 @@ def test_a_pinned_message_is_marked_for_both_and_listed_until_unpinned(people, p
     expect(dialog.get_by_text("weather looks fine")).to_have_count(0)
 
     listed = dialog.locator("[id^='message-']").filter(has_text="the old lighthouse").first
-    listed.hover()
-    tooltip_button(listed, "Unpin").click()
+    message_action(listed, "Unpin").click()
     expect(dialog.get_by_text("No pinned messages")).to_be_visible()
     member_message = _message(member_page, "meeting point is the old lighthouse")
     expect(member_message.get_by_text("Pinned", exact=True)).to_have_count(0)
@@ -160,12 +151,12 @@ def test_a_joined_reaction_counts_both_names_them_and_drops_as_each_removes_it(p
     on_author = _message(author_page, "who is coming on sunday?")
     expect(on_author.get_by_role("button", name="rocket 2")).to_be_visible()
     expect(on_member.get_by_role("button", name="rocket 2")).to_be_visible()
-    assert f"You and {member.name} reacted with :rocket:" in _tooltips(on_author)
-    assert f"{author.name} and You reacted with :rocket:" in _tooltips(on_member)
+    assert f"You and {member.name} reacted with :rocket:" in message_tooltips(on_author)
+    assert f"{author.name} and You reacted with :rocket:" in message_tooltips(on_member)
 
     on_member.get_by_role("button", name="rocket 2").click()
     expect(on_author.get_by_role("button", name="rocket 1")).to_be_visible()
-    assert "You reacted with :rocket:" in _tooltips(on_author)
+    assert "You reacted with :rocket:" in message_tooltips(on_author)
     on_author.get_by_role("button", name="rocket 1").click()
     expect(on_member.get_by_role("button", name="rocket")).to_have_count(0)
     [stored] = _stored(member, channel_id)
@@ -188,7 +179,7 @@ def test_an_admin_deletes_a_members_message_and_it_leaves_the_members_screen(
 
     expect(member_page.get_by_text("buy cheap watches here")).to_have_count(0)
     expect(_message(member_page, "when does the ferry leave?")).to_be_visible()
-    assert "Edit" in _tooltips(_message(admin_page, "when does the ferry leave?"))
+    assert "Edit" in message_tooltips(_message(admin_page, "when does the ferry leave?"))
     assert [message["content"] for message in _stored(member, channel_id)] == [
         "when does the ferry leave?"
     ]

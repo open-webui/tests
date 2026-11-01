@@ -22,8 +22,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import delete_message, enable_channels, group_channel, post_message
+from utils.channel_messages import message_action
 from utils.chat_ui import send
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -43,12 +43,6 @@ def message_rows(page: Page, rendered_id: str) -> Locator:
     return page.locator(f"[id='message-{rendered_id}']")
 
 
-def toolbar_button(message: Locator, tooltip: str) -> Locator:
-    """An icon-only button of a message's hover toolbar, told apart by the tooltip it shows."""
-    message.hover()
-    return tooltip_button(message, tooltip)
-
-
 def left_on_screen(page: Page, deleted_rendered_id: str, author_name: str) -> dict:
     """What still points at the deleted message once its own row is gone."""
     expect(message_rows(page, deleted_rendered_id)).to_have_count(0)
@@ -66,7 +60,7 @@ def test_deleting_a_message_clears_its_quote_and_the_reply_chip(channel, page_fo
         page.goto(f"/channels/{channel_id}")
         expect(page.get_by_text(QUOTED)).to_be_visible()
 
-    toolbar_button(message_rows(reader_page, quoted_id).first, "Reply").click()
+    message_action(message_rows(reader_page, quoted_id).first, "Reply").click()
     expect(reader_page.get_by_text(f"Replying to {author.name}")).to_be_visible()
     with reader_page.expect_response(lambda sent: sent.url.endswith("/messages/post")) as posted:
         send(reader_page, "my answer to that")
@@ -74,10 +68,10 @@ def test_deleting_a_message_clears_its_quote_and_the_reply_chip(channel, page_fo
     answer = message_rows(reader_page, posted.value.json()["id"]).first
     expect(answer).to_contain_text("my answer to that")
     expect(reader_page.get_by_text(QUOTED)).to_have_count(2)  # the message and the quote of it
-    toolbar_button(message_rows(reader_page, quoted_id).first, "Reply").click()
+    message_action(message_rows(reader_page, quoted_id).first, "Reply").click()
     expect(reader_page.get_by_text(f"Replying to {author.name}")).to_be_visible()
 
-    toolbar_button(message_rows(author_page, quoted_id).first, "Delete").click()
+    message_action(message_rows(author_page, quoted_id).first, "Delete").click()
     author_page.get_by_role("button", name="Confirm").click()
 
     assert left_on_screen(reader_page, quoted_id, author.name) == {
@@ -98,9 +92,9 @@ def test_the_thread_panel_clears_them_too(channel, page_for):
     starter = message_rows(reader_page, root_id).first
     expect(starter).to_contain_text("a thread starter")
 
-    toolbar_button(starter, "Reply in Thread").click()
+    message_action(starter, "Reply in Thread").click()
     expect(reader_page.get_by_text(QUOTED)).to_have_count(2)  # the message and the quote of it
-    toolbar_button(message_rows(reader_page, f"{root_id}-{quoted_id}").first, "Reply").click()
+    message_action(message_rows(reader_page, f"{root_id}-{quoted_id}").first, "Reply").click()
     expect(reader_page.get_by_text(f"Replying to {author.name}")).to_be_visible()
 
     delete_message(author, channel_id, quoted_id)

@@ -23,8 +23,8 @@ from harness.channel_chat import enable_channels as enable_channels_with_reply_m
 from harness.channel_quotes import group_channel, post_message
 from harness.image_engines import PNG_BASE64
 from harness.upstream import MOCK_MODEL_ID
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -106,8 +106,7 @@ def test_a_picture_shared_in_a_thread_reaches_a_model_asked_there(people, page_f
     upstream.queue(reply.text("A pine forest trail", match=reply.answering(question)))
     page = _open_channel(page_for, sender, channel_id)
     parent = page.locator(f"[id='message-{parent_id}']").first
-    parent.hover()
-    tooltip_button(parent, "Reply in Thread").click()
+    message_action(parent, "Reply in Thread").click()
     thread_box = page.get_by_label("Reply to thread...")
 
     _attach(page, "trail.png", "image/png", PNG)

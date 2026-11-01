@@ -28,8 +28,8 @@ from harness import upstream as reply
 from harness.channel_chat import enable_channels as enable_channels_with_reply_mode
 from harness.channel_quotes import group_channel, post_message
 from harness.upstream import MOCK_MODEL_ID
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -68,8 +68,7 @@ def _thread_input(page: Page) -> Locator:
 
 def _open_thread(page: Page, parent_id: str) -> None:
     parent = _in_channel(page, parent_id)
-    parent.hover()
-    tooltip_button(parent, "Reply in Thread").click()
+    message_action(parent, "Reply in Thread").click()
     expect(_thread_input(page)).to_be_visible()
 
 
@@ -146,8 +145,7 @@ def test_replying_to_the_models_answer_asks_it_again(people, page_for, upstream)
     first_answer = _in_thread(page, asked, "About four hours")
     expect(first_answer).to_be_visible()
 
-    first_answer.hover()
-    tooltip_button(first_answer, "Reply").click()
+    message_action(first_answer, "Reply").click()
     expect(page.get_by_text(f"Replying to {MOCK_MODEL_ID}")).to_be_visible()
     _thread_input(page).click()
     page.keyboard.type(follow_up)

@@ -42,8 +42,8 @@ from harness.apps import (
     serving_raw_app,
     wait_for_message,
 )
+from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -355,8 +355,7 @@ def test_the_app_starts_a_thread_people_can_open(page_for, apps_admin, installed
         root = wait_for_message(client, channel_id, "!thread written in a thread")
         wait_for_message(client, channel_id, "written in a thread", parent_id=root["id"])
     parent = page.locator(f"[id='message-{root['id']}']").first
-    parent.hover()
-    tooltip_button(parent, "Reply in Thread").click()
+    message_action(parent, "Reply in Thread").click()
     in_thread = page.locator(f"[id^='message-{root['id']}-']").filter(
         has_text="written in a thread"
     )
