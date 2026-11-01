@@ -12,10 +12,15 @@ from utils.chat_ui import chat_input
 TURN_TIMEOUT_MS = 20_000
 
 
+def end_call_button(page: Page):
+    """The call panel's End call button; the call's tab offers another to close it."""
+    return page.get_by_role("tabpanel").get_by_role("button", name="End call")
+
+
 def start_call(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
     page.get_by_role("button", name="Voice mode").click()
-    expect(page.get_by_role("button", name="End call")).to_be_visible()
+    expect(end_call_button(page)).to_be_visible()
 
 
 def call_status(page: Page, status: str):

@@ -31,6 +31,7 @@ from utils.chat_ui import last_reply
 from utils.speech_audio import silent_wav
 from utils.voice_call import (
     TURN_TIMEOUT_MS,
+    end_call_button,
     expect_screen_kept_on,
     record_wake_locks,
     start_call,
@@ -68,7 +69,7 @@ def test_read_aloud_plays_unmuted_after_a_call_ends(
     wait_for_transcriptions(speech_engine, 1)
     expect(last_reply(page)).to_contain_text(f"Heard you {words}.", timeout=TURN_TIMEOUT_MS)
 
-    page.get_by_role("button", name="End call").click()
+    end_call_button(page).click()
     expect(page.get_by_role("button", name="End call")).to_have_count(0)
     expect_screen_kept_on(page, False)
     # what an ended call did to the shared player before 78613d86f, and anything else may do

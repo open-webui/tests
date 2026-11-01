@@ -59,6 +59,7 @@ from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.voice_call import (
     TURN_TIMEOUT_MS,
     call_status,
+    end_call_button,
     expect_screen_kept_on,
     record_wake_locks,
     start_call,
@@ -231,7 +232,7 @@ def test_ending_the_call_closes_the_panel_and_the_provider_session(
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
     expect_screen_kept_on(page, True)
 
-    page.get_by_role("button", name="End call").click()
+    end_call_button(page).click()
 
     expect(call_overlay(page)).to_have_count(0)
     realtime.wait_for(call.ended.is_set, "the call end")
@@ -308,7 +309,7 @@ def test_a_message_typed_during_the_call_replaces_the_providers_snapshot_of_the_
     call = realtime.wait_for_call()
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
     # the call panel covers the chat input until it is hidden
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
+    page.get_by_role("button", name="Hide tabs").click()
 
     send(page, question)
 
@@ -338,13 +339,13 @@ def test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back(
     call = realtime.wait_for_call()
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
 
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
+    page.get_by_role("button", name="Hide tabs").click()
 
     expect(page.get_by_role("button", name="End call")).to_have_count(0)
     assert not call.ended.wait(1), "hiding the call panel ended the call"
     expect(page.get_by_role("button", name="Voice mode")).to_have_count(0)
     page.get_by_role("button", name="Return to call").click()
-    expect(page.get_by_role("button", name="End call")).to_be_visible()
+    expect(end_call_button(page)).to_be_visible()
     expect(call_status(page, "Listening")).to_be_visible()
     assert len(realtime.calls) == 1, "returning to the call opened a new one"
 
@@ -453,7 +454,7 @@ def test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_sai
         lambda stored: any(answer in spoken_of(message) for message in stored),
         "the spoken answer",
     )
-    page.get_by_role("button", name="End call").click()
+    end_call_button(page).click()
     upstream.queue(reply.text("At noon.", match=reply.answering(question)))
 
     send(page, question)

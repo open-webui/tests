@@ -36,6 +36,7 @@ from harness.actors import Actor
 from harness.audio_engine import AUDIO_CONFIG
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input
+from utils.voice_call import end_call_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -44,10 +45,6 @@ MODEL_LOAD_ERROR = re.compile(r"Could not locate file: .*Kokoro-82M")
 NO_CALL_FROM_URL = "?call=true opened the side panel without the call (open-webui/open-webui#31993)"
 # a call opened in error shows at once, so this is long enough to see none open
 NO_CALL_WAIT_MS = 1500
-
-
-def end_call_button(page: Page):
-    return page.get_by_role("button", name="End call")
 
 
 def open_from_url(page: Page, query: str) -> None:

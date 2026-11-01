@@ -167,7 +167,7 @@ def test_a_realtime_call_only_appends(voice_page_for, make_user, cached_setup, r
     realtime.wait_for(lambda: "You are welcome." in realtime.spoken, "the voice's own answer")
     wait_for_spoken_record(caller, page, "You are welcome.")
     # the call panel covers the chat input until it is hidden
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
+    page.get_by_role("button", name="Hide tabs").click()
     ask(page, upstream, "is pier 7 covered?", reply.text("Pier 7 is covered."))
     speak(page, caller, realtime, upstream, "and is it heated", reply.text("It is not heated."))
 
@@ -192,7 +192,7 @@ def test_a_realtime_call_started_in_a_typed_chat_rewrites_the_prefix_once(
 
     speak(page, caller, realtime, upstream, "and low tide", reply.text("At six."))
     speak(page, caller, realtime, upstream, "is the harbour open", reply.text("It is open."))
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
+    page.get_by_role("button", name="Hide tabs").click()
     ask(page, upstream, "until when?", reply.text("Until dusk."))
     speak(page, caller, realtime, upstream, "thanks, and tomorrow", reply.text("Same hours."))
 
