@@ -3,8 +3,8 @@
 A fresh admin adds a terminal connection to a local fake terminal server in the admin settings
 and switches it on, each change saving by itself; it is still there, on, when the tab is opened
 again. In a chat the admin picks the terminal from the input's Terminal menu, which opens its
-file browser, and expands the terminal dock. The page opens a session through the instance's
-proxy, and what is typed reaches the fake shell and comes back on screen.
+file browser, and opens a New Terminal tab beside it. The page opens a session through the
+instance's proxy, and what is typed reaches the fake shell and comes back on screen.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the terminal WebSocket proxy
 dropping what the browser sends the typed command never reaches the shell and nothing comes
@@ -20,7 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.listener import json_answer
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, serving_terminal
-from utils.chat_ui import chat_input
+from utils.cached_chat import open_new_terminal, pick_terminal
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -32,6 +32,8 @@ TYPED = "echo lighthouse"
 @pytest.fixture
 def fake_terminal():
     with serving_terminal() as server:
+        # the side panel offers a shell only to a terminal whose config has it on
+        server.route("GET", "/api/config", json_answer({"features": {"terminal": True}}))
         server.route("POST", "/api/terminals", json_answer({"id": "session-1"}))
         yield server
 
@@ -84,15 +86,11 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
     expect(section.get_by_role("switch")).to_be_checked()
 
     page.goto("/")
-    expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
-    page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
-    browser = page.get_by_role("region", name="File browser")
-    browser.get_by_role("button", name="Expand terminal").click()
-    expect(browser.get_by_role("tab", name="Shell")).to_be_visible()
+    pick_terminal(page, NAME)
+    shell = open_new_terminal(page)
 
-    browser.get_by_role("textbox", name="Terminal input").press_sequentially(TYPED)
-    _screen_text(browser.locator(".xterm-rows"), TYPED)
+    shell.get_by_role("textbox", name="Terminal input").press_sequentially(TYPED)
+    _screen_text(shell.locator(".xterm-rows"), TYPED)
 
     assert fake_terminal.requests_to("/api/terminals"), "no session was created on the terminal"
     session = fake_terminal.sessions[-1]

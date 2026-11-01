@@ -4,7 +4,7 @@ Issue open-webui/open-webui#25613, fixed by 58f917031 (PR open-webui/open-webui#
 a user types for a terminal in their own settings can carry surrounding whitespace. The page
 calls that terminal straight from the browser: HTTP calls send the key in the Authorization
 header, where a trailing space is dropped, so file listing worked; the terminal WebSocket sends
-it inside a JSON `auth` message the server compares exactly, so the dock showed
+it inside a JSON `auth` message the server compares exactly, so the shell showed
 "[Connection closed]". The fix trims the key in the WebSocket auth message and when the
 connection is saved, and the HTTP calls trim it too.
 
@@ -23,13 +23,12 @@ from __future__ import annotations
 import time
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page
 
 from harness.actors import Actor
 from harness.listener import json_answer
 from harness.terminal_server import FakeTerminalServer, serving_terminal
-from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
+from utils.cached_chat import open_new_terminal, pick_terminal
 from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -49,6 +48,7 @@ def personal_terminal():
         server.route("GET", "/api/config", json_answer({"features": {"terminal": True}}))
         server.route("GET", "/files/cwd", json_answer({"cwd": HOME, "home": HOME}))
         server.route("GET", "/files/list", json_answer({"dir": HOME, "entries": []}))
+        server.route("GET", "/api/config", json_answer({"features": {"terminal": True}}))
         server.route("POST", "/api/terminals", json_answer({"id": "session-1"}))
         yield server
 
@@ -71,13 +71,10 @@ def save_personal_terminal(account: Actor, server: FakeTerminalServer, key: str)
     assert saved.status_code == 200, saved.text
 
 
-def open_terminal_dock(page: Page) -> None:
+def open_terminal_shell(page: Page) -> None:
     page.reload()
-    expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
-    page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
-    files = page.get_by_role("region", name="File browser")
-    files.get_by_role("button", name="Expand terminal").click()
+    pick_terminal(page, NAME)
+    open_new_terminal(page)
 
 
 def wait_for_session_auth(server: FakeTerminalServer, timeout: float = 15.0) -> dict:
@@ -99,7 +96,7 @@ def opened_with_a_padded_key(
     account = make_user(role="admin")
     page = page_for(account)
     save_personal_terminal(account, personal_terminal, f"  {KEY}  ")
-    open_terminal_dock(page)
+    open_terminal_shell(page)
     wait_for_session_auth(personal_terminal)
     return personal_terminal
 

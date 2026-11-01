@@ -49,8 +49,8 @@ def browser(home, page_for, make_user, admin, preserve, open_terminal) -> Locato
 
 
 def _code_editor(browser: Locator) -> Locator:
-    # the code editor has no accessible name; its editable area is the only one in the panel
-    return browser.page.locator(".cm-content")
+    # the code editor has no accessible name; its editable area is the only one in the shown tab
+    return browser.locator(".cm-content")
 
 
 def test_a_read_only_file_opens_in_an_editor_that_takes_no_typing(browser, home):
@@ -62,7 +62,8 @@ def test_a_read_only_file_opens_in_an_editor_that_takes_no_typing(browser, home)
     browser.page.keyboard.type("# changed")
     expect(editor).not_to_contain_text("# changed")
 
-    browser.page.get_by_role("button", name="Back").first.click()
+    # each opened file has a tab of its own beside the Files tab
+    browser.page.get_by_role("tab", name="Files", exact=True).click()
     browser.get_by_text("log-book.py", exact=True).click()
     expect(editor).to_contain_text("ENTRIES = []")
     editor.click()

@@ -63,7 +63,8 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.chat_history import seed_chat
 from harness.socket_client import connected
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
+from utils.chat_controls import open_chat_controls
+from utils.chat_ui import chat_input, close_menu, conversation, expect_reply, last_reply, send
 from utils.member_picker import pick_member
 from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.voice_call import start_call
@@ -144,9 +145,9 @@ def _share_over_api(owner, chat_id: str, grants: list[dict], mode: str | None) -
 
 
 def _set_chat_prompt(page: Page) -> None:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    page.get_by_role("textbox", name="System Prompt", exact=True).fill(OWNER_PROMPT)
+    controls = open_chat_controls(page)
+    controls.get_by_role("textbox", name="System Prompt", exact=True).fill(OWNER_PROMPT)
+    close_menu(page)
 
 
 def _sent_home(page: Page, message: str | None = None) -> None:
@@ -297,8 +298,11 @@ def test_someone_replying_does_not_get_the_owners_system_prompt(page_for, make_u
 
     member_page = page_for(member)
     _open_live_chat(member_page, chat_id)
-    member_page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    expect(member_page.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value("")
+    member_controls = open_chat_controls(member_page)
+    expect(member_controls.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value(
+        ""
+    )
+    close_menu(member_page)
     member_turn = _ask(member_page, upstream, "what is the toll?", "Ask at the office.")
     assert OWNER_PROMPT not in "\n".join(_system_prompts(member_turn))
 
@@ -330,9 +334,8 @@ def test_a_clone_from_the_link_starts_without_the_owners_system_prompt(
 
 
 def _chat_header(page: Page) -> Locator:
-    return page.get_by_role("navigation").filter(
-        has=page.get_by_role("button", name="Controls", exact=True)
-    )
+    # the sidebar's navigation sits outside the main landmark
+    return page.get_by_role("main").get_by_role("navigation")
 
 
 def _present(page: Page, person) -> Locator:

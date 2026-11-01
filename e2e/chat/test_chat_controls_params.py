@@ -1,15 +1,15 @@
 """Journey: parameters set in a chat's Controls reach the model and stay with that chat only.
 
-Under Controls, Advanced Params switches a parameter from Default to a value of the chat's own:
-a temperature and a seed set there are sent to the provider with the next message and with the
-messages after a reload, and so are top_p, max_tokens, min_p, the two penalties, the stop
-sequences (comma separated, `\\n` read as a line break, a `%` kept as typed), the reasoning
-effort and the logit bias (`token:bias` pairs sent as a map). A custom parameter an admin adds
-there is sent under its name, its value read as JSON when it is JSON and kept as text when it is
-not. The chat's own system prompt is sent in place of none, again after a reload. A new chat
-starts from the defaults again, and going back and forth between two chats in the sidebar keeps
-each chat's values to itself. Two tabs open on one chat that each change a different setting
-keep both, and the chat opened again shows and sends both (#32755, b4a58be19).
+Under Controls (in the chat input's Model controls menu), Advanced Params switches a parameter from
+Default to a value of the chat's own: a temperature and a seed set there are sent to the provider
+with the next message and with the messages after a reload, and so are top_p, max_tokens, min_p, the
+two penalties, the stop sequences (comma separated, `\\n` read as a line break, a `%` kept as
+typed), the reasoning effort and the logit bias (`token:bias` pairs sent as a map). A custom
+parameter an admin adds there is sent under its name, its value read as JSON when it is JSON and
+kept as text when it is not. The chat's own system prompt is sent in place of none, again after a
+reload. A new chat starts from the defaults again, and going back and forth between two chats in the
+sidebar keeps each chat's values to itself. Two tabs open on one chat that each change a different
+setting keep both, and the chat opened again shows and sends both (#32755, b4a58be19).
 
 The parameters an account saves under Settings > General > Advanced Parameters are sent with
 every chat that sets none of its own; a value set in the chat's Controls wins over them, and a
@@ -45,7 +45,8 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.actors import Actor
 from harness.chat import ask
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, conversation, expect_reply, send
+from utils.chat_controls import control_button, open_chat_controls, open_section
+from utils.chat_ui import REPLY_TIMEOUT_MS, close_menu, conversation, expect_reply, send
 from utils.setting_rows import setting_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -54,23 +55,18 @@ CHAT_PROMPT = "You answer like a lighthouse keeper."
 
 
 def _advanced_params(page: Page) -> Locator:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    # the section starts open
-    expect(page.get_by_role("button", name="Advanced Params")).to_have_attribute(
-        "aria-expanded", "true"
-    )
-    expect(page.get_by_text("Temperature", exact=True)).to_be_visible()
-    return page.locator("body")
+    panel = open_section(open_chat_controls(page), "Advanced Params")
+    expect(panel.get_by_text("Temperature", exact=True)).to_be_visible()
+    return panel
 
 
 def _set(panel: Locator, label: str, value: str) -> None:
-    setting_button(panel, label).click()
+    control_button(panel, label).click()
     panel.get_by_role("spinbutton", name=label).fill(value)
 
 
 def _set_text(panel: Locator, label: str, value: str) -> None:
-    setting_button(panel, label).click()
+    control_button(panel, label).click()
     panel.get_by_role("textbox", name=label).fill(value)
 
 
@@ -99,6 +95,7 @@ def test_a_temperature_and_seed_set_in_the_chat_are_sent_and_kept(page_for, make
     panel = _advanced_params(page)
     _set(panel, "Temperature", "0.3")
     _set(panel, "Seed", "4242")
+    close_menu(page)
 
     first = _ask(page, upstream)
     assert (first.get("temperature"), first.get("seed")) == (0.3, 4242)
@@ -123,6 +120,7 @@ def test_every_sampling_parameter_set_in_the_chat_reaches_the_provider(
     _set_text(panel, "Stop Sequence", "END,HALT,\\n")
     _set_text(panel, "Reasoning Effort", "high")
     _set_text(panel, "logit_bias", "5432:100, 413:-100")
+    close_menu(page)
 
     request = _ask(page, upstream)
 
@@ -146,6 +144,7 @@ def test_a_stop_sequence_with_a_percent_sign_is_sent_as_typed(page_for, make_use
     """#32649 (fix fdb304be2): a `%` in a stop sequence kept every message from sending."""
     page = page_for(make_user())
     _set_text(_advanced_params(page), "Stop Sequence", "100%,END")
+    close_menu(page)
 
     request = _ask(page, upstream)
 
@@ -155,9 +154,10 @@ def test_a_stop_sequence_with_a_percent_sign_is_sent_as_typed(page_for, make_use
 def test_an_admins_custom_parameter_is_sent_under_its_name(page_for, make_user, upstream):
     page = page_for(make_user(role="admin"))
     panel = _advanced_params(page)
-    panel.get_by_role("button", name="Add Custom Parameter").click()
+    control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").fill("top_k")
     panel.get_by_placeholder("Custom Parameter Value").fill("7")
+    close_menu(page)
 
     request = _ask(page, upstream)
     assert request.get("top_k") == 7
@@ -166,14 +166,15 @@ def test_an_admins_custom_parameter_is_sent_under_its_name(page_for, make_user, 
 def test_custom_parameters_are_sent_as_json_or_as_text(page_for, make_user, upstream):
     page = page_for(make_user(role="admin"))
     panel = _advanced_params(page)
-    panel.get_by_role("button", name="Add Custom Parameter").click()
+    control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").last.fill("chat_template_kwargs")
     panel.get_by_placeholder("Custom Parameter Value").last.fill(
         '{"enable_thinking": false, "levels": [1, 2]}'
     )
-    panel.get_by_role("button", name="Add Custom Parameter").click()
+    control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").last.fill("verbosity")
     panel.get_by_placeholder("Custom Parameter Value").last.fill("low and slow")
+    close_menu(page)
 
     request = _ask(page, upstream)
 
@@ -185,6 +186,7 @@ def test_a_new_chat_starts_from_the_defaults(page_for, make_user, upstream):
     page = page_for(make_user())
     panel = _advanced_params(page)
     _set(panel, "Temperature", "0.3")
+    close_menu(page)
     assert _ask(page, upstream).get("temperature") == 0.3
 
     page.get_by_role("link", name="New Chat").first.click()
@@ -199,6 +201,7 @@ def test_each_chat_keeps_its_own_values_when_switching_in_the_sidebar(
     page = page_for(make_user())
     panel = _advanced_params(page)
     _set(panel, "Temperature", "0.3")
+    close_menu(page)
     assert _ask(page, upstream, "tuned chat").get("temperature") == 0.3
 
     page.get_by_role("link", name="New Chat").first.click()
@@ -207,13 +210,17 @@ def test_each_chat_keeps_its_own_values_when_switching_in_the_sidebar(
 
     _sidebar_chat(page, "tuned chat").click()
     expect(conversation(page).get_by_text("tuned chat")).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    expect(setting_button(panel, "Temperature")).to_have_text("Custom")
+    panel = _advanced_params(page)
+    expect(control_button(panel, "Temperature")).to_have_text("Custom")
     expect(panel.get_by_role("spinbutton", name="Temperature")).to_have_value("0.3")
+    close_menu(page)
     assert _ask(page, upstream, "tuned again").get("temperature") == 0.3
 
     _sidebar_chat(page, "plain chat").click()
     expect(conversation(page).get_by_text("plain chat")).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    expect(setting_button(panel, "Temperature")).to_have_text("Default")
+    panel = _advanced_params(page)
+    expect(control_button(panel, "Temperature")).to_have_text("Default")
+    close_menu(page)
     assert "temperature" not in _ask(page, upstream, "plain again")
 
 
@@ -221,8 +228,10 @@ def test_a_chats_system_prompt_is_kept_after_a_reload_and_stays_in_that_chat(
     page_for, make_user, upstream
 ):
     page = page_for(make_user())
-    _advanced_params(page)
-    page.get_by_role("textbox", name="System Prompt", exact=True).fill(CHAT_PROMPT)
+    open_chat_controls(page).get_by_role("textbox", name="System Prompt", exact=True).fill(
+        CHAT_PROMPT
+    )
+    close_menu(page)
     assert _system_prompts(_ask(page, upstream)) == [CHAT_PROMPT]
 
     expect(page).to_have_url(re.compile(r"/c/"))
@@ -256,14 +265,13 @@ def test_two_tabs_changing_different_settings_keep_both(page_for, make_user, ups
     expect_reply(first, "Fog again.")
     expect_reply(second, "Fog again.")
 
-    _advanced_params(first)
-    prompt_box = first.get_by_role("textbox", name="System Prompt", exact=True)
+    prompt_box = open_chat_controls(first).get_by_role("textbox", name="System Prompt", exact=True)
     with _saved_setting(first):
         prompt_box.fill(CHAT_PROMPT)
         prompt_box.blur()
     panel = _advanced_params(second)
     with _saved_setting(second):
-        setting_button(panel, "Temperature").click()
+        control_button(panel, "Temperature").click()
 
     with account.client() as client:
         stored = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"].get("params", {})
@@ -274,10 +282,11 @@ def test_two_tabs_changing_different_settings_keep_both(page_for, make_user, ups
     reopened = page_for(account, path=f"/c/{turn.chat_id}")
     expect_reply(reopened, "Fog again.")
     panel = _advanced_params(reopened)
-    expect(reopened.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value(
+    expect(panel.get_by_role("textbox", name="System Prompt", exact=True)).to_have_value(
         CHAT_PROMPT
     )
     expect(panel.get_by_role("spinbutton", name="Temperature")).to_have_value("0.8")
+    close_menu(reopened)
     request = _ask(reopened, upstream)
     assert (_system_prompts(request), request.get("temperature")) == ([CHAT_PROMPT], 0.8)
 
@@ -315,6 +324,7 @@ def test_a_chat_value_wins_over_the_accounts_saved_one(page_for, tuned_account, 
     page = page_for(tuned_account)
     _save_account_parameters(page, {"Temperature": "0.6", "max_tokens": "200"})
     _set(_advanced_params(page), "Temperature", "0.2")
+    close_menu(page)
 
     request = _ask(page, upstream)
 
@@ -328,8 +338,9 @@ def test_a_chat_value_switched_back_to_default_leaves_the_accounts_one(
     _save_account_parameters(page, {"Temperature": "0.6"})
     panel = _advanced_params(page)
     _set(panel, "Temperature", "0.2")
-    setting_button(panel, "Temperature").click()
-    expect(setting_button(panel, "Temperature")).to_have_text("Default")
+    control_button(panel, "Temperature").click()
+    expect(control_button(panel, "Temperature")).to_have_text("Default")
+    close_menu(page)
 
     request = _ask(page, upstream)
 

@@ -22,8 +22,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, expect_reply, send
-from utils.setting_rows import setting_button
+from utils.chat_controls import control_button, open_chat_controls, open_section
+from utils.chat_ui import chat_input, close_menu, expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -42,18 +42,20 @@ def open_with(page_for, make_user, **ui) -> Page:
 
 
 def controls(page: Page) -> Locator:
-    page.get_by_role("navigation").get_by_role("button", name="Controls").click()
-    prompt = page.get_by_role("textbox", name="System Prompt", exact=True)
+    prompt = open_chat_controls(page).get_by_role("textbox", name="System Prompt", exact=True)
     expect(prompt).to_be_visible()
     return prompt
 
 
 def stream_toggle(page: Page) -> Locator:
-    return setting_button(page.locator("body"), "Stream Chat Response")
+    panel = open_section(page.get_by_role("menu"), "Advanced Params")
+    return control_button(panel, "Stream Chat Response")
 
 
 def ask(page: Page, upstream, question: str) -> dict:
+    """Closes the open Controls, then sends `question` and returns what the provider got."""
     upstream.queue(reply.text("Aye.", match=reply.answering(question)))
+    close_menu(page)
     send(page, question)
     expect_reply(page, "Aye.")
     return [body for body in upstream.chat_requests() if reply.answering(question)(body)][-1]

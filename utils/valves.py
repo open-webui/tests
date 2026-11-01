@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from playwright.sync_api import Locator, expect
 
+from utils.menus import late_menu_entry
+
 
 def valve(dialog: Locator, title: str, description: str) -> Locator:
     """One valve's row: its title, Default or Custom button, input and description."""
@@ -12,5 +14,6 @@ def valve(dialog: Locator, title: str, description: str) -> Locator:
 
 
 def customise(row: Locator) -> None:
-    row.get_by_role("button", name="Default").click()
-    expect(row.get_by_role("button", name="Custom")).to_be_visible()
+    """Switch a valve from Default to Custom; in the chat's Controls its button is a menu item."""
+    late_menu_entry(row, "Default").click()
+    expect(late_menu_entry(row, "Custom")).to_be_visible()

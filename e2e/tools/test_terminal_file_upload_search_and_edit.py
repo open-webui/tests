@@ -2,13 +2,14 @@
 
 A real Open Terminal runs with a few files in its home. In a chat the person picks the terminal
 from the input's Terminal menu. From the File browser's Actions menu they upload a file through
-the file chooser and it shows in the list and lands in the terminal's home. They type into the
-search box and find one file by its contents and another by its name. They Ctrl-click two rows,
-press Select All, delete the selection and confirm: all the selected files are gone from the
-list and from the disk while an unselected one stays. They open a text file, press Edit, type new
-text and press Save: the new text is on disk. They change a code file and press Back without
-saving: the Unsaved changes prompt offers Save, Discard changes and Cancel. Save writes the change
-and leaves, Discard changes leaves the file on disk as it was, and Cancel stays on the edited file.
+the file chooser and it shows in the list and lands in the terminal's home. They open the search
+box and find one file by its contents and another by its name. They Ctrl-click two rows, press
+Select All, delete the selection and confirm: all the selected files are gone from the list and
+from the disk while an unselected one stays. They open a text file, press Edit, type new text and
+press Save: the new text is on disk. They change a code file, which opens in a tab of its own, and
+close that tab without saving: the Unsaved changes prompt offers Save, Discard changes and Cancel.
+Save writes the change and leaves, Discard changes leaves the file on disk as it was, and Cancel
+stays on the edited file.
 
 Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler
 does nothing, its search shows no results, its bulk delete returns early and its save handler
@@ -60,6 +61,9 @@ def test_search_finds_a_file_by_its_contents_and_another_by_its_name(browser, op
     (open_terminal.home / "marmalade-recipe.txt").write_text("oranges and sugar\n")
     (open_terminal.home / "unrelated-note.txt").write_text("nothing here\n")
     browser.get_by_label("Refresh", exact=True).first.click()
+    search_toggle = browser.get_by_role("button", name="Search", exact=True)
+    expect(search_toggle).to_have_attribute("aria-expanded", "false")
+    search_toggle.click()
     search = browser.get_by_placeholder("Search files and contents")
 
     search.fill("quince")
@@ -113,7 +117,7 @@ def test_an_edited_text_file_is_saved_to_the_terminal(browser, open_terminal):
 
 
 def _leave_an_edited_file(browser, open_terminal):
-    """Change a code file, press Back without saving and return the file and the prompt."""
+    """Change a code file, close its tab without saving and return the file and the prompt."""
     script = open_terminal.home / f"leave-me-{uuid.uuid4().hex[:8]}.py"
     script.write_text("barrels = 4\n")
     browser.get_by_label("Refresh", exact=True).first.click()
@@ -124,7 +128,9 @@ def _leave_an_edited_file(browser, open_terminal):
     browser.page.keyboard.type("5")
     expect(browser.get_by_text("barrels = 5", exact=True)).to_be_visible()
 
-    browser.get_by_label("Back", exact=True).click()
+    browser.page.get_by_role("tablist", name="Tabs").get_by_role(
+        "button", name=f"Close {script.name}", exact=True
+    ).click()
     prompt = browser.page.get_by_role("dialog", name="Unsaved changes")
     for button in ("Save", "Discard changes", "Cancel"):
         expect(prompt.get_by_role("button", name=button, exact=True)).to_be_visible()

@@ -3,8 +3,9 @@
 `ask` sends a prompt and waits for the last of its scripted replies, each tied to that prompt, so
 a tool round and the answer after it are one call. `attach` uploads a file through the chat
 input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
-`pick_terminal` picks an Open Terminal for the chat before the first message, and `chat_requests`
-is every streamed request the provider received, the ones the cache sees.
+`pick_terminal` picks an Open Terminal for the chat before the first message and
+`open_new_terminal` opens a shell of it in the side panel; `chat_requests` is every streamed
+request the provider received, the ones the cache sees.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import itertools
 import re
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.upstream import Reply
@@ -70,6 +71,15 @@ def pick_terminal(page: Page, name: str) -> None:
     tooltip_button(page.get_by_role("main"), "Terminal").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name).click()
     expect(page.get_by_role("region", name="File browser")).to_be_visible()
+
+
+def open_new_terminal(page: Page) -> Locator:
+    """Open a shell of the picked terminal from the side panel's New tab menu; returns its panel."""
+    page.get_by_role("button", name="New tab", exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitem", name="New Terminal").click()
+    shell = page.get_by_role("tabpanel", name=re.compile(r"^Terminal \d+$"))
+    expect(shell).to_be_visible()
+    return shell
 
 
 def chat_requests(upstream) -> list[dict]:

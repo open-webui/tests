@@ -38,6 +38,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.plugins import installed_function
 from utils.cached_chat import turn_on_tool
+from utils.chat_controls import open_chat_controls, open_section
 from utils.chat_ui import chat_input, expect_reply, integration_row, send
 from utils.menus import late_menu_entry
 from utils.valves import customise, valve
@@ -344,13 +345,12 @@ def test_each_user_sets_their_own_user_valves_from_the_integrations_menu(
 
 
 def open_chat_controls_valves(page: Page, tool_name: str) -> Locator:
-    page.get_by_role("button", name="Controls").click()
-    page.get_by_role("button", name="Valves").click()
+    panel = open_section(open_chat_controls(page), "Valves")
     tool_picker = page.get_by_role("combobox").filter(
         has=page.get_by_role("option", name=tool_name)
     )
     tool_picker.select_option(label=tool_name)
-    return page.locator("form").filter(has=tool_picker)
+    return panel.locator("form").filter(has=tool_picker)
 
 
 def test_user_valves_set_in_the_chat_controls_replace_the_default(page_for, naming_tool, upstream):
@@ -412,7 +412,7 @@ def test_an_unset_list_valve_keeps_its_default_when_the_chat_controls_save_anoth
     panel = open_chat_controls_valves(page, name)
     rooms_valve = valve(panel, "Rooms", "Rooms you may book")
     expect(
-        rooms_valve.get_by_role("button", name="Default"), "the unset list shows as Custom (#31300)"
+        late_menu_entry(rooms_valve, "Default"), "the unset list shows as Custom (#31300)"
     ).to_be_visible()
     nickname_valve = valve(panel, "Nickname", "What the tool calls you")
     customise(nickname_valve)
@@ -441,8 +441,9 @@ def test_a_list_valve_set_in_the_chat_controls_drops_empty_entries_and_keeps_sav
     panel = open_chat_controls_valves(page, name)
     rooms_valve = valve(panel, "Rooms", "Rooms you may book")
     expect(rooms_valve.get_by_role("textbox")).to_have_value("lobby,hall")
-    with page.expect_response(lambda response: "/valves/user/update" in response.url):
-        type_into(rooms_valve, "north, south, ")
+    type_into(rooms_valve, "north, south, ")
+    # the panel takes the saved valves back with this notice; an edit before it would be replaced
+    expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
     nickname_valve = valve(panel, "Nickname", "What the tool calls you")
     customise(nickname_valve)
     type_into(nickname_valve, "Skipper")
