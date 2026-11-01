@@ -8,12 +8,17 @@ archive is too large after decompression" when the declared total exceeds
 `min(max(10 MiB, stored size * 100), FILE_MAX_SIZE)`, with the admin's file size limit now
 passed through to the loader.
 
+#33460 (`4adf3083f`) then made the check recognise a zip by its content instead of its extension
+or declared type, so a zip uploaded under any name, a `.pdf` included, is checked too, while a
+real PDF still reaches its reader.
+
 Twin of unit/security/test_archive_expansion_limit.py. Bounded by construction: every archive
 declares at most 16 MiB, so the pre-fix run inflates no more than that.
 
-Discriminates: passes on dev bbfa876af; with the size check removed from `Loader._get_loader`
-the 16 MiB archives reach their extractor and fail (or pass) for other reasons, and with
-`FILE_MAX_SIZE` no longer passed to the loader a 1 MiB limit refuses nothing.
+Discriminates: passes on dev 3cda94d40; with the size check removed from `Loader._get_loader`
+the 16 MiB archives reach their extractor and fail (or pass) for other reasons, with
+`FILE_MAX_SIZE` no longer passed to the loader a 1 MiB limit refuses nothing, and on 4adf3083f^
+(archives still told apart by extension) the zip named `scan.pdf` is not refused.
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ import io
 import zipfile
 
 import pytest
+from pypdf import PdfReader, PdfWriter
+
+from integration.retrieval.test_document_loaders import pdf_bytes
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -132,12 +140,37 @@ def test_a_real_word_document_still_reaches_its_extractor(make_user):
     assert "Quarterly revenue summary." in data.get("content", ""), data
 
 
-def test_a_pdf_is_not_run_through_the_archive_check(make_user):
+def test_a_zip_named_as_a_pdf_is_still_refused(make_user):
     bomb = _archive_declaring(16 * MIB)
     with make_user().client() as client:
         data = _processed(client, "scan.pdf", "application/pdf", bomb)
 
+    assert data.get("status") == "failed" and TOO_LARGE in (data.get("error") or ""), (
+        f"a zip declaring 16 MiB got past the archive check by being named scan.pdf: {data}"
+    )
+
+
+def _with_zip_attached(document: bytes) -> bytes:
+    """The PDF with a small zip embedded as a file attachment, as PDF editors allow."""
+    writer = PdfWriter(clone_from=PdfReader(io.BytesIO(document)))
+    writer.add_attachment("figures.zip", _archive_declaring(1 * MIB))
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("attached", [False, True], ids=["plain", "zip-attached"])
+def test_a_real_pdf_still_reaches_its_extractor(attached, make_user):
+    document = pdf_bytes("Quarterly revenue summary.")
+    if attached:
+        document = _with_zip_attached(document)
+        assert zipfile.is_zipfile(io.BytesIO(document)), "the attachment must read as a zip"
+
+    with make_user().client() as client:
+        data = _processed(client, "report.pdf", "application/pdf", document)
+
     assert TOO_LARGE not in (data.get("error") or ""), data
+    assert "Quarterly revenue summary." in data.get("content", ""), data
 
 
 def test_an_unreadable_archive_is_left_to_the_extractor(make_user):
