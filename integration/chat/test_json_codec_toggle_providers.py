@@ -389,11 +389,10 @@ def test_a_streamed_responses_reply_reaches_an_api_client_as_parseable_frames(re
     )
 
     assert streamed.status_code == 200, streamed.text
-    events = _parsed_frames(streamed.text)
-    deltas = [
-        event["delta"] for event in events if event.get("type") == "response.output_text.delta"
-    ]
-    assert "".join(deltas) == FULL_TEXT
+    frames = _parsed_frames(streamed.text)
+    # API clients get Chat Completions chunks since dev e789513ea (#33389)
+    assert {frame.get("object") for frame in frames} == {"chat.completion.chunk"}, frames
+    assert _content(frames) == FULL_TEXT
     assert provider.sent()[-1]["input"][0]["content"] == [{"type": "input_text", "text": ALL_MIXED}]
 
 

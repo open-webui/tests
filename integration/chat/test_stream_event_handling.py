@@ -22,8 +22,9 @@ Twin of unit/chat/test_stream_event_handling.py.
 
 Discriminates: passes on dev bbfa876af. Each narrow test fails with its fix reverted: a
 present-but-empty `output` replacing the stream, `output_item.done` falling to the generic `.done`
-branch, the delta branch returning an unbound `new_output` (both stray events cut the stream with
-an error frame), `started_at` read unguarded, every tool result stamped completed, and the
+branch, the delta branch returning an unbound `new_output` (on dev d22c4449c the two-part event
+name cuts the stream with an error frame; a leading delta now opens its own item since de73bb830),
+`started_at` read unguarded, every tool result stamped completed, and the
 >= 400 follow-up branch removed (both follow-up error tests).
 """
 
@@ -158,7 +159,9 @@ def test_an_unexpected_delta_does_not_cut_the_stream(
 
     errors = [event["error"] for event in events if "error" in event]
     assert not errors, f"the stray delta cut the stream short (#28312): {errors}"
-    assert "still here" in [event.get("delta") for event in events]
+    # API clients get Chat Completions chunks since dev e789513ea (#33389)
+    contents = [choice["delta"].get("content") for event in events for choice in event["choices"]]
+    assert "still here" in contents, f"the text after the stray delta never arrived: {events}"
 
 
 def test_a_stream_ending_in_reasoning_finishes_cleanly(admin, responses_connection):

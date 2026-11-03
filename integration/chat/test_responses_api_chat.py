@@ -269,7 +269,10 @@ def test_an_api_client_gets_a_non_streamed_result_in_chat_completions_shape(resp
     assert call == {"id": "c1", "type": "function", "function": {"name": "lookup"}}
     # a JSON string, spaced as the server's codec writes it (compact under orjson, #31616)
     assert isinstance(arguments, str) and json.loads(arguments) == {"id": 7}, arguments
-    assert body["usage"] == FIRST_USAGE
+    # Chat Completions token names since dev e789513ea (#33389)
+    usage = {key: body["usage"].get(key) for key in ("prompt_tokens", "completion_tokens")}
+    assert usage == {"prompt_tokens": 10, "completion_tokens": 4}, body["usage"]
+    assert body["usage"]["total_tokens"] == 14
     [sent] = provider.sent()
     assert sent["instructions"] == SYSTEM_PROMPT
     assert sent["max_output_tokens"] == 30
