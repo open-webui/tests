@@ -1,6 +1,7 @@
 """Journey: what a sub-agent can reach is what the chat that started it can reach, and no more.
 
-A sub-agent runs as the account that delegated, on the same model, and is offered what the parent
+A sub-agent runs as the account that delegated, on the same model unless the delegation names one
+of the sub-agent models set in the model editor, and is offered what the parent
 was: the workspace tools and external tool servers the chat uses, the skills the account may
 read, the terminal of the chat, the knowledge attached to the model and the memories to read
 (never to write). It leads with the model's own system prompt, runs the filters the person
@@ -20,6 +21,10 @@ temporary chat that delegated left the sub-agent's chat stored on the server, wh
 Chat` keeps nothing (the task tools are withheld from it for that reason, dev d2936c880); PR
 #31573 fixed that (open-webui/open-webui#31567).
 
+Since v0.13.0 (789a0f402) a model can name other models for its sub-agents. The model is offered
+those the account may read, a delegation that names one runs the sub-agent on it, and one naming
+any other model is refused with the list of allowed ones before anything reaches that model.
+
 Every test here but the temporary chat one is red on dev 1c010b438: since de73bb830 a chat request
 whose reply message is already stored in the chat, the way automations, sub-agents and timers
 prepare their reply, is refused with 409 and the reply is never written
@@ -35,7 +40,10 @@ the sub-agent's tool ids, skill tool, terminal, filters or model dropped, the pa
 prompt replaced (with the model dropped as well for the model's own prompt), the parent's prompt
 put in its system prompt, all memory tools removed, every chat file passed on (or none), the
 sub-agent run as the instance owner or as an admin, and the owner check of the chat stop endpoint
-removed.
+removed. The three sub-agent model tests pass on v0.13.0 and dev a01b2ed55; the named and the
+refused model tests fail on v0.12.5, before 789a0f402, and in backend copies of v0.13.0 each turns
+red alone with its edit: the named model ignored, the check of the allowed models removed, and the
+first configured model used when none is named.
 """
 
 from __future__ import annotations
@@ -313,6 +321,103 @@ def test_the_models_own_system_prompt_leads_the_subagents(subagents_on, admin, m
 
     [sub] = sub_requests(upstream, task)
     assert system_text(sub).startswith(persona)
+
+
+@contextlib.contextmanager
+def provider_model(admin, upstream, *, shared: bool):
+    """One more model on the scripted provider, readable by every account only when `shared`."""
+    model_id = f"helper-{uuid.uuid4().hex[:8]}"
+    upstream.models.append(model_id)
+    with admin.client() as client:
+        client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+        if shared:
+            published = client.post(
+                "/api/v1/models/model/access/update",
+                json={"id": model_id, "name": model_id, "access_grants": [EVERYONE_READS]},
+            )
+            assert published.status_code == 200, published.text
+        try:
+            yield model_id
+        finally:
+            client.post("/api/v1/models/model/delete", json={"id": model_id})
+            upstream.models.remove(model_id)
+            client.get("/api/models", params={"refresh": "true"})
+
+
+def delegating_model(admin, *model_ids: str):
+    return preset(admin, meta={"subagents": {"model_ids": list(model_ids)}})
+
+
+def delegation_offer(request: dict) -> dict:
+    [tool] = [t["function"] for t in request["tools"] if t["function"]["name"] == "delegate_task"]
+    return tool["parameters"]["properties"]
+
+
+def test_a_delegation_naming_another_configured_model_runs_the_subagent_on_it(
+    subagents_on, admin, instance, make_user, upstream
+):
+    prompt, task = unique("hand this over"), unique("review the chart")
+    with (
+        provider_model(admin, upstream, shared=True) as helper,
+        delegating_model(admin, helper) as model_id,
+        make_user().client() as chat,
+    ):
+        delegating(upstream, prompt, task, sub_answer(task), model_id=helper)
+        turn, _ = ask(chat, prompt, model=model_id)
+
+    [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
+    [sub] = sub_requests(upstream, task)
+    assert delegation_offer(parent)["model_id"].get("enum") == [helper], (
+        f"the model was not offered its sub-agent model: {delegation_offer(parent)}"
+    )
+    assert sub["model"] == helper, f"the sub-agent ran on {sub['model']}, not on {helper}"
+    [stored] = _stored_subagent_chats(instance, turn.chat_id)
+    assert stored["models"] == [helper]
+
+
+def test_a_subagent_model_that_is_not_configured_or_not_readable_is_refused_and_never_called(
+    subagents_on, admin, make_user, upstream
+):
+    with (
+        provider_model(admin, upstream, shared=True) as allowed,
+        provider_model(admin, upstream, shared=True) as unlisted,
+        provider_model(admin, upstream, shared=False) as private,
+        delegating_model(admin, allowed, private) as model_id,
+        make_user().client() as chat,
+    ):
+        for refused in (unlisted, private):
+            prompt, task = unique("hand this over"), unique("review the chart")
+            delegating(upstream, prompt, task, model_id=refused)
+            ask(chat, prompt, model=model_id)
+
+            *_, wrap_up = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)]
+            refusal = tool_result(wrap_up)
+            assert f"model {refused} is not available" in refusal, (
+                f"the delegation to {refused} was not refused, the model got back: {refusal}"
+            )
+            assert f"Available models: {allowed}." in refusal, f"no allowed models: {refusal}"
+            assert sub_requests(upstream, task) == [], f"a sub-agent ran on {refused}"
+
+    called = {r["model"] for r in upstream.chat_requests()}
+    assert not called & {unlisted, private}, f"the refused models were sent requests: {called}"
+
+
+def test_a_delegation_naming_no_model_runs_the_subagent_on_the_chats_model(
+    subagents_on, admin, instance, make_user, upstream
+):
+    prompt, task = unique("hand this over"), unique("review the chart")
+    delegating(upstream, prompt, task, sub_answer(task))
+    with (
+        provider_model(admin, upstream, shared=True) as helper,
+        delegating_model(admin, helper) as model_id,
+        make_user().client() as chat,
+    ):
+        turn, _ = ask(chat, prompt, model=model_id)
+
+    [sub] = sub_requests(upstream, task)
+    assert sub["model"] == MOCK_MODEL_ID, f"the sub-agent ran on {sub['model']}"
+    [stored] = _stored_subagent_chats(instance, turn.chat_id)
+    assert stored["models"] == [model_id]
 
 
 def test_a_filter_the_person_switched_on_runs_on_the_subagent_too(
