@@ -20,6 +20,12 @@ A note unpinned with the X on its entry in the sidebar's Notes section still off
 menu on the Notes page, in either layout, until a reload: the list kept the pinned state it was
 loaded with (open-webui/open-webui#32707, issue #32706, fix 6a7205e96). The pinning test fails in
 the pre-fix build of the 0.12.4 changes, which has that commit reverted.
+
+Holding Shift did nothing once a button on the page had been clicked, for example after switching
+to Grid, since the keyboard-focus check added in #33676 also matched a mouse-clicked button the
+moment Shift was pressed (open-webui/open-webui#33714). The Grid case of the Shift delete test
+fails on dev 623257af7. A keyboard user who Tabbed onto a note's menu still keeps it while holding
+Shift (#33676), on dev 623257af7 and with the fix.
 """
 
 from __future__ import annotations
@@ -298,6 +304,35 @@ def test_holding_shift_deletes_a_note_at_once(page_for, make_user, layout):
     expect(main.get_by_text(doomed)).to_have_count(0)
     expect(main.get_by_label("Note Menu")).to_have_count(1)
     assert list(_stored_notes(author)) == [kept]
+
+
+def test_holding_shift_keeps_the_menu_a_keyboard_user_tabbed_onto(page_for, make_user):
+    author = make_user()
+    title = _unique("Tabbed")
+    _create_note(author, title, "keep this")
+    page = page_for(author)
+    _open_notes_page(page, title)
+    main = page.get_by_role("main")
+    menu = main.get_by_label("Note Menu")
+    expect(menu).to_have_count(1)
+
+    for _ in range(40):
+        if menu.evaluate("(button) => button === document.activeElement"):
+            break
+        page.keyboard.press("Tab")
+    expect(menu).to_be_focused()
+    page.keyboard.down("Shift")
+    # the swap shows at once on Shift, so a short pause proves it stayed away
+    page.wait_for_timeout(500)
+    expect(menu).to_have_count(1)
+    page.keyboard.up("Shift")
+
+    # a mouse click on another button leaves no keyboard focus, so Shift swaps again
+    main.get_by_role("button", name="Title", exact=True).click()
+    page.keyboard.down("Shift")
+    expect(menu).to_have_count(0)
+    expect(main.get_by_role("button", name="Delete")).to_have_count(1)
+    page.keyboard.up("Shift")
 
 
 # ---------------------------------------------------------------- pinning
