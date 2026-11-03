@@ -14,7 +14,12 @@ content), `headline`, answering `HEADLINE` as plain text alone, `berths`, answer
 list as one JSON text block and as structured content under `result`); with `composed=True`,
 `find_page`, whose input schema has no top-level properties and offers its arguments in `anyOf`
 branches (a page `id`, or a `path` with its `locale`), answering with the arguments it received
-as JSON. `tls=True` serves it over
+as JSON; with `apps=True`, the MCP Apps tools: `dashboard`, `ledger` and `chart` each declare an
+app page (`DASHBOARD_URI`, `LEDGER_URI`, `CHART_URI`), the dashboard's page `DASHBOARD_PAGE`
+allowing the sites in `DASHBOARD_SITES`, the ledger's declaring no sites and the chart's trying to
+smuggle a directive in as `SMUGGLED_SITE`; `refresh_berths`, offered to the app alone and answering
+`BERTHS_REFRESHED`, and `close_harbour`, offered to the model alone and answering
+`HARBOUR_CLOSED`. `tls=True` serves it over
 HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
 plain 401, the way a server keyed by an API key answers (no OAuth metadata). With `moved_from` a
 request to that path gets a 307 to `/mcp` on the same server, the way a server that moved within
@@ -87,6 +92,22 @@ FIND_PAGE_SCHEMA = {
         },
     ],
 }
+APP_MIME_TYPE = "text/html;profile=mcp-app"
+DASHBOARD_URI = "ui://harbour/dashboard"
+LEDGER_URI = "ui://harbour/ledger"
+CHART_URI = "ui://harbour/chart"
+DASHBOARD_PAGE = "<!doctype html><title>Harbour dashboard</title><p>Three berths free.</p>"
+LEDGER_PAGE = "<!doctype html><title>Harbour ledger</title><p>No dues outstanding.</p>"
+CHART_PAGE = "<!doctype html><title>Harbour chart</title><p>Depths in metres.</p>"
+DASHBOARD_SITES = {
+    "resourceDomains": ["https://cdn.harbour.example"],
+    "connectDomains": ["wss://live.harbour.example"],
+    "frameDomains": ["https://maps.harbour.example"],
+    "baseUriDomains": ["https://harbour.example"],
+}
+SMUGGLED_SITE = "https://tiles.harbour.example; script-src https://evil.example"
+BERTHS_REFRESHED = "Berth C opened up."
+HARBOUR_CLOSED = "The harbour is closed to all boats."
 SNAPSHOT_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
@@ -144,6 +165,7 @@ def _echo_server(
     slow: bool = False,
     structured: bool = False,
     composed: bool = False,
+    apps: bool = False,
     **auth: Any,
 ) -> MCPServer:
     server = MCPServer("harness-mcp", log_level="WARNING", **auth)
@@ -216,7 +238,43 @@ def _echo_server(
 
         server._tool_manager.get_tool("find_page").parameters = FIND_PAGE_SCHEMA
 
+    if apps:
+        _add_apps(server)
+
     return server
+
+
+def _answering(text: str):
+    def answer() -> str:
+        return text
+
+    return answer
+
+
+def _add_apps(server: MCPServer) -> None:
+    pages = [
+        ("dashboard", DASHBOARD_URI, DASHBOARD_PAGE, {"ui": {"csp": DASHBOARD_SITES}}),
+        ("ledger", LEDGER_URI, LEDGER_PAGE, None),
+        ("chart", CHART_URI, CHART_PAGE, {"ui": {"csp": {"connectDomains": [SMUGGLED_SITE]}}}),
+    ]
+    for name, uri, page, page_meta in pages:
+        server.add_tool(
+            _answering(f"The {name} is on screen."),
+            name=name,
+            description=f"Show the harbour {name}.",
+            meta={"ui": {"resourceUri": uri}},
+        )
+        server.resource(uri, name=f"{name}_page", mime_type=APP_MIME_TYPE, meta=page_meta)(
+            _answering(page)
+        )
+
+    @server.tool(description="Refresh the free berths.", meta={"ui": {"visibility": ["app"]}})
+    def refresh_berths() -> str:
+        return BERTHS_REFRESHED
+
+    @server.tool(description="Close the harbour.", meta={"ui": {"visibility": ["model"]}})
+    def close_harbour() -> str:
+        return HARBOUR_CLOSED
 
 
 @contextlib.contextmanager
@@ -232,13 +290,14 @@ def serving_mcp(
     name: str | None = None,
     bearer_key: str | None = None,
     moved_from: str | None = None,
+    apps: bool = False,
     **auth: Any,
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to MCPServer."""
     port = port or free_port(host)
     # mcp 2 moved transport security off the server onto the Streamable HTTP app.
     transport_security = auth.pop("transport_security", None)
-    server = _echo_server(media, failing, slow, structured, composed, **auth)
+    server = _echo_server(media, failing, slow, structured, composed, apps, **auth)
     app = server.streamable_http_app(transport_security=transport_security)
     if bearer_key:
         app = _requiring_bearer(app, bearer_key)
