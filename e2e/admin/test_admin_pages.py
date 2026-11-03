@@ -23,6 +23,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.actors import sign_in
 from harness.listener import json_answer
 from utils.tooltips import tooltip_button
+from utils.user_roles import expect_role, role_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -76,10 +77,10 @@ def test_an_added_account_signs_in_and_keeps_a_changed_role(admin_page, instance
 
     users.get_by_role("textbox", name="Search").fill(email)
     row = users.get_by_role("row").filter(has_text=email)
-    expect(row.get_by_role("button", name="Change User Role")).to_have_text("user")
+    expect_role(row, "user")
     assert sign_in(instance, email, password)
 
-    row.get_by_role("button", name="Change User Role").click()
+    role_button(row).click()
     editing = admin_page.get_by_role("dialog").filter(has_text="Edit User")
     editing.get_by_role("combobox", name="Role").select_option(label="Pending")
     editing.get_by_role("button", name="Save").click()
@@ -87,7 +88,7 @@ def test_an_added_account_signs_in_and_keeps_a_changed_role(admin_page, instance
 
     admin_page.reload()
     users.get_by_role("textbox", name="Search").fill(email)
-    expect(row.get_by_role("button", name="Change User Role")).to_have_text("pending")
+    expect_role(row, "pending")
 
 
 @pytest.fixture

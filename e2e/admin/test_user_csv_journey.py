@@ -19,6 +19,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from utils.chat_ui import chat_input
+from utils.user_roles import expect_role
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -67,7 +68,7 @@ def test_imported_accounts_show_their_roles_and_sign_in_with_the_csv_password(
     for name, email, _, role in rows:
         row = users.get_by_role("row").filter(has_text=email)
         expect(row).to_contain_text(name)
-        expect(row.get_by_role("button", name="Change User Role")).to_have_text(role)
+        expect_role(row, role)
 
     visitor = context.new_page()
     (_, member_email, member_password, _), _, (_, wait_email, wait_password, _) = rows

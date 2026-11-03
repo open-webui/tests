@@ -4,7 +4,8 @@ Retargeted for 06c17834e, dc2ac8606 and 3539ad632, which rebuilt the dashboard: 
 row of labelled figures (Tokens, Input, Output, Messages, Chats, Users), Tokens and Messages
 switch what the chart and the share columns count (Tokens first), the chart's bucket size is the
 "Chart interval" picker and each bucket is a point named by its time, whose hover box lists each
-model's count and share.
+model's count and share. f773e057e moved the legend's "Select to isolate model" hint from the
+button's label into hidden text, so a legend entry is found by that hint and the model's name.
 """
 
 from __future__ import annotations
@@ -102,7 +103,8 @@ def chart_view(settings: Locator, name: str) -> None:
 
 def legend_entry(settings: Locator, name: str) -> Locator:
     """The model's entry in the chart legend, which isolates the model when clicked."""
-    return settings.get_by_role("button", name=f"{name} — Select to isolate model")
+    named = settings.page.get_by_title(name, exact=True)
+    return settings.get_by_role("button", name="Select to isolate model").filter(has=named)
 
 
 def activity_lane(settings: Locator, name: str) -> Locator:

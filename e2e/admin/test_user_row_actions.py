@@ -28,6 +28,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from utils.chat_ui import chat_input
+from utils.user_roles import expect_role, role_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -191,11 +192,11 @@ def test_an_account_set_to_pending_meets_the_activation_screen_on_its_next_load(
     expect(chat_input(accounts_page)).to_be_visible(timeout=PAGE_TIMEOUT_MS)
 
     row = _user_row(admin_page, account)
-    row.get_by_role("button", name="Change User Role").click()
+    role_button(row).click()
     editing = admin_page.get_by_role("dialog").filter(has_text="Edit User")
     editing.get_by_role("combobox", name="Role").select_option(label="Pending")
     editing.get_by_role("button", name="Save").click()
-    expect(row.get_by_role("button", name="Change User Role")).to_have_text("pending")
+    expect_role(row, "pending")
 
     accounts_page.reload()
 

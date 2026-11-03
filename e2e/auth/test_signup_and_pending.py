@@ -29,6 +29,7 @@ from playwright.sync_api import Page, expect
 
 from harness.actors import Actor
 from utils.chat_ui import chat_input
+from utils.user_roles import expect_role, role_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -133,12 +134,12 @@ def test_a_pending_visitor_gets_in_once_an_admin_activates_the_account(
     users = admin_page.get_by_role("main")
     users.get_by_role("textbox", name="Search").fill(email)
     row = users.get_by_role("row").filter(has_text=email)
-    expect(row.get_by_role("button", name="Change User Role")).to_have_text("pending")
-    row.get_by_role("button", name="Change User Role").click()
+    expect_role(row, "pending")
+    role_button(row).click()
     editing = admin_page.get_by_role("dialog").filter(has_text="Edit User")
     editing.get_by_role("combobox", name="Role").select_option(label="User")
     editing.get_by_role("button", name="Save").click()
-    expect(row.get_by_role("button", name="Change User Role")).to_have_text("user")
+    expect_role(row, "user")
 
     page.get_by_role("button", name="Check Again").click()
 

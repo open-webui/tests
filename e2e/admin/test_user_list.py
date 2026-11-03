@@ -37,6 +37,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import sign_in
 from utils.chat_ui import chat_input
+from utils.user_roles import expect_role
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -106,7 +107,7 @@ def test_an_edited_account_signs_in_with_its_new_details_and_opens_the_admin_pan
     _search(users, new_email)
     edited = _row(users, new_email)
     expect(edited).to_contain_text(new_name)
-    expect(edited.get_by_role("button", name="Change User Role")).to_have_text("admin")
+    expect_role(edited, "admin")
 
     _sign_in(page, account.email, account.password)
     expect(page.get_by_text(INVALID_CREDENTIALS)).to_be_visible()
@@ -235,7 +236,7 @@ def test_an_account_added_as_admin_signs_in_and_opens_the_admin_panel(admin_page
     form = _add_user(admin_page, users, f"Added Admin {suffix}", email, password, "admin")
     expect(form).to_be_hidden()
     _search(users, email)
-    expect(_row(users, email).get_by_role("button", name="Change User Role")).to_have_text("admin")
+    expect_role(_row(users, email), "admin")
     with instance.client(sign_in(instance, email, password)) as client:
         _dismiss_changelog(client)
 
