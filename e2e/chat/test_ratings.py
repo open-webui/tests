@@ -8,12 +8,15 @@ the reason and the comment. Thumbs up alone is listed as a win.
 The thumbs down test also pins a fixed bug (fix 2d5651410, PR open-webui/open-webui#32334): the
 rating asks for tags in the background, and when they arrived after the reason and comment were
 saved, the rating was saved again from its state before them, so the stored reason and comment
-were gone. The tags reply is held back a few seconds so it always lands after Save.
+were gone. The tags reply is held back a few seconds so it always lands after Save. It also pins
+open-webui/open-webui#33715: while the tags were still being generated, Save in the rating form
+stored nothing at all.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the feedback create route
 answering without storing the row both tests fail (the account has no row on the Feedback page).
 The thumbs down test passes on the dev 5032e834e build and fails on that build with 2d5651410
-reverted (the stored rating has its tags but no reason, comment or score).
+reverted (the stored rating has its tags but no reason, comment or score). It also fails on the
+dev 623257af7 build, where Save stores no reason or comment while the tags are pending (#33715).
 """
 
 from __future__ import annotations
