@@ -25,8 +25,9 @@ turns.
 7. One long exchange (#32781, PR #32794): a chat over the threshold with a single earlier user turn
    was never compacted (three messages or fewer were skipped, and no later user message sat far
    enough back to keep the retention share), so the follow-up went out whole and failed against
-   the model's context window. It is now cut at the follow-up. The summary prompt renders only
-   each message's visible text, so tool output stored on the earlier reply reaches neither request.
+   the model's context window. It is now cut at the follow-up, so tool output stored on the
+   earlier reply stays out of it. A provider that refuses the replayed summary request (item 10)
+   as too long still gets the plain prompt, which renders only each message's visible text.
 8. Model threshold for the usage gauge (#32821, commit c9415a688): a model's own threshold, set
    on the workspace model or in the admin model defaults, decided when a turn compacted, but the
    model list left it out, so the chat's usage gauge measured against the global threshold and
@@ -36,6 +37,10 @@ turns.
    is never stored, so it was never compacted. It now compacts like a saved chat; the summary is
    not stored on the server but sent to the page with the compaction event, naming the message
    it belongs on, and the page sends it back on that message with the next turn.
+10. Cached summary (dev a8b478ed7, on purpose): when the summary goes to the chat's own model, the
+   summary request replays the chat request with the summary instructions appended, so the
+   provider reads the history from its prompt cache. A refused or empty replay falls back to the
+   plain summary prompt, and an empty answer to that to the older turns' own text.
 
 Twin of unit/chat/test_context_compaction.py.
 
@@ -48,7 +53,8 @@ cap fails the capped case; ignoring the retention setting fails the keep-half ca
 `input_tokens` (dev ef67cc3fa) fails the upgraded-chat test for all three dialects. The usage
 dialect, under-threshold, compaction-off, clamp and normalization tests pass on all. Both
 one-exchange cases pass with the #32781 fix (0adecf863) and fail on dev 2d9852c60 before it (no
-summary is made and the whole chat is sent, the tool output included). The model-threshold
+summary is made and the whole chat is sent, the tool output included); the refused-replay case
+passes on dev d22c4449c and on 8e61cc021 before the replay. The model-threshold
 cases pass on dev f844f6e89 and fail on c9415a688^ (the model list carries no threshold while
 the turn still compacts at the model's). The temporary-chat cases pass on dev 226dca18c and fail
 with the temporary id dropped from the compaction check (no summary is made) or with the summary
@@ -89,6 +95,15 @@ TOOL_ANSWER = "The harbour log is clean."
 
 def is_summary_request(body: dict) -> bool:
     return not body.get("stream")
+
+
+def is_chat_request(body: dict) -> bool:
+    return bool(body.get("stream"))
+
+
+def is_replayed_summary_request(body: dict) -> bool:
+    """The chat request replayed with the summary instructions; the plain prompt is one message."""
+    return is_summary_request(body) and len(body["messages"]) > 1
 
 
 def summary_requests(upstream) -> list[dict]:
@@ -321,16 +336,24 @@ def one_question_and_a_large_tool_result() -> list[dict]:
 
 
 @pytest.mark.parametrize(
-    "first_exchange",
+    "first_exchange,replay_refused",
     [
-        pytest.param(one_question_in_three_long_parts, id="long-replies"),
-        pytest.param(one_question_and_a_large_tool_result, id="large-tool-result"),
+        pytest.param(one_question_in_three_long_parts, False, id="long-replies"),
+        pytest.param(one_question_and_a_large_tool_result, False, id="large-tool-result"),
+        pytest.param(
+            one_question_and_a_large_tool_result, True, id="large-tool-result-replay-refused"
+        ),
     ],
 )
 def test_one_long_exchange_is_summarized_before_the_follow_up(
-    user, upstream, compaction, first_exchange
+    user, upstream, compaction, first_exchange, replay_refused
 ):
     compaction()
+    if replay_refused:
+        # as a provider answers a request over the model's context window
+        upstream.queue(
+            reply.error(400, "context length exceeded", match=is_replayed_summary_request)
+        )
     upstream.queue(reply.text(SUMMARY, match=is_summary_request), reply.text("answer 2"))
     history = first_exchange()
     with user.client() as client:
@@ -340,15 +363,21 @@ def test_one_long_exchange_is_summarized_before_the_follow_up(
     summaries = summary_requests(upstream)
     sent = main_call(upstream)
     roles = [message["role"] for message in sent]
-    assert len(summaries) == 1, f"no summary was made and the whole chat was sent: {roles}"
+    assert summaries, f"no summary was made and the whole chat was sent: {roles}"
     assert roles == ["system", "user"], f"more than the follow-up was kept: {roles}"
     assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in sent[0]["content"]
     assert sent[1]["content"] == FOLLOW_UP
-    summary_request = json.dumps(summaries[0])
-    assert history[-1]["content"] in summary_request, "the summary left out the earlier reply"
-    assert TOOL_RESULT_ROW not in summary_request, (
-        f"the summary request carries the tool output ({len(summary_request)} characters)"
+    answered = json.dumps(summaries[-1])
+    assert history[-1]["content"] in answered, "the summary left out the earlier reply"
+    instructions = str(summaries[-1]["messages"][-1]["content"])
+    assert TOOL_RESULT_ROW not in instructions, (
+        f"the summary prompt quotes the tool output ({len(instructions)} characters)"
     )
+    if replay_refused:
+        assert not is_replayed_summary_request(summaries[-1])
+        assert TOOL_RESULT_ROW not in answered, (
+            f"the plain summary prompt carries the tool output ({len(answered)} characters)"
+        )
     assert TOOL_RESULT_ROW not in json.dumps(sent), "the follow-up was sent with the tool output"
 
 
@@ -481,15 +510,22 @@ def test_a_summary_without_text_still_leaves_a_checkpoint(
     user, upstream, compaction, reasoning, stored_prefix
 ):
     compaction()
-    summary = reply.text("", reasoning=reasoning, match=is_summary_request)
-    upstream.queue(summary, reply.text("answer 4"))
+    # every summary request gets it: the replayed chat request, then the plain prompt
+    upstream.queue(
+        *(reply.text("", reasoning=reasoning, match=is_summary_request) for _ in range(2)),
+        reply.text("answer 4", match=is_chat_request),
+    )
     history = turns(3)
     with user.client() as client:
         chat_id, last_id = seed_chat(client, history)
         next_turn(client, chat_id, last_id, "question 4")
         stored = stored_messages(client, chat_id)
 
-    assert stored[history[4]["id"]]["contextSummary"].startswith(stored_prefix)
+    checkpoint = stored[history[4]["id"]].get("contextSummary")
+    assert summary_requests(upstream), "no summary was asked for"
+    assert str(checkpoint).startswith(stored_prefix), (
+        f"the kept turns start without a usable summary: {str(checkpoint)[:80]!r}"
+    )
 
 
 def test_prompt_tokens_are_not_summed_across_a_tool_loop(user, upstream):

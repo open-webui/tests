@@ -32,7 +32,11 @@ test fails (the follow-up resends all twelve pages); the under-count control and
 after a run that was never compacted pass on both.
 With the cut allowed at any message, the pairing and crossing tests fail (a result is sent
 without its call); with the tool calls left out of the summary prompt, only the summary-prompt
-test fails.
+test fails, in its plain-prompt case.
+
+Since dev a8b478ed7 the summary request replays the run's own request with the summary
+instructions appended, so the calls reach it as they are; the plain prompt, which must name each
+call, is sent when the provider refuses the replay or the summary goes to another model.
 """
 
 from __future__ import annotations
@@ -306,12 +310,33 @@ def test_each_tool_call_stays_with_its_result(user, upstream, compaction, log_to
         assert unpaired(body["messages"]) == [], f"request {number}"
 
 
-def test_the_summary_request_names_the_tools_and_arguments(user, upstream, compaction, log_tool):
+def is_replayed_summary_request(body: dict) -> bool:
+    """The run's request replayed with the summary instructions; the plain prompt is one message."""
+    return is_summary_request(body) and len(body["messages"]) > 1
+
+
+@pytest.mark.parametrize("replay_refused", [False, True], ids=["replayed", "plain-prompt"])
+def test_the_summary_request_names_the_tools_and_arguments(
+    user, upstream, compaction, log_tool, replay_refused
+):
     compaction()
+    if replay_refused:
+        upstream.queue(
+            *(
+                reply.error(400, "context length exceeded", match=is_replayed_summary_request)
+                for _ in SUMMARIES
+            )
+        )
     with user.client() as client:
         long_tool_run(client, upstream, log_tool)
 
-    first, second = (body["messages"][-1]["content"] for body in summary_requests(upstream))
+    answered = [
+        json.dumps(body)
+        for body in summary_requests(upstream)
+        if not (replay_refused and is_replayed_summary_request(body))
+    ]
+    assert len(answered) == len(SUMMARIES), f"{len(answered)} summary requests were answered"
+    first, second = answered
     assert "read_log" in first
     for page in range(1, 7):
         assert page_name(page) in first, f"page {page} is missing from the summary prompt"
