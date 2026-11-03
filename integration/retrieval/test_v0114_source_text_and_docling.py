@@ -12,10 +12,11 @@
   through `ftfy.fix_text`, whose default also decodes entities, so `&nbsp;` and `&gt;` in a file
   were rewritten before being stored. Entity decoding is off; ftfy's mojibake repair stays, and
   since PR #31655 (issue #17087) it keeps curly quotes and full-width punctuation as written.
-- Docling page numbers (issue open-webui/open-webui#33603): a PDF Docling split into pages kept
-  only the 0-based page index on its chunks, while the PDF, Mistral and PaddleOCR loaders also
-  store the 1-based `page_label` the model is given to cite and open pages. With Docling the model
-  only saw the index and opened the page before the one it meant.
+- Docling page numbers (issue open-webui/open-webui#33603): a PDF Docling split into pages
+  showed the model only the 0-based page index, so the model cited and opened the page before the
+  one it meant. Since `fe2219d6f` the model is given an uploaded file's page 1-based, for every
+  loader. The chunks keep the 0-based index, which the citation view turns into the page a person
+  sees by itself.
 
 Tika and Docling are local services; each upload is processed before the response returns.
 
@@ -24,17 +25,22 @@ Twin of unit/retrieval/test_v0114_source_text_and_docling.py.
 Discriminates: passes on dev bbfa876af; removing `ino` from `known_source_ext` fails the sketch
 cases (the extraction server is called), dropping the conversion status check fails the refused
 and skipped cases, reading `md_content` with a `''` default fails the null case and decoding
-entities again fails the entity case. The page label case passes on the fix for #33603 and fails
-on dev f3ef8b949 (the chunks carry no `page_label`). The mojibake case passes on dev 015dbc861 and
+entities again fails the entity case. The page number case passes on dev fe2219d6f and fails on
+fe2219d6f^ (the model is given pages 0 and 2). The mojibake case passes on dev 015dbc861 and
 fails on dev a5bc78300, before PR #31655 (the repaired quote comes back straightened).
 """
 
 from __future__ import annotations
 
 import json
+import re
+import uuid
 
 import pytest
 
+from harness import upstream as reply
+from harness.actors import admin_of
+from harness.chat import ask
 from harness.listener import json_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -173,16 +179,23 @@ def test_mojibake_is_still_repaired(extraction):
     assert data["content"] == "don’t"
 
 
-def test_docling_pages_carry_the_page_number_a_person_sees(extraction, listener):
-    client, select = extraction
-    select("docling")
+@pytest.fixture(scope="module")
+def pages_shown(instance_with):
+    """An instance that gives the model each source chunk's page."""
+    return instance_with({"RAG_SOURCE_METADATA_KEYS": "page"})
+
+
+@pytest.mark.slow
+def test_docling_pages_reach_the_model_as_the_page_a_person_sees(pages_shown, preserve, listener):
+    preserve(RETRIEVAL_CONFIG, on=pages_shown)
+    tag = uuid.uuid4().hex[:8]
     # page 2 is blank, so the page numbers come from Docling's JSON
     serve_docling(
         listener,
         {
             "status": "success",
             "document": {
-                "md_content": "harbour on the first page\fharbour on the third page",
+                "md_content": f"harbour {tag} on the first page\fharbour {tag} on the third page",
                 "json_content": {
                     "texts": [
                         {"content_layer": "body", "prov": [{"page_no": 1}]},
@@ -192,22 +205,49 @@ def test_docling_pages_carry_the_page_number_a_person_sees(extraction, listener)
             },
         },
     )
+    with admin_of(pages_shown).client() as client:
+        saved = client.post(
+            RETRIEVAL_CONFIG[1],
+            json={"CONTENT_EXTRACTION_ENGINE": "docling", "DOCLING_SERVER_URL": listener.base_url},
+        )
+        assert saved.status_code == 200, saved.text
+        uploaded = client.post(
+            "/api/v1/files/?process_in_background=false",
+            files={"file": ("survey.pdf", b"%PDF-1.4", "application/pdf")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        file_id = uploaded.json()["id"]
+        prompt = f"Which page mentions harbour {tag}?"
+        pages_shown.upstream.queue(reply.text("page 3", match=reply.answering(prompt)))
+        _, message = ask(
+            client,
+            prompt,
+            chat_files=[
+                {"type": "file", "id": file_id, "name": "survey.pdf", "status": "uploaded"}
+            ],
+        )
+    assert message.get("done") and not message.get("error"), message
 
-    uploaded = client.post(
-        "/api/v1/files/?process_in_background=false",
-        files={"file": ("survey.pdf", b"%PDF-1.4", "application/pdf")},
-    )
-    assert uploaded.status_code == 200, uploaded.text
-    found = client.post(
-        "/api/v1/retrieval/query/doc",
-        json={"collection_name": f"file-{uploaded.json()['id']}", "query": "harbour", "k": 10},
-    )
-    assert found.status_code == 200, found.text
-    pages = sorted(
-        (meta.get("page"), meta.get("page_label")) for meta in found.json()["metadatas"][0]
+    sent = [
+        json.dumps(body["messages"])
+        for body in pages_shown.upstream.chat_requests()
+        if prompt in json.dumps(body["messages"])
+    ]
+    assert sent, "the chat never reached the model"
+    shown = sorted(int(page) for page in re.findall(r'<source [^>]*page=\\"(\d+)\\"', sent[-1]))
+    assert shown == [1, 3], (
+        f"the model was given pages {shown} for a PDF whose text is on pages 1 and 3, so it cites "
+        "and opens the page before the right one (#33603)"
     )
 
-    assert pages == [(0, 1), (2, 3)], (
-        f"Docling chunks carry (page, page_label) {pages}; without a 1-based label the model "
-        "opens and cites the page before the right one (#33603)"
+    # the citation view adds one to the stored page itself, so the chunks must stay 0-based
+    stored = sorted(
+        meta.get("page")
+        for source in message.get("sources") or []
+        for meta in source.get("metadata") or []
+        if meta.get("file_id") == file_id
+    )
+    assert stored == [0, 2], (
+        f"the reply's citations carry pages {stored}; the citation view, which adds one itself, "
+        "would show a page after the right one"
     )
