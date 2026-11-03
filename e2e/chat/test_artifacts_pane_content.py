@@ -13,7 +13,8 @@ copy: SVG blocks no longer collected as artifacts, CSS and JavaScript blocks lef
 page and Preview no longer selecting the block's version) the SVG, page and Preview tests go red;
 the Copy and Download test stays green there as a control. The closed pane test goes red on the
 0.12.4 pre-fix build (9862a5bd6 reverted among other fixes): the reopened pane shows the newest
-version.
+version. Retargeted for 2d7cf5ec9, which shows the pane as the Artifacts tab of the side panel:
+the test closes that tab.
 """
 
 from __future__ import annotations
@@ -122,7 +123,7 @@ def test_preview_on_an_earlier_block_reopens_the_closed_pane_on_that_blocks_vers
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
 
-    pane.get_by_role("button", name="Close", exact=True).click()
+    page.get_by_role("button", name="Close Artifacts", exact=True).click()
     expect(pane).to_have_count(0)
     box.get_by_role("button", name="Preview", exact=True).first.click()
 

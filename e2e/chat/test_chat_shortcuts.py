@@ -7,7 +7,7 @@ model selector, Ctrl+. the settings, Ctrl+/ the shortcut list and Ctrl+Shift+' a
 Shift+Escape puts the focus back in the message box, Escape there stops a reply still streaming
 and keeps what came so far, and ArrowUp in the empty message box opens the last question for
 editing. Bound to keys of the account's choosing, the unassigned Navigate to previous and next
-chat step through the sidebar's chats and Toggle Controls opens and closes the Controls panel.
+chat step through the sidebar's chats and Toggle Controls opens and closes the side panel.
 With Keyboard Shortcuts switched off in the settings the sidebar, model selector and new
 chat shortcuts do nothing.
 
@@ -20,7 +20,9 @@ chord but Ctrl+K every test but the switched-off one fails, and in a backend cop
 update drops the switch that one fails. In a frontend build of ebc6add67 whose
 message box ignores Escape and ArrowUp, and whose Shift+Escape focuses nothing, the three message
 box tests fail; in one whose chat navigation and Toggle Controls shortcuts do nothing, the two
-bound shortcut tests fail.
+bound shortcut tests fail. The Toggle Controls test was retargeted for 2d7cf5ec9, which moved the
+chat's Controls into the Model controls menu and points the shortcut at the side panel: it passes
+on dev d22c4449c and fails in a build whose Toggle Controls does nothing.
 """
 
 from __future__ import annotations
@@ -229,15 +231,22 @@ def test_bound_chat_navigation_steps_through_the_sidebars_chats(page_for, accoun
     expect_reply(page, answers[top_id])
 
 
-def test_bound_toggle_controls_opens_and_closes_the_controls_panel(page_for, account):
+def test_bound_toggle_controls_opens_and_closes_the_side_panel(page_for, account, upstream):
     bind(account, {"toggleControls": "Cmd+Shift+Y"})
     page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
-    advanced_params = page.get_by_role("button", name="Advanced Params")
-    expect(advanced_params).to_have_count(0)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
+    send(page, QUESTION)
+    expect_reply(page, ANSWER)
+    # the header's Tabs button opens and closes the same panel
+    tabs_button = page.get_by_role("button", name="Tabs", exact=True)
+    hide_tabs = page.get_by_role("button", name="Hide tabs", exact=True)
+    expect(tabs_button).to_have_attribute("aria-expanded", "false")
+    expect(hide_tabs).to_be_hidden()
 
     page.keyboard.press("Control+Shift+Y")
-    expect(advanced_params).to_be_visible()
+    expect(hide_tabs).to_be_visible()
+    expect(tabs_button).to_have_attribute("aria-expanded", "true")
 
     page.keyboard.press("Control+Shift+Y")
-    expect(advanced_params).to_be_hidden()
+    expect(hide_tabs).to_be_hidden()
+    expect(tabs_button).to_have_attribute("aria-expanded", "false")

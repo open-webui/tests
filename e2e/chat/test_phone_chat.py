@@ -26,6 +26,9 @@ on the right fall off it), the sign-in, streaming, reply button, Try Again, Edit
 tests go red. In a backend copy whose model create drops `params` the model selector test goes red,
 and in one that leaves the chat's files out of the request the file test.
 
+The dimmed chat test was retargeted for 3cda94d40, which widens the drawer to the screen less 40
+pixels: it taps the middle of that strip.
+
 The two Download choices tests are red on dev ebc6add67: on a screen this narrow the choices open
 beside the menu, past the left edge of the screen, with their names cut off
 (open-webui/open-webui#32015, fixed by f7727e24b).
@@ -180,12 +183,14 @@ def test_the_sidebar_button_opens_the_drawer_and_its_close_button_shuts_it(phone
 def test_a_tap_on_the_dimmed_chat_shuts_the_drawer(phone):
     tap_on_screen(open_sidebar_button(phone))
     expect_sidebar_open(phone)
-    sidebar_width = sidebar(phone).bounding_box()["width"]
-    assert sidebar_width < SCREEN["width"] - 60, (
-        f"the drawer leaves no chat to tap ({sidebar_width})"
+    drawer = sidebar(phone).bounding_box()
+    drawer_right = drawer["x"] + drawer["width"]
+    # the drawer is the screen less 40 pixels, enough for a finger
+    assert SCREEN["width"] - drawer_right >= 40, (
+        f"the drawer leaves no chat to tap (it ends at {drawer_right} of {SCREEN['width']})"
     )
 
-    phone.touchscreen.tap(SCREEN["width"] - 30, SCREEN["height"] // 2)
+    phone.touchscreen.tap((drawer_right + SCREEN["width"]) // 2, SCREEN["height"] // 2)
     expect_sidebar_closed(phone)
 
 

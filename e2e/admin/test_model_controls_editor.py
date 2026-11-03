@@ -6,8 +6,9 @@ parameters (a new option starts with one blank parameter row, and Add parameter 
 a row is blank); Apply stays off while the name or an option name is blank. Saving the model
 stores the controls, and a user's chat on the model then sends the default option's parameters,
 with string values read as JSON. Editing a control keeps the keys of its options when they are
-renamed, Remove takes a control away from the model and from the chat input, and the arrow keys
-on a control's handle reorder the controls, in the store and in the chat input's menu. In the
+renamed, Remove takes a control away from the model and from the chat input's Model controls
+menu, and the arrow keys on a control's handle reorder the controls, in the store and in that
+menu, which ends with the chat's own Controls. In the
 workspace model editor a writer of the model who is no admin sees the same controls and saves
 them unchanged. Admin Settings opens a preset in the workspace editor, so the form is
 tested on a model the scripted provider serves and the workspace editor on a preset.
@@ -24,6 +25,10 @@ The workspace editor test was retargeted for 82f142d37 and 3e0e760ce, which show
 the workspace editor and let anyone with write access read and change them: it opens the preset as
 a writer who is no admin, passes on dev b40891e0a (3 of 3) and fails in a backend copy of it with
 the admin-only rules back, where the writer sees no controls.
+The remove and reorder tests were retargeted for 2d7cf5ec9, which moved the chat's Controls into
+the Model controls menu, so the button stays for a model without controls and the menu ends with
+Controls: they pass on dev d22c4449c and fail in a build whose Remove and reorder handles do
+nothing.
 """
 
 from __future__ import annotations
@@ -39,7 +44,9 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.model_controls import LENGTH, THINKING, preset_with_controls
 from harness.python_tools import EVERYONE_READS
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_controls import control_button
+from utils.chat_ui import chat_input, close_menu, expect_reply, send
+from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -169,11 +176,16 @@ def open_chat(page: Page, model: dict) -> None:
     expect(chat_input(page)).to_be_visible()
 
 
-def listed_controls(page: Page) -> list[str]:
-    """The control names the chat input's Model controls menu lists, each with its option."""
-    page.get_by_label("Model controls").click()
+def open_controls_menu(page: Page) -> Locator:
+    page.get_by_label("Model controls", exact=True).click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("menuitem").first).to_be_visible()
+    expect(control_button(menu, "Controls")).to_be_visible()
+    return menu
+
+
+def listed_controls(page: Page) -> list[str]:
+    """The entries the chat input's Model controls menu lists, each control with its option."""
+    menu = open_controls_menu(page)
     return [text.replace("\n", " ") for text in menu.get_by_role("menuitem").all_inner_texts()]
 
 
@@ -257,7 +269,9 @@ def test_a_removed_control_leaves_the_model_and_the_chat_input(
     store_controls(builder, served_model, {"thinking": THINKING})
     user_page = page_for(make_user())
     open_chat(user_page, served_model)
-    expect(user_page.get_by_label("Model controls")).to_be_visible()
+    menu = open_controls_menu(user_page)
+    expect(late_menu_entry(menu, "Thinking", exact=True)).to_be_visible()
+    close_menu(user_page)
     editor = open_admin_editor(page_for(builder), served_model)
     editor.get_by_role("button", name="Remove Thinking").click()
     expect(editor.get_by_role("button", name="Edit Thinking")).to_have_count(0)
@@ -265,7 +279,10 @@ def test_a_removed_control_leaves_the_model_and_the_chat_input(
 
     assert stored_controls(builder, served_model) == {}
     open_chat(user_page, served_model)
-    expect(user_page.get_by_label("Model controls")).to_have_count(0)
+    # with no model controls left the menu opens on the chat's own Controls only
+    menu = open_controls_menu(user_page)
+    expect(control_button(menu, "Controls")).to_have_attribute("aria-expanded", "true")
+    expect(late_menu_entry(menu, "Thinking", exact=True)).to_have_count(0)
 
 
 def test_controls_reordered_with_the_keyboard_are_stored_and_listed_in_that_order(
@@ -283,7 +300,7 @@ def test_controls_reordered_with_the_keyboard_are_stored_and_listed_in_that_orde
     assert list(stored_controls(builder, served_model)) == ["length", "thinking"]
     page = page_for(make_user())
     open_chat(page, served_model)
-    assert listed_controls(page) == ["Answer length Default", "Thinking Medium"]
+    assert listed_controls(page) == ["Answer length Default", "Thinking Medium", "Controls"]
 
 
 def test_apply_stays_off_while_the_control_name_or_an_option_name_is_blank(
