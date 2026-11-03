@@ -2,14 +2,14 @@
 
 open-webui/open-webui#26917. With `ENABLE_OAUTH_PERSISTENT_CONFIG` on, the admin panel stores
 the OAuth / OIDC settings, but the sign-in providers were built once at startup from the
-environment alone. A provider saved there never got a sign-in button, not right away and not
-after a restart, and its login link answered 404. The providers are now built from the stored
-settings at startup and again on every save, and a save with a value no provider can be built
-with is refused before it is stored.
+environment alone. A provider saved there never got a sign-in button, not even after a restart,
+and its login link answered 404. Since bab66b2c2 the providers are built from the stored settings
+when the server starts (the admin panel says a restart applies them), and a save with a value no
+provider can be built with is refused before it is stored.
 
-Discriminates: passes with fix 9ec1f8391 (branch `fix-admin-oauth-providers-apply`), fails on
-dev b51e68fbb (the sign-in page lists no provider for the saved settings, the login link answers
-404 and an unusable value is stored with a 200).
+Discriminates: passes on dev d22c4449c, fails on bab66b2c2^ (the sign-in page lists no provider
+for the saved settings after a restart, the login link answers 404 and an unusable value is
+stored with a 200).
 """
 
 from __future__ import annotations
@@ -89,41 +89,41 @@ def _assert_signs_in_through(instance, idp, name: str) -> None:
     )
 
 
-def test_a_provider_saved_in_the_admin_panel_gets_a_sign_in_button(persistent, idp):
-    """Narrow: the save takes effect at once, and clearing it takes the button away again."""
+def test_a_provider_saved_in_the_admin_panel_gets_a_sign_in_button_after_a_restart(persistent, idp):
+    """Narrow: the stored settings build the provider at startup, and clearing them removes it."""
     name = f"Panel SSO {uuid.uuid4().hex[:8]}"
-    with oauth_settings(persistent, **_saved_provider(idp, name)):
-        _assert_signs_in_through(persistent, idp, name)
+    try:
+        with oauth_settings(persistent, **_saved_provider(idp, name)):
+            persistent.restart()
+            _assert_signs_in_through(persistent, idp, name)
+    finally:
+        persistent.restart()
 
     assert "oidc" not in _sign_in_providers(persistent), (
-        "the cleared provider still has a sign-in button"
+        "the cleared provider still has a sign-in button after a restart"
     )
     assert _login_redirect(persistent, "oidc").status_code == 404
-
-
-def test_a_provider_saved_in_the_admin_panel_survives_a_restart(persistent, idp):
-    """Narrow: the stored settings register the provider when the server starts."""
-    name = f"Panel SSO {uuid.uuid4().hex[:8]}"
-    with oauth_settings(persistent, **_saved_provider(idp, name)):
-        persistent.restart()
-        _assert_signs_in_through(persistent, idp, name)
 
 
 @pytest.mark.parametrize(
     ("field", "unusable"), [("OAUTH_CODE_CHALLENGE_METHOD", "plain"), ("OAUTH_TIMEOUT", "soon")]
 )
 def test_a_value_the_provider_cannot_use_is_rejected_on_save(persistent, idp, field, unusable):
-    """Narrow: the save is refused before it is stored, and the saved provider keeps signing in."""
+    """Narrow: the save is refused before it is stored, and the provider works after a restart."""
     name = f"Panel SSO {uuid.uuid4().hex[:8]}"
-    with oauth_settings(persistent, **_saved_provider(idp, name)):
-        with persistent.client() as admin:
-            refused = admin.post(OAUTH_CONFIG_PATH, json={field: unusable})
-            stored = admin.get(OAUTH_CONFIG_PATH).json()[field]
-        assert refused.status_code == 400, (
-            f"saving {field}={unusable!r} answered {refused.status_code}"
-        )
-        assert stored != unusable, f"the refused {field} was stored anyway"
-        _assert_signs_in_through(persistent, idp, name)
+    try:
+        with oauth_settings(persistent, **_saved_provider(idp, name)):
+            with persistent.client() as admin:
+                refused = admin.post(OAUTH_CONFIG_PATH, json={field: unusable})
+                stored = admin.get(OAUTH_CONFIG_PATH).json()[field]
+            assert refused.status_code == 400, (
+                f"saving {field}={unusable!r} answered {refused.status_code}"
+            )
+            assert stored != unusable, f"the refused {field} was stored anyway"
+            persistent.restart()
+            _assert_signs_in_through(persistent, idp, name)
+    finally:
+        persistent.restart()
 
 
 def test_stored_settings_decide_every_provider_after_a_restart(persistent):
