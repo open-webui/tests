@@ -7,25 +7,40 @@ compile is refused, and the stored code stays switched on and keeps answering. O
 anyone who may read the tool keeps their own user valves, while the tool's admin valves need
 write access.
 
+Since 0.13.0 a workspace tool can be switched off and on (9d1b4ef36). A switched-off tool leaves
+the chat's tool picker and is no longer offered to the model, even in a chat that already had it
+selected, and it does not run when the model calls it, also when it was switched off after the
+reply started. Switching it on brings all of it back. Only the owner, a writer and the admin may
+switch it.
+
 Discriminates: in a backend copy, the function valves update skipping its save turned both valves
 tests red; the update route not replacing the cached module while the cache also ignored changed
 source turned the updated-source test red; the update storing source whose load failed, and a
 refused update switching the function off, each turned the refused-source test red; the tool
 admin valves routes checking read in place of write turned the reader test red, and the user
 valves routes checking write in place of read turned the user valves test red. Each left the
-other tests green.
+other tests green. The three switch tests fail on v0.12.5, which has no switch, and pass on
+v0.13.0. In backend copies of v0.13.0: the chat's tool loading keeping a switched-off tool turned
+the withheld test red (still offered); the tool list for the picker keeping it turned the same
+test red (still listed); dropping the check made when a tool runs turned the under-way test red
+(the tool ran); the switch route asking for read in place of write, and dropping its owner check,
+each turned the who-may-switch test red. Each left the other switch tests green.
 """
 
 from __future__ import annotations
 
 import textwrap
+import threading
+import time
 import uuid
 
 import pytest
 
-from harness.access import grant
-from harness.chat import ask
+from harness import upstream as reply
+from harness.access import Shareable, attempts, cast, grant
+from harness.chat import ask, send_message, wait_for_reply
 from harness.plugins import installed_function
+from harness.python_tools import python_tool
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -297,3 +312,169 @@ def test_a_writer_reads_and_changes_a_tools_admin_valves(admin, valved_tool):
     assert "api_key" in spec.json()["properties"]
     assert update.status_code == 200, update.text
     assert read.json() == stored == {"api_key": "sk-writer"}
+
+
+TIDE_MARK = "high water at 12:04"
+TIDE_TOOL = source(
+    f"""
+    class Tools:
+        def tide_mark(self) -> str:
+            \"\"\"Read the harbour's tide mark.\"\"\"
+            return "{TIDE_MARK}"
+    """
+)
+
+
+def _switch(actor, tool_id: str, *, to: bool) -> None:
+    with actor.client() as client:
+        switched = client.post(f"/api/v1/tools/id/{tool_id}/toggle")
+    assert switched.status_code == 200, f"switching the tool failed: {switched.text}"
+    assert switched.json()["is_active"] is to, f"the switch left the tool at {switched.json()}"
+
+
+def _picker(client) -> set[str]:
+    """The tool ids the chat's tool picker offers this account."""
+    listed = client.get("/api/v1/tools/")
+    assert listed.status_code == 200, listed.text
+    return {tool["id"] for tool in listed.json()}
+
+
+def _requests_answering(upstream, prompt: str) -> list[dict]:
+    answering = reply.answering(prompt)
+    return [request for request in upstream.chat_requests() if answering(request)]
+
+
+def _offered(request: dict) -> set[str]:
+    return {tool["function"]["name"] for tool in request.get("tools") or []}
+
+
+def _tool_results(request: dict) -> list[str]:
+    """What the tool calls answering the latest user message returned; earlier turns excluded."""
+    messages = request["messages"]
+    last_user = max(index for index, entry in enumerate(messages) if entry["role"] == "user")
+    return [str(entry["content"]) for entry in messages[last_user:] if entry["role"] == "tool"]
+
+
+def _tide_turn(client, upstream, tool_id: str, after=None):
+    """One message with the tool selected, to which the model calls it whether offered or not.
+
+    Returns the turn, the tool names the model was offered and what the tool calls returned.
+    """
+    prompt = f"read the tide ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(prompt)
+    upstream.queue(
+        reply.tool_call("tide_mark", {}, match=answering), reply.text("done", match=answering)
+    )
+    follow_on = {"chat_id": after.chat_id, "parent_id": after.assistant_message_id} if after else {}
+    turn, _ = ask(client, prompt, tool_ids=[tool_id], **follow_on)
+    requests = _requests_answering(upstream, prompt)
+    assert requests, f"the provider never received {prompt!r}"
+    return turn, _offered(requests[0]), _tool_results(requests[-1])
+
+
+def test_a_switched_off_tool_is_withheld_from_a_chat_that_had_it_until_switched_on(
+    admin, make_user, upstream
+):
+    chatter = make_user()
+    with python_tool(admin, TIDE_TOOL, name="Tides") as tool_id, chatter.client() as client:
+        turn, offered_on, ran_on = _tide_turn(client, upstream, tool_id)
+        _switch(admin, tool_id, to=False)
+        picker_off = _picker(client)
+        turn, offered_off, ran_off = _tide_turn(client, upstream, tool_id, after=turn)
+        _switch(admin, tool_id, to=True)
+        picker_back = _picker(client)
+        _, offered_back, ran_back = _tide_turn(client, upstream, tool_id, after=turn)
+
+    assert "tide_mark" in offered_on, f"the selected tool was not offered: {sorted(offered_on)}"
+    assert any(TIDE_MARK in result for result in ran_on), f"the tool returned {ran_on}"
+    assert tool_id not in picker_off, "the switched-off tool is still in the chat's tool picker"
+    assert "tide_mark" not in offered_off, (
+        f"the switched-off tool was still offered to the model: {sorted(offered_off)}"
+    )
+    assert not any(TIDE_MARK in result for result in ran_off), (
+        f"the switched-off tool still ran when the model called it: {ran_off}"
+    )
+    assert tool_id in picker_back, "the tool switched back on is missing from the tool picker"
+    assert "tide_mark" in offered_back, (
+        f"the tool switched back on was not offered: {sorted(offered_back)}"
+    )
+    assert any(TIDE_MARK in result for result in ran_back), (
+        f"the tool switched back on returned {ran_back}"
+    )
+
+
+def _wait_for_request(upstream, prompt: str, timeout: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not _requests_answering(upstream, prompt):
+        assert time.monotonic() < deadline, f"the provider never received {prompt!r}"
+        time.sleep(0.05)
+
+
+def test_a_tool_switched_off_while_a_reply_is_under_way_does_not_run(admin, make_user, upstream):
+    chatter = make_user()
+    prompt = f"read the tide ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(prompt)
+    # the model asks for the tool only after it has been switched off
+    released = threading.Event()
+    upstream.queue(
+        reply.tool_call("tide_mark", {}, hold=released, match=answering),
+        reply.text("done", match=answering),
+    )
+    with python_tool(admin, TIDE_TOOL, name="Tides") as tool_id, chatter.client() as client:
+        try:
+            turn = send_message(client, prompt, tool_ids=[tool_id])
+            _wait_for_request(upstream, prompt)
+            _switch(admin, tool_id, to=False)
+        finally:
+            released.set()
+        wait_for_reply(client, turn)
+
+    requests = _requests_answering(upstream, prompt)
+    offered, results = _offered(requests[0]), _tool_results(requests[-1])
+    assert "tide_mark" in offered, f"the tool was not offered while on: {sorted(offered)}"
+    assert len(requests) == 2 and results, (
+        f"the reply did not go on after the call; the provider got {len(requests)} requests"
+    )
+    assert not any(TIDE_MARK in result for result in results), (
+        f"the tool switched off mid-reply still ran: {results}"
+    )
+
+
+def _switchable_tool() -> dict:
+    return {
+        "id": f"tool_{uuid.uuid4().hex[:8]}",
+        "name": "Tides",
+        "content": TIDE_TOOL,
+        "meta": {"description": "switched on and off"},
+    }
+
+
+SWITCHABLE_TOOL = Shareable(
+    create_path="/api/v1/tools/create",
+    create_body=_switchable_tool,
+    access_path="/api/v1/tools/id/{id}/access/update",
+    owner_permissions={"workspace": {"tools": True}},
+)
+
+
+def _is_on(client, fields: dict) -> bool:
+    stored = client.get(f"/api/v1/tools/id/{fields['id']}")
+    assert stored.status_code == 200, stored.text
+    return stored.json()["is_active"]
+
+
+def test_only_accounts_that_may_edit_a_tool_can_switch_it(admin, make_user):
+    accounts = cast(SWITCHABLE_TOOL, admin, make_user)
+
+    answered = attempts(accounts, "POST", "/api/v1/tools/id/{id}/toggle", look=_is_on)
+
+    states = {role: (attempt.before, attempt.after) for role, attempt in answered.items()}
+    assert states == {
+        "owner": (True, False),
+        "stranger": (True, True),
+        "reader": (True, True),
+        "writer": (True, False),
+        "admin": (True, False),
+    }, f"switching a tool on and off, as (before, after) per account: {states}"
+    refused = {role: answered[role].status for role in ("stranger", "reader")}
+    assert all(status in (401, 403) for status in refused.values()), f"refusals: {refused}"
