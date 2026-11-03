@@ -468,6 +468,7 @@ def test_a_background_limit_of_zero_means_the_default_and_refuses_nothing(
 
 @pytest.mark.slow
 def test_a_limit_of_zero_kept_from_an_older_release_still_loads_and_refuses_nothing(instance_with):
+    """open-webui/open-webui#33609: a 0 left from an older release broke the Sub-agents settings."""
     from harness.actors import admin_of, create_user
 
     launched = instance_with(ZERO_LIMITS_ENV)
