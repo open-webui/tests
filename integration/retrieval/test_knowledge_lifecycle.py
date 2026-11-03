@@ -1,4 +1,4 @@
-"""Knowledge base lifecycle and embedding settings regressions fixed in v0.11.1.
+"""Knowledge base lifecycle, file limits and embedding settings.
 
 - Reindexing left stale per-file vectors (2a6e671f54 + 89922cc9d5, #28106): the reindex rebuilt
   the knowledge base collection only, so each file's own `file-{id}` collection kept its chunks
@@ -19,6 +19,11 @@
   on, a handful of watchers used up the pool and every other request failed. Here a file stays
   stuck behind an embedding service that never answers, on an instance whose pool holds eleven
   connections, and more watchers than that must leave the instance answering.
+- Knowledge base file limits (v0.13.0, 7618df3f5 + 5c4fb61d8, PR #33318):
+  `KNOWLEDGE_MAX_FILE_COUNT`, `KNOWLEDGE_MAX_FILE_SIZE` and `KNOWLEDGE_MAX_UPLOAD_COUNT` cap every
+  knowledge base, and each base may set its own count and size limit; the stricter one applies.
+  A file past a limit is refused with the reason, by every way in (add, batch add, upload into the
+  base, the preflight check), and the base keeps exactly the files it had.
 
 Twin of unit/retrieval/test_knowledge_lifecycle.py.
 
@@ -28,7 +33,8 @@ writing every provider block fails all three engines and required form fields fa
 block, a reset that deletes no files fails the reset case and an unconditional bearer header
 fails both empty-key cases. On dev ef67cc3fa, taking `Depends(get_async_session)` in either
 stream handler again (ba0c4b393 reverted) fails its watcher case: the next request waits out
-the pool and fails.
+the pool and fails. Every file limit case fails on v0.12.5 (no limits, the extra file is linked),
+and on v0.13.0 letting a base's own limit replace the global one fails both stricter-global cases.
 """
 
 from __future__ import annotations
@@ -252,6 +258,203 @@ def test_file_retention_keeps_the_files_of_an_emptied_knowledge_base(unguarded):
     reset(owner, knowledge_base_with(owner, file_id))
 
     assert file_status(owner, file_id) == 200
+
+
+# --- knowledge base file limits ----------------------------------------------------------------
+
+KNOWLEDGE_LIMITS = {
+    "KNOWLEDGE_MAX_UPLOAD_COUNT": "2",
+    "KNOWLEDGE_MAX_FILE_COUNT": "3",
+    "KNOWLEDGE_MAX_FILE_SIZE": "2",
+}
+MB = 1024 * 1024
+
+
+@pytest.fixture(scope="module")
+def limited(instance_with):
+    """The admin of an instance allowing 2 files per upload, 3 per knowledge base, 2 MB each."""
+    return admin_of(instance_with(KNOWLEDGE_LIMITS))
+
+
+def new_knowledge_base(owner, **limits) -> str:
+    body = {"name": f"kb {uuid.uuid4().hex[:6]}", "description": ""}
+    if limits:
+        body["meta"] = limits
+    with owner.client() as client:
+        created = client.post("/api/v1/knowledge/create", json=body)
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
+def sized_text(size: int) -> bytes:
+    # padded with blanks, so a large file has one short chunk to embed
+    words = f"heron colony {uuid.uuid4().hex}".encode()
+    return words + b" " * (size - len(words))
+
+
+def stored_file(owner, size: int) -> str:
+    """A processed upload of `size` bytes, ready to join a knowledge base."""
+    with owner.client() as client:
+        uploaded = client.post(
+            "/api/v1/files/?process_in_background=false",
+            files={"file": (f"{uuid.uuid4().hex[:8]}.txt", sized_text(size), "text/plain")},
+        )
+    assert uploaded.status_code == 200, uploaded.text
+    return uploaded.json()["id"]
+
+
+def add_file(owner, knowledge_id: str, file_id: str) -> httpx.Response:
+    with owner.client() as client:
+        return client.post(f"/api/v1/knowledge/{knowledge_id}/file/add", json={"file_id": file_id})
+
+
+def add_batch(owner, knowledge_id: str, file_ids: list[str]) -> httpx.Response:
+    with owner.client() as client:
+        return client.post(
+            f"/api/v1/knowledge/{knowledge_id}/files/batch/add",
+            json=[{"file_id": file_id} for file_id in file_ids],
+        )
+
+
+def upload_into(owner, knowledge_id: str, content: bytes) -> httpx.Response:
+    """An upload straight into a knowledge base, the way its Add Files button sends one."""
+    with owner.client() as client:
+        return client.post(
+            "/api/v1/files/?process_in_background=false",
+            files={"file": (f"{uuid.uuid4().hex[:8]}.txt", content, "text/plain")},
+            data={"metadata": json.dumps({"knowledge_id": knowledge_id})},
+        )
+
+
+def linked_files(owner, knowledge_id: str) -> list[str]:
+    with owner.client() as client:
+        listed = client.get(f"/api/v1/knowledge/{knowledge_id}/files")
+    assert listed.status_code == 200, listed.text
+    return sorted(item["id"] for item in listed.json()["items"])
+
+
+def filled(owner, knowledge_id: str, count: int) -> list[str]:
+    file_ids = [upload(owner, f"limit probe {uuid.uuid4().hex}") for _ in range(count)]
+    for file_id in file_ids:
+        added = add_file(owner, knowledge_id, file_id)
+        assert added.status_code == 200, f"a file within the limits was refused: {added.text}"
+    assert linked_files(owner, knowledge_id) == sorted(file_ids)
+    return sorted(file_ids)
+
+
+def refused(response: httpx.Response, status: int, reason: str) -> None:
+    assert response.status_code == status, (
+        f"expected a refusal naming {reason!r}, got HTTP {response.status_code}: {response.text}"
+    )
+    assert reason in response.json()["detail"], f"the refusal does not say why: {response.text}"
+
+
+@pytest.mark.slow
+def test_a_full_knowledge_base_refuses_one_more_file(limited):
+    knowledge_id = new_knowledge_base(limited)
+    kept = filled(limited, knowledge_id, 3)
+
+    refused(
+        add_file(limited, knowledge_id, upload(limited, "one too many")), 400, "3 files maximum"
+    )
+    assert linked_files(limited, knowledge_id) == kept, "a refused file joined the knowledge base"
+
+
+@pytest.mark.slow
+def test_uploading_straight_into_a_full_knowledge_base_is_refused(limited):
+    knowledge_id = new_knowledge_base(limited)
+    for _ in range(3):
+        uploaded = upload_into(limited, knowledge_id, f"direct {uuid.uuid4().hex}".encode())
+        assert uploaded.status_code == 200, (
+            f"an upload within the limit was refused: {uploaded.text}"
+        )
+    kept = linked_files(limited, knowledge_id)
+    assert len(kept) == 3, f"the uploads within the limit were not all linked: {kept}"
+
+    refused(upload_into(limited, knowledge_id, b"one too many"), 400, "3 files maximum")
+    assert linked_files(limited, knowledge_id) == kept
+
+
+@pytest.mark.slow
+def test_a_batch_past_the_file_count_is_refused_whole(limited):
+    knowledge_id = new_knowledge_base(limited)
+    kept = filled(limited, knowledge_id, 2)
+    two_more = [upload(limited, f"batch {uuid.uuid4().hex}") for _ in range(2)]
+
+    refused(add_batch(limited, knowledge_id, two_more), 400, "3 files maximum")
+    assert linked_files(limited, knowledge_id) == kept, "part of a refused batch was linked"
+
+    added = add_batch(limited, knowledge_id, two_more[:1])
+    assert added.status_code == 200, f"a batch that fits was refused: {added.text}"
+    assert linked_files(limited, knowledge_id) == sorted([*kept, two_more[0]])
+
+
+@pytest.mark.slow
+def test_more_files_in_one_upload_than_allowed_is_refused(limited):
+    knowledge_id = new_knowledge_base(limited)
+    three = [upload(limited, f"batch {uuid.uuid4().hex}") for _ in range(3)]
+
+    refused(add_batch(limited, knowledge_id, three), 400, "maximum of 2 file(s) per batch")
+    assert linked_files(limited, knowledge_id) == []
+    with limited.client() as client:
+        preflight = client.post(
+            f"/api/v1/knowledge/{knowledge_id}/files/validate", json={"count": 3}
+        )
+    refused(preflight, 400, "maximum of 2 file(s) per batch")
+
+    added = add_batch(limited, knowledge_id, three[:2])
+    assert added.status_code == 200, f"an upload of the allowed size was refused: {added.text}"
+    assert linked_files(limited, knowledge_id) == sorted(three[:2])
+
+
+@pytest.mark.slow
+def test_a_file_over_the_size_limit_is_refused(limited):
+    knowledge_id = new_knowledge_base(limited)
+    too_large = int(2.5 * MB)
+
+    refused(add_file(limited, knowledge_id, stored_file(limited, too_large)), 413, "less than 2 MB")
+    refused(upload_into(limited, knowledge_id, sized_text(too_large)), 413, "less than 2 MB")
+    assert linked_files(limited, knowledge_id) == [], "a file over the size limit was linked"
+    filled(limited, knowledge_id, 1)
+
+
+@pytest.mark.slow
+def test_a_knowledge_bases_own_count_limit_applies_below_the_global_one(limited):
+    knowledge_id = new_knowledge_base(limited)
+    with limited.client() as client:
+        updated = client.post(
+            f"/api/v1/knowledge/{knowledge_id}/update",
+            json={"name": "capped", "description": "", "meta": {"max_file_count": 1}},
+        )
+    assert updated.status_code == 200, updated.text
+    kept = filled(limited, knowledge_id, 1)
+
+    refused(
+        add_file(limited, knowledge_id, upload(limited, "a second file")), 400, "1 files maximum"
+    )
+    assert linked_files(limited, knowledge_id) == kept
+
+
+@pytest.mark.slow
+def test_a_looser_own_count_limit_does_not_lift_the_global_one(limited):
+    knowledge_id = new_knowledge_base(limited, max_file_count=10)
+    kept = filled(limited, knowledge_id, 3)
+
+    refused(
+        add_file(limited, knowledge_id, upload(limited, "a fourth file")), 400, "3 files maximum"
+    )
+    assert linked_files(limited, knowledge_id) == kept
+
+
+@pytest.mark.slow
+def test_the_stricter_of_the_own_and_global_size_limits_applies(limited):
+    strict = new_knowledge_base(limited, max_file_size=1)
+    loose = new_knowledge_base(limited, max_file_size=5)
+
+    refused(add_file(limited, strict, stored_file(limited, int(1.5 * MB))), 413, "less than 1 MB")
+    refused(add_file(limited, loose, stored_file(limited, int(2.5 * MB))), 413, "less than 2 MB")
+    assert linked_files(limited, strict) == []
+    assert linked_files(limited, loose) == []
 
 
 # --- reindexing --------------------------------------------------------------------------------
