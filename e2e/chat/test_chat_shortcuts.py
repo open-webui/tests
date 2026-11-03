@@ -22,7 +22,9 @@ message box ignores Escape and ArrowUp, and whose Shift+Escape focuses nothing, 
 box tests fail; in one whose chat navigation and Toggle Controls shortcuts do nothing, the two
 bound shortcut tests fail. The Toggle Controls test was retargeted for 2d7cf5ec9, which moved the
 chat's Controls into the Model controls menu and points the shortcut at the side panel: it passes
-on dev d22c4449c and fails in a build whose Toggle Controls does nothing.
+on dev d22c4449c and fails in a build whose Toggle Controls does nothing. Since 5f1c6384e the
+panel stays closed when it has no tab to show, so that test opens it as an admin, whose answered
+chat offers a side chat.
 """
 
 from __future__ import annotations
@@ -231,9 +233,11 @@ def test_bound_chat_navigation_steps_through_the_sidebars_chats(page_for, accoun
     expect_reply(page, answers[top_id])
 
 
-def test_bound_toggle_controls_opens_and_closes_the_side_panel(page_for, account, upstream):
-    bind(account, {"toggleControls": "Cmd+Shift+Y"})
-    page = page_for(account)
+def test_bound_toggle_controls_opens_and_closes_the_side_panel(page_for, make_user, upstream):
+    # the panel stays shut with no tab to show; an admin's answered chat offers a side chat
+    admin = make_user(role="admin")
+    bind(admin, {"toggleControls": "Cmd+Shift+Y"})
+    page = page_for(admin)
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
     send(page, QUESTION)
     expect_reply(page, ANSWER)
@@ -246,6 +250,8 @@ def test_bound_toggle_controls_opens_and_closes_the_side_panel(page_for, account
     page.keyboard.press("Control+Shift+Y")
     expect(hide_tabs).to_be_visible()
     expect(tabs_button).to_have_attribute("aria-expanded", "true")
+    side_chat_tab = page.get_by_role("tablist", name="Tabs").get_by_role("tab", name="Side chat 1")
+    expect(side_chat_tab).to_be_visible()
 
     page.keyboard.press("Control+Shift+Y")
     expect(hide_tabs).to_be_hidden()
