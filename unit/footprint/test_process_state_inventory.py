@@ -43,6 +43,7 @@ KNOWN = {
     "SESSION_POOL": "socket/main.py, live sockets, reaped by periodic_session_pool_cleanup",
     "USAGE_POOL": "socket/main.py, models x live sockets, reaped on disconnect",
     "_background_active": "utils/subagents.py, discarded when done; capped unless max_async -1",
+    "_temporary_chat_owners": "utils/chat.py, one per temporary chat, expired (24 h) swept on add",
     "MODELS": "socket/main.py, never written after import; app.state.MODELS is rebound",
     "EVENT_QUEUES": "socket/main.py, one queue per active stream channel, popped on its end",
     "LOCAL_AUTHENTICATED_SIDS": "socket/main.py, sockets on this worker, discarded on disconnect",

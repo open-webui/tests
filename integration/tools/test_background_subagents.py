@@ -39,6 +39,12 @@ sub-agents and timers prepare their reply, is refused with 409 and the reply is 
 93fc3fcb7) and `test_an_unlimited_background_setting_lets_every_delegation_through` (three of three
 on dev 896056690, none on de73bb830^) are red for the same reason.
 
+Since f0cc1bb86 the limits default to none and the settings refuse a limit of 0, which the
+documentation up to v0.12.5 named a way back to the default. An instance whose environment or
+saved settings still hold 0 answers the Sub-agents settings with HTTP 500 on dev d22c4449c, so
+`test_a_limit_of_zero_kept_from_an_older_release_still_loads_and_refuses_nothing` fails there
+and passes on dev 3e50233b1 and with 0 read as no limit in a backend copy.
+
 Discriminates: passes on dev a5bc78300; the two tests named above fail on dev 176d31d1d, before
 their fixes. In backend copies each test turns red with its edit: the dispatch made to wait for the
 sub-agent, the sub-agent left out of the running tasks, the report not stored, stored without its
@@ -69,6 +75,13 @@ CONCURRENT_ENV = {
     "ENABLE_SUBAGENTS": "true",
     "SUBAGENTS_BACKGROUND_ENABLED": "true",
     "SUBAGENTS_MAX_CONCURRENT": "1",
+}
+# a limit of 0 was valid up to v0.12.5 and meant the default
+ZERO_LIMITS_ENV = {
+    "ENABLE_SUBAGENTS": "true",
+    "SUBAGENTS_BACKGROUND_ENABLED": "true",
+    "SUBAGENTS_MAX_CONCURRENT": "0",
+    "SUBAGENTS_MAX_ASYNC": "0",
 }
 
 
@@ -447,6 +460,29 @@ def test_a_background_limit_of_zero_means_the_default_and_refuses_nothing(
         reply.text("Two sent off.", match=reply.answering(prompt)),
     )
     with make_user().client() as client:
+        _, stored = ask(client, prompt)
+
+    handles = dispatch_handles(stored)
+    assert [handle["status"] for handle in handles] == ["dispatched"] * 2, handles
+
+
+@pytest.mark.slow
+def test_a_limit_of_zero_kept_from_an_older_release_still_loads_and_refuses_nothing(instance_with):
+    from harness.actors import admin_of, create_user
+
+    launched = instance_with(ZERO_LIMITS_ENV)
+    with admin_of(launched).client() as client:
+        loaded = client.get(SUBAGENTS[0])
+    assert loaded.status_code == 200, f"the Sub-agents settings failed to load: {loaded.text}"
+
+    prompt = unique("split this up")
+    tasks = [unique("first errand"), unique("second errand")]
+    launched.upstream.queue(
+        two_dispatches(tasks, prompt),
+        *[reply.text("done", delay=SLOW_SECONDS, match=reply.answering(task)) for task in tasks],
+        reply.text("Two sent off.", match=reply.answering(prompt)),
+    )
+    with create_user(launched).client() as client:
         _, stored = ask(client, prompt)
 
     handles = dispatch_handles(stored)

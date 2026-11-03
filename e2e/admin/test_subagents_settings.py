@@ -41,13 +41,14 @@ from utils.model_editor import section
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
+# the limits default to none (an empty field) since f0cc1bb86
 BUILT_IN_DEFAULTS = {
     "ENABLE_SUBAGENTS": False,
     "SUBAGENTS_BACKGROUND_ENABLED": False,
-    "SUBAGENTS_MAX_CONCURRENT": 20,
-    "SUBAGENTS_MAX_ASYNC": 20,
-    "SUBAGENTS_MAX_ITERATIONS": 30,
-    "SUBAGENTS_MAX_OUTPUT": 30000,
+    "SUBAGENTS_MAX_CONCURRENT": None,
+    "SUBAGENTS_MAX_ASYNC": None,
+    "SUBAGENTS_MAX_ITERATIONS": None,
+    "SUBAGENTS_MAX_OUTPUT": None,
     "SUBAGENTS_SYSTEM_PROMPT": "",
 }
 FROM_THE_ENVIRONMENT = {
@@ -99,7 +100,7 @@ def _expect_shown(settings: Locator, values: dict) -> None:
         if isinstance(values[name], bool):
             expect(field).to_be_checked(checked=values[name])
         else:
-            expect(field).to_have_value(str(values[name]))
+            expect(field).to_have_value("" if values[name] is None else str(values[name]))
 
 
 def _stored(admin) -> dict:

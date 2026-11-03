@@ -12,13 +12,16 @@ offered only while it has one. An automation is never offered them; that exclusi
 test here, since an automation run on dev 1c010b438 never reaches the model
 (open-webui/open-webui#32066).
 
-The user's tab is a socket client that answers the server's shell check the way the web client
-does. A personal terminal (one the browser calls) carries the setting in the request itself, and
-reaches the model only while the admin's Direct Integrations switch is on.
+Whether the user has a shell open is the terminal's answer: since 47a9e7d48 Open WebUI asks the
+terminal for the shell of this user and chat before the turn (Open Terminal answers 404 when there
+is none), where it used to ask the user's browser tab. A personal terminal (one the browser
+calls) carries the setting in the request itself, and reaches the model only while the admin's
+Direct Integrations switch is on.
 
 Discriminates: passes on dev 1c010b438; with a20b622ba's backend hunks reverted in a backend copy
 the working-directory-off test and both `always` tests fail (the description names the folder; the
-shell tools are dropped). The default, `auto`, open-shell and AGENTS.md tests pass on both.
+shell tools are dropped). The default, `auto`, open-shell and AGENTS.md tests pass on both. On dev
+d22c4449c the `auto` tests turn red when the terminal's answer is ignored in a backend copy.
 """
 
 from __future__ import annotations
@@ -49,6 +52,9 @@ AGENTS_MD = "Run the linter before every commit."
 TERMINAL_PROMPT = "You are working inside the build box."
 CWD_LINE = "The current working directory is:"
 SHELL_TOOLS = {"read_user_terminal", "send_user_terminal_input"}
+# Open Terminal reads the user's shell here and answers 404 when that user and chat have none open
+USER_SHELL_PATH = "/api/terminals/user/output"
+NO_SHELL = json_answer({"detail": "No connected user shell"}, status=404)
 
 
 def _operation(operation_id: str, description: str) -> dict:
@@ -64,8 +70,8 @@ SPEC = {
     "info": {"title": "terminal", "version": "1"},
     "paths": {
         "/execute": {"post": _operation("run_command", "Run a shell command.")},
-        "/user-terminal/read": {"get": _operation("read_user_terminal", "Read the user's shell.")},
-        "/user-terminal/input": {
+        USER_SHELL_PATH: {"get": _operation("read_user_terminal", "Read the user's shell.")},
+        "/api/terminals/user/input": {
             "post": _operation("send_user_terminal_input", "Type into the user's shell.")
         },
     },
@@ -85,6 +91,7 @@ def terminal(preserve) -> Iterator[FakeTerminalServer]:
         server.route("GET", "/files/read", json_answer({"content": AGENTS_MD}))
         server.route("GET", "/api/config", json_answer({"features": {"system": True}}))
         server.route("GET", "/system", json_answer({"prompt": TERMINAL_PROMPT}))
+        server.route("GET", USER_SHELL_PATH, NO_SHELL)
         yield server
 
 
@@ -103,25 +110,28 @@ def _connect(admin, server: FakeTerminalServer, member, **settings) -> str:
 
 
 @contextmanager
-def _tab(actor, shell_open: bool) -> Iterator[str]:
-    """A signed-in tab answering the server's shell check; yields its socket id."""
-
-    def handle(event: dict):
-        data = event.get("data") or {}
-        if data.get("type") == "request:terminal:state":
-            return {"connected": shell_open}
-        return None
-
+def _tab(actor) -> Iterator[str]:
+    """A signed-in tab of `actor`; yields its socket id."""
     with connected(actor) as session:
-        session.client.on("events", handle)
         yield session.client.get_sid(namespace="/")
 
 
-def _chat_request(actor, upstream, shell_open: bool = False, **options) -> dict:
+def _open_shell(server: FakeTerminalServer, actor) -> None:
+    """The terminal reports a shell `actor` opened in a chat; anyone else still has none."""
+
+    def answer(request) -> tuple:
+        if request.headers.get("x-user-id") == actor.id and request.headers.get("x-session-id"):
+            return json_answer({"output": "$ "})
+        return NO_SHELL
+
+    server.route("GET", USER_SHELL_PATH, answer)
+
+
+def _chat_request(actor, upstream, **options) -> dict:
     """One turn from a tab of `actor`; returns the request the model was sent."""
     prompt = f"check the build {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("done", match=reply.answering(prompt)))
-    with _tab(actor, shell_open) as session_id, actor.client() as client:
+    with _tab(actor) as session_id, actor.client() as client:
         _, message = ask(client, prompt, session_id=session_id, **options)
     assert message["content"] == "done", message
     return next(
@@ -199,11 +209,20 @@ def test_user_shell_tools_auto_follows_the_open_shell(admin, terminal, member, u
     terminal_id = _connect(admin, terminal, member, **setting)
 
     closed = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
-    opened = _offered(_chat_request(member, upstream, shell_open=True, terminal_id=terminal_id))
+    _open_shell(terminal, member)
+    opened = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
 
     assert not SHELL_TOOLS & closed.keys(), f"offered with the shell closed: {sorted(closed)}"
     assert "run_command" in closed
     assert SHELL_TOOLS <= opened.keys(), f"not offered with the shell open: {sorted(opened)}"
+    checks = terminal.requests_to(USER_SHELL_PATH)
+    assert len(checks) == 2, f"expected one shell check per turn, got {len(checks)}"
+    with member.client() as client:
+        for check in checks:
+            chat = client.get(f"/api/v1/chats/{check.headers.get('x-session-id')}")
+            assert chat.status_code == 200, (
+                f"the shell check named no chat of the user: {check.headers}"
+            )
 
 
 @pytest.mark.parametrize("setting", ["always", "auto"])

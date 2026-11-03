@@ -15,7 +15,9 @@ and `test_a_signed_out_client_is_refused_every_signed_in_route` (HTTP 200) red; 
 a module-local dependency that checks nothing turns the same two red (no role the sweep knows);
 letting `get_admin_user` pass a user and `get_verified_user` pass a pending account turns the
 user and pending sweeps red; switching `/api/v1/models/base` to `get_verified_user` leaves the
-user sweep green and turns `test_no_pinned_admin_route_was_opened_to_users` red.
+user sweep green and turns `test_no_pinned_admin_route_was_opened_to_users` red. On dev
+d22c4449c, a browser ticket check that takes any token the instance signed turns the session case
+of `test_a_terminal_browser_frame_wants_a_browser_ticket` red, and no ticket check turns both red.
 """
 
 from __future__ import annotations
@@ -49,6 +51,8 @@ PATH_CONVERTER = re.compile(r"\{([^}:]+):[^}]+\}")
 INVALID_BODY = b'"not the body this route wants"'
 REFUSED = {401, 403}
 
+BROWSER_VIEW = "/api/v1/terminals/{server_id}/browser/view/{sid}/{ticket}/{path}"
+
 # Routes that need no account, by (method, path): why.
 PUBLIC_ROUTES = {
     ("GET", "/health"): "the load balancer's probe",
@@ -76,6 +80,10 @@ PUBLIC_ROUTES = {
     ("GET", "/oauth/clients/{client_id}/callback"): "a tool server's provider redirects here",
     ("POST", "/oauth/backchannel-logout"): "the provider calls it with a signed token",
     ("POST", "/api/v1/channels/webhooks/{webhook_id}/{token}"): "the path carries the secret",
+    **{
+        (method, BROWSER_VIEW): "a terminal browser frame; the path carries a signed ticket"
+        for method in ("GET", "POST", "PUT", "PATCH", "DELETE")
+    },
 }
 
 # Routes whose role the dependency chain does not tell, by (method, path): how they check.
@@ -282,6 +290,24 @@ def test_every_route_has_a_known_role(source_routes, live_routes):
         if role == "public" and route not in PUBLIC_ROUTES:
             unknown.append((*route, "it has no auth dependency"))
     assert not unknown, f"routes with no role the sweep can check: {unknown}"
+
+
+@pytest.mark.parametrize("ticket", ["forged", "session"])
+def test_a_terminal_browser_frame_wants_a_browser_ticket(admin, ticket):
+    """Neither a made-up ticket nor an admin's own session token opens a terminal browser frame."""
+    path = BROWSER_VIEW.format(
+        server_id="sweep-missing-id",
+        sid="sweep-session",
+        ticket=admin.token if ticket == "session" else "not-a-ticket",
+        path="index.html",
+    )
+    with admin.client() as client:
+        statuses = {
+            method: client.request(method, path).status_code
+            for method in ("GET", "POST", "PUT", "PATCH", "DELETE")
+        }
+
+    assert set(statuses.values()) <= REFUSED, f"a {ticket} ticket was let through: {statuses}"
 
 
 def test_every_declared_route_is_served(source_routes, live_routes):
