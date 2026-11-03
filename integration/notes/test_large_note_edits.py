@@ -7,8 +7,15 @@ Socket.IO server's 1 MB default, so the server dropped the connection, the edit 
 and a reload showed the note without it. The server now takes messages up to 16 MiB, the size it
 already accepts for a websocket frame.
 
+Issue open-webui/open-webui#33606: a later cap of 2 MiB per live document (PR
+open-webui/open-webui#31603) refused the first document of any larger note, such as one holding
+a pasted screenshot. The editor seeds the document from the saved note when it opens, the
+server answered that seed with nothing, and the note opened empty and took no typing. The cap
+now matches the 16 MiB message limit.
+
 Discriminates: passes on dev b859124f9, fails on that backend with 914ff1f11 reverted (the large
-edit never reaches the note or its live document).
+edit never reaches the note or its live document). The note above 2 MiB passes with the fix for
+#33606 and fails on dev f3ef8b949 (the seed is answered with nothing).
 """
 
 from __future__ import annotations
@@ -19,12 +26,14 @@ import uuid
 import pytest
 import socketio
 
-from harness.socket_client import connected
+from harness.socket_client import connected, note_edit, note_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 SAVE_WAIT = 15.0
 LARGE_TEXT = " ".join(f"word{number}" for number in range(40_000))
+# About 3.2 MB, past the old 2 MiB cap and still inside one 16 MiB socket message.
+NOTE_ABOVE_2_MIB = " ".join(f"word{number}" for number in range(300_000))
 
 
 def _create_note(owner) -> str:
@@ -82,3 +91,26 @@ def test_a_tab_opening_the_note_later_starts_from_the_large_paste(make_user):
             document = later.note_state(note_id)
 
     assert document == f"<paragraph>{LARGE_TEXT}</paragraph>"
+
+
+def test_a_note_above_2_mib_opens_with_its_content(make_user):
+    owner = make_user()
+    note_id = _create_note(owner)
+    seed = {
+        "document_id": f"note:{note_id}",
+        "update": note_edit(NOTE_ABOVE_2_MIB),
+        "initialize": True,
+    }
+
+    with connected(owner) as tab:
+        tab.join_note(note_id)
+        opened = tab.call("ydoc:document:update", seed)
+        assert opened is not None, (
+            f"#33606: the server refused a {len(NOTE_ABOVE_2_MIB)} character note; it opens empty"
+        )
+        with connected(owner) as later:
+            later.join_note(note_id)
+            document = later.note_state(note_id)
+
+    assert note_text(opened) == f"<paragraph>{NOTE_ABOVE_2_MIB}</paragraph>"
+    assert document == f"<paragraph>{NOTE_ABOVE_2_MIB}</paragraph>"
