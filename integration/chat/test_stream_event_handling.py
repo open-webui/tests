@@ -15,6 +15,9 @@ Six 0.11.1 repairs on the path that turns a provider stream into the stored `out
   silently; the provider's message is now stored as the reply's error, a plain-text one as written
   since dev 015dbc861 (only the status was named before).
 
+open-webui/open-webui#33615: a stream ending in `response.incomplete` (cut off at the token limit)
+was not taken as the end of the reply, so its usage never reached the stored reply or analytics.
+
 The Responses streams come from a listener registered as a Responses-API connection; the tool
 cases run on the scripted provider through the web client's chat path.
 
@@ -25,7 +28,8 @@ present-but-empty `output` replacing the stream, `output_item.done` falling to t
 branch, the delta branch returning an unbound `new_output` (on dev d22c4449c the two-part event
 name cuts the stream with an error frame; a leading delta now opens its own item since de73bb830),
 `started_at` read unguarded, every tool result stamped completed, and the
->= 400 follow-up branch removed (both follow-up error tests).
+>= 400 follow-up branch removed (both follow-up error tests). The #33615 test fails on dev
+fe2219d6f (the reply's usage is stored as only `incomplete`) and passes with its fix.
 """
 
 from __future__ import annotations
@@ -36,10 +40,11 @@ import pytest
 
 from harness import second_provider
 from harness import upstream as reply
-from harness.chat import ask
+from harness.chat import ask, send_message, wait_for_reply
 from harness.listener import json_answer, text_answer
 from harness.plugins import installed_function
 from harness.python_tools import python_tool
+from harness.socket_client import connected
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -119,6 +124,42 @@ def test_a_finished_output_item_is_applied(admin, responses_connection):
     assert message["content"] == "the complete answer", (
         "response.output_item.done was shadowed by the generic .done branch and dropped (#27810)"
     )
+
+
+def test_a_reply_cut_off_at_the_token_limit_keeps_its_usage(admin, responses_connection):
+    usage = {"input_tokens": 1234, "output_tokens": 42, "total_tokens": 1276}
+    incomplete = {
+        "type": "response.incomplete",
+        "response": {
+            "id": "resp_1",
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "usage": usage,
+        },
+    }
+    responses_connection([*_message_added(), _text_delta("cut off mid"), incomplete])
+
+    with admin.client() as client, connected(admin) as socket:
+        turn = send_message(
+            client,
+            "write a long story",
+            model=RESPONSES_MODEL,
+            session_id=socket.sid,
+            params={"max_tokens": 5},
+        )
+        message = wait_for_reply(client, turn)
+        recorded_messages = client.get(
+            "/api/v1/analytics/messages", params={"chat_id": turn.chat_id}
+        )
+    assert recorded_messages.status_code == 200, recorded_messages.text
+    [recorded] = [entry for entry in recorded_messages.json() if entry["role"] == "assistant"]
+
+    tokens = ("input_tokens", "output_tokens", "total_tokens")
+    assert message["content"] == "cut off mid"
+    stored = {key: message["usage"].get(key) for key in tokens}
+    assert stored == usage, f"the truncated reply lost its usage (#33615): {message['usage']}"
+    analysed = {key: (recorded["usage"] or {}).get(key) for key in tokens}
+    assert analysed == usage, f"analytics lost the truncated reply's tokens: {recorded['usage']}"
 
 
 PASSTHROUGH_FILTER = """
