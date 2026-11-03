@@ -628,12 +628,12 @@ def test_a_temporary_chat_compacts_and_hands_the_summary_to_the_page(
     system = {"role": "system", "content": SYSTEM_PROMPT}
     upstream.queue(reply.text(SUMMARY, match=is_summary_request), reply.text("answer 4"))
     with connected(person) as socket, person.client() as client:
-        chat_id = f"{prefix}{socket.client.sid}"
+        chat_id = socket.temporary_chat_id(prefix)
         send_message(
             client,
             "question 4",
             chat_id=chat_id,
-            session_id=socket.client.sid,
+            session_id=socket.sid,
             history=[system, *history],
         )
         compacted = socket.wait_for(chat_id, "context_compaction", done=True)
@@ -652,7 +652,7 @@ def test_a_temporary_chat_compacts_and_hands_the_summary_to_the_page(
             client,
             "question 5",
             chat_id=chat_id,
-            session_id=socket.client.sid,
+            session_id=socket.sid,
             history=[system, *history, *turn_4],
         )
         wait_for_replies(socket, chat_id, 2)

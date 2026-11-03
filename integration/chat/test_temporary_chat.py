@@ -70,13 +70,13 @@ def test_a_temporary_chat_is_answered_over_the_socket_and_not_stored(
         reply.text(ANSWER, match=reply.answering(PROMPT)),
     )
     with connected(account) as socket, account.client() as client:
-        chat_id = f"temporary:{socket.client.sid}"
+        chat_id = socket.temporary_chat_id()
 
         send_message(
             client,
             PROMPT,
             chat_id=chat_id,
-            session_id=socket.client.sid,
+            session_id=socket.sid,
             background_tasks={"follow_up_generation": True},
         )
 

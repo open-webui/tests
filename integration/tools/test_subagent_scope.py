@@ -56,6 +56,7 @@ from harness.listener import json_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
+from harness.socket_client import connected
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     configure_terminals,
@@ -587,11 +588,11 @@ def _stored_subagent_chats(instance, parent_chat_id: str) -> list[dict]:
     ]
 
 
-def _delegate_from(client, upstream, chat_id: str | None, task: str, answer: str) -> str:
+def _delegate_from(client, upstream, chat_id: str | None, task: str, answer: str, **extra) -> str:
     """Send a delegating message and return once the parent has the sub-agent's result."""
     prompt = unique("hand this over")
     delegating(upstream, prompt, task, reply.text(answer, match=reply.answering(task)))
-    turn = send_message(client, prompt, chat_id=chat_id)
+    turn = send_message(client, prompt, chat_id=chat_id, **extra)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         requests = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)]
@@ -617,9 +618,10 @@ def test_a_temporary_chat_leaves_no_stored_subagent_chat_behind(
     subagents_on, instance, make_user, upstream
 ):
     task, answer = unique("look it up"), unique("Found it")
-    chat_id = f"temporary:{uuid.uuid4().hex[:12]}"
-    with make_user().client() as client:
-        _delegate_from(client, upstream, chat_id, task, answer)
+    person = make_user()
+    with connected(person) as tab, person.client() as client:
+        chat_id = tab.temporary_chat_id()
+        _delegate_from(client, upstream, chat_id, task, answer, session_id=tab.sid)
 
     assert _stored_subagent_chats(instance, chat_id) == [], (
         "a temporary chat's delegation left the task and the answer stored on the server"

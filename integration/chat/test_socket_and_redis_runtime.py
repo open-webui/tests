@@ -23,13 +23,13 @@ progress while the reply streams.
 from __future__ import annotations
 
 import time
-import uuid
 
 import pytest
 
 from harness import channel_chat
 from harness.chat import send_message, wait_for_reply
 from harness.inflight import start_slow_reply
+from harness.socket_client import connected
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -53,10 +53,13 @@ def _first_provider_request(upstream, timeout: float = 30.0) -> dict:
 
 @pytest.mark.parametrize("prefix", ["temporary:", "local:"])
 def test_a_temporary_chat_is_not_offered_the_task_list_tools(make_user, upstream, prefix):
-    with make_user().client() as client:
-        send_message(client, "plan my week", chat_id=f"{prefix}{uuid.uuid4().hex}")
+    person = make_user()
+    with connected(person) as tab, person.client() as client:
+        send_message(
+            client, "plan my week", chat_id=tab.temporary_chat_id(prefix), session_id=tab.sid
+        )
+        offered = _offered_tools(_first_provider_request(upstream))
 
-    offered = _offered_tools(_first_provider_request(upstream))
     assert offered, "no builtin tools were offered at all; the check below would prove nothing"
     assert not offered & TASK_LIST_TOOLS, (
         f"a {prefix} chat was offered {sorted(offered & TASK_LIST_TOOLS)}, which have no chats "

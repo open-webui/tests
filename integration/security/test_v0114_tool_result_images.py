@@ -36,7 +36,6 @@ import base64
 import json
 import re
 import time
-import uuid
 
 import pytest
 
@@ -45,6 +44,7 @@ from harness.chat import ChatTurn, ask, send_message
 from harness.listener import json_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.python_tools import python_tool
+from harness.socket_client import connected
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     configure_terminals,
@@ -261,14 +261,14 @@ def test_only_values_that_are_entirely_an_image_data_uri_are_taken_out(
 def test_a_temporary_chat_attaches_the_image_without_storing_a_file(
     make_user, upstream, image_tool
 ):
-    session_id = f"harness-{uuid.uuid4().hex[:8]}"
+    person = make_user()
     upstream.queue(reply.tool_call("render_chart", {}), reply.text("done"))
-    with make_user().client() as client:
+    with connected(person) as tab, person.client() as client:
         send_message(
             client,
             "please run render_chart",
-            chat_id=f"temporary:{session_id}",
-            session_id=session_id,
+            chat_id=tab.temporary_chat_id(),
+            session_id=tab.sid,
             tool_ids=[image_tool],
         )
         sent = request_after_the_tool(upstream)

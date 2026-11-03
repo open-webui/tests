@@ -13,11 +13,14 @@ pycrdt, which the backend depends on) and `note_text(state)` reads back a docume
 server sent. Private app replies (`events:app`) are recorded in `app_events`, and what the
 encrypted chat relay sends (`encryption:event`, `encryption:available`) in `encryption_events` and
 `encryption_invitations`; `join_channels()` joins the channel rooms the way the web client does.
+A temporary chat belongs to the tab that starts it: `temporary_chat_id()` makes its id from the
+tab's `sid` as the page does, and its requests carry that `sid` as their `session_id`.
 """
 
 from __future__ import annotations
 
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -38,6 +41,15 @@ class SocketSession:
     app_events: list[dict] = field(default_factory=list)
     encryption_events: list[dict] = field(default_factory=list)
     encryption_invitations: list[dict] = field(default_factory=list)
+
+    @property
+    def sid(self) -> str:
+        """The session id the page sends as `session_id` (`client.sid` is the transport's)."""
+        return self.client.get_sid()
+
+    def temporary_chat_id(self, prefix: str = "temporary:") -> str:
+        """A new temporary chat of this tab, made the way the page makes one."""
+        return f"{prefix}{self.sid}:{uuid.uuid4()}"
 
     def call(self, event: str, data: dict):
         return self.client.call(event, data, timeout=30)

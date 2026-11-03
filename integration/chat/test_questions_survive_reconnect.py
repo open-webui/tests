@@ -3,10 +3,12 @@
 Since 0.12.4 (c596d40bd) a tool's input or confirmation dialog, or an MCP server's input request,
 that is still open when the page reloads or loses its connection waits up to a minute for a new
 connection of the same account to open that chat, asks it there, and hands its answer back.
-With no reconnect in that minute the tool gets "Client session disconnected." A temporary chat
-cannot be reopened, so its questions (Ask User, a tool approval) end as soon as the page goes.
-Ask User and tool approvals in a saved chat are stored with the chat and wait there instead, so
-no socket is involved in getting them back (see the browser twin).
+With no reconnect in that minute the tool gets "Client session disconnected." Since 321701c1a a
+temporary chat belongs to the tab's connection, and a page whose connection comes back resumes it
+on the new one, so its questions (Ask User, a tool approval) are asked again there too, while
+another account cannot take the chat over. Ask User and tool approvals in a saved chat are stored
+with the chat and wait there instead, so no socket is involved in getting them back (see the
+browser twin).
 
 The minute is fixed in the server, so the test of a missed reconnect waits it out.
 
@@ -14,9 +16,10 @@ Twin of e2e/chat/test_questions_survive_reconnect.py.
 
 Discriminates: passes on dev 948432b43. With the resume turned off in a backend copy (no call
 may wait for a reconnect) the reconnect tests fail (the tool gets "Client session disconnected."
-at once and the new connection is never asked); with temporary chats allowed to wait the
-temporary chat tests fail (no answer for the model within 20s); with the minute raised to an
-hour the missed reconnect test fails (the reply never finishes).
+at once and the new connection is never asked); with the minute raised to an hour the missed
+reconnect test fails (the reply never finishes). The temporary chat tests pass on dev d22c4449c
+and fail on 321701c1a^, where a temporary chat's question ends as soon as the tab goes; with the
+owner check on resuming dropped in a backend copy the other account takes the chat over.
 """
 
 from __future__ import annotations
@@ -36,8 +39,6 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
 DISCONNECTED = "Client session disconnected."
-# the window is a minute; a call that may not wait for a reconnect ends within a second or two
-NO_RESUME_BOUND = 20.0
 
 ASK_THE_TAB = '''
 import json
@@ -54,7 +55,12 @@ class Tools:
         return json.dumps(answer)
 '''
 
-TAB_ANSWERS = {"input": "Ada", "confirmation": True}
+HARBOUR = {"harbour": "Split"}
+TAB_ANSWERS = {
+    "input": "Ada",
+    "confirmation": True,
+    "request:user_input": {"status": "answered", "answers": HARBOUR},
+}
 
 
 @pytest.fixture
@@ -115,6 +121,11 @@ def open_chat(tab: SocketSession, chat_id: str) -> None:
     assert joined is True, f"the new tab could not open chat {chat_id}: {joined}"
 
 
+def resume_temporary_chat(client, tab: SocketSession, chat_id: str):
+    """What the page sends for its temporary chat once its connection is back."""
+    return client.post(f"/api/tasks/chat/{chat_id}/resume", json={"session_id": tab.sid})
+
+
 def tool_results(upstream, prompt: str) -> list[str]:
     return [
         str(entry["content"])
@@ -123,15 +134,6 @@ def tool_results(upstream, prompt: str) -> list[str]:
         for entry in sent["messages"]
         if entry["role"] == "tool"
     ]
-
-
-def wait_for_tool_result(upstream, prompt: str, timeout: float) -> str:
-    deadline = time.monotonic() + timeout
-    while not tool_results(upstream, prompt):
-        if time.monotonic() > deadline:
-            raise AssertionError(f"the model never got the tool's result within {timeout}s")
-        time.sleep(0.1)
-    return tool_results(upstream, prompt)[0]
 
 
 @pytest.mark.parametrize("kind", ["input", "confirmation"])
@@ -239,7 +241,9 @@ def test_with_no_reconnect_within_a_minute_the_tool_hears_the_tab_is_gone(
     assert message["content"].endswith("Nobody answered."), message
 
 
-def test_ask_user_in_a_temporary_chat_ends_when_the_tab_goes(make_user, upstream):
+def test_ask_user_in_a_temporary_chat_is_asked_again_on_the_connection_that_resumes_it(
+    make_user, upstream
+):
     account = make_user()
     prompt = "which harbour? (temporary chat)"
     questions = {
@@ -256,45 +260,71 @@ def test_ask_user_in_a_temporary_chat_ends_when_the_tab_goes(make_user, upstream
     }
     upstream.queue(
         reply.tool_call("ask_user", questions, match=reply.answering(prompt)),
-        reply.text("Nobody answered.", match=reply.answering(prompt)),
+        reply.text("Split it is.", match=reply.answering(prompt)),
     )
-    with account.client() as client, connected(account) as tab:
-        closing = ClosingTab(tab, "request:user_input")
-        chat_id = f"temporary:{tab.client.get_sid()}"
-        send_message(client, prompt, chat_id=chat_id, session_id=tab.client.get_sid())
-        closing.close_once_asked()
+    with account.client() as client, connected(account) as first_tab:
+        closing = ClosingTab(first_tab, "request:user_input")
+        chat_id = first_tab.temporary_chat_id()
+        send_message(client, prompt, chat_id=chat_id, session_id=first_tab.sid)
+        first_question = closing.close_once_asked()
 
-        result = wait_for_tool_result(upstream, prompt, NO_RESUME_BOUND)
+        with connected(account) as second_tab:
+            asked_again = answer_questions(second_tab, "request:user_input")
+            resumed = resume_temporary_chat(client, second_tab, chat_id)
+            assert resumed.status_code == 200, resumed.text
+            done = second_tab.wait_for(chat_id, "chat:completion", done=True)
 
-    assert json.loads(result) == {"status": "error", "error": DISCONNECTED}, (
-        f"Ask User in a temporary chat did not end when the tab went: {result}"
+    assert [question["data"] for question in asked_again] == [first_question["data"]], (
+        f"the resumed temporary chat was not asked the open question once: {asked_again}"
     )
+    assert [json.loads(result) for result in tool_results(upstream, prompt)] == [
+        {"status": "answered", "answers": HARBOUR}
+    ], "the answer from the resumed temporary chat never reached Ask User"
+    assert "Split it is." in str(done["data"]["output"]), done
 
 
-def test_a_tool_approval_in_a_temporary_chat_ends_when_the_tab_goes(
+def test_a_tool_approval_in_a_temporary_chat_is_asked_again_on_its_owners_connection_only(
     tool_approval_on, make_user, upstream
 ):
-    account = make_user()
+    account, stranger = make_user(), make_user()
     prompt = "what time is it? (temporary chat, approval)"
     upstream.queue(
         reply.tool_call("get_current_timestamp", {}, match=reply.answering(prompt)),
-        reply.text("I could not check.", match=reply.answering(prompt)),
+        reply.text("Checked.", match=reply.answering(prompt)),
     )
-    with account.client() as client, connected(account) as tab:
-        closing = ClosingTab(tab, "confirmation")
-        chat_id = f"temporary:{tab.client.get_sid()}"
+    with account.client() as client, connected(account) as first_tab:
+        closing = ClosingTab(first_tab, "confirmation")
+        chat_id = first_tab.temporary_chat_id()
         send_message(
             client,
             prompt,
             chat_id=chat_id,
-            session_id=tab.client.get_sid(),
+            session_id=first_tab.sid,
             params={"tool_approval_mode": "ask"},
         )
-        asked = closing.close_once_asked()
+        first_question = closing.close_once_asked()
 
-        result = wait_for_tool_result(upstream, prompt, NO_RESUME_BOUND)
+        with (
+            stranger.client() as stranger_client,
+            connected(stranger) as stranger_tab,
+            connected(account) as second_tab,
+        ):
+            asked_the_stranger = answer_questions(stranger_tab, "confirmation")
+            taken_over = resume_temporary_chat(stranger_client, stranger_tab, chat_id)
+            asked_again = answer_questions(second_tab, "confirmation")
+            resumed = resume_temporary_chat(client, second_tab, chat_id)
+            assert resumed.status_code == 200, resumed.text
+            second_tab.wait_for(chat_id, "chat:completion", done=True)
 
-    assert asked["data"]["data"]["tool_call"]["name"] == "get_current_timestamp", asked
-    assert result == "Error: tool call was not approved.", (
-        f"the tool approval in a temporary chat did not end when the tab went: {result}"
+    assert first_question["data"]["data"]["tool_call"]["name"] == "get_current_timestamp"
+    assert taken_over.status_code == 404, (
+        f"another account resumed someone's temporary chat: HTTP {taken_over.status_code}"
+    )
+    assert asked_the_stranger == [], "another account was asked to approve the tool call"
+    assert [question["data"] for question in asked_again] == [first_question["data"]], (
+        f"the resumed temporary chat was not asked the open approval once: {asked_again}"
+    )
+    [result] = tool_results(upstream, prompt)
+    assert "current_timestamp" in result, (
+        f"the approval from the resumed temporary chat never let the tool run: {result}"
     )

@@ -663,7 +663,7 @@ def test_a_tab_receives_the_same_final_message_for_a_streamed_chat(pair, owner):
         upstream.queue(reply.text(PIECES, reasoning=REASONING, usage=USAGE))
         actor = on(pair, owner, codec)
         with connected(actor) as tab, actor.client() as client:
-            turn = send_message(client, ALL_MIXED, session_id=tab.client.sid)
+            turn = send_message(client, ALL_MIXED, session_id=tab.sid)
             final = tab.wait_for(turn.chat_id, "chat:completion", done=True)
             stored = wait_for_reply(client, turn)
         streamed = [
