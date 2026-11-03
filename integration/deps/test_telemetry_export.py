@@ -23,6 +23,10 @@ instrumentor it enables for traces once installed a second handler on the root l
 (opentelemetry-instrumentation-logging 0.63b1 does so unless log auto-instrumentation is off), so
 with traces on every line was exported twice.
 
+A request no route matches (a static file, a page of the web app, a probe for a missing path) is
+counted without a route label (issue open-webui/open-webui#33576). The middleware once labelled it
+with its raw path, so every such path became a metric series of its own.
+
 Twin of unit/deps/test_opentelemetry.py and unit/deps/test_psutil.py.
 
 Discriminates: passes on dev a5bc78300; in a backend copy, calling the logging instrumentor
@@ -35,6 +39,8 @@ fails the route test, a user gauge that yields nothing fails the gauge test, a l
 no trace to the server log fails the log trace test, `SystemMetricsInstrumentor` left out fails
 the host metrics test and headers left off the gRPC span exporter fail the gRPC test. With
 `psutil.Process.memory_info` patched to report a tenth of the memory the host metrics test fails.
+The route test fails on dev f3ef8b949, which labels the unmatched request with its raw path, and
+passes with the fix for #33576.
 """
 
 from __future__ import annotations
@@ -222,8 +228,10 @@ def test_database_statements_are_traced(exporting, collector):
 
 def test_requests_are_counted_by_route_template(exporting, collector):
     looked_up = create_user(exporting)
+    unrouted_path = f"/no-such-page-{uuid.uuid4().hex[:8]}"
     with admin_of(exporting).client() as client:
         client.get(f"/api/v1/users/{looked_up.id}").raise_for_status()
+        client.get(unrouted_path)
 
     def counted():
         return [
@@ -240,6 +248,17 @@ def test_requests_are_counted_by_route_template(exporting, collector):
         for attributes, _ in collector.metric_points("http.server.requests")
         if looked_up.id in str(attributes.get("http.route"))
     ], "a user id reached the route label"
+
+    def unrouted_counts():
+        return [
+            attributes
+            for attributes, _ in collector.metric_points("http.server.requests")
+            if "http.route" not in attributes or unrouted_path in str(attributes["http.route"])
+        ]
+
+    unrouted = collector.wait_for(unrouted_counts, "a count for the request no route matched")
+    raw_paths = [attributes["http.route"] for attributes in unrouted if "http.route" in attributes]
+    assert not raw_paths, f"a path no route matched became a route label: {raw_paths}"
 
 
 def test_the_account_gauge_counts_every_account(exporting, collector):
