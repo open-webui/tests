@@ -4,8 +4,9 @@ MinerU 4.x support (#32422, 81f5b8adf, v0.12.2): a server that answers `/v1/heal
 4.x, and a document goes through its V1 API (upload, parse job, poll, download) in place of the 3.x
 `/file_parse` form. The job gets only the fields the V1 API knows (the tier and an OCR mode made
 from `enable_ocr`), a page range only for a PDF, and the pictures the V1 API embeds in the text
-are left out of what is stored. MinerU is a local service here that answers the way each version
-does.
+are left out of what is stored. MinerU 4.1 detection (7cd0f1411) asks `/v1/health` once more
+before the 4.x check, so a 3.x server now gets more than one health probe. MinerU is a local
+service here that answers the way each version does.
 
 Regression: MinerU in local mode failed every document on a 4.x server started with `--api-key`.
 Issue open-webui/open-webui#32836: local mode sent none of its V1 requests with the API Key from
@@ -19,7 +20,8 @@ both. The journey tests pass on dev 7b4d4b51f and each fails under one mutation 
 passing every MinerU parameter into the job (the job fields test), sending the page range for any
 file (the page range test), reading the job's first answer without polling (the polling test),
 taking a failed job for a completed one (the failed job test), storing the text as MinerU sent it
-(the picture test) and taking every server for 4.x (the 3.x test).
+(the picture test) and taking every server for 4.x (the 3.x test). The 3.x test passes on
+7cd0f1411 and fae12c8a9 and fails when a 3.x server is sent any V1 call besides the health check.
 """
 
 from __future__ import annotations
@@ -277,5 +279,7 @@ def test_a_3x_server_gets_the_parameters_as_a_file_parse_form(use_mineru, listen
     assert stored["data"].get("content") == PARSED, stored["data"]
     [parsed] = listener.requests_to("/file_parse")
     assert b'name="language"\r\n\r\nde' in parsed.body, parsed.body[:600]
-    v1_calls = [request.path for request in listener.received if request.path.startswith("/v1/")]
-    assert v1_calls == ["/v1/health"], f"a 3.x server was sent V1 calls: {v1_calls}"
+    v1_paths = [request.path for request in listener.received if request.path.startswith("/v1/")]
+    assert "/v1/health" in v1_paths, "the server's version was not checked"
+    v1_job_calls = [path for path in v1_paths if path != "/v1/health"]
+    assert not v1_job_calls, f"a 3.x server was sent V1 calls: {v1_job_calls}"
