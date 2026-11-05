@@ -564,6 +564,28 @@ def _resend(client, turn, assistant_id: str, messages: list[dict], **extra) -> N
     assert accepted.status_code == 200, accepted.text
 
 
+def _texts_a_tab_shows(socket, chat_id: str) -> list[str]:
+    """The reply text after each event, as a tab folds whole outputs and text deltas into it."""
+    output, texts = [], []
+    for event in socket.events_of(chat_id):
+        data = event.get("data") or {}
+        if event.get("type") == "chat:completion" and "output" in data:
+            output = json.loads(json.dumps(data["output"]))
+        elif (
+            event.get("type") == "response:completion"
+            and data.get("type") == "response.output_text.delta"
+        ):
+            parts = output[data["output_index"]]["content"]
+            while len(parts) <= data["content_index"]:
+                parts.append({"type": "output_text", "text": ""})
+            parts[data["content_index"]]["text"] += data["delta"]
+        else:
+            continue
+        if output and (not texts or texts[-1] != _text(output[-1])):
+            texts.append(_text(output[-1]))
+    return texts
+
+
 def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
     streaming.upstream.queue(
         reply.text(["Once ", "upon ", "a time"], match=reply.answering("tell a tale"))
@@ -576,7 +598,7 @@ def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
         {"role": "user", "content": "tell a tale"},
         {"role": "assistant", "content": "Once upon a time"},
     ]
-    with connected(owner) as socket, owner.client() as client:
+    with connected(owner, in_order=True) as socket, owner.client() as client:
         _resend(
             client,
             turn,
@@ -586,16 +608,13 @@ def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
         )
         socket.wait_for(turn.chat_id, "chat:completion", done=True)
         message = wait_for_reply(client, turn)
-        outputs = [
-            event["data"]["output"]
-            for event in socket.events_of(turn.chat_id)
-            if event.get("type") == "chat:completion" and "output" in (event.get("data") or {})
-        ]
+        shown = _texts_a_tab_shows(socket, turn.chat_id)
 
     assert message["content"] == "Once upon a time there was a fox."
     assert [item["type"] for item in message["output"]] == ["message"]
-    streamed_texts = list(dict.fromkeys(_text(output[-1]) for output in outputs))
-    assert streamed_texts == [
+    assert _text(message["output"][-1]) == "Once upon a time there was a fox."
+    # the tab sees the old text first, then each piece after it, whether sent whole or as deltas
+    assert shown == [
         "Once upon a time",
         "Once upon a time there ",
         "Once upon a time there was ",
