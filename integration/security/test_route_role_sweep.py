@@ -12,7 +12,8 @@ the short tables below name them with a reason, and must still refuse a signed-o
 Discriminates: in a backend copy, removing `user=Depends(get_admin_user)` from
 `/api/v1/configs/export` turns `test_every_route_has_a_known_role` (the route reads as public)
 and `test_a_signed_out_client_is_refused_every_signed_in_route` (HTTP 200) red; swapping it for
-a module-local dependency that checks nothing turns the same two red (no role the sweep knows);
+a module-local dependency that checks nothing turns the same two red (no role the sweep knows),
+and so does dropping `get_human_user` from `GET /api/v1/auths/sessions`, a router auths mounts;
 letting `get_admin_user` pass a user and `get_verified_user` pass a pending account turns the
 user and pending sweeps red; switching `/api/v1/models/base` to `get_verified_user` leaves the
 user sweep green and turns `test_no_pinned_admin_route_was_opened_to_users` red. On dev
@@ -74,6 +75,9 @@ PUBLIC_ROUTES = {
     ("POST", "/api/v1/auths/mfa/enroll/confirm"): "a sign-in's challenge token authorizes it",
     ("POST", "/api/v1/auths/mfa/verify"): "a sign-in's challenge token authorizes it",
     ("POST", "/api/v1/auths/mfa/recover"): "a challenge and an admin's reset token authorize it",
+    ("POST", "/api/v1/auths/sessions/requests"): "a native app opens a sign-in to approve",
+    ("POST", "/api/v1/auths/sessions/exchange"): "an approved login code and its verifier",
+    ("POST", "/api/v1/auths/sessions/refresh"): "a native app's refresh token",
     ("GET", "/oauth/{provider}/login"): "starts an OAuth sign-in",
     ("GET", "/oauth/{provider}/login/callback"): "the provider redirects here",
     ("GET", "/oauth/{provider}/callback"): "the provider redirects here",
@@ -180,22 +184,28 @@ def _declared_routes(tree: ast.Module):
                 yield method, path.value, node
 
 
-def _router_prefixes(main_tree: ast.Module) -> dict[str, str]:
-    """`{module: prefix}` from every `app.include_router(<module>.router, prefix=...)`."""
+def _router_prefixes(tree: ast.Module) -> dict[str, str]:
+    """`{module: prefix}` from every `<app or router>.include_router(<module>.router, ...)`."""
     prefixes = {}
-    for node in ast.walk(main_tree):
+    for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or getattr(node.func, "attr", None) != "include_router":
             continue
         router = node.args[0]
-        prefix = next(k.value.value for k in node.keywords if k.arg == "prefix")
+        prefix = next((k.value.value for k in node.keywords if k.arg == "prefix"), "")
         prefixes[router.value.id] = prefix
     return prefixes
 
 
-def _router_source(routers: Path, module: str) -> Path:
-    """The router's file, or its package's `__init__.py` (audio became one in 093bfce2b)."""
-    module_file = routers / f"{module}.py"
-    return module_file if module_file.exists() else routers / module / "__init__.py"
+def _router_source(backend: Path, tree: ast.Module, module: str) -> Path:
+    """The file `tree` imports `module` from, or its package's `__init__.py` (audio, 093bfce2b)."""
+    package = next(
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and any(alias.name == module for alias in node.names)
+    )
+    module_path = backend.joinpath(*package.split("."), module)
+    module_file = module_path.with_suffix(".py")
+    return module_file if module_file.exists() else module_path / "__init__.py"
 
 
 @pytest.fixture(scope="module")
@@ -208,12 +218,16 @@ def source_routes() -> dict[tuple[str, str], tuple[str, str | None]]:
 
 def classify_source_routes(backend: Path) -> dict[tuple[str, str], tuple[str, str | None]]:
     """`{(METHOD, path): (router module, role)}` for every route the source declares."""
-    package = backend / "open_webui"
-    main_tree = ast.parse((package / "main.py").read_text(encoding="utf-8"))
+    main_tree = ast.parse((backend / "open_webui" / "main.py").read_text(encoding="utf-8"))
     modules = {"main": ("", main_tree)}
-    for module, prefix in _router_prefixes(main_tree).items():
-        source = _router_source(package / "routers", module).read_text(encoding="utf-8")
-        modules[module] = (prefix, ast.parse(source))
+    # a router can mount another under its own prefix (auths mounts sessions, 404d27a36)
+    including = [("", main_tree)]
+    while including:
+        parent_prefix, parent_tree = including.pop()
+        for module, prefix in _router_prefixes(parent_tree).items():
+            source = _router_source(backend, parent_tree, module).read_text(encoding="utf-8")
+            modules[module] = (parent_prefix + prefix, ast.parse(source))
+            including.append(modules[module])
 
     routes = {}
     for module, (prefix, tree) in modules.items():
