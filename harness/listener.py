@@ -38,6 +38,22 @@ class ReceivedRequest:
 
 
 Answer = tuple[int, dict[str, str], bytes | Iterable[bytes]]
+
+
+def read_body(handler: BaseHTTPRequestHandler) -> bytes:
+    """The request body, sent with a Content-Length or chunked."""
+    if handler.headers.get("Transfer-Encoding", "").lower() != "chunked":
+        length = int(handler.headers.get("Content-Length", 0))
+        return handler.rfile.read(length) if length else b""
+    body = b""
+    while size := int(handler.rfile.readline().split(b";")[0], 16):
+        body += handler.rfile.read(size)
+        handler.rfile.readline()
+    while handler.rfile.readline() not in (b"\r\n", b"\n", b""):
+        pass  # trailers
+    return body
+
+
 Handler = Callable[[ReceivedRequest], Answer]
 
 
@@ -92,24 +108,12 @@ def listening(host: str = "127.0.0.1", tls: bool = False, port: int = 0) -> Iter
         def log_message(self, *args) -> None:
             pass
 
-        def _read_body(self) -> bytes:
-            if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
-                length = int(self.headers.get("Content-Length", 0))
-                return self.rfile.read(length) if length else b""
-            body = b""
-            while size := int(self.rfile.readline().split(b";")[0], 16):
-                body += self.rfile.read(size)
-                self.rfile.readline()
-            while self.rfile.readline() not in (b"\r\n", b"\n", b""):
-                pass  # trailers
-            return body
-
         def _serve(self) -> None:
             request = ReceivedRequest(
                 method=self.command,
                 path=self.path,
                 headers=dict(self.headers.items()),
-                body=self._read_body(),
+                body=read_body(self),
             )
             with listener.lock:
                 listener.received.append(request)

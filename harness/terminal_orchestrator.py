@@ -22,6 +22,7 @@ from typing import Iterator
 import httpx
 
 from harness.instance import free_port
+from harness.listener import read_body
 from harness.open_terminal import API_KEY, OpenTerminal, serving_open_terminal
 
 CONTEXT_HEADER = "X-Terminal-Context-Id"
@@ -83,8 +84,7 @@ def serving_terminal_orchestrator() -> Iterator[TerminalOrchestrator]:
 
         def _forward(self) -> None:
             context = self.headers.get(CONTEXT_HEADER) or SHARED
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length) if length else b""
+            body = read_body(self)
             headers = {
                 name: value
                 for name, value in self.headers.items()

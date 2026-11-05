@@ -33,7 +33,7 @@ from websockets.server import ServerProtocol
 from websockets.sync.client import ClientConnection, connect
 
 from harness.instance import free_port
-from harness.listener import Answer, IPv6HTTPServer
+from harness.listener import Answer, IPv6HTTPServer, read_body
 
 # The admin endpoint pair, for `preserve(TERMINAL_SERVERS_CONFIG)`.
 TERMINAL_SERVERS_CONFIG = ("/api/v1/configs/terminal_servers", "/api/v1/configs/terminal_servers")
@@ -136,7 +136,7 @@ def serving_terminal(host: str = "127.0.0.1") -> Iterator[FakeTerminalServer]:
                 path=self.path,
                 headers={name.lower(): value for name, value in self.headers.items()},
                 cookies={name: morsel.value for name, morsel in cookies.items()},
-                body=self._read_body(),
+                body=read_body(self),
             )
             with server_state.lock:
                 server_state.received.append(request)
@@ -155,19 +155,6 @@ def serving_terminal(host: str = "127.0.0.1") -> Iterator[FakeTerminalServer]:
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
-
-        def _read_body(self) -> bytes:
-            # the instance's proxy streams request bodies, so they arrive chunked
-            if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
-                length = int(self.headers.get("Content-Length", 0))
-                return self.rfile.read(length) if length else b""
-            body = b""
-            while size := int(self.rfile.readline().split(b";")[0], 16):
-                body += self.rfile.read(size)
-                self.rfile.readline()
-            while self.rfile.readline() not in (b"\r\n", b"\n", b""):
-                pass
-            return body
 
         def _cors_headers(self) -> dict[str, str]:
             return {
