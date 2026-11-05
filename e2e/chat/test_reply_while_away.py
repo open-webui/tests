@@ -93,12 +93,16 @@ def test_a_reply_that_finished_in_another_chat_shows_on_return(page_for, make_us
 
 def test_a_second_tab_follows_a_streaming_reply_to_its_end(page_for, make_user, upstream):
     page = page_for(make_user())
-    chat_url = _start_story(page, upstream)
-
-    second_tab = page.context.new_page()
-    second_tab.goto(chat_url)
-    expect(last_reply(second_tab)).to_contain_text("part-1")
-    expect(stop_button(second_tab)).to_be_visible()
+    # the reply pauses partway, so it cannot finish before a slow second tab has loaded
+    rest_of_reply = threading.Event()
+    try:
+        chat_url = _start_story(page, upstream, hold=rest_of_reply, hold_after=3)
+        second_tab = page.context.new_page()
+        second_tab.goto(chat_url)
+        expect(last_reply(second_tab)).to_contain_text("part-1")
+        expect(stop_button(second_tab)).to_be_visible()
+    finally:
+        rest_of_reply.set()
 
     _expect_whole_and_finished(second_tab)
     _expect_whole_and_finished(page)

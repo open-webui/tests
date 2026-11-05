@@ -32,13 +32,17 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 ANSWER = "The tide turns at noon."
 DENIED = "Response notifications cannot be activated as the website permissions have been denied."
 
-# keeps what the page shows, so a test can read the notifications that reached the browser
+# keeps what the page shows, so a test can read the notifications that reached the browser;
+# the headless shell reports `permission` as denied even after a grant, so it reports the grant
 RECORD_NOTIFICATIONS = """
 window.shownNotifications = [];
 window.Notification = new Proxy(window.Notification, {
     construct(target, args) {
         window.shownNotifications.push({ title: args[0], body: args[1]?.body });
         return Reflect.construct(target, args);
+    },
+    get(target, name) {
+        return name === 'permission' && ALLOWED ? 'granted' : Reflect.get(target, name);
     }
 });
 """
@@ -48,7 +52,7 @@ def recording_page(page_for, account, allow: bool) -> Page:
     page = page_for(account)
     if allow:
         page.context.grant_permissions(["notifications"])
-    page.add_init_script(RECORD_NOTIFICATIONS)
+    page.add_init_script(f"const ALLOWED = {str(allow).lower()};" + RECORD_NOTIFICATIONS)
     page.goto("/")
     return page
 
