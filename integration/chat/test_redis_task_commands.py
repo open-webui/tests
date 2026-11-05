@@ -17,6 +17,10 @@ instance's task command listener cancels the reply it runs. Three fixes keep tha
   redis-py 8.0.1 subscribes on an uninitialized cluster client as well, so the cluster test is
   journey coverage here and unit/chat/test_socket_cluster_and_packets.py keeps the narrow guard.
 
+The cluster test is also the regression for open-webui/open-webui#33765: on dev 393dd6689 the
+terminal connection hub built its own cluster client and subscribed before initializing it, so
+every chat request on a Redis Cluster failed and the slow reply never reached the provider.
+
 One instance runs on a real Redis the test can stall (`DEBUG SLEEP`), stop and start again,
 another on a one-node Redis Cluster. The subscription is read off Redis itself (`PUBSUB NUMSUB`),
 and a stop is proven by a slow reply that ends before its last piece.
@@ -27,7 +31,8 @@ unit/chat/test_socket_cluster_and_packets.py for the listener.
 Discriminates: passes on dev ef67cc3fa; with a fixed 2 second default socket timeout the
 signed-out token is accepted while Redis stalls; with the listener returning once its stream
 ends, the restarted Redis never gets its subscriber back and the stop is lost. Removing the
-`initialize()` call stays green with redis-py 8.0.1 (see above).
+`initialize()` call stays green with redis-py 8.0.1 (see above). The cluster test fails on dev
+393dd6689 (#33765, no reply request reaches the provider) and passes with the hub fix.
 """
 
 from __future__ import annotations
