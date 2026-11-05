@@ -4,7 +4,9 @@ A fresh admin adds a terminal connection to a local fake terminal server in the 
 and switches it on, each change saving by itself; it is still there, on, when the tab is opened
 again. In a chat the admin picks the terminal from the input's Terminal menu, which opens its
 file browser, and opens a New Terminal tab beside it. The page opens a session through the
-instance's proxy, and what is typed reaches the fake shell and comes back on screen.
+instance's proxy, and what is typed reaches the fake shell and comes back on screen. The page
+runs without WebGL, so the terminal keeps its fallback text rows (f789a0742 draws on a WebGL
+canvas where it can), the only screen a test can read.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the terminal WebSocket proxy
 dropping what the browser sends the typed command never reaches the shell and nothing comes
@@ -27,6 +29,12 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 NAME = "Lab shell"
 TYPED = "echo lighthouse"
+NO_WEBGL = """
+const getContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function (type, ...options) {
+    return /webgl/i.test(type) ? null : getContext.call(this, type, ...options);
+};
+"""
 
 
 @pytest.fixture
@@ -68,6 +76,7 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
 ):
     preserve(TERMINAL_SERVERS_CONFIG)
     page = page_for(make_user(role="admin"))
+    page.add_init_script(NO_WEBGL)
     section = _terminal_section(page)
     expect(section.get_by_text("No terminal connections configured")).to_be_visible()
     tooltip_button(section, "Add Connection").click()

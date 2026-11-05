@@ -8,7 +8,8 @@ in the dialog and saved, the control is gone from the next account's open chat. 
 every control whatever the defaults say. Allow Chat Export also decides whether a folder's menu in
 the sidebar and the Actions menu of Archived Chats offer Export. Allow Side Chat (0.13.0) is the
 one switch that starts off: without it the / menu has no Side chat and a typed `/side` only says
-the account may not use it, nothing reaches the model; with it, or as an admin, `/side` opens one.
+the account may not use it, nothing reaches the model; with it, or as an admin, `/side` opens one,
+named after its question since 3b1a95383 saves it as a chat.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Default permissions dialog
 saves the permissions it opened with, every "withdrawn" test and the file upload refusal fail
@@ -19,6 +20,7 @@ Export, and with the folder check skipped, so does Archived Chats. On dev ca8f45
 message still offers Edit. The side chat tests pass on v0.13.0 and dev 5f1c6384e; with the
 backend's side chat default switched on the default test fails, and in a v0.13.0 frontend build
 that skips the Allow Side Chat check the withheld test fails as the / menu offers Side chat.
+Retargeted for 3b1a95383, the side chat tests pass on dev c165ee14f.
 """
 
 from __future__ import annotations
@@ -33,7 +35,15 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.chat import ask
 from utils.chat_controls import controls_entry
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, last_reply, replies, send
+from utils.chat_ui import (
+    REPLY_TIMEOUT_MS,
+    chat_input,
+    last_reply,
+    replies,
+    send,
+    side_chat_panel,
+    side_chat_tab,
+)
 from utils.model_selector import SELECTOR_BUTTON
 from utils.sidebar_folders import folder_link, folder_row
 from utils.user_menu import open_settings
@@ -248,10 +258,6 @@ def side_chat_menu_row(page: Page) -> Locator:
     return menu.get_by_role("button", name="Side chat", exact=True)
 
 
-def side_chat_panel(page: Page) -> Locator:
-    return page.get_by_role("tabpanel", name="Side chat 1", exact=True)
-
-
 # An admin opens side chats whatever Allow Side Chat says.
 @pytest.mark.parametrize(
     ("allowed", "role"), [(True, "user"), (False, "admin")], ids=["allowed", "admin-withheld"]
@@ -270,7 +276,7 @@ def test_side_opens_a_side_chat_with_allow_side_chat_or_as_admin(
     chat_input(page).press("Delete")
     send(page, f"/side {question}")
 
-    expect(side_chat_panel(page)).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
+    expect(side_chat_panel(page, question)).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
 
 
 def test_side_does_nothing_without_allow_side_chat(page_for, admin, make_user, upstream, preserve):
@@ -286,8 +292,9 @@ def test_side_does_nothing_without_allow_side_chat(page_for, admin, make_user, u
     send(page, f"/side {question}")
 
     expect(page.get_by_text("You do not have permission to use side chat.")).to_be_visible()
-    expect(page.get_by_role("tab", name="Side chat 1", exact=True)).to_have_count(0)
-    expect(side_chat_panel(page)).to_have_count(0)
+    # an unsent side chat keeps its "Side chat 1" label, so no tab may open at all
+    expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab")).to_have_count(0)
+    expect(side_chat_tab(page, question)).to_have_count(0)
     expect(replies(page)).to_have_count(2)
     asked = [body for body in upstream.chat_requests() if reply.mentioning(question)(body)]
     assert asked == [], f"the side question reached the model without the permission: {asked}"

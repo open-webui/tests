@@ -1,17 +1,19 @@
 """Journey: a side chat answers from the chat so far and leaves the chat itself untouched.
 
-Typing `/side <question>` (or `/btw`) in an open chat opens a temporary side conversation in a
-tab beside it. The model gets the conversation so far as context plus the side question, and the
-side exchange is kept out of the chat: it is not shown there, not saved with it and not stored as
-a chat of its own, so a reload shows the chat as it was. Closing the side chat's tab discards it;
-a new side chat, opened here with `/btw`, starts empty and its model never sees the closed one's
-exchange.
+Typing `/side <question>` (or `/btw`) in an open chat opens a side conversation in a tab beside
+it. The model gets the conversation so far as context plus the side question, and the side
+exchange is kept out of the chat: it is not shown there and not saved with it, so a reload shows
+the chat as it was. Since 3b1a95383 a side chat is saved as a chat of its own, titled with its
+question, which also names its tab. Closing the side chat's tab takes it off the page; a new side
+chat, opened here with `/btw`, starts empty and its model never sees the closed one's exchange.
 
 Discriminates: passes on v0.13.0 and dev 5f1c6384e. In a v0.13.0 frontend build whose side chat
 request leaves out the chat so far, the first test fails on what the model was sent; with closing
 a side chat's tab keeping it, the second fails as the tab stays; with `/side` also sent on as a
 message of the chat, the first fails as the question shows in the chat and, with that check left
-out, as the stored chat holds it.
+out, as the stored chat holds it. Retargeted for the saved side chats of 3b1a95383: passes on dev
+c165ee14f, and in its frontend build whose side chat copies none of the chat so far both
+tests fail on what the model was sent.
 """
 
 from __future__ import annotations
@@ -23,8 +25,16 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from harness.chat import ask
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, conversation, expect_reply, send
+from harness.chat import ChatTurn, ask, wait_for_reply
+from utils.chat_ui import (
+    REPLY_TIMEOUT_MS,
+    chat_input,
+    conversation,
+    expect_reply,
+    send,
+    side_chat_panel,
+    side_chat_tab,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -38,11 +48,11 @@ SECOND_SIDE_ANSWER = "Klagenfurt is the capital of Carinthia."
 
 @pytest.fixture
 def side_chat_allowed(admin, preserve) -> None:
-    """Allow Side Chat (and Temporary Chat, which it needs) on in the default permissions."""
+    """Allow Side Chat on in the default permissions."""
     preserve("permissions")
     with admin.client() as client:
         permissions = client.get("/api/v1/users/default/permissions").json()
-        permissions["chat"].update(temporary=True, side_chat=True)
+        permissions["chat"].update(side_chat=True)
         saved = client.post("/api/v1/users/default/permissions", json=permissions)
     assert saved.status_code == 200, saved.text
 
@@ -61,22 +71,12 @@ def open_answered_chat(page_for, account, upstream) -> tuple[Page, str]:
     return page, turn.chat_id
 
 
-def side_chat_tab(page: Page, number: int) -> Locator:
-    return page.get_by_role("tab", name=f"Side chat {number}", exact=True)
-
-
-def side_chat_panel(page: Page, number: int) -> Locator:
-    return page.get_by_role("tabpanel", name=f"Side chat {number}", exact=True)
-
-
-def ask_aside(
-    page: Page, upstream, number: int, question: str, answer: str, command: str = "side"
-) -> Locator:
-    """Open side chat `number` with `/<command> <question>` and wait for its answer there."""
+def ask_aside(page: Page, upstream, question: str, answer: str, command: str = "side") -> Locator:
+    """Open a side chat with `/<command> <question>` and wait for its answer there."""
     upstream.queue(reply.text(answer, match=reply.answering(question)))
     send(page, f"/{command} {question}")
-    expect(side_chat_tab(page, number)).to_have_attribute("aria-selected", "true")
-    panel = side_chat_panel(page, number)
+    expect(side_chat_tab(page, question)).to_have_attribute("aria-selected", "true")
+    panel = side_chat_panel(page, question)
     expect(panel).to_contain_text(answer, timeout=REPLY_TIMEOUT_MS)
     return panel
 
@@ -103,11 +103,22 @@ def stored_chat(account, chat_id: str) -> dict:
     return found.json()["chat"]
 
 
-def chat_ids(account) -> list[str]:
+def stored_reply_to(account, chat_id: str, question: str) -> dict:
+    """The stored reply to `question` in chat `chat_id`, once the server has marked it done."""
+    messages = stored_chat(account, chat_id)["history"]["messages"]
+    asked = [message for message in messages.values() if message.get("content") == question]
+    assert len(asked) == 1 and asked[0]["childrenIds"], f"{question!r} was not saved: {messages}"
+    turn = ChatTurn(chat_id, asked[0]["id"], asked[0]["childrenIds"][0])
+    with account.client() as client:
+        return wait_for_reply(client, turn)
+
+
+def listed_chats(account) -> dict[str, str]:
+    """The account's chats in its chat list, as id to title."""
     with account.client() as client:
         listed = client.get("/api/v1/chats/", params={"page": 1})
     assert listed.status_code == 200, listed.text
-    return [chat["id"] for chat in listed.json()]
+    return {chat["id"]: chat["title"] for chat in listed.json()}
 
 
 def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
@@ -117,7 +128,7 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
     question = tagged(SIDE_QUESTION)
     page, chat_id = open_answered_chat(page_for, account, upstream)
 
-    panel = ask_aside(page, upstream, 1, question, SIDE_ANSWER)
+    panel = ask_aside(page, upstream, question, SIDE_ANSWER)
 
     expect(panel).to_contain_text(question)
     expect(chat_input(page)).to_have_text("")
@@ -131,7 +142,15 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
         f"the side exchange was saved into the chat: {stored}"
     )
     assert ANSWER in stored
-    assert chat_ids(account) == [chat_id], "the side chat was stored as a chat of its own"
+    chats = listed_chats(account)
+    side_chat_ids = [listed for listed, title in chats.items() if title == question]
+    assert chat_id in chats and len(side_chat_ids) == 1 and len(chats) == 2, (
+        f"expected the chat and one side chat titled {question!r} in the chat list, got {chats}"
+    )
+    side_reply = stored_reply_to(account, side_chat_ids[0], question)
+    assert SIDE_ANSWER in json.dumps(side_reply), (
+        f"the side chat saved another answer: {side_reply}"
+    )
     assert conversation_sent_for(upstream, question) == [
         ("user", PROMPT),
         ("assistant", ANSWER),
@@ -142,9 +161,9 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
 
     expect_reply(page, ANSWER)
     expect(conversation(page).get_by_text(PROMPT)).to_be_visible()
-    # a reload reopens the tabs panel, which can start a new, empty side chat there
-    expect(page.get_by_text(SIDE_ANSWER)).to_have_count(0)
-    expect(page.get_by_text(question)).to_have_count(0)
+    # the side chat's title also shows in the sidebar's chat list
+    expect(main_messages.get_by_text(SIDE_ANSWER)).to_have_count(0)
+    expect(main_messages.get_by_text(question)).to_have_count(0)
 
 
 def test_a_closed_side_chat_is_gone_and_the_next_one_starts_empty(
@@ -152,14 +171,14 @@ def test_a_closed_side_chat_is_gone_and_the_next_one_starts_empty(
 ):
     first, second = tagged(SIDE_QUESTION), tagged(SECOND_SIDE_QUESTION)
     page, _ = open_answered_chat(page_for, make_user(), upstream)
-    ask_aside(page, upstream, 1, first, SIDE_ANSWER)
+    ask_aside(page, upstream, first, SIDE_ANSWER)
 
-    page.get_by_role("button", name="Close Side chat 1", exact=True).click()
+    page.get_by_role("button", name=f"Close {first}", exact=True).click()
 
-    expect(side_chat_tab(page, 1)).to_have_count(0)
+    expect(side_chat_tab(page, first)).to_have_count(0)
     expect(page.get_by_text(SIDE_ANSWER)).to_have_count(0)
 
-    panel = ask_aside(page, upstream, 2, second, SECOND_SIDE_ANSWER, command="btw")
+    panel = ask_aside(page, upstream, second, SECOND_SIDE_ANSWER, command="btw")
 
     expect(panel.get_by_text(SIDE_ANSWER)).to_have_count(0)
     assert conversation_sent_for(upstream, second) == [

@@ -48,6 +48,15 @@ def expect_reply(page: Page, text: str) -> None:
     expect(last_reply(page)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
 
 
+def side_chat_tab(page: Page, question: str) -> Locator:
+    """The tab of the side chat opened with `question`, which it takes as its title once saved."""
+    return page.get_by_role("tab", name=question, exact=True)
+
+
+def side_chat_panel(page: Page, question: str) -> Locator:
+    return page.get_by_role("tabpanel", name=question, exact=True)
+
+
 def stop_button(page: Page) -> Locator:
     return page.get_by_role("button", name="Stop")
 
