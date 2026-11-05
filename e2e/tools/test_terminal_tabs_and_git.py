@@ -90,7 +90,8 @@ def _drag(page: Page, source: Locator, target: Locator) -> None:
 
 
 def _unpick_terminal(page: Page, name: str) -> None:
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    # the Terminal menu's button is named for the terminal picked in it
+    tooltip_button(page.get_by_role("main"), name).click()
     choice = page.get_by_role("menu").get_by_role("menuitemradio", name=name)
     expect(choice).to_have_attribute("aria-checked", "true")
     choice.click()

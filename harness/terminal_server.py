@@ -130,14 +130,13 @@ def serving_terminal(host: str = "127.0.0.1") -> Iterator[FakeTerminalServer]:
             if self.headers.get("Upgrade", "").lower() == "websocket":
                 self._serve_session()
                 return
-            length = int(self.headers.get("Content-Length", 0))
             cookies = SimpleCookie(self.headers.get("Cookie", ""))
             request = TerminalRequest(
                 method=self.command,
                 path=self.path,
                 headers={name.lower(): value for name, value in self.headers.items()},
                 cookies={name: morsel.value for name, morsel in cookies.items()},
-                body=self.rfile.read(length) if length else b"",
+                body=self._read_body(),
             )
             with server_state.lock:
                 server_state.received.append(request)
@@ -156,6 +155,19 @@ def serving_terminal(host: str = "127.0.0.1") -> Iterator[FakeTerminalServer]:
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
+
+        def _read_body(self) -> bytes:
+            # the instance's proxy streams request bodies, so they arrive chunked
+            if self.headers.get("Transfer-Encoding", "").lower() != "chunked":
+                length = int(self.headers.get("Content-Length", 0))
+                return self.rfile.read(length) if length else b""
+            body = b""
+            while size := int(self.rfile.readline().split(b";")[0], 16):
+                body += self.rfile.read(size)
+                self.rfile.readline()
+            while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                pass
+            return body
 
         def _cors_headers(self) -> dict[str, str]:
             return {

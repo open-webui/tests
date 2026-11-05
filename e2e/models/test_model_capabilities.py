@@ -269,12 +269,14 @@ def terminal(admin, preserve):
 
 
 def terminal_buttons(page: Page) -> int:
+    """The Terminal menu's buttons, named 'Terminal' or for the terminal picked in them."""
     return (
         page.get_by_role("main")
         .get_by_role("button")
         .evaluate_all(
-            "(buttons) => buttons.filter("
-            "(button) => button.parentElement?._tippy?.props.content === 'Terminal').length"
+            "(buttons, names) => buttons.filter("
+            "(button) => names.includes(button.parentElement?._tippy?.props.content)).length",
+            ["Terminal", TERMINAL_NAME],
         )
     )
 
