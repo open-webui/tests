@@ -10,14 +10,17 @@ member who opens its address is sent home. The Webhooks modal makes a webhook, c
 address, and posting to that address shows the message to a member under the webhook's name;
 deleting the webhook makes the address refuse further posts. A post reaches a member who has
 the channel open without a reload; renaming the webhook in the modal shows its earlier posts
-under the new name, and once it is deleted they read "Deleted Webhook".
+under the new name, and once it is deleted they read "Deleted Webhook". A webhook rename typed
+but not yet saved stays in the open Webhooks window when a message arrives in the channel.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, a create form that sends a fixed name
 turns the group test red, a direct message created without its picked person turns the direct
 message test red, an update that sends the old name turns the rename test red, a delete that skips
 its request turns the delete test red, and a webhook delete that skips its request turns the webhook
 test red; in a backend copy, listing every webhook post under a fixed name turns the renaming test
-red (checked on dev ebc6add67).
+red (checked on dev ebc6add67). The unsaved rename test passes with the fix for
+open-webui/open-webui#33775 and fails on dev c165ee14f, where the arriving message resets the
+window; the webhook test fails there too, as the webhook's own post closes the selected webhook.
 
 Retargeted for b704d0613: the gear became an options menu that also holds the mute choice.
 """
@@ -210,6 +213,7 @@ def test_a_deleted_channel_leaves_the_sidebar_and_sends_a_member_home(
 def test_a_webhook_made_in_the_modal_posts_under_its_name_until_it_is_deleted(
     channels_on, make_user, page_for
 ):
+    """Caught open-webui/open-webui#33775: the webhook's own post collapsed the open window."""
     owner, member = make_user(), make_user()
     channel_id = group_channel(owner, member)
     page = page_for(owner, permissions=CLIPBOARD)
@@ -280,3 +284,36 @@ def test_webhook_posts_arrive_live_and_follow_the_webhooks_name(channels_on, mak
     assert deleted.status_code == 200, deleted.text
     member_page.reload()
     expect(_message(member_page, "low tide at noon")).to_contain_text("Deleted Webhook")
+
+
+def test_an_unsaved_webhook_rename_survives_a_message_arriving_in_the_channel(
+    channels_on, make_user, page_for
+):
+    """Regression for open-webui/open-webui#33775.
+
+    Every message arriving in the open channel reset the Webhooks window, so the selected webhook
+    closed and a name typed but not yet saved was lost. Now the window keeps both until it closes.
+    """
+    owner, member = make_user(), make_user()
+    channel_id = group_channel(owner, member)
+    with owner.client() as client:
+        made = client.post(
+            f"/api/v1/channels/{channel_id}/webhooks/create", json={"name": "Tide Bot"}
+        )
+    assert made.status_code == 200, made.text
+    page = page_for(owner)
+    _open_channel(page, channel_id)
+    _open_edit_modal(page, "channel-").get_by_role("button", name="Manage").click()
+    webhooks = page.get_by_role("dialog").filter(has_text="New Webhook")
+    webhooks.get_by_role("button", name="Tide Bot").click()
+    webhooks.get_by_placeholder("Webhook Name").fill("Harbour Bot")
+
+    post_message(member, channel_id, "ebb tide at nine")
+
+    expect(_message(page, "ebb tide at nine")).to_be_attached()
+    expect(webhooks.get_by_placeholder("Webhook Name")).to_have_value("Harbour Bot")
+    webhooks.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("Saved", exact=True)).to_be_visible()
+    with owner.client() as client:
+        listed = client.get(f"/api/v1/channels/{channel_id}/webhooks")
+    assert [webhook["name"] for webhook in listed.json()] == ["Harbour Bot"], listed.text
