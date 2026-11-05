@@ -1,6 +1,6 @@
 """Journey: attaching to a message by dropping, pasting and removing files in the composer.
 
-A text file dropped on the chat page is attached and its text reaches the model; one removed from
+A text file dropped on the message box is attached and its text reaches the model; one removed from
 the composer before sending never does. A chat dragged from the sidebar onto the composer is
 attached as a reference. A picture pasted into the message box is sent to the model as an image,
 and with Paste Large Text as File on, a long paste becomes an attached file instead of message
@@ -9,6 +9,9 @@ text. Each is read in what the model was sent.
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose composer ignores dropped files,
 dropped sidebar items and pasted files, and whose remove button leaves the file attached, every
 test but the long paste one fails, and with Paste Large Text as File ignored that one fails.
+
+Retargeted for 3b1a95383: only the composer takes dropped files and chats; the rest of the chat
+area ignores dropped files and can open a dropped chat beside it.
 """
 
 from __future__ import annotations
@@ -62,12 +65,12 @@ def _attach_by_upload(page: Page, name: str, text: str) -> None:
 
 
 def _drop(page: Page, script: str, *args) -> None:
-    """Drop what `script` puts into a DataTransfer onto the chat page, as a drag does."""
-    expect(chat_input(page)).to_be_visible()
+    """Drop what `script` puts into a DataTransfer onto the message box, as a drag does."""
+    box = chat_input(page)
+    expect(box).to_be_visible()
     data = page.evaluate_handle(script, list(args))
-    pane = page.locator("#chat-pane")
-    pane.dispatch_event("dragover", {"dataTransfer": data})
-    pane.dispatch_event("drop", {"dataTransfer": data})
+    box.dispatch_event("dragover", {"dataTransfer": data})
+    box.dispatch_event("drop", {"dataTransfer": data})
 
 
 def test_a_file_removed_before_sending_never_reaches_the_model(page_for, make_user, upstream):
@@ -126,6 +129,7 @@ def test_a_sidebar_chat_dropped_on_the_composer_is_referenced(page_for, make_use
         """([chatId]) => {
             const data = new DataTransfer();
             data.setData('application/x-open-webui-drag', '');
+            data.setData('application/x-open-webui-chat', chatId);
             data.setData('text/plain', JSON.stringify({ type: 'chat', id: chatId }));
             return data;
         }""",
