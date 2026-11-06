@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 
 import pytest
@@ -427,10 +428,12 @@ def test_a_long_reply_over_many_pieces_is_shown_in_full(chat_page, account, stre
 # --- what a person sees live: a second page, growing thoughts, channels, Functions ---------------
 
 
-def slow_thoughts(prompt: str, thoughts: list[str], answer: list[str], delay: float = 0.5):
+def slow_thoughts(
+    prompt: str, thoughts: list[str], answer: list[str], delay: float = 0.5, **options
+):
     """A reply that thinks in `<think>` tags over many pieces, then answers over more pieces."""
     pieces = ["<think>", *thoughts, "</think>", *answer]
-    return reply.text(pieces, chunk_delay=delay, match=reply.answering(prompt))
+    return reply.text(pieces, chunk_delay=delay, match=reply.answering(prompt), **options)
 
 
 def test_a_chat_opened_on_a_second_page_mid_stream_shows_the_text_so_far_then_all_of_it(
@@ -438,14 +441,22 @@ def test_a_chat_opened_on_a_second_page_mid_stream_shows_the_text_so_far_then_al
 ):
     thoughts = [f"idea-{index} " for index in range(6)]
     answer = [f"word-{index} " for index in range(8)]
-    streaming.upstream.queue(slow_thoughts("both pages", thoughts, answer))
-    send(chat_page, "both pages")
-    expect(last_reply(chat_page)).to_contain_text("Thinking", timeout=REPLY_TIMEOUT_MS)
+    # the reply pauses after word-1, so it cannot end before a slow second page has loaded
+    rest_of_reply = threading.Event()
+    held_after = len(thoughts) + 5  # the role, <think>, the thoughts, </think>, word-0, word-1
+    try:
+        streaming.upstream.queue(
+            slow_thoughts("both pages", thoughts, answer, hold=rest_of_reply, hold_after=held_after)
+        )
+        send(chat_page, "both pages")
+        expect(last_reply(chat_page)).to_contain_text("Thinking", timeout=REPLY_TIMEOUT_MS)
 
-    second = page_for(account, path=f"/c/{chat_id_of(chat_page)}")
-    expect(thought_button(second)).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
-    expect(last_reply(second)).to_contain_text("word-", timeout=REPLY_TIMEOUT_MS)
-    assert "word-7" not in last_reply(second).inner_text(), "the reply had already ended"
+        second = page_for(account, path=f"/c/{chat_id_of(chat_page)}")
+        expect(thought_button(second)).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
+        expect(last_reply(second)).to_contain_text("word-1", timeout=REPLY_TIMEOUT_MS)
+        expect(stop_button(second)).to_be_visible()
+    finally:
+        rest_of_reply.set()
 
     whole = "".join(answer).strip()
     expect_whole_reply(second, whole, thought=True)
