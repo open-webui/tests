@@ -5,7 +5,8 @@ double click renames it, hovering shows a preview of the folder) and, on hover, 
 button (its last button). `folder_link(scope, name)` is the name to click; `folder_row(scope,
 name)` is the whole row, for hovering, dragging and its buttons. `scope` is the sidebar or the
 page. The name carries an unread count after the folder's name when there is one, so `name`
-matches that start.
+matches that start. `open_advanced(dialog)` unfolds the folder dialog's Advanced section, which
+holds the default model, the system prompt and the knowledge (70e4b9a52).
 
 Retargeted for b704d0613: the folder's name is the trigger of its hover preview, so it is a
 button that opens a dialog, still an anchor to the folder page. Chat rows are buttons as well,
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 import re
 
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import Locator, Page, expect
 
 _ROWS = "[id^='folder-'][id$='-button']"
 
@@ -41,3 +42,10 @@ def click_folder_menu_button(row: Locator) -> None:
     """
     row.get_by_role("button").first.hover()
     row.get_by_role("button").last.click()
+
+
+def open_advanced(dialog: Locator) -> None:
+    toggle = dialog.get_by_role("button", name="Advanced", exact=True)
+    if toggle.get_attribute("aria-expanded") != "true":
+        toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")

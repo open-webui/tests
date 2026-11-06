@@ -30,7 +30,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.channel_chat import enable_channels, mention, model_reply
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
-from utils.sidebar_folders import click_folder_menu_button, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_row, open_advanced
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -270,6 +270,7 @@ def edit_folder_with_files(page: Page, folder_name: str, *names: str) -> Locator
     click_folder_menu_button(row)
     page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
+    open_advanced(dialog)
     dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
         dialog.locator("button[aria-expanded]")
     ).click()

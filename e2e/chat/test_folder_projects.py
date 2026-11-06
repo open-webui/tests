@@ -20,7 +20,9 @@ build with #31368 reverted, the pinned chat dropped on Chats stays under Pinned 
 dropped on Pinned ends unpinned.
 The folder settings test was retargeted for 8d0ff76f2, whose folder dialog picks knowledge and
 uploads files in its Knowledge picker: it passes on dev 76ad6f97c (3 of 3) and fails in a build of
-it whose folder dialog saves without its files.
+it whose folder dialog saves without its files. Retargeted again for 70e4b9a52, which moves the
+prompt and the knowledge under the dialog's Advanced section, and 003c9e085, which hands the model
+the folder's knowledge in a context round of its own.
 
 The in-place rename test also pins open-webui/open-webui#31582, fixed by PR #31584: pressing Enter
 saved the folder twice, so two update requests and two "Folder updated successfully" toasts
@@ -49,7 +51,7 @@ from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
 from utils.menus import late_menu_entry
-from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row, open_advanced
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -188,6 +190,7 @@ def test_the_folder_settings_reach_a_new_chat_started_in_the_folder(
         sidebar = open_sidebar(page)
         folder_menu(sidebar, "Harbour").get_by_role("menuitem", name="Edit").click()
         dialog = page.get_by_role("dialog")
+        open_advanced(dialog)
         dialog.get_by_placeholder(re.compile("Write your model system prompt")).fill(SYSTEM_PROMPT)
         dialog.get_by_role("button", name=re.compile("^Knowledge")).and_(
             dialog.locator("button[aria-expanded]")
@@ -223,8 +226,10 @@ def test_the_folder_settings_reach_a_new_chat_started_in_the_folder(
     [request] = [r for r in upstream.chat_requests() if reply.answering("when is high tide?")(r)]
     system = "\n".join(m["content"] for m in request["messages"] if m["role"] == "system")
     assert system.startswith(SYSTEM_PROMPT), system
-    assert f'type="collection" id="{knowledge_id}"' in system, system
-    assert f'type="file" id="{file_id}"' in system, system
+    # since 003c9e085 the folder's knowledge reaches the model as a context round of its own
+    [knowledge] = reply.context_results(request, "list_attached_knowledge")
+    assert f'type="collection" id="{knowledge_id}"' in knowledge, knowledge
+    assert f'type="file" id="{file_id}"' in knowledge, knowledge
     chat_id = page.url.rsplit("/", 1)[-1]
     assert stored_chat(owner, chat_id)["folder_id"] == folder_id
 

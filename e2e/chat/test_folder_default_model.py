@@ -1,11 +1,11 @@
 """Journey: a folder's default model is chosen in the folder's settings and left alone by chats.
 
-In a folder's Edit dialog the Default Model is a searchable model picker that reads "Use default"
-until a model is chosen; Save stores it as the folder's model, a Reset button beside it clears it
-again and the dialog shows the stored choice when it is reopened. A chat started in the folder
-opens on that model. Picking another model for one chat in the folder changes that chat only: the
-folder keeps its default for the next chat. A folder with no default opens its chats on the
-instance's default model, not on the model the last chat used.
+In a folder's Edit dialog, under Advanced (70e4b9a52), the Default Model is a searchable model
+picker that reads "Use default" until a model is chosen; Save stores it as the folder's model, a
+Reset button beside it clears it again and the dialog shows the stored choice when it is reopened.
+A chat started in the folder opens on that model. Picking another model for one chat in the folder
+changes that chat only: the folder keeps its default for the next chat. A folder with no default
+opens its chats on the instance's default model, not on the model the last chat used.
 
 Discriminates: in a frontend build with the chat saving its selected models to the folder again
 (the change undone), the chat that switched models rewrites the folder's default and the folder
@@ -27,7 +27,7 @@ from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_search
-from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row, open_advanced
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -85,6 +85,7 @@ def open_edit_dialog(page: Page) -> Locator:
     page.get_by_role("menu").get_by_role("menuitem", name="Edit").click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_placeholder("Enter folder name")).to_have_value(FOLDER)
+    open_advanced(dialog)
     return dialog
 
 
