@@ -11,7 +11,7 @@ leaving the chat inside the app was rebuilt without the skill's name, sent as `<
 server's fallback for an empty message filled in the names of every skill.
 
 Discriminates: passes on the efe63bd34 build; on a build with c402acb40 reverted the / menu test
-fails (no skill in the system prompt, the raw tag in the user message). The $ menu test passes on
+fails (no skill loaded for the reply, the raw tag in the user message). The $ menu test passes on
 both, and an unrelated chat journey passes on the reverted build. In the pre-fix build of 0.12.4
 (14956af03 reverted) the restored draft test fails: the user message reads both skills' names.
 """
@@ -65,10 +65,14 @@ def _send_after_pick(page: Page, upstream, trigger: str, name: str) -> dict:
     return next(filter(reply.answering(question), upstream.chat_requests()))
 
 
-def _system_text(request: dict) -> str:
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
+def _question_sent(request: dict) -> str:
+    """The person's message as sent, ahead of the skill Open WebUI loaded for it."""
+    users = [entry for entry in request["messages"] if entry["role"] == "user"]
+    return str(users[-1]["content"])
+
+
+def _skill_text(request: dict) -> str:
+    return "\n".join(reply.context_results(request, "view_skill"))
 
 
 def test_a_skill_picked_from_the_slash_menu_reaches_the_model(page_for, skill, upstream):
@@ -77,8 +81,8 @@ def test_a_skill_picked_from_the_slash_menu_reaches_the_model(page_for, skill, u
 
     request = _send_after_pick(page, upstream, "/", name)
 
-    user_text = str(request["messages"][-1]["content"])
-    assert SKILL_BODY in _system_text(request), (
+    user_text = _question_sent(request)
+    assert SKILL_BODY in _skill_text(request), (
         "the skill picked from the / menu was never loaded for the reply (#29978)"
     )
     assert "<@" not in user_text, f"the skill went out as a raw @ mention: {user_text!r}"
@@ -90,7 +94,7 @@ def test_a_skill_picked_from_the_dollar_menu_reaches_the_model(page_for, skill, 
 
     request = _send_after_pick(page, upstream, "$", name)
 
-    assert SKILL_BODY in _system_text(request)
+    assert SKILL_BODY in _skill_text(request)
 
 
 @pytest.fixture
@@ -130,6 +134,6 @@ def test_a_restored_skill_only_draft_sends_only_that_skill(page_for, skill, seco
     expect_reply(page, "Soft grey threads fall")
 
     request = next(filter(reply.answering(name), upstream.chat_requests()))
-    sent = request["messages"][-1]["content"]
+    sent = _question_sent(request)
     assert sent == name, f"the restored draft sent {sent!r} in place of the skill's name"
-    assert SKILL_BODY in _system_text(request)
+    assert SKILL_BODY in _skill_text(request)
