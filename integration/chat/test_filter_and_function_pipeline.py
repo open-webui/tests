@@ -1,4 +1,4 @@
-"""Six fixes in the filter and function plumbing, the first five from 0.11.1.
+"""Seven fixes in the filter and function plumbing, the first five from 0.11.1.
 
 * Disabled functions (commit a3a81fee03): the user-valves endpoints ignored `is_active`, so a
   switched-off function still loaded its code and accepted valves that could never apply. The
@@ -18,6 +18,10 @@
 * Pipe file list (PR #32380, commit 29719c8bf, issue #32379): a pipe answering a message without
   attachments got `__files__` as None, where the docs promise a list, so a pipe looping over the
   files crashed. It now gets an empty list.
+* Empty context lists (issue open-webui/open-webui#33807, regression from 003c9e085): with
+  native function calling every reply started with a hidden knowledge list and skill list even
+  when they were empty, so a pipe reading the last message as the question got
+  `<attached_knowledge></attached_knowledge>`. Empty lists are left out again.
 
 Twin of unit/chat/test_filter_and_function_pipeline.py.
 
@@ -25,8 +29,10 @@ Discriminates: reverting each fix in its own copy fails that fix's tests and no 
 disabled-function spec and update, the pipe's repeated system prompt, the number, object and
 reasoning deltas, the direct stream filter (the keep-alive line too), and the outlet, stream,
 valves and user-valves log lines, and the pipe's file list (it is None with 29719c8bf
-reverted, on dev ad8da5921). The nearby tests (active function, unknown id, a pipe without
-params, plain and empty deltas, no filter, a quiet inlet, a working filter) pass on all six.
+reverted, on dev ad8da5921), and the pipe's messages (they end in the empty knowledge list on
+dev da9bca0fc, before the fix for #33807). The nearby tests (active function, unknown id, a
+pipe without params, plain and empty deltas, no filter, a quiet inlet, a working filter) pass
+on all six.
 """
 
 from __future__ import annotations
@@ -185,6 +191,46 @@ def test_a_pipe_keeps_one_system_prompt_across_tool_calls(admin, system_prompt, 
     answered = json.loads(message["content"])
     assert answered["system"] == expected
     assert answered["files"] == [], "a message without attachments gave the pipe no file list"
+
+
+# --- empty context lists (#33807) --------------------------------------------------------------
+
+MESSAGES_PIPE = source(
+    """
+    import json
+
+    class Pipe:
+        def pipe(self, body):
+            messages = body["messages"]
+            return json.dumps([[message["role"], message.get("content")] for message in messages])
+    """
+)
+
+CONTEXT_LIST_TAGS = ("attached_knowledge", "available_skills")
+
+
+def is_empty_context_list(content) -> bool:
+    text = str(content or "")
+    for tag in CONTEXT_LIST_TAGS:
+        text = text.replace(f"<{tag}>", "").replace(f"</{tag}>", "")
+    return any(f"<{tag}>" in str(content) for tag in CONTEXT_LIST_TAGS) and not text.strip()
+
+
+def test_a_pipe_is_not_handed_empty_knowledge_or_skill_lists(admin):
+    question = "When does the pier office open?"
+    with installed_function(admin, MESSAGES_PIPE) as pipe_id:
+        with admin.client() as client:
+            client.get("/api/models").raise_for_status()
+            _, message = ask(client, question, model=pipe_id)
+
+    received = json.loads(message["content"])
+    assert ["user", question] in received, f"the pipe never got the question: {received}"
+    empty_lists = [content for _, content in received if is_empty_context_list(content)]
+    assert not empty_lists, f"the pipe was handed empty context lists: {empty_lists}"
+    if not any("<available_skills>" in str(content) for _, content in received):
+        assert received[-1] == ["user", question], (
+            f"the last message was not the question: {received}"
+        )
 
 
 # --- non-string deltas (ac091273b) -------------------------------------------------------------
