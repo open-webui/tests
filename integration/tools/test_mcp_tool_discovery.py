@@ -36,6 +36,7 @@ from harness.mcp_server import (
     serving_mcp,
 )
 from harness.terminal_server import read_grant
+from harness.tool_calls import without_context_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -194,7 +195,7 @@ def test_a_server_from_before_the_2026_protocol_runs_a_tool_in_a_chat(
     calls = [request for request in received if request.method == "tools/call"]
     assert len(calls) == 1, f"the tool did not run once: {[r.method for r in received]}"
     assert calls[0].protocol_version == protocol_version
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = without_context_calls(upstream.chat_requests()[-1]["messages"])
     tool_messages = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
     assert tool_messages == ["harbour wall"], (
         f"the model did not get the tool's answer: {follow_up}"

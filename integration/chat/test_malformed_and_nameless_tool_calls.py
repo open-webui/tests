@@ -3,8 +3,9 @@
 * `dbb17a572`: an assistant turn that failed with nothing written was replayed to the model as
   an empty assistant message on the next turn. Such rows are now dropped from the replay.
 * `fed94c9f5`: tool-call arguments that parse to something other than an object (a list, a
-  string) crashed the reply. The tool now answers with a "must be a JSON object" error and the
-  model is called again.
+  string) crashed the reply. The tool now answers with an `Error: ` result saying the arguments
+  must be a JSON object (a "complete" one for a string, since dev d87837372) and the model is
+  called again.
 * `66e021a92` (PR #29690, issue #29686): a streamed tool call whose `function.name` was JSON null
   kept the null, which was stored and sent back for the provider to reject. It is now `""`, so
   the call fails once with the ordinary unknown-tool error.
@@ -24,6 +25,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.chat_history import seed_chat
+from harness.tool_calls import without_context_calls, without_hidden_calls
 from harness.upstream import Reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -32,13 +34,13 @@ pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_sour
 def tool_results(message: dict) -> list[str]:
     return [
         item["output"][0]["text"]
-        for item in message.get("output") or []
+        for item in without_hidden_calls(message.get("output") or [])
         if item["type"] == "function_call_output"
     ]
 
 
 def replayed(upstream) -> list[dict]:
-    return upstream.chat_requests()[-1]["messages"]
+    return without_context_calls(upstream.chat_requests()[-1]["messages"])
 
 
 def test_an_empty_failed_turn_is_not_replayed(user, upstream):
@@ -81,7 +83,9 @@ def test_non_object_arguments_come_back_as_an_error_and_the_turn_goes_on(user, u
         _, message = ask(client, "what time is it?")
 
     results = tool_results(message)
-    assert len(results) == 1 and "must be a JSON object" in results[0], message
+    assert len(results) == 1 and results[0].startswith("Error: ") and "JSON object" in results[0], (
+        message
+    )
     tool_messages = [entry["content"] for entry in replayed(upstream) if entry["role"] == "tool"]
     assert tool_messages == results
     assert message["content"] == "let me retry"
@@ -104,7 +108,9 @@ def test_a_tool_call_with_a_null_name_is_stored_and_replayed_as_empty(user, upst
     with user.client() as client:
         _, message = ask(client, "do something")
 
-    calls = [item for item in message["output"] if item["type"] == "function_call"]
+    calls = [
+        item for item in without_hidden_calls(message["output"]) if item["type"] == "function_call"
+    ]
     assert [call["name"] for call in calls] == [""]
     [result] = tool_results(message)
     assert "not found" in result

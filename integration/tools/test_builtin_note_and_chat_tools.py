@@ -46,7 +46,7 @@ import pytest
 from harness import upstream as reply
 from harness.backends import wait_until
 from harness.chat import ask, send_message, wait_for_reply
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tools, run_tool, without_context_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -76,7 +76,11 @@ def edit(actor, upstream, note_id: str, **arguments):
     with actor.client() as client:
         ask(client, prompt)
     [*_, final] = [request for request in upstream.chat_requests() if answering(request)]
-    results = [entry["content"] for entry in final["messages"] if entry["role"] == "tool"]
+    results = [
+        entry["content"]
+        for entry in without_context_calls(final["messages"])
+        if entry["role"] == "tool"
+    ]
     assert len(results) == 2, f"the model's two tool calls did not both run: {final['messages']}"
     return json.loads(results[-1])
 
@@ -404,7 +408,9 @@ def test_an_edit_of_a_page_changed_after_it_was_read_is_refused(two_page_note, u
 
     final = requests_answering(upstream, answering)[-1]
     [*_, result] = [
-        json.loads(entry["content"]) for entry in final["messages"] if entry["role"] == "tool"
+        json.loads(entry["content"])
+        for entry in without_context_calls(final["messages"])
+        if entry["role"] == "tool"
     ]
     assert result.get("code") == "page_conflict", f"a stale page was overwritten: {result}"
     assert page_texts(owner, note_id)[gulls] == "edited by hand meanwhile"
