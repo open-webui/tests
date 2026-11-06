@@ -9,7 +9,9 @@ carries a fresh tag that its replies and the requests read back are tied to.
 Open WebUI stores the context it hands the model (attached knowledge, the skill list, recalled
 memories, preloaded skills) as hidden tool calls of its own at the start of a reply (since dev
 003c9e085). `without_hidden_calls(output)` drops them from a reply's stored output, the way
-`upstream.conversation` does for a provider payload.
+`upstream.conversation` does for a provider payload. A citing tool's result (knowledge, file and
+web tools) carries its source list in the citations template after it (since dev 8e2ba2937);
+`without_citation_context(result)` gives the tool's own result.
 """
 
 from __future__ import annotations
@@ -21,6 +23,9 @@ import httpx
 from harness import upstream as reply
 from harness.chat import ask
 from harness.upstream import MockUpstream
+
+# Where the default RAG template starts in the source list after a citing tool's result
+CITATION_CONTEXT = "\n\n### Task:\n"
 
 
 def run_tool(
@@ -47,6 +52,12 @@ def offered_tools(client: httpx.Client, upstream: MockUpstream, **options) -> se
     assert requests, f"the provider never received {prompt!r}"
     offered = requests[0].get("tools") or []
     return {tool["function"]["name"] for tool in offered}
+
+
+def without_citation_context(result: str) -> str:
+    """A tool's own result, without the source list a citing tool's result carries after it."""
+    own, marker, _ = result.rpartition(CITATION_CONTEXT)
+    return own if marker else result
 
 
 def without_hidden_calls(output: list[dict]) -> list[dict]:

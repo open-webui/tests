@@ -50,7 +50,7 @@ def test_arguments_from_an_any_of_branch_reach_the_tool(wiki, upstream, argument
     with person.client() as client:
         ask(client, "open the page", tool_ids=[f"server:mcp:{server_id}"])
 
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = reply.conversation(upstream.chat_requests()[-1])
     [content] = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
     assert json.loads(content) == arguments
 

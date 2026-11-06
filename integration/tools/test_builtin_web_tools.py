@@ -19,7 +19,7 @@ import pytest
 
 from harness.actors import admin_of, create_user
 from harness.listener import text_answer
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tools, run_tool, without_citation_context
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
     RETRIEVAL_CONFIG,
@@ -52,7 +52,8 @@ def fetching(instance_with, preserve, listener):
 
 def fetch(launched, actor, url: str) -> str:
     with actor.client() as client:
-        return run_tool(client, launched.upstream, "fetch_url", {"url": url}, **WITH_WEB_SEARCH)
+        result = run_tool(client, launched.upstream, "fetch_url", {"url": url}, **WITH_WEB_SEARCH)
+    return without_citation_context(result)
 
 
 def test_a_page_is_fetched_as_text(fetching, listener):

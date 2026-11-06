@@ -59,7 +59,7 @@ def _timed_tool_result(instance, tool_id: str, tool: str, arguments: dict) -> tu
         ask(client, prompt, tool_ids=[tool_id])
     elapsed = time.monotonic() - started
     sent = [body for body in instance.upstream.chat_requests() if this_test(body)]
-    follow_up = sent[-1]["messages"]
+    follow_up = reply.conversation(sent[-1])
     [tool_message] = [entry for entry in follow_up if entry["role"] == "tool"]
     return tool_message["content"], elapsed
 

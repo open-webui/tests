@@ -24,7 +24,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.listener import json_answer, text_answer
-from harness.tool_calls import run_tool
+from harness.tool_calls import run_tool, without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -224,10 +224,14 @@ def test_a_failed_call_tells_the_model_the_status(
     with owner.client() as client:
         _, message = ask(client, f"use {name}", tool_ids=TOOL_IDS)
 
-    sent_back = upstream.chat_requests()[-1]["messages"][-1]
+    sent_back = reply.conversation(upstream.chat_requests()[-1])[-1]
     assert sent_back["role"] == "tool"
     assert json.loads(sent_back["content"]) == {"error": expected}
-    [result] = [item for item in message["output"] if item["type"] == "function_call_output"]
+    [result] = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     assert result["status"] == "failed"
 
 
@@ -236,12 +240,16 @@ def test_an_image_answer_is_shown_to_the_model(owner, upstream, pets_server):
     with owner.client() as client:
         _, message = ask(client, "show me", tool_ids=TOOL_IDS)
 
-    [result] = [item for item in message["output"] if item["type"] == "function_call_output"]
+    [result] = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     texts = [part["text"] for part in result["output"] if part["type"] == "input_text"]
     assert texts == ["get_photo: Image file read successfully."]
     [image] = [part for part in result["output"] if part["type"] == "input_image"]
     assert image["image_url"]
-    sent_back = json.dumps(upstream.chat_requests()[-1]["messages"])
+    sent_back = json.dumps(reply.conversation(upstream.chat_requests()[-1]))
     assert "get_photo: Image file read successfully." in sent_back
     assert "image_url" in sent_back
 
@@ -251,8 +259,12 @@ def test_an_inline_html_answer_becomes_a_card_for_the_user(owner, upstream, pets
     with owner.client() as client:
         _, message = ask(client, "card please", tool_ids=TOOL_IDS)
 
-    [result] = [item for item in message["output"] if item["type"] == "function_call_output"]
+    [result] = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     assert result["embeds"] == [CARD]
-    told = json.loads(upstream.chat_requests()[-1]["messages"][-1]["content"])
+    told = json.loads(reply.conversation(upstream.chat_requests()[-1])[-1]["content"])
     assert told["code"] == "ui_component"
     assert CARD not in json.dumps(upstream.chat_requests()[-1])

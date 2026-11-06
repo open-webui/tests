@@ -35,7 +35,7 @@ import pytest
 
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.python_tools import EVERYONE_READS
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tools, run_tool, without_citation_context
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -68,7 +68,7 @@ def call(
         **({"chat_files": chat_files} if chat_files else {}),
     }
     with actor.client() as client:
-        result = run_tool(client, upstream, tool, arguments, **chat)
+        result = without_citation_context(run_tool(client, upstream, tool, arguments, **chat))
     try:
         return json.loads(result)
     except ValueError:

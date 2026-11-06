@@ -137,7 +137,7 @@ def _chat_request(actor, upstream, **options) -> dict:
     return next(
         request
         for request in reversed(upstream.chat_requests())
-        if prompt in str(request["messages"][-1].get("content"))
+        if prompt in str(reply.conversation(request)[-1].get("content"))
     )
 
 

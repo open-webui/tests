@@ -29,6 +29,7 @@ from harness.chat import ask
 from harness.mcp_server import SNAPSHOT_PNG, TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.model_presets import preset_with_capabilities
 from harness.terminal_server import read_grant
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -60,7 +61,7 @@ def call_tool(person, upstream, server_id: str, tool: str, arguments: dict | Non
     upstream.queue(reply.tool_call(f"{server_id}_{tool}", arguments or {}), reply.text("I see."))
     with person.client() as client:
         _, message = ask(client, f"use {tool}", tool_ids=[f"server:mcp:{server_id}"])
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = reply.conversation(upstream.chat_requests()[-1])
     assert any(entry["role"] == "tool" for entry in follow_up), f"{tool} never ran: {follow_up}"
     return message, follow_up
 
@@ -80,7 +81,7 @@ def last_request_mentioning(upstream, prompt: str) -> list[dict]:
         request for request in upstream.chat_requests() if reply.mentioning(prompt)(request)
     ]
     assert requests, f"the provider never received {prompt!r}"
-    return requests[-1]["messages"]
+    return reply.conversation(requests[-1])
 
 
 def image_parts(messages: list[dict]) -> list[dict]:
@@ -131,7 +132,7 @@ def snapshot_then_ask_again(person, upstream, server_id: str, model: str):
 def tool_result_files(message: dict) -> list[dict]:
     return [
         file
-        for item in message["output"]
+        for item in without_hidden_calls(message["output"])
         if item["type"] == "function_call_output"
         for file in item.get("files") or []
     ]

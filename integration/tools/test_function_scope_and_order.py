@@ -109,7 +109,7 @@ def sent_text(account: Actor, upstream, question: str, model: str = MOCK_MODEL_I
     with account.client() as client:
         ask(client, question, model=model)
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    return request["messages"][-1]["content"]
+    return reply.conversation(request)[-1]["content"]
 
 
 @contextmanager

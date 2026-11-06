@@ -34,7 +34,7 @@ import pytest
 from harness.actors import create_user
 from harness.calendar_api import MINUTE_NS, create_event, default_calendar_id, to_ns
 from harness.knowledge_bases import add_text_file, knowledge_base, model_with_knowledge
-from harness.tool_calls import run_tool
+from harness.tool_calls import run_tool, without_citation_context
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -367,9 +367,8 @@ def shared_library(make_user):
 
 def _view_file(actor, upstream, preset: str, file_id: str) -> dict:
     with actor.client() as client:
-        return json.loads(
-            run_tool(client, upstream, "view_file", {"file_id": file_id}, model=preset)
-        )
+        result = run_tool(client, upstream, "view_file", {"file_id": file_id}, model=preset)
+    return json.loads(without_citation_context(result))
 
 
 def test_a_file_shared_through_a_knowledge_base_can_be_viewed(shared_library, upstream):

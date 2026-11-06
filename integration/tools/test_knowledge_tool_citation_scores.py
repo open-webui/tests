@@ -8,7 +8,8 @@ percentage that classic retrieval shows for the same knowledge base. Each groupe
 carries a `distances` list aligned with its documents.
 
 The scripted model calls each tool and the test reads the sources stored on the reply, which is
-what the citation list renders after a reload.
+what the citation list renders after a reload. Since dev 98f7a6146 a small chat file goes to the
+model whole, unsearched, so the chat file test turns the full-text threshold off.
 
 Twin of e2e/tools/test_knowledge_tool_citation_scores.py.
 
@@ -27,7 +28,9 @@ from harness import upstream as reply
 from harness.chat import ask
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.python_tools import EVERYONE_READS
+from harness.tool_calls import without_citation_context
 from harness.upstream import MOCK_MODEL_ID
+from harness.web_retrieval import RETRIEVAL_CONFIG
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -77,9 +80,9 @@ def cited_by_tool(actor, upstream, tool: str, arguments: dict, **chat) -> tuple[
     upstream.queue(reply.tool_call(tool, arguments), reply.text("done"))
     with actor.client() as client:
         _, message = ask(client, f"use {tool}", **chat)
-    sent_back = upstream.chat_requests()[-1]["messages"]
+    sent_back = reply.conversation(upstream.chat_requests()[-1])
     [tool_result] = [entry["content"] for entry in sent_back if entry["role"] == "tool"]
-    return message.get("sources") or [], json.loads(tool_result)
+    return message.get("sources") or [], json.loads(without_citation_context(tool_result))
 
 
 def assert_every_document_is_scored(sources: list[dict]) -> None:
@@ -107,8 +110,15 @@ def test_knowledge_file_citations_carry_their_relevance_scores(library, upstream
     assert_every_document_is_scored(sources)
 
 
-def test_chat_file_citations_carry_their_relevance_scores(library, file_reader, upstream):
+def test_chat_file_citations_carry_their_relevance_scores(
+    admin, preserve, library, file_reader, upstream
+):
     reader, _, file_ids = library
+    preserve(RETRIEVAL_CONFIG)
+    # since 98f7a6146 a small chat file goes whole, unsearched and so unscored
+    with admin.client() as client:
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+        assert saved.status_code == 200, saved.text
     files = [{"type": "file", "id": file_id, "name": file_id} for file_id in sorted(file_ids)]
 
     sources, _ = cited_by_tool(

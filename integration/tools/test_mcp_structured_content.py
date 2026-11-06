@@ -66,7 +66,7 @@ def tool_result_sent_to_the_model(person, upstream, server_id: str, tool: str) -
     upstream.queue(reply.tool_call(f"{server_id}_{tool}", {"city": "Graz"}), reply.text("Noted."))
     with person.client() as client:
         ask(client, f"use {tool} for Graz", tool_ids=[f"server:mcp:{server_id}"])
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = reply.conversation(upstream.chat_requests()[-1])
     tool_messages = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
     assert len(tool_messages) == 1, f"{tool} did not run once: {follow_up}"
     return tool_messages[0]
@@ -151,7 +151,7 @@ def test_a_plain_string_from_an_sdk_tool_reaches_the_model_once(
         with person.client() as client:
             ask(client, "echo the tide", tool_ids=[f"server:mcp:{server_id}"])
 
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = reply.conversation(upstream.chat_requests()[-1])
     [content] = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
     assert content.count(said) == 1, (
         f"#32126: the model got the tool's text more than once: {content}"

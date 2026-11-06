@@ -64,6 +64,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask, send_message, wait_for_reply
+from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -160,7 +161,11 @@ def finished_reply(text: str):
 
 
 def dispatch_handles(message: dict) -> list[dict]:
-    outputs = [item for item in message["output"] if item["type"] == "function_call_output"]
+    outputs = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     return [json.loads(item["output"][0]["text"]) for item in outputs]
 
 
@@ -377,7 +382,11 @@ def test_a_report_that_arrives_before_a_later_answer_ends_follows_the_answer_tha
 
 
 def tool_outputs(message: dict) -> list[str]:
-    outputs = [item for item in message["output"] if item["type"] == "function_call_output"]
+    outputs = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     return [item["output"][0]["text"] for item in outputs]
 
 

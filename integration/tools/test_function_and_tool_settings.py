@@ -179,7 +179,7 @@ def test_saved_filter_valves_are_read_back_and_used_on_the_next_chat(admin, make
         with chatter.client() as client:
             ask(client, "second")
 
-    sent = [request["messages"][-1]["content"] for request in upstream.chat_requests()]
+    sent = [reply.conversation(request)[-1]["content"] for request in upstream.chat_requests()]
     assert stored == {"tag": "[saved tag]"}
     assert sent == ["first [default tag]", "second [saved tag]"]
 
@@ -350,7 +350,7 @@ def _offered(request: dict) -> set[str]:
 
 def _tool_results(request: dict) -> list[str]:
     """What the tool calls answering the latest user message returned; earlier turns excluded."""
-    messages = request["messages"]
+    messages = reply.conversation(request)
     last_user = max(index for index, entry in enumerate(messages) if entry["role"] == "user")
     return [str(entry["content"]) for entry in messages[last_user:] if entry["role"] == "tool"]
 

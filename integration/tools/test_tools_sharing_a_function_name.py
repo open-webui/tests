@@ -79,7 +79,9 @@ def _results_of_calling(client, upstream, names: list[str], tool_ids: list[str])
     )
     ask(client, prompt, tool_ids=tool_ids)
     follow_up = [request for request in upstream.chat_requests() if answering(request)][-1]
-    return sorted(entry["content"] for entry in follow_up["messages"] if entry["role"] == "tool")
+    return sorted(
+        entry["content"] for entry in reply.conversation(follow_up) if entry["role"] == "tool"
+    )
 
 
 def test_two_workspace_tools_with_the_same_function_both_run(admin, make_user, upstream):

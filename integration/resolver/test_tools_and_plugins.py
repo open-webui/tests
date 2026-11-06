@@ -47,6 +47,7 @@ from harness.listener import json_answer, text_answer
 from harness.plugins import installed_function
 from harness.python_tools import python_tool
 from harness.second_provider import OPENAI_CONFIG, sse
+from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -167,7 +168,7 @@ def _stderr_of(message: dict) -> str:
     """What the cell's engine reported on stderr, from the code block or the tool's result."""
     [outcome] = [
         item
-        for item in message["output"]
+        for item in without_hidden_calls(message["output"])
         if item["type"] in ("open_webui:code_interpreter", "function_call_output")
     ]
     if outcome["type"] == "open_webui:code_interpreter":
@@ -321,14 +322,15 @@ def test_a_pipelines_filter_and_pipe_serve_chats_by_name(
         )
 
     assert filtered["content"] == "answered by the provider", filtered
-    sent = upstream.chat_requests()[-1]["messages"][-1]["content"]
+    sent = reply.conversation(upstream.chat_requests()[-1])[-1]["content"]
     assert sent == "hello there [seen by the filter]"
     assert piped["content"] == "piped by name", piped
     assert len(server.requests_to(f"/{FILTER_ID}/filter/inlet")) == 2
     outlets = len(server.requests_to(f"/{FILTER_ID}/filter/outlet"))
     assert outlets_called, f"the filter's outlet ran {outlets} times, not once per chat"
     [pipe_request] = server.requests_to("/chat/completions")
-    assert pipe_request.json()["messages"][-1]["content"] == "hello pipe [seen by the filter]"
+    piped_prompt = reply.conversation(pipe_request.json())[-1]["content"]
+    assert piped_prompt == "hello pipe [seen by the filter]"
 
 
 @pytest.mark.usefixtures("refuses_unknown_names")
@@ -433,11 +435,12 @@ def test_a_tool_a_pipe_and_a_filter_reach_a_service_by_name(
             _, toolled = ask(client, "find Rex", tool_ids=[tool_id])
             _, piped = ask(client, "greet me", model=pipe_id)
 
-    sent_back = upstream.chat_requests()[-1]["messages"]
+    sent_back = reply.conversation(upstream.chat_requests()[-1])
     assert toolled["content"] == "looked up", toolled
     assert json.loads(sent_back[-1]["content"]) == {"found": "Rex"}
     assert piped["content"] == "greeted by name", piped
-    assert upstream.chat_requests()[0]["messages"][-1]["content"] == "find Rex [context by name]"
+    asked = reply.conversation(upstream.chat_requests()[0])[-1]["content"]
+    assert asked == "find Rex [context by name]"
     assert len(server.requests_to("/pets")) == 1
     assert len(server.requests_to("/greeting")) == 1
     assert len(server.requests_to("/context")) == 2
@@ -456,7 +459,7 @@ def test_a_tool_reaching_an_unresolvable_name_tells_the_model_the_same_error(
         upstream.queue(reply.tool_call("lookup", {"name": "Rex"}), reply.text("gave up"))
         (_, message), seconds = timed(ask, client, "find Rex", tool_ids=[tool_id])
 
-    told = json.loads(upstream.chat_requests()[-1]["messages"][-1]["content"])
+    told = json.loads(reply.conversation(upstream.chat_requests()[-1])[-1]["content"])
     assert without_resolver_reason(told["error"]) == PLUGIN_ERROR
     assert message["content"] == "gave up", message
     assert seconds < FAILS_WITHIN, f"the lookup failed only after {seconds:.1f}s"

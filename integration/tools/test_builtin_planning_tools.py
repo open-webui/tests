@@ -71,7 +71,7 @@ def call_in_turn(actor, upstream, *calls: tuple[str, dict]) -> tuple[str, list]:
     upstream.queue(*scripted, reply.text("done"))
     with actor.client() as client:
         turn, _ = ask(client, "plan it")
-    sent_back = upstream.chat_requests()[-1]["messages"]
+    sent_back = reply.conversation(upstream.chat_requests()[-1])
     results = [json.loads(entry["content"]) for entry in sent_back if entry["role"] == "tool"]
     return turn.chat_id, results
 
