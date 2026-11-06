@@ -28,6 +28,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.listener import listening, text_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
 from utils.chat_ui import chat_input, expect_reply, link_dialog, send
@@ -53,10 +54,12 @@ def pages():
 
 @pytest.fixture
 def fetching_instance(instance_with):
+    """An instance that may fetch local pages, with File Context ticked so a page's text is sent."""
     launched = instance_with(LOCAL_WEB_FETCH)
     if not launched.serves_frontend:
         pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
-    return launched
+    with file_context_ticked(admin_of(launched)):
+        yield launched
 
 
 @pytest.fixture

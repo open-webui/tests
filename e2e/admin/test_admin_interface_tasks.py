@@ -314,6 +314,7 @@ def ask_about_the_upload(page: Page) -> None:
     page.get_by_role("button", name="Toggle status history").first.click()
 
 
+@pytest.mark.usefixtures("file_context_on", "chunked_retrieval")
 def test_a_switched_on_retrieval_query_generation_searches_the_upload_with_the_models_queries(
     page_for, admin, make_user, upstream, tasks_restored
 ):
@@ -337,6 +338,7 @@ def test_a_switched_on_retrieval_query_generation_searches_the_upload_with_the_m
     assert "map room atlas shelf" in embedded_texts(upstream)
 
 
+@pytest.mark.usefixtures("file_context_on", "chunked_retrieval")
 def test_a_switched_off_retrieval_query_generation_searches_the_upload_with_the_question(
     page_for, admin, make_user, upstream, tasks_restored
 ):

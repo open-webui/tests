@@ -13,6 +13,9 @@ flagged in the panel and sends it twice.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the passages about herons; a local service also plays the reranker.
+File Context is ticked in the Model Defaults, since a model in native function calling otherwise
+reads the file through its tools and nothing is retrieved up front, and the whole-file threshold
+is off.
 
 Discriminates: passes on dev ebc6add67; in a frontend build whose Documents form sends the
 retrieval settings it loaded in place of the edited ones, every test fails.
@@ -28,6 +31,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.keyword_embeddings import keyword_embedding_env, serve_keyword_embeddings
 from harness.listener import ReceivedRequest, json_answer, listening
 from harness.web_retrieval import RETRIEVAL_CONFIG
@@ -78,6 +82,8 @@ BASELINE = {
     "RAG_RERANKING_ENGINE": "",
     "RAG_RERANKING_MODEL": "",
     "RAG_TEMPLATE": "",
+    # a file under the threshold goes whole, and the notes are under the default one
+    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
 }
 
 
@@ -90,7 +96,7 @@ def embedder():
 
 @pytest.fixture
 def ranked(instance_with, embedder, preserve):
-    """The keyword-embedding instance on the baseline settings, restored after the test."""
+    """The keyword-embedding instance on the baseline settings with File Context ticked."""
     launched = instance_with(keyword_embedding_env(embedder))
     if not launched.serves_frontend:
         pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
@@ -98,7 +104,8 @@ def ranked(instance_with, embedder, preserve):
     with launched.client() as client:
         saved = client.post(RETRIEVAL_CONFIG[1], json=BASELINE)
     assert saved.status_code == 200, saved.text
-    return launched
+    with file_context_ticked(admin_of(launched)):
+        yield launched
 
 
 def open_documents(page: Page) -> Locator:

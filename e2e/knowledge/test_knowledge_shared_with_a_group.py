@@ -30,7 +30,13 @@ from harness.backends import wait_until
 from harness.knowledge_bases import add_text_file
 from utils.chat_ui import chat_input, conversation, expect_reply, listed_source, send
 
-pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.journey,
+    pytest.mark.requires_browser,
+    pytest.mark.requires_source,
+    # retrieval puts the file text into the prompt only with File Context ticked
+    pytest.mark.usefixtures("file_context_on"),
+]
 
 KNOWLEDGE_USER = {"workspace": {"knowledge": True}}
 

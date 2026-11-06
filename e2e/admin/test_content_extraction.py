@@ -35,7 +35,13 @@ from harness.listener import ReceivedRequest, json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import chat_input, expect_reply, send
 
-pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.journey,
+    pytest.mark.requires_browser,
+    pytest.mark.requires_source,
+    # retrieval puts the file text into the prompt only with File Context ticked
+    pytest.mark.usefixtures("file_context_on"),
+]
 
 EXTRACTED = "The tide table lists high water at 06:42 and 19:05."
 QUESTION = "When is high water according to the report?"

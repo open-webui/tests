@@ -156,6 +156,7 @@ def test_top_k_decides_how_many_pieces_of_a_file_the_model_gets(
     assert len(sent) == 2, sent
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_bypass_embedding_and_retrieval_gives_the_model_the_whole_file(
     admin_page, page_for, make_user, preserve, upstream
 ):

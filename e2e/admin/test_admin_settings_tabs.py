@@ -70,6 +70,7 @@ def _save(page: Page, settings: Locator) -> None:
     expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_saved_rag_template_wraps_an_uploaded_file(admin_page, preserve, upstream):
     preserve(RETRIEVAL_CONFIG)
     marker = f"Answer from these notes only, batch {uuid.uuid4().hex[:6]}."

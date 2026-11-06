@@ -67,6 +67,7 @@ from harness.access import make_group
 from harness.actors import Actor, admin_of
 from harness.backends import wait_until
 from harness.chat import ask
+from harness.file_context import file_context_ticked
 from harness.knowledge_bases import add_text_file
 from harness.listener import listening, text_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH, RETRIEVAL_CONFIG
@@ -310,6 +311,7 @@ def test_searching_the_base_lists_only_matching_files(page_for, curator):
     expect(_file_row(base, "moorings.txt")).to_be_visible()
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_removed_file_is_no_longer_sent_to_a_chat(page_for, curator, upstream):
     knowledge_id = _create_base(curator, _unique("Harbour"))
     _add_files(
@@ -344,6 +346,7 @@ def _sent_to_the_model(owner: Actor, upstream, knowledge_id: str, question: str)
     return json.dumps(next(filter(reply.answering(question), upstream.chat_requests())))
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_new_directory_holds_its_text_and_deleting_it_removes_that_text(
     page_for, curator, upstream
 ):
@@ -507,6 +510,7 @@ def test_a_directory_dragged_onto_another_shows_nested_with_its_files(page_for, 
     assert _level(curator, knowledge_id, moorings) == ([], ["gate.txt"])
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_deleting_a_directory_but_keeping_its_contents_moves_the_files_up(
     page_for, curator, upstream
 ):
@@ -563,7 +567,8 @@ def test_a_webpage_added_by_its_link_is_listed_and_its_text_reaches_a_chat(
     base = page.get_by_role("main")
     expect(base.locator("[data-knowledge-row]")).to_have_count(1)
     question = "when is high tide?"
-    sent = _sent_to_the_model(owner, launched.upstream, knowledge_id, question)
+    with file_context_ticked(owner):
+        sent = _sent_to_the_model(owner, launched.upstream, knowledge_id, question)
     assert "High tide at the harbour is at noon" in sent
     _delete_bases_of(owner)
 
@@ -725,6 +730,7 @@ def _sync_directory(page: Page, base: Locator, folder: Path, file_count: int) ->
     confirming.get_by_role("button", name="Confirm").click()
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_syncing_a_directory_mirrors_its_changes_into_the_base(
     page_for, curator, upstream, tmp_path: Path
 ):

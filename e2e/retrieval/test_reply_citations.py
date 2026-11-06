@@ -27,7 +27,14 @@ from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, listed_source, send
 
-pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.journey,
+    pytest.mark.requires_browser,
+    pytest.mark.requires_source,
+    # retrieval puts the file text into the prompt only with File Context ticked, and the
+    # passages carry a relevance only when a small file is not sent whole
+    pytest.mark.usefixtures("file_context_on", "chunked_retrieval"),
+]
 
 HERONS = ("herons.txt", "Grey herons wait motionless in the reeds at dawn.")
 OTTERS = ("otters.txt", "Otters slide down the muddy bank after rain.")

@@ -23,7 +23,8 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness import youtube
-from harness.actors import create_user
+from harness.actors import admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import LOCAL_WEB_FETCH, save_web_settings, web_settings_restored
 from utils.chat_ui import expect_reply, link_dialog, send
@@ -51,7 +52,9 @@ def youtube_instance(instance_with, fake_youtube):
         save_web_settings(
             client, YOUTUBE_LOADER_PROXY_URL=fake_youtube.proxy_url, YOUTUBE_LOADER_LANGUAGE=["en"]
         )
-        yield launched
+        # a transcript reaches the prompt only with File Context ticked
+        with file_context_ticked(admin_of(launched)):
+            yield launched
 
 
 def open_chat_about(page_for, launched, video_id: str):

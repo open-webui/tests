@@ -21,6 +21,7 @@ from harness.host_names import c_ares_refusal_problem
 from harness.instance import LaunchedInstance, launch
 from harness.listener import Listener, listening
 from harness.upstream import MOCK_MODEL_ID, MockUpstream
+from harness.web_retrieval import RETRIEVAL_CONFIG
 
 TEST_USER_EMAIL = "test@example.com"
 TEST_USER_PASSWORD = "testpassword123"
@@ -170,6 +171,15 @@ def preserve(request: pytest.FixtureRequest) -> Generator[Callable[..., None], N
         if restored.status_code != 200:
             failures.append(f"restoring {write_path} failed: {restored.text}")
     assert not failures, failures
+
+
+@pytest.fixture
+def chunked_retrieval(admin: Actor, preserve: Callable[..., None]) -> None:
+    """Small files searched by their chunks on the shared instance, not sent whole."""
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client:
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+    assert saved.status_code == 200, f"turning the whole-file threshold off failed: {saved.text}"
 
 
 @pytest.fixture

@@ -21,7 +21,13 @@ from playwright.sync_api import expect
 from harness import upstream as reply
 from utils.chat_ui import chat_input, conversation, expect_reply, listed_source, send
 
-pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+pytestmark = [
+    pytest.mark.journey,
+    pytest.mark.requires_browser,
+    pytest.mark.requires_source,
+    # retrieval puts the file text into the prompt only with File Context ticked
+    pytest.mark.usefixtures("file_context_on"),
+]
 
 FILE_NAME = "lake-house.txt"
 FILE_TEXT = "The lake house gate code is 4242.\nThe boat key hangs by the door.\n"

@@ -15,11 +15,11 @@ attached in a chat adding the Files tools once with every request after it appen
 an AGENTS.md or a skill that was in the terminal from the first turn. Each control checks where
 the break falls.
 
-Three more controls show breakers the page does not name, each rewriting the system message:
-a chat moved into a folder that has its own system prompt, a knowledge base attached to the chat
-after its first turn (its `<attached_knowledge>` list is in the system message, not in the
-message that carried it) and a skill shared with the person mid-chat (every readable skill is
-listed in the system message, whether or not it was attached).
+Two more controls show breakers the page does not name, each rewriting the system message:
+a chat moved into a folder that has its own system prompt and a skill shared with the person
+mid-chat (every readable skill is listed in the system message, whether or not it was attached).
+A knowledge base attached to the chat after its first turn only appends: since 003c9e085 it is
+named in the message that carried it, no longer in a system message list.
 
 `test_unchanged_memories_with_the_system_context_on_only_append` failed on dev 1c010b438 in CI:
 the reply stayed blank on the page; since de73bb830 the reply in a new chat sometimes stays blank
@@ -556,18 +556,23 @@ def test_moving_a_chat_into_a_folder_with_a_prompt_rewrites_the_prefix(
     assert broken is not None and "messages[0] (system)" in broken, broken
 
 
-def test_a_knowledge_base_attached_after_the_first_turn_rewrites_the_prefix(
+def test_a_knowledge_base_attached_after_the_first_turn_only_appends(
     page_for, cached_setup, admin, make_user, upstream
 ):
     person = make_user()
-    with admin.client() as client, knowledge_base(client, "Timetables", [EVERYONE_READS]):
+    with (
+        admin.client() as client,
+        knowledge_base(client, "Timetables", [EVERYONE_READS]) as knowledge_id,
+    ):
         page = page_for(person, path=f"/?models={cached_setup.id}")
         ask(page, upstream, "good morning", reply.text("Morning."))
         attach_from_menu(page, "Attach Knowledge", "Timetables")
         ask(page, upstream, "when does the bus leave?", reply.text("At 07:15."))
 
-    broken = first_break(chat_requests(upstream))
-    assert broken is not None and "messages[0] (system)" in broken, broken
+    requests = chat_requests(upstream)
+    assert knowledge_id not in str(requests[0]["messages"])
+    assert knowledge_id in str(requests[1]["messages"]), "the attached base never reached the model"
+    assert_append_only(requests)
 
 
 def test_a_skill_shared_with_the_person_mid_chat_rewrites_the_prefix(

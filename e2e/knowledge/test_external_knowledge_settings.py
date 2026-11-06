@@ -218,6 +218,7 @@ def _attach_and_ask(page: Page, knowledge_name: str, prefix: str) -> None:
     send(page, QUESTION)
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_chat_with_the_source_attached_is_sent_the_points_qdrant_found(
     page_for, curator, listener, upstream
 ):
@@ -355,6 +356,7 @@ def test_a_milvus_source_without_a_vector_field_is_not_tried(page_for, curator, 
     assert searches_of(milvus_service, collection) == []
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_chat_with_the_milvus_source_attached_is_sent_the_rows_milvus_found(
     page_for, curator, milvus_service, upstream
 ):

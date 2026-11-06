@@ -35,6 +35,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.file_context import file_context_ticked
 from harness.instance import resolve_backend, resolve_frontend_build
 from harness.upgraded_release import Upgraded, data_set_params, upgraded_release
 from utils.cached_chat import attach_from_menu, calling, turn_on_tool
@@ -309,14 +310,15 @@ def test_prompts_insert_their_text_by_their_command_for_their_readers(open_as, u
 
 def test_the_knowledge_base_answers_a_new_chat_from_its_old_file(open_as, upgraded, provider):
     knowledge = upgraded.manifest["knowledge"]
-    page = open_as("bob")
-    attach_from_menu(page, "Knowledge", knowledge["name"])
     question = "Which door hides the key?"
     provider.queue(reply.text("The blue one.", match=_the_chat_asking(question)))
 
-    send(page, question)
-
-    expect_reply(page, "The blue one.")
+    # the base's text reaches the prompt only with File Context ticked
+    with file_context_ticked(upgraded.actor("admin")):
+        page = open_as("bob")
+        attach_from_menu(page, "Knowledge", knowledge["name"])
+        send(page, question)
+        expect_reply(page, "The blue one.")
     [request] = [body for body in provider.chat_requests() if _the_chat_asking(question)(body)]
     sent = "\n".join(str(entry["content"]) for entry in request["messages"])
     assert knowledge["text"] in sent, "the old file's text did not reach the model"

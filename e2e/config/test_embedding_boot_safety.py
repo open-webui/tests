@@ -22,8 +22,10 @@ import pytest
 from playwright.sync_api import expect
 
 from harness import upstream as reply
-from harness.actors import create_user
+from harness.actors import admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.local_embedding import local_embedding_env, save_keyword_model
+from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [
@@ -47,9 +49,22 @@ def local_instance(instance_with, tmp_path_factory):
     return launched
 
 
-def test_a_knowledge_base_embedded_locally_answers_a_chat(page_for, local_instance):
+@pytest.fixture
+def retrieving(local_instance, preserve):
+    """The local instance retrieving up front: File Context ticked, no whole-file shortcut."""
+    preserve(RETRIEVAL_CONFIG, on=local_instance)
+    admin = admin_of(local_instance)
+    with admin.client() as client:
+        # a file under the whole-file threshold would reach the chat without its embedding
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+    assert saved.status_code == 200, saved.text
+    with file_context_ticked(admin):
+        yield local_instance
+
+
+def test_a_knowledge_base_embedded_locally_answers_a_chat(page_for, retrieving):
     name = f"Orchard {uuid.uuid4().hex[:6]}"
-    page = page_for(create_user(local_instance, role="admin"), path="/workspace/knowledge/create")
+    page = page_for(create_user(retrieving, role="admin"), path="/workspace/knowledge/create")
     creating = page.get_by_role("dialog")
     creating.get_by_role("textbox", name="What are you working on?").fill(name)
     creating.get_by_role("textbox", name="What are you trying to achieve?").fill("the orchard")
@@ -65,7 +80,7 @@ def test_a_knowledge_base_embedded_locally_answers_a_chat(page_for, local_instan
     )
     expect(base.get_by_role("button", name=re.compile(re.escape(FILE_NAME)))).to_be_visible()
 
-    upstream = local_instance.upstream
+    upstream = retrieving.upstream
     upstream.queue(reply.text("It is 5151.", match=reply.answering(QUESTION)))
     page.goto("/")
     chat_input(page).click()
