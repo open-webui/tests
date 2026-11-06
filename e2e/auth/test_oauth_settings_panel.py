@@ -21,6 +21,8 @@ from typing import Callable, Iterator
 import pytest
 from playwright.sync_api import Browser, Locator, Page, expect
 
+from conftest import AppConfig
+from e2e.conftest import _close_context, _new_context
 from harness.actors import admin_of
 from harness.oidc_provider import OAUTH_CONFIG_PATH, session_user, shared_provider, sso_env
 from utils.chat_ui import chat_input
@@ -50,22 +52,22 @@ def sso(instance_with, idp, preserve):
 
 
 @pytest.fixture
-def signed_out(browser: Browser, sso) -> Iterator[Callable[[], Page]]:
+def signed_out(
+    browser: Browser, sso, config: AppConfig, request: pytest.FixtureRequest
+) -> Iterator[Callable[[], Page]]:
     """`signed_out()` opens the auth page in a browser that has never signed in."""
     contexts = []
 
     def open_auth() -> Page:
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080}, base_url=sso.base_url
-        )
+        context = _new_context(browser, config, sso.base_url)
         contexts.append(context)
         page = context.new_page()
         page.goto("/auth")
         return page
 
     yield open_auth
-    for context in contexts:
-        context.close()
+    for index, context in enumerate(contexts):
+        _close_context(context, request.node, f"signed-out-{index}")
 
 
 def oauth_panel(page_for, sso) -> tuple[Page, Locator]:
@@ -95,6 +97,11 @@ def continue_with(page: Page, provider: str = "SSO") -> None:
     page.get_by_role("button", name=f"Continue with {provider}").click()
 
 
+def expect_signed_in(page: Page, config: AppConfig) -> None:
+    # the sign-in ends in a cold app load, which page_for also gives the navigation limit
+    expect(chat_input(page)).to_be_visible(timeout=config.navigation_timeout)
+
+
 def test_allowed_domains_turn_away_a_person_from_another_domain(page_for, sso, idp, signed_out):
     page, oauth = oauth_panel(page_for, sso)
     field(oauth, "Allowed Domains").fill("harbour.example")
@@ -109,7 +116,9 @@ def test_allowed_domains_turn_away_a_person_from_another_domain(page_for, sso, i
     expect(chat_input(visitor)).to_have_count(0)
 
 
-def test_allowed_domains_let_a_person_from_the_listed_domain_in(page_for, sso, idp, signed_out):
+def test_allowed_domains_let_a_person_from_the_listed_domain_in(
+    page_for, sso, idp, signed_out, config
+):
     page, oauth = oauth_panel(page_for, sso)
     field(oauth, "Allowed Domains").fill("harbour.example")
     save(page)
@@ -118,10 +127,12 @@ def test_allowed_domains_let_a_person_from_the_listed_domain_in(page_for, sso, i
     visitor = signed_out()
     continue_with(visitor)
 
-    expect(chat_input(visitor)).to_be_visible()
+    expect_signed_in(visitor, config)
 
 
-def test_role_mapping_makes_a_person_with_an_admin_role_an_admin(page_for, sso, idp, signed_out):
+def test_role_mapping_makes_a_person_with_an_admin_role_an_admin(
+    page_for, sso, idp, signed_out, config
+):
     page, oauth = oauth_panel(page_for, sso)
     set_switch(oauth, "Role Mapping")
     field(oauth, "Roles Claim").fill("roles")
@@ -132,12 +143,14 @@ def test_role_mapping_makes_a_person_with_an_admin_role_an_admin(page_for, sso, 
 
     visitor = signed_out()
     continue_with(visitor)
-    expect(chat_input(visitor)).to_be_visible()
+    expect_signed_in(visitor, config)
 
     assert session_user(sso, visitor.evaluate("localStorage.token"))["role"] == "admin"
 
 
-def test_group_mapping_puts_a_person_in_the_groups_of_their_claim(page_for, sso, idp, signed_out):
+def test_group_mapping_puts_a_person_in_the_groups_of_their_claim(
+    page_for, sso, idp, signed_out, config
+):
     group = f"Harbour crew {uuid.uuid4().hex[:6]}"
     page, oauth = oauth_panel(page_for, sso)
     set_switch(oauth, "Group Mapping")
@@ -148,7 +161,7 @@ def test_group_mapping_puts_a_person_in_the_groups_of_their_claim(page_for, sso,
 
     visitor = signed_out()
     continue_with(visitor)
-    expect(chat_input(visitor)).to_be_visible()
+    expect_signed_in(visitor, config)
 
     with admin_of(sso).client() as client:
         [created] = [
