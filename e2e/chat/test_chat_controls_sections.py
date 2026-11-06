@@ -1,11 +1,12 @@
 """Journey: the Files section of a chat's Controls and the permissions that shape the panel.
 
-A file attached to a message stays with the chat: later messages are sent with it too, and the
-Controls (under the chat input's Model controls) list it under Files. Removed there, it is no
-longer sent with the next message and stays removed after a reload. The Default permissions an
-admin keeps under Allow Chat Controls (Allow Chat Valves, Allow Chat System Prompt and Allow Chat
-Params) each take one section from a user's Controls when switched off, leaving the others, while
-an admin keeps all three.
+A file attached to a message stays with the chat: the model can still read it on later messages
+(through the chat file tools since bd6fc15be, which keeps File Context off with native function
+calling), and the Controls (under the chat input's Model controls) list it under Files. Removed
+there, the model can no longer read it on the next message and it stays removed after a reload.
+The Default permissions an admin keeps under Allow Chat Controls (Allow Chat Valves, Allow Chat
+System Prompt and Allow Chat Params) each take one section from a user's Controls when switched
+off, leaving the others, while an admin keeps all three.
 
 The tests that start their chat from the home page were red from 193cf225f (v0.12.5): the new
 chat stopped syncing with the server, so a removal under Files was never saved
@@ -28,7 +29,7 @@ import pytest
 from playwright.sync_api import Locator, Page, Response, expect
 
 from harness import upstream as reply
-from utils.cached_chat import attach
+from utils.cached_chat import attach, this_turns_tool_results
 from utils.chat_controls import control_button, open_chat_controls
 from utils.chat_ui import close_menu, expect_reply, send
 
@@ -75,13 +76,17 @@ def chat_saved(page: Page) -> Callable[[Response], bool]:
 
 
 def ask(page: Page, upstream) -> str:
-    """Sends a fresh question and returns everything the provider was sent for it."""
+    """Sends a fresh question; what the model found searching the chat's files for the notes."""
     question = f"what do my notes say? {uuid.uuid4().hex[:6]}"
-    upstream.queue(reply.text("Noted.", match=reply.answering(question)))
+    answering = reply.answering(question)
+    upstream.queue(
+        reply.tool_call("grep_chat_files", {"pattern": "harbour notes"}, match=answering),
+        reply.text("Noted.", match=answering),
+    )
     send(page, question)
     expect_reply(page, "Noted.")
-    [request] = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
-    return str(request["messages"])
+    *_, answered = [body for body in upstream.chat_requests() if answering(body)]
+    return str(this_turns_tool_results(answered))
 
 
 # --------------------------------------------------------------------------- files

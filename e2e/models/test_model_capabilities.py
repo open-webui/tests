@@ -4,18 +4,18 @@ A fresh admin unticks or ticks one capability of a preset on the scripted model 
 model editor, saves it and opens a chat on it, after a first look at the same chat with the switch
 as it was. Without Vision a picture attached in the chat input is refused with a notice and never
 attached, while an SVG, which the models docs page says is read as a document, still goes up.
-Without File Context the text of a file attached in the chat stays out of the message and the
-model is offered the chat file tools to read it instead. Without Citations the reply shows no
-sources, neither the inline source chips nor the sources row under it. With Usage ticked the
-provider is asked to report token counts (e2e/chat/test_reply_usage.py shows them). Without Image
-Generation the chat's Image switch is gone although the admin has image generation on. Without
-Memory a stored memory no longer reaches the model, as context or through the memory tools.
-Without Terminal the chat offers no terminal and one picked before is not handed to the model. An
-unticked capability is no longer offered under Default Features, which since 98f23b17a (#32963)
-lists only a capability whose global feature is on, so the test turns web search and image
-generation on first. File Upload, Web Search, Builtin
-Tools and the Time category are covered in e2e/models/test_model_editor.py, Status Updates in
-e2e/chat/test_status_updates.py; the Code Interpreter is legacy and left out.
+Without Preload files (File Context) the text of a file attached in the chat stays out of the
+message and the model is offered the chat file tools to read it instead. Without Citations the
+reply shows no sources, neither the inline source chips nor the sources row under it. With Usage
+ticked the provider is asked to report token counts (e2e/chat/test_reply_usage.py shows them).
+Without Image Generation the chat's Image switch is gone although the admin has image generation
+on. Without Memory a stored memory no longer reaches the model, as context or through the memory
+tools. Without Terminal the chat offers no terminal and one picked before is not handed to the
+model. An unticked capability is no longer offered under Default Features, which since 98f23b17a
+(#32963) lists only a capability whose global feature is on, so the test turns web search and image
+generation on first. File Upload, Web Search, Builtin Tools and the Time category are covered in
+e2e/models/test_model_editor.py, Status Updates in e2e/chat/test_status_updates.py; the Code
+Interpreter is legacy and left out.
 
 `test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tools` is red now and then
 on dev 896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload
@@ -155,12 +155,14 @@ def test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tool
     page_for, builder, preset, upstream
 ):
     page = page_for(builder)
+    # since bd6fc15be File Context (Preload files since 131783e54) starts off in native mode
+    switch_capability(page, preset, "Preload files", True)
     open_chat_on(page, preset)
     with_context = ask_about_attached_notes(page, upstream, "when does the ferry leave?")
     assert "06:40" in str(with_context["messages"])
     assert not CHAT_FILE_TOOLS & offered_tool_names(with_context)
 
-    switch_capability(page, preset, "File Context", False)
+    switch_capability(page, preset, "Preload files", False)
 
     open_chat_on(page, preset)
     without_context = ask_about_attached_notes(page, upstream, "when does the ferry go?")
@@ -181,6 +183,8 @@ def cited_answer(page: Page, upstream, question: str) -> Locator:
 
 def test_unticking_citations_shows_no_sources_with_the_reply(page_for, builder, preset, upstream):
     page = page_for(builder)
+    # the attached file's text is the source cited; Preload files starts off since bd6fc15be
+    switch_capability(page, preset, "Preload files", True)
     open_chat_on(page, preset)
     cited = cited_answer(page, upstream, "when does the ferry leave?")
     expect(cited.get_by_role("button", name=f"View source: {FERRY_NOTES[0]}")).to_be_visible()

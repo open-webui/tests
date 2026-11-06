@@ -2,8 +2,9 @@
 
 Max Upload Count and Max Upload Size refuse, in the chat input, the files beyond them, with the
 limit named. Allowed File Extensions refuses a file of another kind. Top K decides how many
-pieces of an uploaded file the model is given, and Bypass Embedding and Retrieval gives it the
-whole file.
+pieces of an uploaded file the model is given (with File Context ticked, which native function
+calling leaves off since bd6fc15be, and the full text threshold of 98f7a6146 at 0), and Bypass
+Embedding and Retrieval gives it the whole file.
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose retrieval settings update ignores
 Top K, Bypass Embedding and Retrieval, Max Upload Size, Max Upload Count and Allowed File
@@ -140,6 +141,7 @@ def test_a_file_of_an_allowed_kind_still_uploads(page_for, make_user):
     expect(page.get_by_role("button", name="notes.txt")).to_be_visible()
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_top_k_decides_how_many_pieces_of_a_file_the_model_gets(
     admin_page, page_for, make_user, preserve, upstream
 ):
@@ -149,6 +151,8 @@ def test_top_k_decides_how_many_pieces_of_a_file_the_model_gets(
     field(settings, "Chunk Size").fill("60")
     field(settings, "Chunk Overlap").fill("0")
     field(settings, "Top K").fill("2")
+    # files under the threshold are handed over whole since 98f7a6146
+    field(settings, "Full Text Threshold (Characters)").fill("0")
     save(admin_page, settings)
 
     sent = ask_about_the_guide(page_for(make_user()), upstream)

@@ -48,6 +48,7 @@ from harness import upstream as reply
 from harness.chat import ask
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, stop_button
 from utils.model_selector import model_search
 from utils.phone import (
@@ -245,7 +246,7 @@ def test_enter_starts_a_new_line_and_the_send_button_sends_both_lines(phone, ups
 
     tap_on_screen(send_button(phone))
     expect_reply(phone, "Both lines arrived.")
-    sent = request_answering(upstream, question)["messages"][-1]["content"]
+    sent = reply.conversation(request_answering(upstream, question))[-1]["content"]
     assert re.search(rf"{question}\n+and the second line", str(sent)), sent
 
 
@@ -308,8 +309,14 @@ def test_a_file_from_the_plus_menu_reaches_the_model(phone, upstream):
     expect_on_screen(attached)
 
     question = f"when is high tide {uuid.uuid4().hex[:6]}"
+    # File Context is off with native function calling, so the model reads the file with its tools
+    upstream.queue(
+        reply.tool_call("grep_chat_files", {"pattern": "tide"}, match=reply.answering(question))
+    )
     ask_by_tapping(phone, upstream, question, "At noon.")
-    assert "High tide comes at noon." in str(request_answering(upstream, question)["messages"])
+    *_, answered = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
+    found = this_turns_tool_results(answered)
+    assert "High tide comes at noon." in str(found), found
 
 
 def test_capture_opens_the_camera_and_the_photo_reaches_the_model(phone, upstream):
@@ -323,7 +330,7 @@ def test_capture_opens_the_camera_and_the_photo_reaches_the_model(phone, upstrea
 
     question = f"what colour is it {uuid.uuid4().hex[:6]}"
     ask_by_tapping(phone, upstream, question, "Red.")
-    content = request_answering(upstream, question)["messages"][-1]["content"]
+    content = reply.conversation(request_answering(upstream, question))[-1]["content"]
     images = [part for part in content if part.get("type") == "image_url"]
     assert len(images) == 1, content
 

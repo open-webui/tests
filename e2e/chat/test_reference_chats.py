@@ -1,7 +1,8 @@
 """Journey: another chat referenced from the composer's Reference Chats reaches the model.
 
 The composer's More menu lists the account's chats under Reference Chats, searched by title. The
-chat picked is attached to the message and sent with it, so the model is given that conversation,
+chat picked is attached to the message and sent with it, so the model can open that conversation
+(with its chat tools since bd6fc15be, which keeps File Context off with native function calling),
 and the reference stays on the message after a reload. The open chat is not offered as a reference
 to itself.
 
@@ -19,6 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.menus import late_menu_entry
 
@@ -60,9 +62,13 @@ def _chat_picker(page: Page) -> Locator:
 def test_a_referenced_chat_reaches_the_model_with_the_message(
     page_for, account, referenced, upstream
 ):
-    _, referenced_title = referenced
+    referenced_id, referenced_title = referenced
     question = f"when should I be at the pier? {uuid.uuid4().hex[:6]}"
-    upstream.queue(reply.text("Be there by half past seven.", match=reply.answering(question)))
+    answering = reply.answering(question)
+    upstream.queue(
+        reply.tool_call("view_chat", {"chat_id": referenced_id}, match=answering),
+        reply.text("Be there by half past seven.", match=answering),
+    )
     page = page_for(account)
 
     picker = _chat_picker(page)
@@ -71,9 +77,11 @@ def test_a_referenced_chat_reaches_the_model_with_the_message(
     send(page, question)
 
     expect_reply(page, "Be there by half past seven.")
-    [request] = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
-    sent = " ".join(str(message.get("content")) for message in request["messages"])
-    assert REFERENCED_FACT in sent, f"the referenced chat never reached the model: {sent}"
+    asked, answered = [body for body in upstream.chat_requests() if answering(body)]
+    question_sent = str(reply.conversation(asked)[-1]["content"])
+    assert f'type="chat" id="{referenced_id}"' in question_sent, question_sent
+    opened = this_turns_tool_results(answered)
+    assert REFERENCED_FACT in str(opened), f"the referenced chat never reached the model: {opened}"
 
     page.reload()
     expect_reply(page, "Be there by half past seven.")

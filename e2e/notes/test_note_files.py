@@ -1,11 +1,12 @@
 """Journey: files on a note, as its owner, a reader and a writer meet them.
 
 Upload files in the note's menu puts a file into the note as a chip in its text; the chip opens
-the file's text, and the note's chat is given that text on every message. A reader of the shared
-note sees the chip and opens it but cannot detach it, and the note's chat is the reader's to use
-as well; a writer detaches the file for everyone. A file over the admin's Max Upload Size is
-refused with the limit named, and a picture pasted into the note is shrunk to the size the
-person's Image Compression asks for.
+the file's text, and the note's chat can read that text on every message (through the chat file
+tools since bd6fc15be, which keeps File Context off with native function calling). A reader of
+the shared note sees the chip and opens it but cannot detach it, and the note's chat is the
+reader's to use as well; a writer detaches the file for everyone. A file over the admin's Max
+Upload Size is refused with the limit named, and a picture pasted into the note is shrunk to the
+size the person's Image Compression asks for.
 
 A reader's chat on the note is given the note's file too (docs: "Attached files feed the note's
 chat", and read access is enough to open one): the file belongs to the owner and fix b612c8847
@@ -60,6 +61,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.actors import Actor
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import expect_reply, send
 from utils.note_content import note_files, note_images
 from utils.note_menu import open_note_menu
@@ -163,14 +165,18 @@ def note_with_file(page_for, make_user) -> SharedNote:
     return SharedNote(owner, reader, writer, note_id)
 
 
-def ask_note_chat(page: Page, upstream, question: str) -> dict:
-    """Ask in the note's chat panel; returns what the provider was sent for the question."""
-    upstream.queue(reply.text("Noted.", match=reply.answering(question)))
+def ask_note_chat(page: Page, upstream, question: str) -> list[dict]:
+    """Ask in the note's chat panel; what the model found searching the chat's files for it."""
+    answering = reply.answering(question)
+    upstream.queue(
+        reply.tool_call("grep_chat_files", {"pattern": "pilot boat"}, match=answering),
+        reply.text("Noted.", match=answering),
+    )
     page.get_by_role("main").get_by_role("button", name="Chat", exact=True).click()
     send(page, question)
     expect_reply(page, "Noted.")
-    [request] = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
-    return request
+    *_, answered = [body for body in upstream.chat_requests() if answering(body)]
+    return this_turns_tool_results(answered)
 
 
 def test_an_uploaded_file_shows_on_the_note_and_opens_its_text(note_with_file, page_for):
@@ -216,11 +222,9 @@ def test_the_owners_note_chat_is_given_the_notes_file(note_with_file, page_for, 
     page = page_for(note_with_file.owner)
     open_note(page, note_with_file.note_id)
 
-    request = ask_note_chat(
-        page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}"
-    )
+    found = ask_note_chat(page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}")
 
-    assert FILE_TEXT in json.dumps(request["messages"])
+    assert FILE_TEXT in json.dumps(found), found
 
 
 def test_a_reader_opens_the_notes_file_but_cannot_detach_it(note_with_file, page_for):
@@ -261,11 +265,9 @@ def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, u
     page = page_for(note_with_file.reader)
     open_note(page, note_with_file.note_id)
 
-    request = ask_note_chat(
-        page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}"
-    )
+    found = ask_note_chat(page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}")
 
-    assert FILE_TEXT in json.dumps(request["messages"]), (
+    assert FILE_TEXT in json.dumps(found), (
         "a reader's chat on the shared note was not given the note's file; the owner's is"
     )
 

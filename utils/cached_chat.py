@@ -5,7 +5,8 @@ a tool round and the answer after it are one call. `attach` uploads a file throu
 input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
 `pick_terminal` picks an Open Terminal for the chat before the first message and
 `open_new_terminal` opens a shell of it in the side panel; `chat_requests` is every streamed
-request the provider received, the ones the cache sees.
+request the provider received, the ones the cache sees, and `this_turns_tool_results` what the
+model's own tool calls returned since the last question.
 """
 
 from __future__ import annotations
@@ -94,9 +95,16 @@ def called_tools(request: dict) -> set[str]:
     """Every tool the model called in the conversation `request` carries."""
     return {
         call["function"]["name"]
-        for message in request["messages"]
+        for message in reply.conversation(request)
         for call in message.get("tool_calls") or []
     }
+
+
+def this_turns_tool_results(request: dict) -> list[dict]:
+    """The results of the tools the model called since the last question in `request`."""
+    turn = reply.conversation(request)
+    asked = max(index for index, entry in enumerate(turn) if entry["role"] == "user")
+    return [entry for entry in turn[asked:] if entry["role"] == "tool"]
 
 
 def tool_results(request: dict) -> str:

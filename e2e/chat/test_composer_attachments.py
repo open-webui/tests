@@ -1,10 +1,12 @@
 """Journey: attaching to a message by dropping, pasting and removing files in the composer.
 
-A text file dropped on the message box is attached and its text reaches the model; one removed from
-the composer before sending never does. A chat dragged from the sidebar onto the composer is
-attached as a reference. A picture pasted into the message box is sent to the model as an image,
-and with Paste Large Text as File on, a long paste becomes an attached file instead of message
-text. Each is read in what the model was sent.
+A text file dropped on the message box is attached and the model can read its text; one removed
+from the composer before sending never reaches it. A chat dragged from the sidebar onto the
+composer is attached as a reference the model can open. A picture pasted into the message box is
+sent to the model as an image, and with Paste Large Text as File on, a long paste becomes an
+attached file instead of message text. Each is read in what the model was sent; since bd6fc15be
+File Context is off with native function calling, so the model reads a file or a chat through its
+tools and the scripted model calls them.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose composer ignores dropped files,
 dropped sidebar items and pasted files, and whose remove button leaves the file attached, every
@@ -25,6 +27,8 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from harness.upstream import Reply
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -45,15 +49,23 @@ def _request_answering(upstream, question: str) -> dict:
     return request
 
 
-def _text_sent(upstream, question: str) -> str:
-    request = _request_answering(upstream, question)
-    return json.dumps(request["messages"])
+def _read_back(upstream, question: str) -> str:
+    """What the model's own tool call returned while answering `question`."""
+    *_, answered = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
+    return json.dumps(this_turns_tool_results(answered))
 
 
-def _ask(page: Page, upstream, question: str) -> None:
-    upstream.queue(reply.text("Noted.", match=reply.answering(question)))
+def _ask(page: Page, upstream, question: str, *reading: Reply) -> None:
+    answering = reply.answering(question)
+    for call in reading:
+        call.match = answering
+    upstream.queue(*reading, reply.text("Noted.", match=answering))
     send(page, question)
     expect_reply(page, "Noted.")
+
+
+def _searching_files(pattern: str) -> Reply:
+    return reply.tool_call("grep_chat_files", {"pattern": pattern})
 
 
 def _attach_by_upload(page: Page, name: str, text: str) -> None:
@@ -84,10 +96,10 @@ def test_a_file_removed_before_sending_never_reaches_the_model(page_for, make_us
     expect(page.get_by_text("removed.txt")).to_have_count(0)
 
     question = _question()
-    _ask(page, upstream, question)
-    sent = _text_sent(upstream, question)
-    assert "lighthouses" in sent, sent
-    assert "submarines" not in sent, sent
+    _ask(page, upstream, question, _searching_files("file mentions"))
+    found = _read_back(upstream, question)
+    assert "lighthouses" in found, found
+    assert "submarines" not in found, found
 
 
 def test_a_file_dropped_on_the_chat_is_attached_and_reaches_the_model(
@@ -107,8 +119,8 @@ def test_a_file_dropped_on_the_chat_is_attached_and_reaches_the_model(
     expect(page.get_by_role("button").filter(has_text="dropped.txt")).to_be_visible()
 
     question = _question()
-    _ask(page, upstream, question)
-    assert "kingfishers" in _text_sent(upstream, question)
+    _ask(page, upstream, question, _searching_files("dropped file"))
+    assert "kingfishers" in _read_back(upstream, question)
 
 
 def test_a_sidebar_chat_dropped_on_the_composer_is_referenced(page_for, make_user, upstream):
@@ -138,8 +150,10 @@ def test_a_sidebar_chat_dropped_on_the_composer_is_referenced(page_for, make_use
     expect(page.get_by_role("button").filter(has_text="Parking")).to_be_visible()
 
     question = _question()
-    _ask(page, upstream, question)
-    assert "bay twelve" in _text_sent(upstream, question)
+    _ask(page, upstream, question, reply.tool_call("view_chat", {"chat_id": chat_id}))
+    asked = next(filter(reply.answering(question), upstream.chat_requests()))
+    assert f'type="chat" id="{chat_id}"' in str(reply.conversation(asked)[-1]["content"])
+    assert "bay twelve" in _read_back(upstream, question)
 
 
 def test_a_pasted_picture_is_sent_to_the_model_as_an_image(page_for, make_user, upstream):
@@ -159,7 +173,7 @@ def test_a_pasted_picture_is_sent_to_the_model_as_an_image(page_for, make_user, 
 
     question = _question()
     _ask(page, upstream, question)
-    content = _request_answering(upstream, question)["messages"][-1]["content"]
+    content = reply.conversation(_request_answering(upstream, question))[-1]["content"]
     images = [part for part in content if part.get("type") == "image_url"]
     assert len(images) == 1, content
     # the clipboard re-encodes the picture, so its header is compared and not its bytes
@@ -184,5 +198,5 @@ def test_a_long_paste_becomes_an_attached_file_when_the_account_asks(page_for, m
     expect(page.get_by_role("button").filter(has_text="Pasted_Text_")).to_be_visible()
     expect(chat_input(page)).not_to_contain_text("tide table")
     question = _question()
-    _ask(page, upstream, question)
-    assert "tide table" in _text_sent(upstream, question)
+    _ask(page, upstream, question, _searching_files("for the harbour"))
+    assert "tide table" in _read_back(upstream, question)

@@ -2,9 +2,11 @@
 
 Attach Files in the chat input's menu lists the account's earlier uploads, narrowed by a search on
 part of the name; picking one attaches it to a new chat without uploading it again, and the model
-is given its text. A follow-up in the chat a file was sent in is given the file again. Once the
+can read its text. A follow-up in the chat a file was sent in can read the file again. Once the
 file is deleted, that chat still opens with the file named on its message, a follow-up is answered
-without the file's text and the file is gone from Attach Files.
+without the file's text and the file is gone from Attach Files. Since bd6fc15be File Context is
+off with native function calling, so the scripted model reads the file through the chat file
+tools.
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose Attach Files list
 never searches and whose picked file is never attached, the reuse and search tests fail; in a
@@ -23,7 +25,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
-from utils.cached_chat import attach, attach_from_menu
+from utils.cached_chat import attach, attach_from_menu, this_turns_tool_results
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.menus import late_menu_entry
 
@@ -49,13 +51,17 @@ def file_ids(account: Actor) -> list[str]:
 
 
 def ask(page: Page, upstream, question: str) -> str:
-    """Send `question` and return everything the provider was sent for it."""
-    upstream.queue(reply.text("Noted.", match=reply.answering(question)))
+    """Send `question`; what the model found searching the chat's files for the harbour map."""
+    answering = reply.answering(question)
+    upstream.queue(
+        reply.tool_call("grep_chat_files", {"pattern": "harbour map"}, match=answering),
+        reply.text("Noted.", match=answering),
+    )
     send(page, question)
     expect(conversation(page).get_by_text(question)).to_be_visible()
     expect_reply(page, "Noted.")
-    [request] = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
-    return json.dumps(request["messages"])
+    *_, answered = [body for body in upstream.chat_requests() if answering(body)]
+    return json.dumps(this_turns_tool_results(answered))
 
 
 def question(text: str) -> str:

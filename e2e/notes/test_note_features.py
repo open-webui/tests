@@ -40,6 +40,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import Actor
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.menus import late_menu_entry
 from utils.notes_page import note_row
@@ -246,9 +247,14 @@ def test_a_note_attached_in_the_composer_reaches_the_model(page_for, make_user, 
     author = make_user()
     title = _unique("Allergies")
     note_text = "Sam is allergic to hazelnuts"
-    _create_note(author, title, note_text)
+    note_id = _create_note(author, title, note_text)
     question = f"what should I avoid baking? {uuid.uuid4().hex[:6]}"
-    upstream.queue(reply.text("Skip the hazelnuts.", match=reply.answering(question)))
+    answering = reply.answering(question)
+    # File Context is off with native function calling, so the model opens the note with its tools
+    upstream.queue(
+        reply.tool_call("view_note", {"note_id": note_id}, match=answering),
+        reply.text("Skip the hazelnuts.", match=answering),
+    )
     page = page_for(author)
 
     picker = _open_note_picker(page)
@@ -256,9 +262,11 @@ def test_a_note_attached_in_the_composer_reaches_the_model(page_for, make_user, 
     send(page, question)
 
     expect_reply(page, "Skip the hazelnuts.")
-    [request] = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
-    sent = " ".join(str(message.get("content")) for message in request["messages"])
-    assert note_text in sent, f"the note never reached the model: {sent}"
+    asked, answered = [body for body in upstream.chat_requests() if answering(body)]
+    question_sent = str(reply.conversation(asked)[-1]["content"])
+    assert f'type="note" id="{note_id}"' in question_sent, question_sent
+    opened = this_turns_tool_results(answered)
+    assert note_text in str(opened), f"the note never reached the model: {opened}"
 
 
 @pytest.mark.regression
