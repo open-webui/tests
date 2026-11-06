@@ -91,6 +91,50 @@ def mentioning(prompt: str) -> Callable[[dict], bool]:
     return matches
 
 
+# Since 003c9e085 Open WebUI hands the model its context as tool rounds of its own before a reply
+CONTEXT_TOOLS = frozenset({"list_attached_knowledge", "list_available_skills", "recall_memories"})
+
+
+def conversation(body: dict) -> list[dict]:
+    """The messages of `body` without the context rounds Open WebUI adds before each reply."""
+    messages = body.get("messages", [])
+    context_ids = {
+        call["id"]
+        for entry in messages
+        for call in entry.get("tool_calls") or []
+        if call["function"]["name"] in CONTEXT_TOOLS
+    }
+    kept = []
+    for entry in messages:
+        if entry.get("role") == "tool" and entry.get("tool_call_id") in context_ids:
+            continue
+        if not entry.get("tool_calls"):
+            kept.append(entry)
+            continue
+        calls = [call for call in entry["tool_calls"] if call["id"] not in context_ids]
+        if calls:
+            kept.append({**entry, "tool_calls": calls})
+        elif entry.get("content"):
+            kept.append({key: value for key, value in entry.items() if key != "tool_calls"})
+    return kept
+
+
+def context_results(body: dict, name: str) -> list[str]:
+    """What each `name` context round in `body` gave the model, oldest first."""
+    messages = body.get("messages", [])
+    call_ids = {
+        call["id"]
+        for entry in messages
+        for call in entry.get("tool_calls") or []
+        if call["function"]["name"] == name
+    }
+    return [
+        str(entry["content"])
+        for entry in messages
+        if entry.get("role") == "tool" and entry.get("tool_call_id") in call_ids
+    ]
+
+
 @dataclass
 class UpstreamRequest:
     method: str

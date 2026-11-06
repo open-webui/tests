@@ -52,7 +52,7 @@ def test_a_follow_up_is_sent_with_the_earlier_turn(chat_page, upstream):
     send(chat_page, "second question")
     expect_reply(chat_page, "second answer")
 
-    sent = [entry["content"] for entry in upstream.chat_requests()[-1]["messages"]]
+    sent = [entry["content"] for entry in reply.conversation(upstream.chat_requests()[-1])]
     assert sent[-3:] == ["first question", "first answer", "second question"]
 
 
@@ -98,7 +98,7 @@ def test_editing_a_sent_message_resends_it(chat_page, upstream):
     chat_page.locator("#confirm-edit-message-button").click()
 
     expect_reply(chat_page, "answer to the fix")
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == "what is 2+2"
+    assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == "what is 2+2"
 
 
 def test_reasoning_is_folded_away_above_the_answer(chat_page, upstream):
