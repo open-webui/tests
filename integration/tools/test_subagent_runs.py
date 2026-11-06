@@ -61,7 +61,7 @@ def offered(request: dict) -> set[str]:
 
 
 def tool_result(request: dict) -> str:
-    last = request["messages"][-1]
+    last = reply.conversation(request)[-1]
     assert last["role"] == "tool", last
     return last["content"]
 
@@ -97,7 +97,7 @@ def test_the_subagent_gets_the_task_with_its_context_and_no_way_to_delegate_agai
 
     [sub] = [r for r in upstream.chat_requests() if reply.answering(task)(r)]
     parent = upstream.chat_requests()[0]
-    system, user = sub["messages"][0], sub["messages"][-1]
+    system, user = sub["messages"][0], reply.conversation(sub)[-1]
     assert system["role"] == "system"
     assert system["content"].startswith(DEFAULT_PROMPT_START)
     assert user["content"] == f"{task}\n\n## Context\nthe ledger is in March"

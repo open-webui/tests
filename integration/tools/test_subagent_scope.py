@@ -71,6 +71,7 @@ from harness.terminal_server import (
     read_grant,
     serving_terminal,
 )
+from harness.tool_calls import skill_list, without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -132,6 +133,11 @@ def system_text(request: dict) -> str:
     return "\n".join(m["content"] for m in request["messages"] if m["role"] == "system")
 
 
+def told(request: dict) -> str:
+    """The system prompt and the skill list the model got."""
+    return system_text(request) + "\n" + skill_list(request)
+
+
 def delegating(upstream, prompt: str, task: str, *sub_steps: reply.Reply, **arguments) -> None:
     """Script the delegation, the sub-agent's steps (the last one an answer) and the wrap-up."""
     upstream.queue(
@@ -156,7 +162,7 @@ def sub_answer(task: str) -> reply.Reply:
 
 
 def tool_result(request: dict) -> str:
-    last = request["messages"][-1]
+    last = reply.conversation(request)[-1]
     assert last["role"] == "tool", last
     return last["content"]
 
@@ -233,8 +239,8 @@ def test_a_skill_the_account_may_read_is_listed_to_the_subagent_and_loads(
 
     first, *_, last = sub_requests(upstream, task)
     assert "view_skill" in offered(first)
-    assert f"<id>{skill_id}</id>" in system_text(first)
-    assert f"<id>{hidden_id}</id>" not in system_text(first)
+    assert f"<id>{skill_id}</id>" in told(first)
+    assert f"<id>{hidden_id}</id>" not in told(first)
     assert instructions in tool_result(last)
 
 
@@ -246,7 +252,7 @@ def test_a_subagent_is_told_of_each_skill_once(subagents_on, skills, make_user, 
         ask(chat, prompt)
 
     [sub] = sub_requests(upstream, task)
-    assert system_text(sub).count(f"<id>{skill_id}</id>") == 1, (
+    assert told(sub).count(f"<id>{skill_id}</id>") == 1, (
         "the skill list of the parent's system prompt and the sub-agent's own both name the skill"
     )
 
@@ -433,8 +439,9 @@ def test_a_filter_the_person_switched_on_runs_on_the_subagent_too(
             ask(chat, plain_prompt)
 
     [sub], [plain_sub] = sub_requests(upstream, task), sub_requests(upstream, plain_task)
-    assert sub["messages"][-1]["content"].endswith("FILTER-MARK"), "the filter did not run"
-    assert "FILTER-MARK" not in plain_sub["messages"][-1]["content"]
+    asked, plain_asked = reply.conversation(sub)[-1], reply.conversation(plain_sub)[-1]
+    assert asked["content"].endswith("FILTER-MARK"), "the filter did not run"
+    assert "FILTER-MARK" not in plain_asked["content"]
 
 
 def test_a_subagent_reads_the_memories_but_cannot_write_them(subagents_on, make_user, upstream):
@@ -512,7 +519,7 @@ def test_the_subagent_gets_none_of_the_conversation_before_its_task(
         ask(chat, prompt, history=history)
 
     [sub] = sub_requests(upstream, task)
-    assert [m["role"] for m in sub["messages"]] == ["system", "user"]
+    assert [m["role"] for m in reply.conversation(sub)] == ["system", "user"]
     assert earlier not in json.dumps(sub["messages"])
     assert prompt not in json.dumps(sub["messages"])
 
@@ -584,7 +591,11 @@ def test_a_subagent_has_no_tool_the_account_may_not_use(
 
 
 def _dispatch_handle(message: dict) -> dict:
-    [output] = [item for item in message["output"] if item["type"] == "function_call_output"]
+    [output] = [
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    ]
     return json.loads(output["output"][0]["text"])
 
 
@@ -701,7 +712,7 @@ def _delegate_from(client, upstream, chat_id: str | None, task: str, answer: str
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         requests = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)]
-        if any(r["messages"][-1]["role"] == "tool" for r in requests):
+        if any(reply.conversation(r)[-1]["role"] == "tool" for r in requests):
             return turn.chat_id
         time.sleep(0.1)
     raise AssertionError("the delegation never came back to the parent")

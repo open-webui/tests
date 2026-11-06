@@ -144,7 +144,7 @@ def _sub_agent_requests(upstream, task: str) -> list[dict]:
 
 
 def _tool_results(request: dict) -> list[str]:
-    return [entry["content"] for entry in request["messages"] if entry["role"] == "tool"]
+    return [entry["content"] for entry in reply.conversation(request) if entry["role"] == "tool"]
 
 
 def _system_messages(request: dict) -> list[str]:
@@ -240,7 +240,8 @@ def test_the_max_iterations_stops_a_sub_agent_that_keeps_calling_tools(
 
     assert len(_sub_agent_requests(upstream, task)) == 3
     [result] = _tool_results(upstream.chat_requests()[-1])
-    assert "Tool-call limit reached (2 iterations)" in result
+    # worded "Tool-call limit reached (2 iterations)" before dev d87837372
+    assert result == "Error: Tool-call iteration limit reached.", result
 
 
 def test_a_larger_max_iterations_lets_the_sub_agent_finish(
