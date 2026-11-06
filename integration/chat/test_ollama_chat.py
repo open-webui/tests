@@ -29,6 +29,8 @@ from harness.ollama_provider import (
     connect_ollama,
     serve_ollama,
 )
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -57,8 +59,12 @@ def _output_text(message: dict, kind: str) -> list[str]:
     ]
 
 
-def _without_tools(sent: dict) -> dict:
-    return {key: value for key, value in sent.items() if key != "tools"}
+def _payload(sent: dict) -> dict:
+    """The request without its tools and the context rounds Open WebUI adds before a reply."""
+    return {
+        **{key: value for key, value in sent.items() if key != "tools"},
+        "messages": conversation(sent),
+    }
 
 
 def test_a_streamed_reply_keeps_its_thinking_text_and_counters(ollama):
@@ -81,7 +87,7 @@ def test_a_streamed_reply_keeps_its_thinking_text_and_counters(ollama):
     assert (usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (12, 5, 17)
     assert usage["response_token/s"] == 5.0
     [sent] = server.chat_requests()
-    assert _without_tools(sent) == {
+    assert _payload(sent) == {
         "model": OLLAMA_MODEL,
         "messages": [{"role": "user", "content": "hi"}],
         "stream": True,
@@ -121,7 +127,7 @@ def test_the_history_reaches_ollama_with_images_and_thinking(ollama):
         history=[{"role": "system", "content": SYSTEM_PROMPT}],
     )
 
-    assert server.chat_requests()[-1]["messages"] == [
+    assert conversation(server.chat_requests()[-1]) == [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "what is this?", "images": ["AAAA"]},
         {"role": "assistant", "content": "a cat", "thinking": "looked closely"},
@@ -140,7 +146,9 @@ def test_a_tool_call_runs_and_its_result_goes_back_in_ollamas_shape(ollama):
     _, message = ask(client, "what time is it?", model=OLLAMA_MODEL)
 
     assert message["content"] == "It is late."
-    [stored_call] = [item for item in message["output"] if item["type"] == "function_call"]
+    [stored_call] = [
+        item for item in without_hidden_calls(message["output"]) if item["type"] == "function_call"
+    ]
     assert stored_call["name"] == "get_current_timestamp"
     first, follow_up = server.chat_requests()
     assert first["stream"] is True

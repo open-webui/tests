@@ -19,6 +19,8 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.python_tools import python_tool
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -48,21 +50,22 @@ def shout_twice(admin, make_user, upstream, first_id: str, second_id: str) -> di
 
 def stored_pairs(message: dict) -> list[tuple[str, str]]:
     """Each stored call's text argument with the result stored under its id."""
+    output = without_hidden_calls(message["output"])
     results = {
         item["call_id"]: item["output"][0]["text"]
-        for item in message["output"]
+        for item in output
         if item["type"] == "function_call_output"
     }
     return [
         (json.loads(item["arguments"])["text"], results.get(item["call_id"]))
-        for item in message["output"]
+        for item in output
         if item["type"] == "function_call"
     ]
 
 
 def sent_pairs(upstream) -> list[tuple[str, str]]:
     """Each call the provider was sent last, by its text argument, with the result sent for it."""
-    messages = upstream.chat_requests()[-1]["messages"]
+    messages = conversation(upstream.chat_requests()[-1])
     results = {
         entry["tool_call_id"]: entry["content"] for entry in messages if entry["role"] == "tool"
     }
@@ -86,7 +89,7 @@ def test_calls_reusing_an_id_reach_the_model_paired_with_their_results(admin, ma
     assert sent_pairs(upstream) == [("first", "FIRST"), ("second", "SECOND")]
     call_ids = [
         call["id"]
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in conversation(upstream.chat_requests()[-1])
         for call in entry.get("tool_calls") or []
     ]
     assert len(set(call_ids)) == 2, call_ids
@@ -99,5 +102,9 @@ def test_unique_call_ids_are_kept_as_the_provider_sent_them(admin, make_user, up
     message = shout_twice(admin, make_user, upstream, "call_a", "call_b")
 
     assert stored_pairs(message) == [("first", "FIRST"), ("second", "SECOND")]
-    stored_ids = [item["call_id"] for item in message["output"] if item["type"] == "function_call"]
+    stored_ids = [
+        item["call_id"]
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call"
+    ]
     assert stored_ids == ["call_a", "call_b"]

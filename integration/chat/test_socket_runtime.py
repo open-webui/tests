@@ -34,6 +34,7 @@ from harness.actors import admin_of, create_user
 from harness.chat import ask
 from harness.python_tools import python_tool
 from harness.socket_client import connected
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -166,7 +167,7 @@ def _tool_results(upstream) -> list[str]:
     return [
         entry["content"]
         for sent in upstream.chat_requests()
-        for entry in sent["messages"]
+        for entry in conversation(sent)
         if entry["role"] == "tool"
     ]
 

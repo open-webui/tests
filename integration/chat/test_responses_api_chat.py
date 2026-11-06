@@ -25,6 +25,7 @@ from harness.chat import ask
 from harness.chat_history import seed_chat
 from harness.listener import json_answer, text_answer
 from harness.second_provider import OPENAI_CONFIG
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -43,7 +44,7 @@ def responses(admin, preserve, listener):
 
 
 def _items(message: dict, kind: str) -> list[dict]:
-    return [item for item in message["output"] if item["type"] == kind]
+    return [item for item in without_hidden_calls(message["output"]) if item["type"] == kind]
 
 
 def test_a_request_is_sent_in_the_responses_shape(responses):
@@ -62,7 +63,7 @@ def test_a_request_is_sent_in_the_responses_shape(responses):
 
     [sent] = provider.sent()
     assert sent["instructions"] == SYSTEM_PROMPT
-    assert sent["input"] == [
+    assert responses_api.conversation(sent) == [
         {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}
     ]
     assert (sent["max_output_tokens"], sent["temperature"], sent["stream"]) == (50, 0.5, True)
@@ -104,7 +105,7 @@ def test_reasoning_a_tool_call_and_the_answer_are_stored(responses):
     usage = message["usage"]
     assert (usage["input_tokens"], usage["output_tokens"], usage["total_tokens"]) == (30, 6, 36)
 
-    follow_up = provider.sent()[-1]["input"]
+    follow_up = responses_api.conversation(provider.sent()[-1])
     assert follow_up[-2] == {
         "type": "function_call",
         "call_id": "call_1",
@@ -137,7 +138,7 @@ def test_an_earlier_turn_is_replayed_as_input_items(responses):
 
     ask(client, "and now?", model=MODEL, chat_id=chat_id, parent_id=last_id)
 
-    first, replayed, latest = provider.sent()[-1]["input"]
+    first, replayed, latest = responses_api.conversation(provider.sent()[-1])
     assert first["role"] == "user"
     assert first["content"] == [
         {"type": "input_text", "text": "what is this?"},

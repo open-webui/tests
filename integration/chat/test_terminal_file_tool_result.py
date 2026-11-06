@@ -25,7 +25,10 @@ Twin of unit/chat/test_terminal_file_tool_result.py.
 
 Discriminates: passes on dev ef67cc3fa and 05e115366; with `inline is not True` restored to the
 bail-out, the calls without `inline: true` reach the model as the raw terminal answer, and with
-`displayed` set from a truthy `inline`, the string and 1 calls are flagged as displayed. On dev
+`displayed` set from a truthy `inline`, the string and 1 calls are flagged as displayed. Since
+d87837372 a string argument is read as the boolean the tool's schema asks for, so `"true"` now
+means inline: the string case sends `"false"` and only the 1 call still shows the truthy check;
+passes on dev da9bca0fc. On dev
 c5981aaea, a file id call routed to the terminal instead of the built-in tool turned the chat or
 knowledge file test red. The Vision-off read passes on the #33345 branch 1a02165c1 and fails on
 dev 3b8205505 (the PNG is sent to a model that cannot read it).
@@ -45,6 +48,7 @@ from harness.listener import json_answer
 from harness.model_presets import preset_with_capabilities
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.tool_calls import run_tool
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -109,7 +113,7 @@ def _tool_result(terminal, admin, upstream, name: str, arguments: dict) -> dict:
 
 
 @pytest.mark.parametrize(
-    "inline", [False, None, "true", 1], ids=["false", "absent", "string", "one"]
+    "inline", [False, None, "false", 1], ids=["false", "absent", "string", "one"]
 )
 def test_a_display_file_call_without_inline_true_still_resolves_the_file(
     terminal, admin, upstream, inline
@@ -245,7 +249,7 @@ def _read_the_chart(terminal, admin, upstream, capabilities: dict) -> list[dict]
     requests = [
         request for request in upstream.chat_requests() if reply.mentioning(prompt)(request)
     ]
-    follow_up = requests[-1]["messages"] if requests else []
+    follow_up = conversation(requests[-1]) if requests else []
     assert any(entry["role"] == "tool" for entry in follow_up), f"read_file never ran: {follow_up}"
     return follow_up
 

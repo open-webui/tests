@@ -30,6 +30,8 @@ from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
 from harness.plugins import installed_function
 from harness.raw_provider import RAW_MODEL_ID, chunk, connect
 from harness.second_provider import OPENAI_CONFIG
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import conversation
 
 pytestmark = [
     pytest.mark.journey,
@@ -125,7 +127,9 @@ def _streamed_calls(frames: list[dict]) -> list[dict]:
 
 
 def _stored_calls(message: dict) -> list[dict]:
-    return [item for item in message["output"] if item["type"] == "function_call"]
+    return [
+        item for item in without_hidden_calls(message["output"]) if item["type"] == "function_call"
+    ]
 
 
 def _user_texts(sent: dict) -> list[str]:
@@ -161,7 +165,7 @@ def test_an_ollama_tool_call_with_non_ascii_arguments_is_stored_and_replayed(oll
     assert json.loads(stored["arguments"]) == ARGUMENTS
     assert message["content"] == MIXED_TEXT["japanese"]
     _, follow_up = server.chat_requests()
-    replayed = [entry for entry in follow_up["messages"] if entry.get("tool_calls")]
+    replayed = [entry for entry in conversation(follow_up) if entry.get("tool_calls")]
     assert [entry["function"] for entry in replayed[0]["tool_calls"]] == [
         {"name": "lookup", "arguments": ARGUMENTS}
     ]
@@ -370,7 +374,7 @@ def test_a_responses_reply_with_mixed_text_and_a_function_call_is_stored_equal(r
     assert message["content"].endswith(MIXED_TEXT["japanese"])
     first, follow_up = provider.sent()
     assert first["input"][0]["content"] == [{"type": "input_text", "text": ALL_MIXED}]
-    replayed = [item for item in follow_up["input"] if item.get("type") == "function_call"]
+    replayed = [item for item in follow_up["input"] if item.get("name") == "lookup"]
     assert json.loads(replayed[0]["arguments"]) == ARGUMENTS
 
 

@@ -19,6 +19,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.depcheck, pytest.mark.api, pytest.mark.requires_source]
 
@@ -92,5 +93,5 @@ def test_the_model_is_offered_the_spec_and_its_call_runs_the_method(admin, harbo
     offered = [tool["function"] for tool in first["tools"]]
     [offered] = [spec for spec in offered if spec["name"] == "book_berth"]
     _book_berth(offered)
-    [tool_message] = [entry for entry in follow_up["messages"] if entry["role"] == "tool"]
+    [tool_message] = [entry for entry in conversation(follow_up) if entry["role"] == "tool"]
     assert "Aurora is booked for 6 hours on the low tide" in tool_message["content"]

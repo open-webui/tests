@@ -21,6 +21,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ChatTurn, send_message, wait_for_reply
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -79,7 +80,7 @@ def _resolve(client: httpx.Client, turn: ChatTurn, call_id: str, action: str) ->
 
 
 def _tool_results(upstream) -> list[str]:
-    last = upstream.chat_requests()[-1]["messages"]
+    last = conversation(upstream.chat_requests()[-1])
     return [entry.get("tool_call_id") for entry in last if entry["role"] == "tool"]
 
 

@@ -58,6 +58,7 @@ from harness.mcp_server import (
 )
 from harness.otlp_collector import serving_trace_collector, trace_collector_env
 from harness.terminal_server import read_grant
+from harness.upstream import conversation
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
     RETRIEVAL_CONFIG,
@@ -189,7 +190,7 @@ def _tool_result(person, upstream, server_id: str, tool: str, arguments: dict) -
     upstream.queue(reply.tool_call(f"{server_id}_{tool}", arguments), reply.text("Noted."))
     with person.client() as client:
         ask(client, f"use {tool}", tool_ids=[f"server:mcp:{server_id}"])
-    follow_up = upstream.chat_requests()[-1]["messages"]
+    follow_up = conversation(upstream.chat_requests()[-1])
     [tool_message] = [entry for entry in follow_up if entry["role"] == "tool"]
     return tool_message["content"]
 

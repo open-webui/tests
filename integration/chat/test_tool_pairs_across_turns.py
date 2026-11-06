@@ -18,6 +18,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.chat_history import seed_chat
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -63,7 +64,7 @@ def replay(user, upstream, *replies: dict) -> list[dict]:
     with user.client() as client:
         chat_id, last_id = seed_chat(client, history)
         ask(client, "and now?", chat_id=chat_id, parent_id=last_id)
-    return upstream.chat_requests()[-1]["messages"]
+    return conversation(upstream.chat_requests()[-1])
 
 
 def unpaired_pieces(messages: list[dict]) -> list[str]:
