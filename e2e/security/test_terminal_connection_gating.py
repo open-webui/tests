@@ -5,7 +5,9 @@ resolves one by id, where before only the list had hidden it. A user picks a ter
 chat input's Terminal menu; the admin then switches it off through a config import, which saves
 the connection without rebuilding the terminal list cached in Redis. The user's next message
 still names the terminal, and the reply shows that it is disabled instead of the model being
-offered its tools.
+offered its tools. Since 4955624d2 a new chat first asks the terminal to open the file browser's
+folder, so the chat's first message is refused with the working directory error and the second,
+sent in that chat, reaches the tools and is refused as disabled.
 
 The page gets the socket events unheld (`real_socket_timing`), and the test stays red until a
 second bug is fixed (open-webui/open-webui#32550): the refusal comes before the page knows the new
@@ -13,10 +15,13 @@ chat's id, the page drops it, and the person sees an empty reply with a Stop but
 
 Discriminates: with the events held, passes on dev ef67cc3fa with its built frontend; with the
 `enabled` check removed from `get_terminal_tools` in a backend copy the model is offered the
-terminal's tools and the reply shows no error.
+terminal's tools and the reply shows no error. Retargeted for 4955624d2: passes on dev da9bca0fc,
+and with the same check removed there the second message is offered the tools.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 from playwright.sync_api import expect
@@ -38,6 +43,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.
 
 NAME = "Build box"
 PROMPT = "list the build artefacts"
+SECOND_PROMPT = "and the test reports?"
 RUN_COMMAND_SPEC = {
     "openapi": "3.0.0",
     "info": {"title": "Terminal", "version": "1"},
@@ -94,6 +100,11 @@ def test_a_terminal_switched_off_mid_chat_offers_no_tools(page_for, cached_insta
 
         cached_instance.upstream.queue(reply.text("ready", match=reply.answering(PROMPT)))
         send(page, PROMPT)
+        expect(conversation(page).get_by_text("Working directory is unavailable")).to_be_visible()
+        expect(page).to_have_url(re.compile("/c/"))
+
+        cached_instance.upstream.queue(reply.text("ready", match=reply.answering(SECOND_PROMPT)))
+        send(page, SECOND_PROMPT)
         expect(conversation(page).get_by_text("is disabled")).to_be_visible()
 
     offered = [
