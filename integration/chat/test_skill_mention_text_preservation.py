@@ -48,7 +48,8 @@ def skill_id(admin):
 def _sent_to_the_model(admin, upstream, content: str) -> str:
     with admin.client() as client:
         ask(client, content)
-    return upstream.chat_requests()[-1]["messages"][-1]["content"]
+    messages = upstream.chat_requests()[-1]["messages"]
+    return [message for message in messages if message["role"] == "user"][-1]["content"]
 
 
 @pytest.mark.parametrize("text", NOT_MENTIONS)

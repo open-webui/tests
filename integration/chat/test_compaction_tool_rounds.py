@@ -53,7 +53,8 @@ from harness import upstream as reply
 from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, ask
 from harness.prompt_caching import prefix_break
 from harness.python_tools import python_tool
-from harness.upstream import MOCK_MODEL_ID, Reply
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import MOCK_MODEL_ID, Reply, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -233,7 +234,7 @@ def resend(
 
 def resumed_from_the_last_summary(body: dict) -> list[str]:
     """Why a request misses the run's last summary or resends rounds before it."""
-    messages, problems = body["messages"], []
+    messages, problems = conversation(body), []
     pages = called_pages(messages)
     if pages != [page_name(page) for page in range(9, 13)]:
         problems.append(f"{len(pages)} pages resent ({len(json.dumps(messages))} chars): {pages}")
@@ -252,6 +253,7 @@ def called_pages(messages: list[dict]) -> list[str]:
         json.loads(call["function"]["arguments"])["page"]
         for message in messages
         for call in message.get("tool_calls") or []
+        if call["function"]["name"] == "read_log"
     ]
 
 
@@ -285,7 +287,7 @@ def test_a_long_tool_run_is_compacted_between_rounds(user, upstream, compaction,
         True,
         False,
     ], "the reply was not compacted after its third and fifth rounds"
-    fourth = rounds[3][0]["messages"]
+    fourth = conversation(rounds[3][0])
     assert [entry["role"] for entry in fourth] == ["system", "user", "assistant", "tool", "tool"]
     assert fourth[0]["content"] == f"[CONVERSATION SUMMARY]\n{SUMMARIES[0]}"
     assert fourth[1]["content"].startswith("read the whole harbour log")
@@ -295,7 +297,9 @@ def test_a_long_tool_run_is_compacted_between_rounds(user, upstream, compaction,
     assert called_pages(last) == [page_name(page) for page in range(9, 13)]
 
     assert ANSWER in message["content"]
-    calls = [item for item in message["output"] if item["type"] == "function_call"]
+    calls = [
+        item for item in without_hidden_calls(message["output"]) if item["type"] == "function_call"
+    ]
     assert len(calls) == 2 * ROUNDS, "the stored reply lost rounds the request left out"
 
 
@@ -448,5 +452,5 @@ def test_the_next_message_resumes_from_the_runs_last_summary(user, upstream, com
     shown = stored[run.assistant_message_id]
     assert ANSWER in shown["content"]
     for kind in ("function_call", "function_call_output"):
-        items = [item for item in shown["output"] if item["type"] == kind]
+        items = [item for item in without_hidden_calls(shown["output"]) if item["type"] == kind]
         assert len(items) == 2 * ROUNDS, f"the saved run lost {kind} items"

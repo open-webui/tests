@@ -28,7 +28,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask, send_message, wait_for_reply
 from harness.plugins import installed_function
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -48,7 +48,7 @@ class Filter:
 
 
 def model_calls(upstream) -> list[list[dict]]:
-    return [request["messages"] for request in upstream.chat_requests()]
+    return [conversation(request) for request in upstream.chat_requests()]
 
 
 def test_the_request_stage_sees_the_assembled_payload(admin, user, upstream):
@@ -150,7 +150,9 @@ def test_a_refusing_request_filter_stops_an_approved_tool_from_running(
             message = settled_message(client, turn)
 
     ran = [
-        item for item in message.get("output") or [] if item.get("type") == "function_call_output"
+        item
+        for item in message.get("output") or []
+        if item.get("type") == "function_call_output" and item.get("call_id") == call["call_id"]
     ]
     assert not ran, "the approved tool ran although the request filter refused the request"
     assert len(model_calls(upstream)) == 1, "the model was asked again after the filter refused"

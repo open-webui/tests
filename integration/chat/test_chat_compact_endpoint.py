@@ -21,7 +21,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.chat_history import seed_chat
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -115,7 +115,7 @@ def test_the_next_turn_sends_the_summary_and_what_follows_it(make_user, upstream
             history=[{"role": "system", "content": SYSTEM_PROMPT}],
         )
 
-    sent = [body for body in upstream.chat_requests() if body.get("stream")][-1]["messages"]
+    sent = conversation([body for body in upstream.chat_requests() if body.get("stream")][-1])
     assert sent[0]["role"] == "system"
     assert sent[0]["content"].startswith(SYSTEM_PROMPT)
     assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in sent[0]["content"]

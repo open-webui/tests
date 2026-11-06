@@ -45,7 +45,7 @@ from harness.instance import LaunchedInstance
 from harness.plugins import installed_function
 from harness.raw_provider import RAW_MODEL_ID, chunk, sse
 from harness.second_provider import OPENAI_CONFIG
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -390,7 +390,7 @@ def test_a_failing_user_valves_names_the_filter_and_the_handler_still_runs(
         logged = wait_for_log(instance, offset, f"Failed to get user valves for filter {filter_id}")
 
     assert f"Failed to get user valves for filter {filter_id}" in logged
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == "hello [inlet ran]"
+    assert conversation(upstream.chat_requests()[-1])[-1]["content"] == "hello [inlet ran]"
 
 
 RAISING_INLET = source(

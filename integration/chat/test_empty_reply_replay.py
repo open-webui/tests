@@ -19,12 +19,15 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask, send_message
 from harness.chat_history import seed_chat
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 
 def replayed(upstream) -> list[tuple[str, str]]:
-    return [(entry["role"], entry["content"]) for entry in upstream.chat_requests()[-1]["messages"]]
+    return [
+        (entry["role"], entry["content"]) for entry in conversation(upstream.chat_requests()[-1])
+    ]
 
 
 def wait_for_provider_request(upstream, timeout: float = 15.0) -> None:

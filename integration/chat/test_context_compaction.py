@@ -79,7 +79,7 @@ from harness.chat import ChatTurn, ask, send_message
 from harness.chat_history import seed_chat
 from harness.prepared_data import serving, snapshot_database
 from harness.socket_client import connected
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -111,7 +111,7 @@ def summary_requests(upstream) -> list[dict]:
 
 
 def main_call(upstream) -> list[dict]:
-    return [body for body in upstream.chat_requests() if body.get("stream")][-1]["messages"]
+    return conversation([body for body in upstream.chat_requests() if body.get("stream")][-1])
 
 
 def turns(count: int, filler: int = 400) -> list[dict]:
