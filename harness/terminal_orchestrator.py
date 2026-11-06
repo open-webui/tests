@@ -21,7 +21,6 @@ from typing import Iterator
 
 import httpx
 
-from harness.instance import free_port
 from harness.listener import read_body
 from harness.open_terminal import API_KEY, OpenTerminal, serving_open_terminal
 
@@ -73,8 +72,7 @@ class TerminalOrchestrator:
 
 @contextlib.contextmanager
 def serving_terminal_orchestrator() -> Iterator[TerminalOrchestrator]:
-    port = free_port()
-    orchestrator = TerminalOrchestrator(base_url=f"http://127.0.0.1:{port}")
+    orchestrator = TerminalOrchestrator(base_url="")
 
     class RequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -111,7 +109,9 @@ def serving_terminal_orchestrator() -> Iterator[TerminalOrchestrator]:
 
     # The shared terminal boots here, so a missing open-terminal skips before the server starts.
     orchestrator.terminal(SHARED)
-    server = ThreadingHTTPServer(("127.0.0.1", port), RequestHandler)
+    # Bound at once: a port picked earlier can be taken while the shared terminal boots.
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
+    orchestrator.base_url = f"http://127.0.0.1:{server.server_port}"
     threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True).start()
     try:
         yield orchestrator
