@@ -10,8 +10,9 @@ reply shows no sources, neither the inline source chips nor the sources row unde
 ticked the provider is asked to report token counts (e2e/chat/test_reply_usage.py shows them).
 Without Image Generation the chat's Image switch is gone although the admin has image generation
 on. Without Memory a stored memory no longer reaches the model, as context or through the memory
-tools. Without Terminal the chat offers no terminal and one picked before is not handed to the
-model. An unticked capability is no longer offered under Default Features, which since 98f23b17a
+tools. Without Terminal a new chat drops the terminal picked before and the model is not handed
+it; the Terminal menu itself stays, as since 6ef26be29 picking a terminal also lists its agents as
+models. An unticked capability is no longer offered under Default Features, which since 98f23b17a
 (#32963) lists only a capability whose global feature is on, so the test turns web search and image
 generation on first. File Upload, Web Search, Builtin Tools and the Time category are covered in
 e2e/models/test_model_editor.py, Status Updates in e2e/chat/test_status_updates.py; the Code
@@ -22,11 +23,13 @@ on dev 896056690: since de73bb830 the reply in a new chat sometimes stays blank 
 although the server saved it whole (open-webui/open-webui#32091, fixed by 958ad3673).
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose chat input ignores the
-Vision, Image Generation and Terminal capabilities those three tests fail, in one whose replies
+Vision and Image Generation capabilities those two tests fail, in one whose replies
 ignore the Citations capability the citations test fails and in one whose editor lists every
 default feature the default feature test fails. In a backend copy that injects file text whatever
 File Context says the file context test fails, in one that never asks for usage the usage test
-fails and in one that ignores the Memory capability the memory test fails.
+fails and in one that ignores the Memory capability the memory test fails. Retargeted for
+6ef26be29, which keeps the Terminal menu for every model: passes on dev 144dec942 (5 of 5), and in
+its build with the new chat's reset of the picked terminal removed the terminal test fails.
 Retargeted for 8d0ff76f2, whose capabilities are switches in sections that open on a click: passes
 on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's settings as they were
 loaded every test that saves an edit fails.
@@ -61,7 +64,6 @@ from utils.model_editor import (
     sent_request,
     set_checkbox,
 )
-from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -279,35 +281,34 @@ def terminal(admin, preserve):
         yield server
 
 
-def terminal_buttons(page: Page) -> int:
-    """The Terminal menu's buttons, named 'Terminal' or for the terminal picked in them."""
-    return (
-        page.get_by_role("main")
-        .get_by_role("button")
-        .evaluate_all(
-            "(buttons, names) => buttons.filter("
-            "(button) => names.includes(button.parentElement?._tippy?.props.content)).length",
-            ["Terminal", TERMINAL_NAME],
-        )
-    )
+def terminal_menu(page: Page, label: str) -> Locator:
+    """The chat's Terminal menu, labelled 'Terminal' or for the terminal picked in it."""
+    return page.get_by_role("main").get_by_role("button", name=label, exact=True)
 
 
-def test_unticking_terminal_takes_the_terminal_out_of_the_chat(
+def test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat(
     page_for, builder, preset, upstream, terminal
 ):
     page = page_for(builder)
     open_chat_on(page, preset)
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    terminal_menu(page, "Terminal").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=TERMINAL_NAME).click()
     expect(page.get_by_role("region", name="File browser")).to_be_visible()
     assert "run_command" in offered_tool_names(sent_request(page, upstream, "list the berths"))
+    expect(terminal_menu(page, TERMINAL_NAME)).to_be_visible()
 
     switch_capability(page, preset, "Terminal", False)
 
     open_chat_on(page, preset)
     request = sent_request(page, upstream, "list the berths again")
-    assert "run_command" not in offered_tool_names(request)
-    assert terminal_buttons(page) == 0, "the chat still offers a terminal"
+    offered = offered_tool_names(request)
+    assert "run_command" not in offered, (
+        f"the model was still handed the terminal: {sorted(offered)}"
+    )
+    expect(terminal_menu(page, "Terminal")).to_be_visible()
+    expect(
+        terminal_menu(page, TERMINAL_NAME), "the new chat kept the picked terminal"
+    ).to_have_count(0)
 
 
 @pytest.fixture

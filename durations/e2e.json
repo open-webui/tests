@@ -1911,7 +1911,7 @@
     "e2e/models/test_model_capabilities.py::test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tools[chromium]": 12.308,
     "e2e/models/test_model_capabilities.py::test_unticking_image_generation_takes_the_image_switch_out[chromium]": 11.299,
     "e2e/models/test_model_capabilities.py::test_unticking_memory_keeps_a_stored_memory_out_of_the_chat[chromium]": 11.906,
-    "e2e/models/test_model_capabilities.py::test_unticking_terminal_takes_the_terminal_out_of_the_chat[chromium]": 12.692,
+    "e2e/models/test_model_capabilities.py::test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat[chromium]": 12.692,
     "e2e/models/test_model_capabilities.py::test_unticking_vision_refuses_a_picture_attached_in_the_chat[chromium]": 11.553,
     "e2e/models/test_model_edit_preserves_base_model.py::test_saving_a_new_description_keeps_the_base_model[chromium]": 4.204,
     "e2e/models/test_model_editor.py::test_a_default_filter_starts_switched_on_in_a_new_chat[chromium]": 15.219,
