@@ -36,6 +36,8 @@ on dev 5032e834e.
 The builtin tool test was retargeted for 8d0ff76f2, whose Builtin Tools categories are switches in a
 section that opens on a click: passes on dev 76ad6f97c (3 of 3) and fails in a build of it whose
 editor saves the model's settings as they were loaded.
+The two Using Entire Document tests set the Full Text Threshold to 0: since 98f7a6146 a file under
+it goes whole and its dialog shows no switch.
 """
 
 from __future__ import annotations
@@ -161,6 +163,18 @@ def test_file_context_on_rewrites_the_prefix(model_with, page_for, make_user, up
     assert "messages[1] (user)" in broken, broken
 
 
+@pytest.fixture
+def retrieved_in_pieces(admin, preserve):
+    """Every file sent in pieces until switched to Using Entire Document.
+
+    Since 98f7a6146 a file under the Full Text Threshold goes whole and its dialog shows no switch.
+    """
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client:
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+    assert saved.status_code == 200, saved.text
+
+
 def use_entire_document(page: Page, name: str) -> None:
     page.get_by_role("button", name=re.compile(re.escape(name))).click()
     dialog = page.get_by_role("dialog")
@@ -171,6 +185,7 @@ def use_entire_document(page: Page, name: str) -> None:
     expect(dialog).to_have_count(0)
 
 
+@pytest.mark.usefixtures("retrieved_in_pieces")
 def test_using_the_entire_document_with_file_context_on_rewrites_the_prefix(
     model_with, page_for, make_user, upstream
 ):
@@ -189,6 +204,7 @@ def test_using_the_entire_document_with_file_context_on_rewrites_the_prefix(
     assert "messages[1] (user)" in broken, broken
 
 
+@pytest.mark.usefixtures("retrieved_in_pieces")
 def test_using_the_entire_document_with_file_context_off_does_nothing(
     cached_setup, page_for, make_user, upstream
 ):

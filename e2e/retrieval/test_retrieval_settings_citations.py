@@ -6,9 +6,10 @@ model was given. Top K decides how many passages are cited. Hybrid Search with a
 Threshold cites only the passages that match the question, and switched off again cites the
 rest as well. An External reranker picked in the panel decides the cited passage, which shows the
 relevance the reranker gave it. Chunk Size decides how much of the file each passage holds, and
-Chunk Overlap repeats a sentence in the two neighbouring passages that share it. Full Context
-Mode gives the model the whole file however low Top K is. A RAG Template frames the context the
-model is sent, and one that places the context twice is flagged in the panel and sends it twice.
+Chunk Overlap repeats a sentence in the two neighbouring passages that share it. Always Use Full
+Text (Full Context Mode before c5f24f588) gives the model the whole file however low Top K is. A
+RAG Template frames the context the model is sent, and one that places the context twice is
+flagged in the panel and sends it twice.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the passages about herons; a local service also plays the reranker.
@@ -300,7 +301,7 @@ def test_chunk_overlap_repeats_a_sentence_in_neighbouring_passages(
 
 
 def test_full_context_mode_gives_the_model_the_whole_file(documents, page_for, ranked, reader):
-    set_switch(documents, "Full Context Mode", turn_on=True)
+    set_switch(documents, "Always Use Full Text", turn_on=True)
     expect(documents.get_by_text("Top K", exact=True)).to_have_count(0)
     save(documents)
 

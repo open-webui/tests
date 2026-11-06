@@ -9,7 +9,10 @@ PDF viewer says "Failed to load PDF." in the suite's Chromium 131 for any PDF, s
 here. An attached picture opens full size from the sent message and downloads as the bytes that were
 uploaded. Switching a long document to Using Entire Document in its dialog sends the model the
 whole text where focused retrieval sends a few pieces of it, and a file's switch shows its own
-mode after another attachment is removed.
+mode after another attachment is removed. Since 98f7a6146 a file under the Full Text Threshold goes
+whole without a switch, so those two tests set the threshold to 0 and Top K back to 3, and since
+bd6fc15be a model in native function calling reads attached files through its tools unless File
+Context is ticked.
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows
 "No content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never
@@ -32,6 +35,7 @@ from PIL import Image
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.web_retrieval import RETRIEVAL_CONFIG
 from integration.retrieval.test_document_loaders import (
     DOCX,
     PPTX,
@@ -267,6 +271,22 @@ def landmarks_sent(upstream, question: str, landmarks: list[str]) -> list[str]:
     return [name for name in landmarks if name in sent]
 
 
+@pytest.fixture
+def retrieved_in_pieces(admin, preserve):
+    """Every file sent as its three closest pieces until switched to Using Entire Document.
+
+    Since 98f7a6146 a file under the Full Text Threshold goes whole and its dialog shows no switch,
+    and Top K defaults to 10, more pieces than the long report has.
+    """
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client:
+        saved = client.post(
+            RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0, "TOP_K": 3}
+        )
+    assert saved.status_code == 200, saved.text
+
+
+@pytest.mark.usefixtures("retrieved_in_pieces")
 def test_a_files_mode_switch_shows_its_own_mode_after_another_file_is_removed(page_for, make_user):
     """#32699 (fix a944564c2): the remaining file's switch showed the removed file's mode."""
     page = page_for(make_user())
@@ -291,6 +311,7 @@ def test_a_files_mode_switch_shows_its_own_mode_after_another_file_is_removed(pa
     expect(dialog.get_by_role("switch")).to_have_attribute("aria-checked", "false")
 
 
+@pytest.mark.usefixtures("retrieved_in_pieces", "file_context_on")
 def test_using_the_entire_document_sends_the_model_all_of_it(page_for, make_user, upstream):
     page = page_for(make_user())
     report, landmarks = long_report()
