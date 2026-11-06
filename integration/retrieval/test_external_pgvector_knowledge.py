@@ -109,6 +109,7 @@ def test_the_retrieval_test_of_a_saved_connection_returns_only_as_many_rows_as_a
     assert tried.json()["documents"] == NEAREST_FIRST[:1]
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_chat_with_the_knowledge_base_attached_gets_its_nearest_rows(
     admin, upstream, connection_id
 ):

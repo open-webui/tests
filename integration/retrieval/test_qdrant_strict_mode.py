@@ -28,6 +28,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of
 from harness.chat import ask
+from harness.file_context import file_context_ticked
 from harness.knowledge_bases import knowledge_base
 from harness.qdrant_server import FakeQdrant, qdrant_env, serving_qdrant
 from harness.web_retrieval import RETRIEVAL_CONFIG
@@ -49,6 +50,8 @@ LINE_CHUNKS = {
     "ENABLE_RAG_HYBRID_SEARCH": True,
     "RAG_FULL_CONTEXT": False,
     "BYPASS_EMBEDDING_AND_RETRIEVAL": False,
+    # a chat would get a small file whole instead of searching it
+    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
     "TOP_K": 5,
 }
 
@@ -166,7 +169,8 @@ def test_a_chat_falls_back_to_vector_search_when_the_collection_cannot_be_read(
     question = "when does the ferry leave?"
     on_qdrant.upstream.queue(reply.text("noted", match=reply.answering(question)))
 
-    ask(admin_client, question, files=[{"type": "file", "id": file_id, "name": "ferry.txt"}])
+    with file_context_ticked(admin_of(on_qdrant)):
+        ask(admin_client, question, files=[{"type": "file", "id": file_id, "name": "ferry.txt"}])
 
     sent = on_qdrant.upstream.chat_requests()[-1]["messages"]
     assert any("ferry 09:00" in str(message.get("content")) for message in sent), (

@@ -10,7 +10,9 @@ neighbouring chunks, and a minimum chunk size merges small markdown sections.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the chunks about herons and nothing else; a local service also plays the
-reranker.
+reranker. File Context is ticked in the Model Defaults: without it a model in native function
+calling gets the file as a reference to read through its tools, and nothing is retrieved up front.
+Files under `RAG_FULL_TEXT_CHAR_THRESHOLD` go whole, so the threshold is off here.
 
 Discriminates: in a backend copy, the files handler asking for `TOP_K` + 1 chunks turned both
 top-k tests red; `get_all_items_from_collections` returning nothing turned the full context test
@@ -28,6 +30,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.chat import ask
+from harness.file_context import file_context_ticked
 from harness.keyword_embeddings import (
     embedded_texts,
     keyword_embedding_env,
@@ -62,6 +65,8 @@ ONE_PARAGRAPH_CHUNKS = {
     "CHUNK_SIZE": 60,
     "CHUNK_OVERLAP": 0,
     "CHUNK_MIN_SIZE_TARGET": 0,
+    # a file under the threshold goes whole, and every file here is under the default one
+    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
 }
 
 
@@ -74,10 +79,11 @@ def embedder():
 
 @pytest.fixture
 def ranked(instance_with, embedder, preserve):
-    """The keyword-embedding instance, its retrieval settings restored after the test."""
+    """The keyword-embedding instance with File Context ticked, its settings restored after."""
     launched = instance_with(keyword_embedding_env(embedder))
     preserve(RETRIEVAL_CONFIG, on=launched)
-    return launched
+    with file_context_ticked(admin_of(launched)):
+        yield launched
 
 
 @pytest.fixture

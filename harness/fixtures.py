@@ -16,6 +16,7 @@ import pytest
 
 from harness import upstream as upstream_module
 from harness.actors import Actor, admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.host_names import c_ares_refusal_problem
 from harness.instance import LaunchedInstance, launch
 from harness.listener import Listener, listening
@@ -169,6 +170,13 @@ def preserve(request: pytest.FixtureRequest) -> Generator[Callable[..., None], N
         if restored.status_code != 200:
             failures.append(f"restoring {write_path} failed: {restored.text}")
     assert not failures, failures
+
+
+@pytest.fixture
+def file_context_on(admin: Actor) -> Iterator[None]:
+    """File Context ticked in the shared instance's Model Defaults for the test."""
+    with file_context_ticked(admin):
+        yield
 
 
 @contextlib.contextmanager

@@ -102,6 +102,7 @@ def test_the_admin_retrieval_test_searches_the_collection(admin, listener, upstr
     assert "harbour gate code" in json.dumps(embedded)
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_chat_with_the_knowledge_base_attached_gets_its_points(
     admin, listener, upstream, connection_id
 ):
@@ -326,6 +327,7 @@ def test_the_admin_retrieval_test_searches_a_milvus_collection(admin, milvus_ser
     )
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_a_chat_with_a_milvus_knowledge_base_attached_gets_its_rows(
     admin, milvus_service, upstream
 ):

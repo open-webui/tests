@@ -28,8 +28,9 @@ import uuid
 import pytest
 
 from harness import upstream as reply
-from harness.actors import create_user
+from harness.actors import admin_of, create_user
 from harness.chat import ask
+from harness.file_context import file_context_ticked
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -174,6 +175,7 @@ def test_a_web_search_result_reaches_the_model(searching, make_user, upstream):
     assert answer["sources"], "the stored reply lists no web source"
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_an_untyped_collection_item_is_not_queried(searching, make_user, upstream):
     searcher = make_user()
     with searcher.client() as client:
@@ -215,7 +217,7 @@ def test_an_untyped_collection_item_is_queried_when_access_control_is_bypassed(u
             json={"name": "bypass", "content": "bypass payload", "collection_name": "bypass-coll"},
         )
     assert stored.status_code == 200, stored.text
-    with searcher.client() as client:
+    with file_context_ticked(admin_of(unguarded)), searcher.client() as client:
         ask(client, "what is in it", files=[{"collection_name": "bypass-coll", "name": "bypass"}])
 
     assert "bypass payload" in sent_text(unguarded.upstream)

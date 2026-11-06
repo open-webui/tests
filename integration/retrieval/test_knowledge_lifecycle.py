@@ -669,6 +669,7 @@ def attach_and_ask(reader, chat_id: str, upstream) -> str:
     return str(upstream.chat_requests()[-1]["messages"])
 
 
+@pytest.mark.usefixtures("file_context_on")
 @pytest.mark.parametrize("share", [share_by_grant, share_through_folder], ids=["grant", "folder"])
 def test_a_chat_shared_with_a_user_can_be_attached(make_user, upstream, share):
     owner, reader = make_user(), make_user()
@@ -681,6 +682,7 @@ def test_a_chat_shared_with_a_user_can_be_attached(make_user, upstream, share):
     )
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_an_unshared_chat_adds_nothing_and_its_owner_still_attaches_it(make_user, upstream):
     owner, stranger = make_user(), make_user()
     secret = f"TEAL-{uuid.uuid4().hex[:6]}"
@@ -690,6 +692,7 @@ def test_an_unshared_chat_adds_nothing_and_its_owner_still_attaches_it(make_user
     assert secret in attach_and_ask(owner, chat_id, upstream)
 
 
+@pytest.mark.usefixtures("file_context_on")
 def test_an_admin_attaches_any_chat(make_user, admin, upstream):
     secret = f"TEAL-{uuid.uuid4().hex[:6]}"
     chat_id = chat_with_secret(make_user(), secret)
