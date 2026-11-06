@@ -10,6 +10,10 @@ model got it. Browser twin of integration/tools/test_personal_terminal_through_b
 Discriminates: passes on the efe63bd34 build; on a build with the page's `request:terminal`
 handler removed the test fails (the page never reads the terminal and the model is sent no
 AGENTS.md), while an unrelated chat journey passes on that build.
+
+Issue open-webui/open-webui#33811: since dev the reply is only "Working directory is unavailable",
+as the server tries to move the personal terminal to the file browser's folder itself. Fails on
+dev 144dec942, passes with the fix branch fix/personal-terminal-working-dir on top of it.
 """
 
 from __future__ import annotations
