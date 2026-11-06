@@ -35,6 +35,7 @@ loaded every test that saves an edit fails.
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 
 import pytest
@@ -260,6 +261,12 @@ def terminal(admin, preserve):
     preserve(TERMINAL_SERVERS_CONFIG)
     with serving_terminal() as server:
         server.route("GET", "/openapi.json", json_answer(RUN_COMMAND_SPEC))
+        # A new chat starts in the file browser's folder, as Open Terminal moves there.
+        server.route(
+            "POST",
+            "/files/cwd",
+            lambda request: json_answer({"cwd": json.loads(request.body)["path"]}),
+        )
         connection = server.connection(
             name=TERMINAL_NAME, config={"access_grants": [EVERYONE_READS]}
         )
