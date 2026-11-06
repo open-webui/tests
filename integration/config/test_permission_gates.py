@@ -37,7 +37,9 @@ patching (98a920168) both reverted. The positive tests, image editing with gener
 them, and the all-off round trip pass on both. The 13 "without sharing" tests fail on dev
 2ea6bf436 (the group grant is stored) and pass with `e92638dc7`; the group-allowed, admin and
 private tests pass on both. On dev 302b8cfd5 the access route refuses the share with a 403; letting
-it through there fails all 7 "cannot share" tests.
+it through there fails all 7 "cannot share" tests. Since 70e4b9a52 the first message's folder is
+looked up for its terminal defaults before anything else, and a missing or foreign folder is
+refused there with a 403; the folder tests pass on dev da9bca0fc.
 """
 
 from __future__ import annotations
@@ -345,7 +347,7 @@ def test_a_new_chat_cannot_be_filed_into_another_users_folder(make_user, upstrea
     folder_id = _create_folder(make_user())
 
     with make_user().client() as client:
-        with pytest.raises(AssertionError, match="HTTP 404"):
+        with pytest.raises(AssertionError, match="HTTP 403"):
             send_message(client, "hi", folder_id=folder_id)
         created = _own_chat_ids(client)
 
@@ -356,7 +358,7 @@ def test_a_new_chat_cannot_be_filed_into_another_users_folder(make_user, upstrea
 
 def test_a_new_chat_cannot_be_filed_into_a_folder_that_does_not_exist(make_user, upstream):
     with make_user().client() as client:
-        with pytest.raises(AssertionError, match="HTTP 404"):
+        with pytest.raises(AssertionError, match="HTTP 403"):
             send_message(client, "hi", folder_id="no-such-folder")
 
 

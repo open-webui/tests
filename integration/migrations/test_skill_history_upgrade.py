@@ -26,12 +26,15 @@ the restart test, along with the history, first-save, rename and orphan tests. R
 production in place of restoring it; it passes on dev 206bf9723 and fails in a backend copy
 whose version switch keeps the current version. Retargeted for c7193760b, where the mentioned
 skill's tag no longer carries a `version_id`: the mention tests check the skill's own tag and
-its first version's instructions; passes on dev c7193760b.
+its first version's instructions; passes on dev c7193760b. Retargeted for 6e8a6c446, where the
+mentioned skill reaches the model as a view_skill result Open WebUI preloads; passes on dev
+da9bca0fc.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -42,7 +45,7 @@ from harness.chat import ask
 from harness.prepared_data import ReleaseData, serving
 from harness.skill_rows import add_long_used_skills, skill_state
 from harness.upgraded_release import Upgraded, data_set_params, upgraded_release
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, context_results
 
 pytestmark = [
     pytest.mark.journey,
@@ -208,15 +211,14 @@ def test_hundreds_of_added_skills_and_a_large_one_read_back_whole(migrated):
         assert _sha(skill["content"]) == _sha(expected), skill_id
 
 
-def _system_prompt(upgraded: Upgraded, who: str, mention: str) -> str:
+def _viewed_skills(upgraded: Upgraded, who: str, mention: str) -> list[dict]:
+    """The skills Open WebUI preloaded as view_skill results for a message with `mention`."""
     upgraded.provider.reset()
     upgraded.provider.queue(reply.text("Noted."))
     with upgraded.client(who) as client:
         ask(client, f"{mention} what first?", model=MOCK_MODEL_ID)
     request = upgraded.provider.chat_requests()[-1]
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
+    return [json.loads(result) for result in context_results(request, "view_skill")]
 
 
 @pytest.mark.parametrize(
@@ -229,10 +231,10 @@ def test_a_reader_mentions_an_old_skill_and_the_model_gets_its_first_version(
 ):
     upgraded = migrated.upgraded
     saved = upgraded.manifest["skills"][skill_id]
-    system = _system_prompt(upgraded, who, f"<${skill_id}|{saved['name']}>")
+    viewed = _viewed_skills(upgraded, who, f"<${skill_id}|{saved['name']}>")
 
-    assert f'<skill id="{skill_id}"' in system, system
-    assert saved["content"] in system, system
+    assert [skill["id"] for skill in viewed] == [skill_id], viewed
+    assert saved["content"] in viewed[0]["content"], viewed
 
 
 def _save(upgraded: Upgraded, who: str, skill_id: str, changes: dict) -> dict:

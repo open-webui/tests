@@ -41,7 +41,9 @@ provider-nested reasoning details ignored, chat attachments filtered by url, `ca
 `prompt_tokens`, and compaction sent to the task model; dropping `model` from the replay keys fails
 the two same-model replay cases. `think_tags` as the default reasoning format fails the llama.cpp
 and strict-provider tests, `memory.id` dropped from the sort keys fails both tie tests, and the
-capability read moved below the fallback swap fails the fallback usage test.
+capability read moved below the fallback swap fails the fallback usage test. Retargeted for
+3aacd9ffa and e6ae368f5, where recalled memories reach the model as a recall_memories result Open
+WebUI preloads after the user's message; passes on dev da9bca0fc.
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ import pytest
 
 from harness import second_provider
 from harness.chat import send_message, wait_for_reply
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, context_results, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -118,9 +120,9 @@ def test_memory_context_lists_memories_in_a_stable_order(make_user, upstream):
         turn = send_message(client, "what do you remember?", features={"memory": True})
         wait_for_reply(client, turn)
 
-    system = upstream.chat_requests()[-1]["messages"][0]
-    assert system["role"] == "system"
-    entries = [line[2:] for line in system["content"].splitlines() if line.startswith("- ")]
+    # recalled memories reach the model as a recall_memories result Open WebUI preloads
+    [recalled] = context_results(upstream.chat_requests()[-1], "recall_memories")
+    entries = [line[2:] for line in recalled.splitlines() if line.startswith("- ")]
     assert entries == [
         "work/project: alpha note",
         "work/project: Beta note",
@@ -132,8 +134,9 @@ def test_no_memories_adds_no_memory_context(make_user, upstream):
     with make_user().client() as client:
         wait_for_reply(client, send_message(client, "hello", features={"memory": True}))
 
-    sent = upstream.chat_requests()[-1]["messages"]
-    assert [entry["role"] for entry in sent] == ["user"]
+    sent = upstream.chat_requests()[-1]
+    assert context_results(sent, "recall_memories") == []
+    assert [entry["role"] for entry in conversation(sent)] == ["user"]
 
 
 # --- #28241: custom params from the defaults survive a request override ----------------------
@@ -215,7 +218,7 @@ def test_replayed_history_carries_only_payload_fields(make_user, upstream):
         )
         _continue(client, chat_id, last_id)
 
-    replayed = upstream.chat_requests()[-1]["messages"]
+    replayed = conversation(upstream.chat_requests()[-1])
     leaked = [sorted(set(entry) - {"role", "content"}) for entry in replayed]
     assert leaked == [[], [], []], f"bookkeeping keys reached the provider: {leaked}"
 

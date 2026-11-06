@@ -34,7 +34,9 @@ the current files or whose version delete answers true without deleting. Retarge
 c7193760b, where the mentioned skill's tag no longer carries a `version_id`; passes on dev
 c7193760b. The .skill tests pass on dev 226dca18c; in a backend copy, a .skill export that writes
 only SKILL.md, is named `skills.zip`, or an import that refuses `.skill` turns the round trip test
-red, and dropping the one-skill check turns the exactly-one test red.
+red, and dropping the one-skill check turns the exactly-one test red. Retargeted for 6e8a6c446,
+where a mentioned skill reaches the model as a view_skill result Open WebUI preloads; passes on dev
+da9bca0fc and goes red in a backend copy whose view_skill result lists no files.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ from harness.skill_files import (
     set_production,
     skill_md,
 )
+from harness.upstream import context_results
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -493,13 +496,14 @@ def test_a_mentioned_skill_reaches_the_model_with_the_list_of_its_files(owner, u
     with owner.client() as client:
         ask(client, f"<${skill['id']}|Tides> when is high water?")
 
-    request = upstream.chat_requests()[-1]
-    system = "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
-    assert f'<skill id="{skill["id"]}" name="{skill["name"]}">' in system, system
-    assert "Read the tide table first." in system
+    # the mentioned skill arrives as a view_skill result Open WebUI preloads
+    viewed = [
+        json.loads(result) for result in context_results(upstream.chat_requests()[-1], "view_skill")
+    ]
+    assert [entry["id"] for entry in viewed] == [skill["id"]], viewed
+    assert "Read the tide table first." in viewed[0]["content"]
+    listed = {entry["path"] for entry in viewed[0]["files"]}
     for path in ("references/tables.md", "references/charts.md", "scripts/check.py"):
-        assert path in system, system
+        assert path in listed, listed
     # the supporting files are listed, not pasted in
-    assert "High water at noon." not in system
+    assert "High water at noon." not in json.dumps(viewed)

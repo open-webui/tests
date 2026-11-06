@@ -10,13 +10,15 @@ Each test drives one chat through a feature family over several turns, the way t
 sends them, and checks every consecutive pair of requests the provider received, tool rounds
 included: plain turns, single and multi-step tool rounds, parallel tool calls, reasoning, the
 chat file tools, knowledge bases, notes and chats attached to the chat, the model's knowledge,
-the memory tools, unchanged memories kept in the system prompt, skills, a sub-agent, a
-background sub-agent's report, a timer, web search and fetch, an image a tool returned, a real
-Open Terminal connected from the first turn, time passing and a change to settings outside the
-prefix. The controls at the end take the breakers
-the page names (Citations on, File Context on, the memory system context with a memory
-changing, web search switched on mid-chat, an earlier message edited) and show the check goes
-red on each.
+the memory tools, unchanged memories recalled with the memory system context on, skills, a
+sub-agent, a background sub-agent's report, a timer, web search and fetch, an image a tool
+returned, a real Open Terminal connected from the first turn, time passing and a change to
+settings outside the prefix. The controls at the end take the breakers the page names (File
+Context on, web search switched on mid-chat, an earlier message edited) and show the check goes
+red on each. Since dev 8e2ba2937 the citation context goes out with the tool
+result it cites, and since e6ae368f5 recalled memories go out as a result of their own after each
+question, so Citations on and a memory changing with the memory system context on only append
+now and are promise tests; they rewrote the prefix on dev c165ee14f.
 
 The turn a timer or a background sub-agent's report started was sent the chat's finished system
 prompt as its own and had the model's system prompt and attached knowledge added to it again, so
@@ -66,7 +68,7 @@ from harness.prompt_caching import (
 )
 from harness.python_tools import EVERYONE_READS
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
-from harness.upstream import Reply
+from harness.upstream import Reply, context_results
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
     RETRIEVAL_CONFIG,
@@ -434,7 +436,7 @@ def test_unchanged_memories_in_the_system_context_only_append(
             chat.say(text)
 
     requests = chat.requests()
-    assert "takes the early ferry" in requests[0]["messages"][0]["content"]
+    assert "takes the early ferry" in context_results(requests[0], "recall_memories")[0]
     assert_append_only(requests)
 
 
@@ -697,7 +699,7 @@ def model_with(admin):
             client.post("/api/v1/models/model/delete", json={"id": model_id})
 
 
-def test_citations_on_rewrite_the_prefix(cached_setup, model_with, make_user, upstream):
+def test_citations_on_only_append(cached_setup, model_with, make_user, upstream):
     with make_user().client() as client:
         chat = Conversation(client, upstream, model_with(citations=True))
         chat.say(
@@ -705,8 +707,13 @@ def test_citations_on_rewrite_the_prefix(cached_setup, model_with, make_user, up
             calling("view_knowledge_file", {"file_id": cached_setup.handbook_file_id}),
             reply.text("Read."),
         )
+        chat.say("and when does the ferry leave?")
 
-    assert first_break(chat.requests()) is not None
+    requests = chat.requests()
+    result = [entry for entry in requests[1]["messages"] if entry["role"] == "tool"][-1]["content"]
+    assert "pier 7" in result, "the handbook never reached the model"
+    assert '<source id="1"' in result, f"the citation context never reached the model: {result}"
+    assert_append_only(requests)
 
 
 def test_file_context_on_rewrites_the_prefix(model_with, make_user, upstream):
@@ -719,7 +726,7 @@ def test_file_context_on_rewrites_the_prefix(model_with, make_user, upstream):
     assert first_break(chat.requests()) is not None
 
 
-def test_a_memory_change_with_the_system_context_on_rewrites_the_prefix(
+def test_a_memory_change_with_the_system_context_on_only_appends(
     cached_setup, admin, make_user, upstream
 ):
     turn_on_memory_system_context(admin)
@@ -730,7 +737,12 @@ def test_a_memory_change_with_the_system_context_on_rewrites_the_prefix(
         client.post("/api/v1/memories/add", json={"content": "takes the early ferry"})
         chat.say("again")
 
-    assert first_break(chat.requests()) is not None
+    requests = chat.requests()
+    recalled = context_results(requests[-1], "recall_memories")
+    assert "takes the early ferry" in recalled[-1], (
+        f"the new memory never reached the model: {recalled}"
+    )
+    assert_append_only(requests)
 
 
 def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
