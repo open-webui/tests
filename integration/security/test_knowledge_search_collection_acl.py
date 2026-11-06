@@ -119,7 +119,7 @@ def knowledge_bases_found_by_the_model(actor: Actor, upstream) -> set[str]:
     )
     with actor.client() as client:
         ask(client, "which knowledge base has the notes?")
-    replayed = upstream.chat_requests()[-1]["messages"]
+    replayed = reply.conversation(upstream.chat_requests()[-1])
     tool_results = [entry["content"] for entry in replayed if entry["role"] == "tool"]
     assert len(tool_results) == 1, f"the tool result was not replayed: {replayed}"
     listed = json.loads(tool_results[0])

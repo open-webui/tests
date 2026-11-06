@@ -14,8 +14,8 @@ sends its lines one at a time, since the server can otherwise reorder them and d
 knowledge left on it.
 
 Discriminates: passes on dev ebc6add67; with the filtering removed from `_set_direct_model` the
-other account's file comes back through `view_file`, the system prompt names their file and
-collection, and the action sees them on the model.
+other account's file comes back through `view_file`, the attached knowledge list names their
+file and collection, and the action sees them on the model.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import uuid
 
 import pytest
 
+from harness import upstream as reply
 from harness.chat import send_message, wait_for_reply
 from harness.direct_connection import answering, chunk_line, direct_model
 from harness.knowledge_bases import knowledge_base
@@ -102,14 +103,16 @@ def _view_file(knowledge: dict, file_id: str) -> tuple[dict, str]:
 
     first, follow_up = tab.requests
     [tool_result] = [
-        entry["content"] for entry in follow_up["form_data"]["messages"] if entry["role"] == "tool"
+        entry["content"]
+        for entry in reply.conversation(follow_up["form_data"])
+        if entry["role"] == "tool"
     ]
     return first, tool_result
 
 
-def _system_prompt(request: dict) -> str:
-    messages = request["form_data"]["messages"]
-    return "\n".join(entry["content"] for entry in messages if entry["role"] == "system")
+def _attached_knowledge(request: dict) -> str:
+    """The attached knowledge list Open WebUI hands the model before its first reply."""
+    return "\n".join(reply.context_results(request["form_data"], "list_attached_knowledge"))
 
 
 # narrow: knowledge the caller cannot read is dropped from the direct model
@@ -127,15 +130,14 @@ def test_a_claimed_file_of_another_account_cannot_be_read(knowledge):
 
 def test_the_model_is_only_told_about_knowledge_the_caller_can_read(knowledge):
     first_request, _ = _view_file(knowledge, knowledge["my_file"])
-    system_prompt = _system_prompt(first_request)
+    listed = _attached_knowledge(first_request)
 
-    assert knowledge["my_file"] in system_prompt, system_prompt
-    assert knowledge["their_file"] not in system_prompt, (
-        f"the model was offered another account's file as attached knowledge (#26723): "
-        f"{system_prompt}"
+    assert knowledge["my_file"] in listed, listed
+    assert knowledge["their_file"] not in listed, (
+        f"the model was offered another account's file as attached knowledge (#26723): {listed}"
     )
-    assert knowledge["their_collection"] not in system_prompt, (
-        f"the model was offered a collection the caller cannot read (#26723): {system_prompt}"
+    assert knowledge["their_collection"] not in listed, (
+        f"the model was offered a collection the caller cannot read (#26723): {listed}"
     )
 
 

@@ -160,7 +160,7 @@ def replay(user, upstream, output: list[dict]) -> list[dict]:
             [QUESTION, {"role": "assistant", "content": "here it is", "output": output}],
         )
         ask(client, "and now?", chat_id=chat_id, parent_id=assistant_id)
-    return upstream.chat_requests()[-1]["messages"]
+    return reply.conversation(upstream.chat_requests()[-1])
 
 
 CHART_RESULT = [

@@ -27,6 +27,7 @@ from typing import Iterator
 
 import pytest
 
+from harness import upstream as reply
 from harness.access import make_group
 from harness.chat import ask
 from harness.plugins import installed_function
@@ -115,11 +116,7 @@ def preset(owner, params: dict | None = None, **meta) -> Iterator[str]:
 def sent_to_provider(actor, upstream, model_id: str, question: str, **options) -> dict:
     with actor.client() as client:
         ask(client, question, model=model_id, **options)
-    return next(
-        body
-        for body in upstream.chat_requests()
-        if question in str(body["messages"][-1]["content"])
-    )
+    return next(body for body in upstream.chat_requests() if reply.answering(question)(body))
 
 
 def offered(request: dict) -> set[str]:
