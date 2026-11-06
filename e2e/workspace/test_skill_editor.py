@@ -1,7 +1,7 @@
 """Journey: a skill written, changed and deleted in the workspace, as a chat mention sees it.
 
-A fresh admin writes a skill in Workspace > Skills. Mentioning it with `$` in a chat puts its
-instructions in the system prompt the model is sent. After its instructions are changed in the
+A fresh admin writes a skill in Workspace > Skills. Mentioning it with `$` in a chat hands the
+model its instructions. After its instructions are changed in the
 editor, the next mention sends the new ones and none of the old. Deleted from the list's menu,
 it leaves the list and the `$` picker, while a skill next to it stays.
 
@@ -74,7 +74,7 @@ def _dollar_picker(page: Page, query: str) -> Locator:
     return page.get_by_role("button")
 
 
-def _system_prompt_after_mention(page: Page, upstream, name: str) -> str:
+def _skill_given_after_mention(page: Page, upstream, name: str) -> str:
     question = f"what now? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("On it.", match=reply.answering(question)))
     _dollar_picker(page, name.split()[0]).filter(has_text=name).click()
@@ -82,9 +82,7 @@ def _system_prompt_after_mention(page: Page, upstream, name: str) -> str:
     page.keyboard.press("Enter")
     expect_reply(page, "On it.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
+    return "\n".join(reply.context_results(request, "view_skill"))
 
 
 def test_a_skill_written_in_the_editor_reaches_the_model_when_mentioned(
@@ -94,9 +92,9 @@ def test_a_skill_written_in_the_editor_reaches_the_model_when_mentioned(
     page = page_for(skill_writer)
     _write_skill(page, name, "Answer in exactly three bullet points.")
 
-    system = _system_prompt_after_mention(page, upstream, name)
+    given = _skill_given_after_mention(page, upstream, name)
 
-    assert "Answer in exactly three bullet points." in system
+    assert "Answer in exactly three bullet points." in given
 
 
 def test_changed_instructions_replace_the_old_ones_in_the_next_mention(
@@ -113,10 +111,10 @@ def test_changed_instructions_replace_the_old_ones_in_the_next_mention(
     page.get_by_role("main").get_by_role("button", name="Save", exact=True).click()
     expect(page.get_by_text("Skill updated successfully")).to_be_visible()
 
-    system = _system_prompt_after_mention(page, upstream, name)
+    given = _skill_given_after_mention(page, upstream, name)
 
-    assert "Answer like a sailor." in system
-    assert "Answer formally." not in system
+    assert "Answer like a sailor." in given
+    assert "Answer formally." not in given
 
 
 def test_a_deleted_skill_leaves_the_list_and_the_dollar_picker(page_for, skill_writer):

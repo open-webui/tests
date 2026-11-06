@@ -183,11 +183,9 @@ def test_setting_an_old_version_as_production_brings_back_its_files_for_the_next
     page.keyboard.press("Enter")
     expect_reply(page, "At noon.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    system = "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
-    assert "Read the tide table first." in system
-    assert "Ignore the tides." not in system
+    given = "\n".join(reply.context_results(request, "view_skill"))
+    assert "Read the tide table first." in given
+    assert "Ignore the tides." not in given
 
 
 def test_a_zip_of_skill_folders_is_imported_through_the_dialog(page_for, owner):

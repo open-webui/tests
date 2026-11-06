@@ -111,7 +111,7 @@ def _dollar_menu(page: Page, typed: str) -> Locator:
     return page.get_by_role("button")
 
 
-def _system_prompt_after_mention(page: Page, upstream, typed: str, shown: str) -> str:
+def _skill_given_after_mention(page: Page, upstream, typed: str, shown: str) -> str:
     question = f"what now? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("On it.", match=reply.answering(question)))
     _dollar_menu(page, typed).filter(has_text=shown).click()
@@ -120,9 +120,7 @@ def _system_prompt_after_mention(page: Page, upstream, typed: str, shown: str) -
     # the conversation's label is translated, so the reply is found by its class
     expect(page.locator(".chat-assistant").last).to_contain_text("On it.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
+    return "\n".join(reply.context_results(request, "view_skill"))
 
 
 def test_a_skill_markdown_file_is_imported_named_from_its_front_matter(page_for, keeper, upstream):
@@ -143,8 +141,8 @@ def test_a_skill_markdown_file_is_imported_named_from_its_front_matter(page_for,
     assert stored["description"] == "Reading tide tables"
     assert stored["content"] == markdown
 
-    system = _system_prompt_after_mention(page, upstream, suffix, f"tide-tables-{suffix}")
-    assert "Read the high tide column first." in system
+    given = _skill_given_after_mention(page, upstream, suffix, f"tide-tables-{suffix}")
+    assert "Read the high tide column first." in given
 
 
 def test_a_json_file_of_several_skills_imports_each_of_them(page_for, keeper):
@@ -226,8 +224,8 @@ def test_a_german_name_given_in_the_editor_shows_in_a_german_interface(
     expect(rows.filter(has_text=german_name)).to_be_visible()
     expect(rows.filter(has_text=default_name)).to_have_count(0)
 
-    system = _system_prompt_after_mention(page, upstream, default_name.split()[1], german_name)
-    assert "Tie a bowline." in system
+    given = _skill_given_after_mention(page, upstream, default_name.split()[1], german_name)
+    assert "Tie a bowline." in given
 
 
 def test_the_german_name_finds_the_skill_in_a_german_interface(german_named):

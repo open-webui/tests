@@ -7,7 +7,8 @@ reaching the next chat, and a skill switched off after it was attached is not ap
 shared with everyone that carries a skill the chatting account may not read gives that account
 none of its instructions, while a skill shared with the account does reach it. Where the model
 uses native function calling with builtin tools and the admin has switched on lazy skill loading,
-the system prompt lists the attached skill by name and description only, the provider is offered
+Open WebUI lists the attached skill by name and description only (in a tool round of its own
+since 003c9e085), the provider is offered
 the skill viewer, and when the model calls it the chat shows the call and the skill's instructions
 reach the provider in the tool result. Unticking Skills under the editor's Builtin Tools and
 saving withdraws the list and the viewer from the next chat, while the attached skill arrives in
@@ -22,8 +23,8 @@ Discriminates: passes on dev ebc6add67; in a backend copy whose chat middleware 
 a chat sends along for its model, the attach, detach, switched-off and unreadable-skill tests
 fail; in one that no longer filters skills by what the chatting account may read, the
 unreadable-skill test fails; in one that no longer skips switched-off skills, the switched-off
-test fails; in one whose skill viewer answers an error or whose system prompt leaves out the
-skill list, the native test fails; in one that ignores the model's Skills toggle (55e1c44c9), or a
+test fails; in one whose skill viewer answers an error or that leaves out the skill list, the
+native test fails; in one that ignores the model's Skills toggle (55e1c44c9), or a
 frontend build without the Skills entry in the editor's Builtin Tools, the toggle test fails.
 Retargeted for 8d0ff76f2, whose editor picks skills from a search list and keeps the Skills switch
 in its Builtin Tools section: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor
@@ -279,9 +280,11 @@ def test_native_function_calling_lists_the_skill_and_the_viewer_loads_it(
 
     answered = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
     first, last = answered[0], answered[-1]
-    manifest = system_text(first)
+    manifest = "\n".join(reply.context_results(first, "list_available_skills"))
     offered = {tool["function"]["name"] for tool in first.get("tools") or []}
-    tool_results = json.dumps([entry for entry in last["messages"] if entry["role"] == "tool"])
+    tool_results = json.dumps(
+        [entry for entry in reply.conversation(last) if entry["role"] == "tool"]
+    )
     assert "<available_skills>" in manifest, manifest
     assert skill["name"] in manifest and f"How to behave at the dock {skill['id']}" in manifest
     assert instructions not in manifest, manifest
@@ -303,7 +306,8 @@ def test_unticking_skills_in_the_editor_withdraws_the_list_and_the_viewer(
     attach_in_editor(page, model, skill)
     open_chat_on(page, model["id"], model["name"])
     ticked = reply_request(page, upstream, "when do we sail?")
-    assert "<available_skills>" in system_text(ticked), system_text(ticked)
+    listed = "\n".join(reply.context_results(ticked, "list_available_skills"))
+    assert "<available_skills>" in listed and skill["name"] in listed, listed
     assert "view_skill" in offered_tool_names(ticked)
 
     editor = open_editor(page, model)
@@ -313,7 +317,7 @@ def test_unticking_skills_in_the_editor_withdraws_the_list_and_the_viewer(
     open_chat_on(page, model["id"], model["name"])
     unticked = reply_request(page, upstream, "when do we sail now?")
     prompt = system_text(unticked)
-    assert "<available_skills>" not in prompt, prompt
+    assert "<available_skills>" not in json.dumps(unticked["messages"]), unticked["messages"]
     assert "view_skill" not in offered_tool_names(unticked)
     assert "get_current_timestamp" in offered_tool_names(unticked)
     assert f'<skill id="{skill["id"]}"' in prompt and instructions in prompt, prompt

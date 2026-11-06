@@ -1,8 +1,8 @@
 """Journey: a skill shared in its Access dialog, as the accounts it reaches and misses see it.
 
 An admin writes a skill and shares it from the skill editor's Access dialog. Shared with a group
-for reading, it is offered by the `$` menu to the group's member, whose mention puts its
-instructions in the system prompt the model is sent, and an outsider is never offered it.
+for reading, it is offered by the `$` menu to the group's member, whose mention hands the model
+its instructions, and an outsider is never offered it.
 Taking the group off the list again withdraws it from the member. A user given write access in
 the same dialog changes its instructions in the editor and the owner's next mention sends the
 new ones, while a reader opens the editor read only, without a Save. Who the API lets do what
@@ -115,7 +115,7 @@ def _dollar_menu(page: Page, typed: str) -> Locator:
 
 
 def _mention_and_ask(page: Page, upstream, skill: dict) -> str:
-    """Mention the skill from the `$` menu, ask, and return the system prompt the model got."""
+    """Mention the skill from the `$` menu, ask, and return the skill the model was given."""
     question = f"which knot? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("A bowline.", match=reply.answering(question)))
     _dollar_menu(page, _suffix(skill)).filter(has_text=skill["name"]).click()
@@ -123,9 +123,7 @@ def _mention_and_ask(page: Page, upstream, skill: dict) -> str:
     page.keyboard.press("Enter")
     expect_reply(page, "A bowline.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
+    return "\n".join(reply.context_results(request, "view_skill"))
 
 
 def test_a_skill_shared_with_a_group_reaches_its_member_and_not_an_outsider(
@@ -190,6 +188,6 @@ def test_a_writer_changes_the_instructions_and_a_reader_meets_a_read_only_editor
     expect(code_editor(reader_page)).to_have_attribute("contenteditable", "false")
     expect(reader_page.get_by_role("main").get_by_role("button", name="Save")).to_have_count(0)
 
-    system = _mention_and_ask(page, upstream, skill)
-    assert "Tie a sheet bend." in system
-    assert "Tie a reef knot." not in system
+    given = _mention_and_ask(page, upstream, skill)
+    assert "Tie a sheet bend." in given
+    assert "Tie a reef knot." not in given
