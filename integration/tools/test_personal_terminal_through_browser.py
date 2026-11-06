@@ -14,6 +14,11 @@ Discriminates: passes on dev efe63bd34; with 7ad0ae468 reverted in a backend cop
 which touches the same lines, undone first) all three narrow tests fail: the server connects to
 the terminal itself and the chat ends in a connection error. The admin-terminal test passes on
 both.
+
+Issue open-webui/open-webui#33811: the page sends the folder its file browser has open with a new
+chat, and the server tried to move a personal terminal there itself, so the reply was only
+"Working directory is unavailable". The browser-folder test passes on c165ee14f and on the fix
+branch fix/personal-terminal-working-dir and fails on dev da9bca0fc.
 """
 
 from __future__ import annotations
@@ -149,6 +154,25 @@ def test_a_skill_the_model_opens_is_read_through_the_browser(make_user, upstream
         f"the model opened the personal terminal's skill and got {results} (#30410)"
     )
     assert "/skills/read?name=ship-it" in asked
+
+
+def test_a_new_chat_in_the_file_browsers_folder_gets_its_reply(make_user, upstream):
+    owner = make_user(role="admin")
+    upstream.queue(reply.text("ready"))
+    personal = {"url": UNREACHABLE, "key": "", "is_terminal": True, "specs": [RUN_COMMAND]}
+    with _browser_tab(owner) as (session_id, _), owner.client() as client:
+        _, message = ask(
+            client,
+            "what is in this folder?",
+            session_id=session_id,
+            terminal_id=UNREACHABLE,
+            terminal_cwd=f"{HOME}/project",
+            tool_servers=[personal],
+        )
+
+    assert not message.get("error") and message["content"] == "ready", (
+        f"a new chat on a personal terminal opened in a folder got no reply: {message} (#33811)"
+    )
 
 
 @pytest.fixture
