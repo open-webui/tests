@@ -189,13 +189,12 @@ def test_a_subagent_stops_at_the_iteration_limit_and_says_so(
 
     expect_reply(page, "It gave up.")
     sub_row(page, task).click()
-    expect(last_reply(page)).to_contain_text("Tool-call limit reached (2 iterations).")
-    # one request to start and one after each of the two allowed rounds
-    assert len(sub_requests(upstream, task)) == 3
-    failed = upstream.chat_requests()[-1]["messages"][-1]
-    assert failed["role"] == "tool"
-    assert failed["content"].startswith("Error:")
-    assert "Tool-call limit reached (2 iterations)." in failed["content"]
+    # since d87837372 the request after the last allowed round withdraws the tools for an answer,
+    # and a call the model still makes there fails with the limit
+    expect(last_reply(page)).to_contain_text("Tool-call iteration limit reached.")
+    requests = sub_requests(upstream, task)
+    assert len(requests) == 3
+    assert requests[-1].get("tool_choice") == "none" and not requests[-1].get("tools"), requests[-1]
 
 
 def test_a_subagent_answer_longer_than_the_output_limit_is_cut(
@@ -295,7 +294,7 @@ def test_several_subagents_in_one_reply_each_get_a_row_and_a_result(
         expect(last_reply(page)).to_contain_text(answer)
     handed_over = {
         entry["tool_call_id"]: entry["content"]
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
         if entry["role"] == "tool"
     }
     assert handed_over == {"call_0": answers[0], "call_1": answers[1]}
