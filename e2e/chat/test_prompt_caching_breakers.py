@@ -2,24 +2,27 @@
 
 The page lists what breaks the provider's cached prefix and what does not. A person drives chats
 on the page's setup in the web client and applies exactly one breaker per test: a model with File
-Context on and a text file attached, the same file switched to Using Entire Document, Citations
-on with a knowledge file read by a tool, a memory added in Settings > Personalization while the
-memory system context is on, an AGENTS.md written into the Open Terminal's home between turns, a
-skill saved there between turns, a builtin tool category unticked on the model by an admin in the
-model editor, web search or a workspace tool switched on from the Integrations menu, an earlier
-question edited and sent again, and a skill mentioned with `$` in a later turn, which is how a
-chat attaches one (its whole text joins the system message). The page also calls some changes
-harmless, and those tests stay green: a file or a whole knowledge base switched to Using Entire
-Document with File Context off, memories in the system context that do not change, the first file
-attached in a chat adding the Files tools once with every request after it appending again, and
-an AGENTS.md or a skill that was in the terminal from the first turn. Each control checks where
-the break falls.
+Context on and a text file attached, the same file switched to Using Entire Document, an
+AGENTS.md written into the Open Terminal's home between turns, a skill saved there between turns,
+a builtin tool category unticked on the model by an admin in the model editor, web search or a
+workspace tool switched on from the Integrations menu and an earlier question edited and sent
+again. The page also calls some changes harmless, and those tests stay green: a file or a whole
+knowledge base switched to Using Entire Document with File Context off, memories in the system
+context that do not change, the first file attached in a chat adding the Files tools once with
+every request after it appending again, and an AGENTS.md or a skill that was in the terminal from
+the first turn. Each control checks where the break falls.
 
-Two more controls show breakers the page does not name, each rewriting the system message:
-a chat moved into a folder that has its own system prompt and a skill shared with the person
-mid-chat (every readable skill is listed in the system message, whether or not it was attached).
-A knowledge base attached to the chat after its first turn only appends: since 003c9e085 it is
-named in the message that carried it, no longer in a system message list.
+Three breakers the page still names only append since the 0.13.1 rework, so their tests check
+that instead: Citations on with a knowledge file read by a tool (8e2ba2937 puts the citation
+markers into the tool result), a memory added in Settings > Personalization while the memory
+system context is on (e6ae368f5 hands the memories over in a recall round after each question)
+and a skill mentioned with `$` in a later turn (6e8a6c446 loads it as a skill viewer call).
+
+Two more controls show breakers the page does not name: a chat moved into a folder that has its
+own system prompt and a skill shared with the person mid-chat (every readable skill is listed for
+the model, whether or not it was attached). A knowledge base attached to the chat after its first
+turn only appends: since 003c9e085 it is named in the message that carried it, no longer in a
+system message list.
 
 `test_unchanged_memories_with_the_system_context_on_only_append` failed on dev 1c010b438 in CI:
 the reply stayed blank on the page; since de73bb830 the reply in a new chat sometimes stays blank
@@ -238,7 +241,7 @@ def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
 # --- Citations ------------------------------------------------------------------------------
 
 
-def test_citations_on_rewrite_the_prefix(model_with, page_for, make_user, upstream):
+def test_citations_on_only_append(model_with, page_for, make_user, upstream):
     model = model_with(citations=True)
     page = page_for(make_user(), path=f"/?models={model.id}")
 
@@ -251,10 +254,10 @@ def test_citations_on_rewrite_the_prefix(model_with, page_for, make_user, upstre
     )
 
     requests = chat_requests(upstream)
-    assert "06:40" in tool_results(requests[-1]), tool_results(requests[-1])
-    broken = first_break(requests)
-    assert broken is not None, "Citations on left the prefix append-only after a tool round"
-    assert "messages[1] (user)" in broken, broken
+    results = tool_results(requests[-1])
+    # since 8e2ba2937 the citation markers ride along with the tool result instead
+    assert "06:40" in results and '<source id="1"' in results, results
+    assert_append_only(requests)
 
 
 # --- Memory ---------------------------------------------------------------------------------
@@ -272,7 +275,7 @@ def add_memory_in_settings(page: Page, text: str) -> None:
     expect(settings.get_by_text(text)).to_be_visible()
 
 
-def test_a_memory_added_mid_chat_with_the_system_context_on_rewrites_the_prefix(
+def test_a_memory_added_mid_chat_with_the_system_context_on_only_appends(
     cached_setup, admin, page_for, make_user, upstream
 ):
     with admin.client() as client:
@@ -289,11 +292,10 @@ def test_a_memory_added_mid_chat_with_the_system_context_on_rewrites_the_prefix(
     ask(page, upstream, "what is the weather?", reply.text("Clear."))
 
     requests = chat_requests(upstream)
-    assert FIRST_MEMORY in requests[0]["messages"][0]["content"]
-    assert SECOND_MEMORY in requests[1]["messages"][0]["content"]
-    broken = first_break(requests)
-    assert broken is not None, "a memory added mid-chat left the prefix append-only"
-    assert "messages[0] (system)" in broken, broken
+    # since e6ae368f5 each question's memories come in a recall round kept in the chat
+    assert FIRST_MEMORY in "\n".join(reply.context_results(requests[0], "recall_memories"))
+    assert SECOND_MEMORY in reply.context_results(requests[1], "recall_memories")[-1]
+    assert_append_only(requests)
 
 
 def test_unchanged_memories_with_the_system_context_on_only_append(
@@ -315,7 +317,7 @@ def test_unchanged_memories_with_the_system_context_on_only_append(
     ask(page, upstream, "and the tides?", reply.text("High at noon."))
 
     requests = chat_requests(upstream)
-    assert SECOND_MEMORY in requests[0]["messages"][0]["content"]
+    assert SECOND_MEMORY in "\n".join(reply.context_results(requests[0], "recall_memories"))
     assert_append_only(requests)
 
 
@@ -458,7 +460,7 @@ def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
     assert broken is not None and "in tools" in broken, broken
 
 
-def test_a_skill_mentioned_mid_chat_rewrites_the_prefix(
+def test_a_skill_mentioned_mid_chat_only_appends(
     cached_setup, admin, page_for, make_user, upstream
 ):
     skill_id = f"tide-tables-{uuid.uuid4().hex[:6]}"
@@ -486,8 +488,11 @@ def test_a_skill_mentioned_mid_chat_rewrites_the_prefix(
             client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
     requests = chat_requests(upstream)
-    assert "Read the high tide column first." in requests[1]["messages"][0]["content"]
-    assert first_break(requests) is not None, "a skill mentioned mid-chat left the prefix alone"
+    # since 6e8a6c446 a mention loads the skill as a viewer call after the question
+    assert "Read the high tide column first." in "\n".join(
+        reply.context_results(requests[1], "view_skill")
+    )
+    assert_append_only(requests)
 
 
 def test_a_workspace_tool_switched_on_mid_chat_rewrites_the_prefix(
@@ -600,6 +605,6 @@ def test_a_skill_shared_with_the_person_mid_chat_rewrites_the_prefix(
             client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
     requests = chat_requests(upstream)
-    assert "Tide tables" in requests[1]["messages"][0]["content"]
+    assert "Tide tables" in "\n".join(reply.context_results(requests[1], "list_available_skills"))
     broken = first_break(requests)
     assert broken is not None, "a new skill left the prefix alone"
