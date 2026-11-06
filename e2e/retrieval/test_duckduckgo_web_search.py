@@ -57,7 +57,7 @@ def searcher(instance_with, duckduckgo):
 
 
 def _tool_results(searcher) -> list[str]:
-    follow_up = searcher.upstream.chat_requests()[-1]["messages"]
+    follow_up = reply.conversation(searcher.upstream.chat_requests()[-1])
     return [entry["content"] for entry in follow_up if entry["role"] == "tool"]
 
 

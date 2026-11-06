@@ -29,6 +29,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
+from harness.file_context import file_context_ticked
 from harness.listener import json_answer, listening, text_answer
 from harness.playwright_server import serving_playwright
 from harness.search_apis import search_apis_env, serving_search_apis
@@ -172,7 +173,9 @@ def fetch_in_a_chat(page: Page, reader, link: str, question: str) -> str:
     send(page, question)
     expect_reply(page, "The log says so")
     follow_up = [body for body in reader.upstream.chat_requests() if answering(body)][-1]
-    [fetched] = [entry["content"] for entry in follow_up["messages"] if entry["role"] == "tool"]
+    [fetched] = [
+        entry["content"] for entry in reply.conversation(follow_up) if entry["role"] == "tool"
+    ]
     return fetched
 
 
@@ -233,8 +236,11 @@ def test_the_fetch_length_limit_cuts_what_the_model_reads(page_for, reader, read
     page = page_for(create_user(reader))
     fetched = fetch_in_a_chat(page, reader, f"{services.base_url}/page", "How long is the log?")
 
-    assert fetched.endswith("\n\n[Content truncated...]"), fetched
-    assert len(fetched) == 20 + len("\n\n[Content truncated...]")
+    # since 8e2ba2937 the citation context for the page follows the cut text
+    kept, marker, _ = fetched.partition("\n\n[Content truncated...]")
+    assert marker, f"the page was not cut: {fetched}"
+    assert len(kept) == 20, f"the model read {len(kept)} characters of the page: {kept!r}"
+    assert PAGE_TEXT not in fetched, fetched
 
 
 def attach_webpage(page: Page, link: str) -> None:
@@ -259,10 +265,12 @@ def test_bypass_embedding_decides_whether_an_attached_page_is_embedded(
     question = f"What is in the lighthouse log ({'bypassed' if bypass else 'embedded'})?"
     reader.upstream.queue(reply.text("Fog every hour.", match=reply.answering(question)))
 
-    page = page_for(create_user(reader))
-    attach_webpage(page, f"{services.base_url}/page")
-    send(page, question)
-    expect_reply(page, "Fog every hour.")
+    # an attached page reaches the prompt only with File Context ticked
+    with file_context_ticked(reader_admin):
+        page = page_for(create_user(reader))
+        attach_webpage(page, f"{services.base_url}/page")
+        send(page, question)
+        expect_reply(page, "Fog every hour.")
 
     embedded = [
         entry

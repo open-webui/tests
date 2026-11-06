@@ -119,7 +119,9 @@ def tool_results(searcher, question: str) -> list[str]:
     follow_up = [
         body for body in searcher.upstream.chat_requests() if reply.answering(question)(body)
     ]
-    return [entry["content"] for entry in follow_up[-1]["messages"] if entry["role"] == "tool"]
+    return [
+        entry["content"] for entry in reply.conversation(follow_up[-1]) if entry["role"] == "tool"
+    ]
 
 
 @pytest.mark.parametrize("engine", ENGINES, ids=lambda engine: engine.name)
