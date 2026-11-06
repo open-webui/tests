@@ -23,6 +23,9 @@ by default outside legacy mode, and a call without a session id gets no file too
 the provider got only the bare question (open-webui/open-webui#33808, fix branch
 fix/api-chat-files). `test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools`
 pins the other half: a client that sends a session id gets the file tools.
+`test_a_model_without_builtin_tools_still_reads_an_attached_file` is red on dev 144dec942 and
+passes on v0.13.0: a model with Builtin Tools unticked gets no file tools even with a session id,
+and since bd6fc15be the file text is not injected either.
 
 Discriminates: on dev 0f5a58f5f, in backend copies: `get_current_user_by_api_key` finding no user
 fails every API-key run; an unknown key answered 403 fails the wrong-key test; dropping the
@@ -55,6 +58,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import NO_BACKGROUND_TASKS
 from harness.knowledge_bases import knowledge_base
+from harness.model_presets import preset_with_capabilities
 from harness.python_tools import python_tool
 from harness.upstream import MOCK_MODEL_ID
 
@@ -319,6 +323,25 @@ def test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools(
     assert answered.status_code == 200, answered.text
     offered = offered_tools(upstream)
     assert "view_file" in offered, f"the file tools were not offered, only {sorted(offered)}"
+
+
+def test_a_model_without_builtin_tools_still_reads_an_attached_file(
+    instance, admin, credential, upstream
+):
+    with preset_with_capabilities(admin, {"builtin_tools": False}) as model_id:
+        with instance.client(credential) as client:
+            file_id = upload_and_wait(client, "orders.txt", "Order 4471 shipped on a Tuesday.")
+            answered = complete(
+                client,
+                "When did order 4471 ship?",
+                model=model_id,
+                files=[{"type": "file", "id": file_id}],
+                session_id=f"api-{uuid.uuid4().hex[:8]}",
+            )
+
+    assert answered.status_code == 200, answered.text
+    sent = sent_text(upstream)
+    assert "Order 4471 shipped on a Tuesday." in sent, f"the model got no file text: {sent}"
 
 
 def test_tool_ids_offer_the_tool_and_hand_its_call_back(instance, admin, credential, upstream):
