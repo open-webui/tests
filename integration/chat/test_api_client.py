@@ -18,6 +18,12 @@ provider, the last two alike so a private model's name stays hidden.
 since de73bb830 a call into a chat whose empty answer was stored first, as the docs describe, is
 refused with 409, with or without `user_message` (open-webui/open-webui#32066, fixed by 641c82df1).
 
+The two file and two knowledge runs are red on dev da9bca0fc: since bd6fc15be File Context is off
+by default outside legacy mode, and a call without a session id gets no file tools either, so
+the provider got only the bare question (open-webui/open-webui#33808, fix branch
+fix/api-chat-files). `test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools`
+pins the other half: a client that sends a session id gets the file tools.
+
 Discriminates: on dev 0f5a58f5f, in backend copies: `get_current_user_by_api_key` finding no user
 fails every API-key run; an unknown key answered 403 fails the wrong-key test; dropping the
 `/api/v1/models` alias fails both model list runs; dropping the client's `temperature`,
@@ -296,6 +302,23 @@ def test_a_file_added_to_a_knowledge_base_over_the_api_answers_a_question(
     assert answered.status_code == 200, answered.text
     assert answered.json()["choices"][0]["message"]["content"] == "Brass, since 1911."
     assert "made of brass and dates from 1911" in sent_text(upstream)
+
+
+def test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools(
+    instance, credential, upstream
+):
+    with instance.client(credential) as client:
+        file_id = upload_and_wait(client, "orders.txt", "Order 4471 shipped on a Tuesday.")
+        answered = complete(
+            client,
+            "When did order 4471 ship?",
+            files=[{"type": "file", "id": file_id}],
+            session_id=f"api-{uuid.uuid4().hex[:8]}",
+        )
+
+    assert answered.status_code == 200, answered.text
+    offered = offered_tools(upstream)
+    assert "view_file" in offered, f"the file tools were not offered, only {sorted(offered)}"
 
 
 def test_tool_ids_offer_the_tool_and_hand_its_call_back(instance, admin, credential, upstream):
