@@ -55,9 +55,11 @@ def _ask_about(page_for, account, upstream, tag: str) -> list:
         request
         for request in upstream.chat_requests()
         if question in str(request)
-        and any(entry["role"] == "tool" for entry in request["messages"])
+        and any(entry["role"] == "tool" for entry in reply.conversation(request))
     ]
-    [found] = [entry["content"] for entry in follow_up["messages"] if entry["role"] == "tool"]
+    [found] = [
+        entry["content"] for entry in reply.conversation(follow_up) if entry["role"] == "tool"
+    ]
     return json.loads(found)
 
 

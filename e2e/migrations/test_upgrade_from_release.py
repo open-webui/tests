@@ -139,7 +139,7 @@ def _the_chat_asking(question: str):
 
 
 def _after_a_tool_result(body: dict) -> bool:
-    return body["messages"][-1]["role"] == "tool"
+    return reply.conversation(body)[-1]["role"] == "tool"
 
 
 def _turn_with(page: Page, text: str) -> Locator:
@@ -224,7 +224,7 @@ def test_an_old_chat_continues_and_keeps_the_new_turn(open_as, upgraded, provide
 
     expect_reply(page, "Yes, the Wiener Schnitzel is.")
     [request] = [body for body in provider.chat_requests() if _the_chat_asking(question)(body)]
-    sent = [(entry["role"], entry["content"]) for entry in request["messages"]]
+    sent = [(entry["role"], entry["content"]) for entry in reply.conversation(request)]
     assert sent[-5:] == [
         ("user", "What is a Schnitzel?"),
         ("assistant", "Schnitzel is a breaded cutlet."),
@@ -336,7 +336,9 @@ def test_the_shared_tool_runs_in_a_new_chat(open_as, upgraded, provider):
 
     expect_reply(page, "Pack sunglasses for Graz.")
     [answered] = [body for body in provider.chat_requests() if _after_a_tool_result(body)]
-    results = [entry["content"] for entry in answered["messages"] if entry["role"] == "tool"]
+    results = [
+        entry["content"] for entry in reply.conversation(answered) if entry["role"] == "tool"
+    ]
     assert any("Sunny in Graz" in str(result) for result in results), results
 
 
@@ -400,7 +402,5 @@ def test_a_group_reader_mentions_an_old_skill_in_a_new_chat(open_as, upgraded, p
 
     expect_reply(page, "The night train.")
     [request] = [body for body in provider.chat_requests() if _the_chat_asking(question)(body)]
-    system = "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
-    assert "Prefer night trains over flights." in system, system
+    given = "\n".join(reply.context_results(request, "view_skill"))
+    assert "Prefer night trains over flights." in given, given

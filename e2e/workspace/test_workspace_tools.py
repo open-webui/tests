@@ -83,7 +83,7 @@ def test_a_tool_from_the_editor_is_called_and_its_result_shows(page_for, toolsmi
     assert "lookup_locker" in [tool["function"]["name"] for tool in offered.get("tools", [])]
     tool_results = [
         entry["content"]
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
         if entry["role"] == "tool"
     ]
     assert tool_results == ["Locker 7 belongs to Ada, code 777."], tool_results

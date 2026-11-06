@@ -287,7 +287,7 @@ def test_tool_call_arguments_arriving_in_pieces_reach_the_tool_and_the_answer_fo
     expect_reply(page, "Ten days ago it was.")
     sent = [r.json() for r in second_provider.requests_to("/v1/chat/completions")]
     assert len(sent) == 2
-    called = [m for m in sent[1]["messages"] if m.get("tool_calls")]
+    called = [m for m in reply.conversation(sent[1]) if m.get("tool_calls")]
     function = called[0]["tool_calls"][0]["function"]
     assert function["name"] == "calculate_timestamp"
     assert json.loads(function["arguments"]) == {"days_ago": 3, "weeks_ago": 1}
@@ -688,7 +688,7 @@ def test_merged_deltas_with_thoughts_and_a_tool_call_show_the_same_reply_live_an
     thought_button(page).click()
     expect(last_reply(page)).to_contain_text("weighing the two options")
     sent = [r.json() for r in second_provider.requests_to("/v1/chat/completions")]
-    called = [m for m in sent[1]["messages"] if m.get("tool_calls")]
+    called = [m for m in reply.conversation(sent[1]) if m.get("tool_calls")]
     assert json.loads(called[0]["tool_calls"][0]["function"]["arguments"]) == {
         "days_ago": 3,
         "weeks_ago": 1,

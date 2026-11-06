@@ -56,7 +56,7 @@ def _ask_for_the_time(page: Page, upstream, answer: str) -> str:
 
 def _tool_results(upstream, question: str) -> list[str]:
     final = [body for body in upstream.chat_requests() if reply.answering(question)(body)][-1]
-    return [str(entry["content"]) for entry in final["messages"] if entry["role"] == "tool"]
+    return [str(entry["content"]) for entry in reply.conversation(final) if entry["role"] == "tool"]
 
 
 def _approval_button(page: Page, name: str):

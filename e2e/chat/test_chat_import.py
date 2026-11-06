@@ -112,7 +112,7 @@ def test_exported_chats_import_into_a_fresh_account_and_carry_on(page_for, make_
     upstream.queue(reply.text("A little longer.", match=reply.answering(follow_up)))
     send(page, follow_up)
     expect_reply(page, "A little longer.")
-    sent = next(filter(reply.answering(follow_up), upstream.chat_requests()))["messages"]
+    sent = reply.conversation(next(filter(reply.answering(follow_up), upstream.chat_requests())))
     assert [entry["content"] for entry in sent if entry["role"] != "system"] == [
         QUESTION,
         ANSWER,

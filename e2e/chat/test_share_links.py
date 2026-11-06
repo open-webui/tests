@@ -119,7 +119,7 @@ def test_a_granted_account_clones_the_chat_and_carries_on_in_its_copy(
     upstream.queue(reply.text("mostly coots", match=reply.answering("anything else")))
     send(viewer_page, "anything else?")
     expect_reply(viewer_page, "mostly coots")
-    sent = upstream.chat_requests()[-1]["messages"]
+    sent = reply.conversation(upstream.chat_requests()[-1])
     assert [entry["content"] for entry in sent if entry["role"] == "assistant"] == [ANSWER]
 
     viewer_page.reload()

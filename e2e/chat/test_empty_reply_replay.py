@@ -29,7 +29,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.
 
 def has_no_empty_assistant_message(body: dict) -> bool:
     return all(
-        entry.get("content")
+        entry.get("content") or entry.get("tool_calls")
         for entry in body.get("messages", [])
         if entry.get("role") == "assistant"
     )

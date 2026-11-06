@@ -389,9 +389,17 @@ def test_regenerating_the_last_reply_only_appends(page_for, cached_setup, make_u
     ask(page, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
-    assert requests[2] == requests[1], "the regenerated reply was asked for differently"
+    original, regenerated = requests[1], requests[2]
+    # Open WebUI's own context calls get fresh ids on every request; all else is asked unchanged
+    assert {**regenerated, "messages": reply.conversation(regenerated)} == {
+        **original,
+        "messages": reply.conversation(original),
+    }, "the regenerated reply was asked for differently"
+    for name in reply.CONTEXT_TOOLS:
+        assert reply.context_results(regenerated, name) == reply.context_results(original, name)
     assert "Soon." not in json.dumps(requests[3]["messages"])
-    assert_append_only(requests)
+    assert_append_only(requests[:2])
+    assert_append_only(requests[2:])
 
 
 def test_a_temperature_and_model_description_change_mid_chat_only_append(
@@ -453,7 +461,8 @@ def test_a_skill_loaded_on_demand_only_appends(
     ask(page, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
-    assert "<available_skills>" in requests[0]["messages"][0]["content"]
+    listed = "\n".join(reply.context_results(requests[0], "list_available_skills"))
+    assert "<available_skills>" in listed, listed
     assert "Read the high tide column first." in tool_results(requests[-1])
     assert_append_only(requests)
 

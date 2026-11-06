@@ -468,7 +468,7 @@ def test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_sai
     expect_reply(page, "At noon.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
     assistant_turns = [
-        entry["content"] for entry in request["messages"] if entry["role"] == "assistant"
+        entry["content"] for entry in reply.conversation(request) if entry["role"] == "assistant"
     ]
     assert assistant_turns == [
         f"[Historical voice assistant transcript; not current task status]\n{answer}"

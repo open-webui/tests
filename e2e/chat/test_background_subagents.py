@@ -276,8 +276,9 @@ def test_two_accounts_at_once_each_get_only_their_own_report(
     for task, answer in zip(tasks, answers):
         [report] = [r for r in upstream.chat_requests() if report_of(task)(r)]
         other_answer = answers[1 - answers.index(answer)]
-        assert answer in str(report["messages"][-1]["content"])
-        assert other_answer not in str(report["messages"][-1]["content"])
+        reported = str(reply.conversation(report)[-1]["content"])
+        assert answer in reported
+        assert other_answer not in reported
 
 
 def test_a_background_limit_of_one_refuses_one_of_two_subagents_and_reports_the_other(
@@ -424,5 +425,5 @@ def test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report(
     expect(report_row(page)).to_contain_text("2 tasks")
     expect_reply(page, "Both reports read.")
     [report] = [r for r in upstream.chat_requests() if report_of(tasks[0])(r)]
-    content = str(report["messages"][-1]["content"])
+    content = str(reply.conversation(report)[-1]["content"])
     assert all(task in content and f"answer for {task}" in content for task in tasks)

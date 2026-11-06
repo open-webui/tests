@@ -100,4 +100,4 @@ def test_a_switched_off_voice_mode_prompt_sends_no_voice_instructions(
 
     spoken = first_spoken_request(upstream, 0)
     assert BUILT_IN_MARKER not in str(spoken["messages"])
-    assert spoken["messages"][-1]["role"] == "user"
+    assert reply.conversation(spoken)[-1]["role"] == "user"

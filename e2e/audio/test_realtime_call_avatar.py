@@ -262,7 +262,9 @@ def test_a_standard_call_shows_the_avatar_and_the_chat_model_plays_its_gesture(
     asked = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
     offered = [tool["function"]["name"] for tool in asked[0].get("tools", [])]
     assert "play_animation" in offered, offered
-    results = [entry for body in asked for entry in body["messages"] if entry["role"] == "tool"]
+    results = [
+        entry for body in asked for entry in reply.conversation(body) if entry["role"] == "tool"
+    ]
     assert results, "the gesture's result never reached the chat model"
     assert json.loads(results[0]["content"]) == {"status": "started"}
     expect_avatar_shown(page)

@@ -125,7 +125,9 @@ def stored_picture(actor, url: str) -> bytes:
 
 def tool_results(upstream, prompt: str) -> list[str]:
     follow_ups = [body for body in upstream.chat_requests() if reply.answering(prompt)(body)]
-    return [entry["content"] for entry in follow_ups[-1]["messages"] if entry["role"] == "tool"]
+    return [
+        entry["content"] for entry in reply.conversation(follow_ups[-1]) if entry["role"] == "tool"
+    ]
 
 
 def draw(page: Page, upstream, prompt: str, answer: str) -> None:

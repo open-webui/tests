@@ -123,7 +123,7 @@ def test_a_picture_shared_in_a_thread_reaches_a_model_asked_there(people, page_f
     [sent] = [request for request in upstream.chat_requests() if question in str(request)]
     images = [
         part["image_url"]["url"]
-        for part in sent["messages"][-1]["content"]
+        for part in reply.conversation(sent)[-1]["content"]
         if isinstance(part, dict) and part.get("type") == "image_url"
     ]
     assert images == [f"data:image/png;base64,{PNG_BASE64}"]

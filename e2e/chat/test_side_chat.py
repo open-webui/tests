@@ -86,7 +86,7 @@ def conversation_sent_for(upstream, question: str) -> list[tuple[str, str]]:
     sent = [body for body in upstream.chat_requests() if reply.answering(question)(body)]
     assert len(sent) == 1, f"expected one provider request for {question!r}, got {len(sent)}"
     turns = []
-    for entry in sent[0]["messages"]:
+    for entry in reply.conversation(sent[0]):
         if entry["role"] == "system":
             continue
         content = entry["content"]

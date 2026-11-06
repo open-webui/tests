@@ -82,7 +82,7 @@ def test_a_voice_call_only_appends(
 
     requests = answered_turns(upstream, TURNS)
     assert all(VOICE_PROMPT in request["messages"][0]["content"] for request in requests)
-    assert [message["role"] for message in requests[-1]["messages"]][-3:] == [
+    assert [message["role"] for message in reply.conversation(requests[-1])][-3:] == [
         "user",
         "assistant",
         "user",
@@ -178,7 +178,7 @@ def test_a_realtime_call_only_appends(voice_page_for, make_user, cached_setup, r
     requests = chat_requests(upstream)
     assert len(requests) == 5, [request["messages"][-1] for request in requests]
     assert called_tools(requests[-1]) == {"get_current_timestamp"}
-    told = [message["content"] for message in requests[-1]["messages"]]
+    told = [message["content"] for message in reply.conversation(requests[-1])]
     assert {HISTORICAL + "At 06:40.", HISTORICAL + "You are welcome."} <= set(told)
     assert all(VOICE_PROMPT in request["messages"][0]["content"] for request in requests)
     assert_append_only(requests)

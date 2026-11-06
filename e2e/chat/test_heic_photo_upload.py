@@ -49,7 +49,7 @@ def attach(page: Page, name: str, content: bytes, mime_type: str) -> None:
 
 def images_sent(upstream, prompt: str) -> list[str]:
     answered = [body for body in upstream.chat_requests() if reply.answering(prompt)(body)]
-    question = answered[-1]["messages"][-1]["content"]
+    question = reply.conversation(answered[-1])[-1]["content"]
     parts = question if isinstance(question, list) else []
     return [part["image_url"]["url"] for part in parts if part.get("type") == "image_url"]
 

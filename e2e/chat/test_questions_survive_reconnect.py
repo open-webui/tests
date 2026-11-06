@@ -103,7 +103,7 @@ def reload_chat(page: Page) -> None:
 
 def tool_results(upstream, prompt: str) -> list[str]:
     final = [body for body in upstream.chat_requests() if reply.answering(prompt)(body)][-1]
-    return [str(entry["content"]) for entry in final["messages"] if entry["role"] == "tool"]
+    return [str(entry["content"]) for entry in reply.conversation(final) if entry["role"] == "tool"]
 
 
 def test_ask_user_comes_back_after_a_reload_and_its_answer_finishes_the_reply(

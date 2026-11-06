@@ -128,7 +128,9 @@ def _ask_follow_up(page: Page, upstream) -> dict:
 
 
 def _tool_results(request: dict) -> list[str]:
-    return [str(entry["content"]) for entry in request["messages"] if entry["role"] == "tool"]
+    return [
+        str(entry["content"]) for entry in reply.conversation(request) if entry["role"] == "tool"
+    ]
 
 
 def test_a_tool_result_corrected_in_the_json_editor_is_what_the_model_gets_next(

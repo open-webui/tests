@@ -199,9 +199,9 @@ def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
     expect(owner_page.get_by_role("button", name="Voice mode")).to_be_visible()
     sent = _ask(member_page, upstream, "is there a later one?", "One more at noon.")
 
-    assert [entry["content"] for entry in sent["messages"] if entry["role"] == "assistant"] == [
-        ANSWER
-    ]
+    assert [
+        entry["content"] for entry in reply.conversation(sent) if entry["role"] == "assistant"
+    ] == [ANSWER]
     expect(_user_message(member_page, "is there a later one?")).not_to_contain_text(member.name)
     # the owner's tab was left open on the chat: no reload
     expect(_user_message(owner_page, "is there a later one?")).to_contain_text(member.name)
@@ -329,7 +329,7 @@ def test_a_clone_from_the_link_starts_without_the_owners_system_prompt(
 
     assert OWNER_PROMPT not in "\n".join(_system_prompts(clone_turn))
     assert [
-        entry["content"] for entry in clone_turn["messages"] if entry["role"] == "assistant"
+        entry["content"] for entry in reply.conversation(clone_turn) if entry["role"] == "assistant"
     ] == [ANSWER]
 
 

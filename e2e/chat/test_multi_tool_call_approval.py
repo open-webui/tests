@@ -95,7 +95,7 @@ def test_both_calls_of_a_turn_are_allowed_one_after_the_other(
     expect_reply(page, "Checked the clock twice.")
     tool_results = [
         entry.get("tool_call_id")
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
         if entry["role"] == "tool"
     ]
     assert tool_results == ["call_1", "call_2"]

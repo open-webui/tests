@@ -103,7 +103,7 @@ def answered_with(name: str):
     """A `match` for the follow-up request whose tool result carries `name`."""
 
     def matches(body: dict) -> bool:
-        results = [entry for entry in body["messages"] if entry["role"] == "tool"]
+        results = [entry for entry in reply.conversation(body) if entry["role"] == "tool"]
         return any(name in str(entry["content"]) for entry in results)
 
     return matches
@@ -132,7 +132,7 @@ def test_the_typed_answer_reaches_a_tool_on_the_instance_without_the_pages_socke
     tool_results = [
         entry["content"]
         for sent in provider.chat_requests()
-        for entry in sent["messages"]
+        for entry in reply.conversation(sent)
         if entry["role"] == "tool"
     ]
     assert tool_results == [json.dumps(NAME)]

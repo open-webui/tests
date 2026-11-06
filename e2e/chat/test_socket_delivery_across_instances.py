@@ -128,7 +128,7 @@ def _tool_results(provider) -> list[str]:
     return [
         entry["content"]
         for sent in provider.chat_requests()
-        for entry in sent["messages"]
+        for entry in reply.conversation(sent)
         if entry["role"] == "tool"
     ]
 
