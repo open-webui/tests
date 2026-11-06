@@ -4,8 +4,9 @@ Since v0.13.0 (2d7cf5ec9 and 58926cfe7) the Tabs button of a chat opens a worksp
 person who picked an Open Terminal adds a shell and a new file from the workspace's New tab menu
 and drags the file's tab in front of the shell. Use full-width tabs spreads the workspace over
 the chat area with the conversation as a tab of its own, and the choice is still in place after a
-reload. When the file browser is in a Git repository, the Git panel under the tabs shows a changed
-file's diff, stages and commits it, and the commit shows in its History and on the disk.
+reload, where a terminal picked keeps the conversation in front and Files opens from New tab
+(89b924aae). When the file browser is in a Git repository, the Git panel under the tabs shows a
+changed file's diff, stages and commits it, and the commit shows in its History and on the disk.
 
 Discriminates: passes on v0.13.0 and dev 5f1c6384e; on a v0.13.0 build whose dropped tab keeps
 its old place, whose layout toggle saves nothing and whose Git panel ignores Stage, each test
@@ -147,8 +148,13 @@ def test_the_full_width_layout_is_kept_after_a_reload(terminal_page):
     expect(chat_input(page)).to_be_visible()
     _unpick_terminal(page, terminal)
     page.reload()
-    pick_terminal(page, terminal)
+    # since 89b924aae a terminal picked in full-width tabs leaves the conversation in front
+    expect(chat_input(page)).to_be_visible()
+    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=terminal).click()
+    expect(tooltip_button(page.get_by_role("main"), terminal)).to_be_visible()
     expect(layout).to_have_attribute("aria-pressed", "true")
+    _add_tab(page, "Files")
     expect(_tab_strip(page).get_by_role("tab")).to_have_count(2)
     _tab_strip(page).get_by_role("tab", name="Files").click()
     after_reload = _file_browser_width(page)
