@@ -15,10 +15,11 @@ selected.
 
 A SKILL.md longer than the content limit (the admin's `SKILL_CONTENT_MAX_CHARS`, 20,000 when
 unset) reaches the model as a preview of the preview limit (`SKILL_PREVIEW_MAX_CHARS`, 5,000
-when unset), whether it is `$`-mentioned or loaded with `view_skill`, followed by "Skill
-instructions truncated", the skill id and the `next_offset` to page on from; a shorter one arrives
-whole. On a model with the Skills builtin tool off a mentioned skill is cut at 100,000 characters
-with no offset, since the model cannot page. `read_skill_file` returns at most the content limit
+when unset), whether it is `$`-mentioned or loaded with `view_skill`, with the skill id and the
+`next_offset` to page on from; a shorter one arrives whole. Since dev 6e8a6c446 a `$`-mention
+preloads `view_skill`, so the model gets the same result as for its own call. On a model with
+the Skills builtin tool off a mentioned skill is cut at 100,000 characters with no offset, since
+the model cannot page. `read_skill_file` returns at most the content limit
 per call whatever `max_chars` asks for. `grep_skill_files` returns excerpts with the path and
 offset of each match, ignores case unless told not to, searches only `path` when given, returns
 at most `max_results` excerpts and lists the rest by location, and skips binary files.
@@ -69,7 +70,7 @@ from harness.skill_files import (
     save,
     skill_md,
 )
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tools, run_tool, viewed_skills
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -218,7 +219,7 @@ def test_a_file_read_after_view_skill_comes_from_the_version_it_loaded(owner, up
         assert resaved.status_code == 200, resaved.text
         wait_for_reply(client, turn)
 
-    sent_back = upstream.chat_requests()[-1]["messages"]
+    sent_back = reply.conversation(upstream.chat_requests()[-1])
     results = {
         entry["tool_call_id"]: json.loads(entry["content"])
         for entry in sent_back
@@ -363,13 +364,25 @@ def _large_skill(owner, length: int, **extra_files: str) -> tuple[dict, str]:
     return create(owner, {"SKILL.md": text, **extra_files}, skill_id=skill_id), text
 
 
-def _injected(actor, upstream, skill: dict, model: str = MOCK_MODEL_ID) -> str:
-    """The `<skill>` block the provider got for a message that mentions `skill` with `$`."""
+def _mentioned(actor, upstream, skill: dict, model: str = MOCK_MODEL_ID) -> dict:
+    """The request the provider got for a message that mentions `skill` with `$`."""
     tag = uuid.uuid4().hex[:8]
     upstream.queue(reply.text("done", match=reply.answering(tag)))
     with actor.client() as client:
         ask(client, f"<${skill['id']}|{skill['name']}> how do I rig it? ({tag})", model=model)
-    request = next(entry for entry in upstream.chat_requests() if reply.answering(tag)(entry))
+    return next(entry for entry in upstream.chat_requests() if reply.answering(tag)(entry))
+
+
+def _preloaded(actor, upstream, skill: dict) -> dict:
+    """The `view_skill` result Open WebUI preloaded for a message that mentions `skill`."""
+    loaded = viewed_skills(_mentioned(actor, upstream, skill)).get(skill["id"])
+    assert loaded, f"the mentioned skill was not loaded: {skill['id']}"
+    return loaded
+
+
+def _injected(actor, upstream, skill: dict, model: str) -> str:
+    """The `<skill>` block of the system prompt for a mention on a model without skill tools."""
+    request = _mentioned(actor, upstream, skill, model)
     system = "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
     )
@@ -408,7 +421,7 @@ def test_a_skill_over_the_content_limit_reaches_the_model_as_a_preview(
     skill_limits()
     skill, text = _large_skill(owner, 20_001)
 
-    block = _injected(owner, upstream, skill)
+    loaded = _preloaded(owner, upstream, skill)
     viewed = _call(owner, upstream, "view_skill", id=skill["id"])
     rest = _call(
         owner,
@@ -420,11 +433,8 @@ def test_a_skill_over_the_content_limit_reaches_the_model_as_a_preview(
         max_chars=20_000,
     )
 
-    assert text[:5_000] in block, f"the preview is missing: {block[:300]}"
-    assert text[:5_001] not in block, "the model got more than the 5,000 character preview"
-    note = block.split(text[:5_000], 1)[1]
-    assert TRUNCATED in note and skill["id"] in note, note
-    assert re.search(r"next_offset\W*5000\b", note), note
+    assert (loaded["id"], loaded["content"]) == (skill["id"], text[:5_000]), loaded["content"][-80:]
+    assert loaded["next_offset"] == 5_000, loaded["next_offset"]
     assert (viewed["content"], viewed["next_offset"]) == (text[:5_000], 5_000), viewed
     assert (rest["content"], rest["next_offset"]) == (text[5_000:], None), rest["next_offset"]
 
@@ -433,10 +443,10 @@ def test_a_skill_within_the_content_limit_arrives_whole(owner, upstream, skill_l
     skill_limits()
     skill, text = _large_skill(owner, 20_000)
 
-    block = _injected(owner, upstream, skill)
+    loaded = _preloaded(owner, upstream, skill)
 
-    assert text in block, "a 20,000 character skill did not arrive whole"
-    assert TRUNCATED not in block, block[-300:]
+    assert loaded["content"] == text, "a 20,000 character skill did not arrive whole"
+    assert loaded["next_offset"] is None, loaded["next_offset"]
 
 
 def test_with_the_skills_tool_off_a_mentioned_skill_is_cut_at_100000_characters(
@@ -483,13 +493,13 @@ def test_the_admin_skill_limits_set_the_preview_and_the_page_size(owner, upstrea
     skill_limits(content=3_000, preview=800)
     skill, text = _large_skill(owner, 3_001)
 
-    block = _injected(owner, upstream, skill)
+    loaded = _preloaded(owner, upstream, skill)
     page = _call(
         owner, upstream, "read_skill_file", id=skill["id"], path="SKILL.md", max_chars=10_000
     )
 
-    assert text[:800] in block and text[:801] not in block, "the preview ignored the setting"
-    assert re.search(r"next_offset\W*800\b", block.split(text[:800], 1)[1]), block[-300:]
+    assert loaded["content"] == text[:800], "the preview ignored the setting"
+    assert loaded["next_offset"] == 800, loaded["next_offset"]
     assert (page["content"], page["next_offset"]) == (text[:3_000], 3_000), page["next_offset"]
 
 

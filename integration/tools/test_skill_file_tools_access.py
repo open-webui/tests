@@ -46,7 +46,7 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import Actor, admin_of, create_user
 from harness.chat import ask
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tools, run_tool, skill_list, viewed_skills
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -142,14 +142,15 @@ def _version(owner: Actor, skill_id: str) -> str:
 
 
 def _system_prompt(actor: Actor, upstream, content: str) -> str:
-    """The system prompt the model was sent for one message of `actor`'s."""
+    """The system prompt, skill list and loaded skills the model got for a message of `actor`'s."""
     upstream.queue(reply.text("done"))
     with actor.client() as client:
         ask(client, content)
     request = upstream.chat_requests()[-1]
-    return "\n".join(
+    system = "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
     )
+    return "\n".join([system, skill_list(request), json.dumps(viewed_skills(request))])
 
 
 @pytest.mark.parametrize("via", ["user", "group"])

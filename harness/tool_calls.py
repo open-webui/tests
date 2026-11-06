@@ -11,11 +11,14 @@ memories, preloaded skills) as hidden tool calls of its own at the start of a re
 003c9e085). `without_hidden_calls(output)` drops them from a reply's stored output, the way
 `upstream.conversation` does for a provider payload. A citing tool's result (knowledge, file and
 web tools) carries its source list in the citations template after it (since dev 8e2ba2937);
-`without_citation_context(result)` gives the tool's own result.
+`without_citation_context(result)` gives the tool's own result. With the Skills tool on, the
+skill list comes as a `list_available_skills` result and a selected or mentioned skill as a
+preloaded `view_skill` result (since dev 6e8a6c446); `skill_list` and `viewed_skills` read them.
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import httpx
@@ -52,6 +55,17 @@ def offered_tools(client: httpx.Client, upstream: MockUpstream, **options) -> se
     assert requests, f"the provider never received {prompt!r}"
     offered = requests[0].get("tools") or []
     return {tool["function"]["name"] for tool in offered}
+
+
+def skill_list(body: dict) -> str:
+    """The `<available_skills>` list handed to the model in a provider payload, or ''."""
+    return "\n".join(reply.context_results(body, "list_available_skills"))
+
+
+def viewed_skills(body: dict) -> dict[str, dict]:
+    """The skills `view_skill` returned in a provider payload, preloaded or called, by id."""
+    results = [json.loads(result) for result in reply.context_results(body, "view_skill")]
+    return {skill["id"]: skill for skill in results if "id" in skill}
 
 
 def without_citation_context(result: str) -> str:

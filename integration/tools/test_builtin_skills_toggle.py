@@ -3,12 +3,14 @@
 The model editor stores the Skills switch as `meta.builtinTools.skills`. A web chat on a native
 function calling model gets the `<available_skills>` manifest and the `view_skill` tool unless
 that key is false; with it false the skills attached to the model reach the system prompt whole,
-as in non-native mode, and the other builtin tools are still offered.
+as in non-native mode, and the other builtin tools are still offered. Since dev 6e8a6c446 and
+003c9e085 the manifest comes as a `list_available_skills` result and a skill that arrives whole
+as a preloaded `view_skill` result, both ahead of the model's reply.
 
 Since 079fb19e7 (0.12.4) the admin's "Load selected skills on demand" (`ENABLE_SKILL_LAZY_LOADING`,
-off by default) keeps the skills selected in a chat out of the system prompt: they are only
-listed for `view_skill`, while a skill mentioned in the message still arrives whole. The setting
-is saved through the admin config and kept by a save that leaves it out.
+off by default) keeps the skills selected in a chat from being loaded: they are only listed for
+`view_skill`, while a skill mentioned in the message still arrives whole. The setting is saved
+through the admin config and kept by a save that leaves it out.
 
 Discriminates: in a backend copy whose chat middleware and `get_builtin_tools` ignore
 `builtinTools.skills`, the skills-off tests fail (manifest and `view_skill` still present, the
@@ -22,13 +24,14 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from typing import Iterator
+from typing import Iterator, NamedTuple
 
 import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
 from harness.python_tools import EVERYONE_READS
+from harness.tool_calls import skill_list, viewed_skills
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -97,10 +100,17 @@ def skilled_model(admin, builtin_tools: dict | None, attach: bool = False) -> It
             client.delete(f"/api/v1/skills/id/{skill['id']}/delete")
 
 
+class Sent(NamedTuple):
+    system: str
+    skill_list: str
+    loaded: dict[str, dict]
+    offered: set[str]
+
+
 def provider_request(
     admin, upstream, model: str, content: str = "what is at the dock?", **extra
-) -> tuple[str, set[str]]:
-    """The system prompt and tool names the provider got for one web chat on `model`."""
+) -> Sent:
+    """What the provider got for one web chat on `model` about skills, and the tools offered."""
     upstream.queue(reply.text("done"))
     with admin.client() as client:
         ask(client, content, model=model, **extra)
@@ -108,36 +118,40 @@ def provider_request(
     system = "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
     )
-    return system, {tool["function"]["name"] for tool in request.get("tools") or []}
+    offered = {tool["function"]["name"] for tool in request.get("tools") or []}
+    return Sent(system, skill_list(request), viewed_skills(request), offered)
 
 
 def test_skills_are_listed_and_viewable_by_default(admin, upstream):
     with skilled_model(admin, None) as setup:
-        system, offered = provider_request(admin, upstream, setup["model"])
+        sent = provider_request(admin, upstream, setup["model"])
 
-    assert "<available_skills>" in system and setup["skill"]["name"] in system, system
-    assert setup["text"] not in system, system
-    assert "view_skill" in offered, sorted(offered)
+    assert "<available_skills>" in sent.skill_list, sent
+    assert setup["skill"]["name"] in sent.skill_list, sent.skill_list
+    assert setup["text"] not in sent.system + sent.skill_list and not sent.loaded, sent
+    assert "view_skill" in sent.offered, sorted(sent.offered)
 
 
 def test_the_skills_toggle_off_removes_the_manifest_and_the_viewer(admin, upstream):
     with skilled_model(admin, {"skills": False}) as setup:
-        system, offered = provider_request(admin, upstream, setup["model"])
+        sent = provider_request(admin, upstream, setup["model"])
 
-    assert "<available_skills>" not in system and setup["skill"]["name"] not in system, system
-    assert "view_skill" not in offered, sorted(offered)
-    assert "get_current_timestamp" in offered, sorted(offered)
+    assert "<available_skills>" not in sent.system, sent.system
+    assert setup["skill"]["name"] not in sent.system, sent.system
+    assert not sent.skill_list, sent.skill_list
+    assert "view_skill" not in sent.offered, sorted(sent.offered)
+    assert "get_current_timestamp" in sent.offered, sorted(sent.offered)
 
 
 def test_with_skills_off_an_attached_skill_arrives_whole(admin, upstream):
     with skilled_model(admin, {"skills": False}, attach=True) as setup:
-        system, offered = provider_request(admin, upstream, setup["model"])
+        sent = provider_request(admin, upstream, setup["model"])
 
-    assert f'<skill id="{setup["skill"]["id"]}"' in system, system
-    assert f'name="{setup["skill"]["name"]}">' in system, system
-    assert setup["text"] in system, system
-    assert "<available_skills>" not in system, system
-    assert "view_skill" not in offered, sorted(offered)
+    assert f'<skill id="{setup["skill"]["id"]}"' in sent.system, sent.system
+    assert f'name="{setup["skill"]["name"]}">' in sent.system, sent.system
+    assert setup["text"] in sent.system, sent.system
+    assert "<available_skills>" not in sent.system and not sent.skill_list, sent
+    assert "view_skill" not in sent.offered, sorted(sent.offered)
 
 
 # 079fb19e7: "Load selected skills on demand"
@@ -147,21 +161,22 @@ def test_a_selected_skill_arrives_whole_with_lazy_loading_off(admin, upstream, l
     lazy_loading(False)
     with skilled_model(admin, None) as setup:
         selected = [setup["skill"]["id"]]
-        system, _ = provider_request(admin, upstream, setup["model"], skill_ids=selected)
+        sent = provider_request(admin, upstream, setup["model"], skill_ids=selected)
 
-    assert f'<skill id="{setup["skill"]["id"]}"' in system, system
-    assert setup["text"] in system, system
+    loaded = sent.loaded.get(setup["skill"]["id"])
+    assert loaded and setup["text"] in loaded["content"], sent
 
 
 def test_with_lazy_loading_on_a_selected_skill_is_only_listed(admin, upstream, lazy_loading):
     lazy_loading(True)
     with skilled_model(admin, None) as setup:
         selected = [setup["skill"]["id"]]
-        system, offered = provider_request(admin, upstream, setup["model"], skill_ids=selected)
+        sent = provider_request(admin, upstream, setup["model"], skill_ids=selected)
 
-    assert setup["text"] not in system, f"the selected skill was loaded whole: {system}"
-    assert "<available_skills>" in system and setup["skill"]["name"] in system, system
-    assert "view_skill" in offered, sorted(offered)
+    assert not sent.loaded, f"the selected skill was loaded whole: {sent.loaded}"
+    assert setup["text"] not in sent.system + sent.skill_list, sent
+    assert setup["skill"]["name"] in sent.skill_list, sent.skill_list
+    assert "view_skill" in sent.offered, sorted(sent.offered)
 
 
 def test_with_lazy_loading_on_a_mentioned_skill_still_arrives_whole(admin, upstream, lazy_loading):
@@ -169,10 +184,10 @@ def test_with_lazy_loading_on_a_mentioned_skill_still_arrives_whole(admin, upstr
     with skilled_model(admin, None) as setup:
         skill = setup["skill"]
         mention = f"<${skill['id']}|{skill['name']}> what is at the dock?"
-        system, _ = provider_request(admin, upstream, setup["model"], mention)
+        sent = provider_request(admin, upstream, setup["model"], mention)
 
-    assert f'<skill id="{skill["id"]}"' in system, system
-    assert setup["text"] in system, f"the mentioned skill was not loaded: {system}"
+    loaded = sent.loaded.get(skill["id"])
+    assert loaded and setup["text"] in loaded["content"], f"the skill was not loaded: {sent}"
 
 
 def test_the_lazy_loading_setting_is_saved_and_kept_by_saves_without_it(admin, lazy_loading):

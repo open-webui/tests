@@ -34,6 +34,7 @@ from harness.chat import ask
 from harness.listener import json_answer
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
+from harness.tool_calls import skill_list
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -112,21 +113,15 @@ def _personal_terminal_chat(client, upstream, session_id: str, text: str) -> dic
     return upstream.chat_requests()[-1]
 
 
-def _system_text(request: dict) -> str:
-    return "\n".join(
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    )
-
-
 def test_the_skill_list_is_read_through_the_browser(make_user, upstream):
     owner = make_user(role="admin")
     upstream.queue(reply.text("ready"))
     with _browser_tab(owner) as (session_id, asked), owner.client() as client:
         request = _personal_terminal_chat(client, upstream, session_id, "what can you do?")
 
-    system = _system_text(request)
+    listed = skill_list(request)
     assert "/skills" in asked, f"the tab was never asked for the terminal's skills: {asked}"
-    assert "<id>terminal:ship-it</id>" in system, (
+    assert "<id>terminal:ship-it</id>" in listed, (
         "the personal terminal's skills never reached the model (#30410)"
     )
 
@@ -149,7 +144,7 @@ def test_a_skill_the_model_opens_is_read_through_the_browser(make_user, upstream
     with _browser_tab(owner) as (session_id, asked), owner.client() as client:
         request = _personal_terminal_chat(client, upstream, session_id, "ship it")
 
-    results = [entry["content"] for entry in request["messages"] if entry["role"] == "tool"]
+    results = [entry["content"] for entry in reply.conversation(request) if entry["role"] == "tool"]
     assert results and SKILL_BODY in results[-1], (
         f"the model opened the personal terminal's skill and got {results} (#30410)"
     )
