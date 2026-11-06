@@ -141,7 +141,7 @@ def requests_for(upstream, prompt: str) -> list[dict]:
 
 def tool_results(upstream, prompt: str) -> list[str]:
     final = requests_for(upstream, prompt)[-1]
-    return [str(entry["content"]) for entry in final["messages"] if entry["role"] == "tool"]
+    return [str(entry["content"]) for entry in reply.conversation(final) if entry["role"] == "tool"]
 
 
 def expect_shout_shown(page: Page, word: str) -> None:
@@ -553,7 +553,7 @@ def test_a_mixed_round_asks_each_call_in_turn_and_a_second_round_asks_again(
     final = requests_for(upstream, prompt)[-1]
     results = {
         entry["tool_call_id"]: entry["content"]
-        for entry in final["messages"]
+        for entry in reply.conversation(final)
         if entry["role"] == "tool"
     }
     assert results == {
@@ -649,7 +649,7 @@ def test_a_denied_dispatch_is_asked_again_on_regenerate_and_continue_runs_nothin
     expect_reply(page, "Really not.")
     continued = requests_for(upstream, prompt)[-1]
     assert tool_results(upstream, prompt) == [REJECTED]
-    assert continued["messages"][-1]["role"] == "assistant"
+    assert reply.conversation(continued)[-1]["role"] == "assistant"
 
     upstream.queue(
         call_tool("shout", {"text": "maybe"}, prompt, "call_r"),

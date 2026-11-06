@@ -89,7 +89,7 @@ def test_an_mcp_server_the_admin_adds_is_called_in_chat(
     expect(tool_output(page, f"chart-room-{token}_echo")).to_contain_text(phrase)
     tool_results = [
         entry["content"]
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
         if entry["role"] == "tool"
     ]
     assert tool_results == [phrase], tool_results

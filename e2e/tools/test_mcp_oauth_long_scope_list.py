@@ -83,7 +83,7 @@ def test_pressing_a_server_that_asks_for_many_scopes_connects_it(
 
     tool_results = [
         entry["content"]
-        for entry in upstream.chat_requests()[-1]["messages"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
         if entry["role"] == "tool"
     ]
     assert tool_results == [PHRASE], tool_results

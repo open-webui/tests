@@ -142,7 +142,9 @@ def tool_results(upstream, question: str) -> list[str]:
     answered = [
         request for request in upstream.chat_requests() if reply.answering(question)(request)
     ]
-    return [entry["content"] for entry in answered[-1]["messages"] if entry["role"] == "tool"]
+    return [
+        entry["content"] for entry in reply.conversation(answered[-1]) if entry["role"] == "tool"
+    ]
 
 
 def ask_tool(page: Page, upstream, tool_name: str, function_name: str, question: str) -> None:
