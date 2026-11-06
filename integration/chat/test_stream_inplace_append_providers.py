@@ -10,8 +10,10 @@ pieces arrive from an Ollama connection (text, thinking and a tool call in lines
 connection (its own events are reduced elsewhere, so only the deltas coalesced into fewer socket
 events reach the append), a direct connection served by the user's own tab, and tool calls whose
 arguments are split across deltas for a workspace Python tool, an OpenAPI tool server, an MCP
-server and a knowledge tool whose result carries a source. An Anthropic connection has no path of
-its own here: the messages endpoint only converts the handler's stream on the way out.
+server and a knowledge tool whose result carries a source (since 8e2ba2937, in 0.13.1, its
+source markers follow the result in the tool message instead of going into the prompt). An
+Anthropic connection has no path of its own here: the messages endpoint only converts the
+handler's stream on the way out.
 
 The direct connection test pins open-webui/open-webui#31953: since 24e30d1cb the socket router
 checks the tab's session token again for every event the tab sends, and the reply's pieces
@@ -36,6 +38,7 @@ import secrets
 import pytest
 
 from harness import responses_provider as responses_api
+from harness import upstream
 from harness.actors import admin_of
 from harness.chat import send_message, wait_for_reply
 from harness.direct_connection import answering, chunk_line, direct_model
@@ -45,6 +48,7 @@ from harness.ollama_provider import OLLAMA_CONFIG, chat_stream, connect_ollama, 
 from harness.python_tools import python_tool
 from harness.second_provider import OPENAI_CONFIG, attach, sse
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source, pytest.mark.slow]
 
@@ -80,7 +84,7 @@ def converse(socket, client, model, prompts, **options):
 def shape(message):
     """The stored output without ids and clocks: (type, text or call) per item."""
     items = []
-    for item in message["output"]:
+    for item in without_hidden_calls(message["output"]):
         if item["type"] == "function_call":
             # re-encoded by the server's JSON codec, whose spacing is its own (#31616)
             items.append(("function_call", item["name"], json.loads(item["arguments"])))
@@ -135,7 +139,7 @@ def test_ollama_thinking_and_text_lines_are_joined(ollama):
         ("response.output_text.delta", "wor"),
         ("response.output_text.delta", "ld"),
     ]
-    assert server.chat_requests()[-1]["messages"] == [
+    assert upstream.conversation(server.chat_requests()[-1]) == [
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "Hello, world", "thinking": "weighing it"},
         {"role": "user", "content": "again"},
@@ -161,7 +165,7 @@ def test_ollama_tool_call_then_a_streamed_answer(ollama):
 
     replies, deltas = converse(socket, client, OLLAMA_MODEL, ["what time is it?", "again"])
 
-    [_, call_item, result_item, _, _] = replies[0]["output"]
+    [_, call_item, result_item, _, _] = without_hidden_calls(replies[0]["output"])
     stamp = json.loads(result_item["output"][0]["text"])["current_timestamp"]
     assert shape(replies[0])[:2] == [
         ("reasoning", "check clock"),
@@ -178,7 +182,7 @@ def test_ollama_tool_call_then_a_streamed_answer(ollama):
         ("response.output_text.delta", "It is "),
         ("response.output_text.delta", "late."),
     ]
-    first, second, third = [request["messages"] for request in server.chat_requests()]
+    first, second, third = [upstream.conversation(request) for request in server.chat_requests()]
     assert first == [{"role": "user", "content": "what time is it?"}]
     assert second[1:] == [
         {
@@ -270,7 +274,7 @@ def test_responses_deltas_are_coalesced_into_fewer_socket_events(responses):
         socket, client, RESPONSES_MODEL, ["count", "again"], params={"stream_delta_chunk_size": 3}
     )
 
-    [thought, answer] = replies[0]["output"]
+    [thought, answer] = without_hidden_calls(replies[0]["output"])
     assert [part["text"] for part in thought["summary"]] == ["abcd"]
     assert [part["text"] for part in thought["content"]] == ["xyz"]
     assert answer["content"][0]["text"] == "1234567"
@@ -282,7 +286,7 @@ def test_responses_deltas_are_coalesced_into_fewer_socket_events(responses):
         ("response.output_text.delta", "456"),
         ("response.output_text.delta", "7"),
     ]
-    assert provider.sent()[-1]["input"][-2] == {
+    assert responses_api.conversation(provider.sent()[-1])[-2] == {
         "type": "message",
         "role": "assistant",
         "content": [{"type": "output_text", "text": "1234567"}],
@@ -325,7 +329,7 @@ def test_responses_function_call_arguments_are_coalesced_for_a_python_tool(respo
     assert [d for d in deltas if d[0] == "response.function_call_arguments.delta"] == [
         ("response.function_call_arguments.delta", encoded),
     ]
-    second = provider.sent()[1]["input"]
+    second = responses_api.conversation(provider.sent()[1])
     second[-2]["arguments"] = json.loads(second[-2]["arguments"])
     assert second[-2:] == [
         {
@@ -340,7 +344,7 @@ def test_responses_function_call_arguments_are_coalesced_for_a_python_tool(respo
             "output": "route from Vienna with 3 stops",
         },
     ]
-    assert provider.sent()[2]["input"][-1]["content"][0]["text"] == "again"
+    assert responses_api.conversation(provider.sent()[2])[-1]["content"][0]["text"] == "again"
 
 
 # --- direct connection: the user's own tab streams the provider's lines ------------------
@@ -374,7 +378,7 @@ def test_a_direct_connections_streamed_pieces_are_joined(streaming):
             session_id=tab.session_id,
         )
 
-    [_, _, result_item, _] = replies[0]["output"]
+    [_, _, result_item, _] = without_hidden_calls(replies[0]["output"])
     result = result_item["output"][0]["text"]
     assert json.loads(result)["current_timestamp"] > 0
     assert replies[0]["content"] == "It is late.", "the streamed reply came back scrambled (#31953)"
@@ -392,7 +396,7 @@ def test_a_direct_connections_streamed_pieces_are_joined(streaming):
         ("response.output_text.delta", "It is "),
         ("response.output_text.delta", "late."),
     ]
-    asked = [request["form_data"]["messages"] for request in tab.requests]
+    asked = [upstream.conversation(request["form_data"]) for request in tab.requests]
     called = {"name": "get_current_timestamp", "arguments": "{}"}
     tool_round = [
         {"role": "user", "content": "what time is it?"},
@@ -460,7 +464,8 @@ def tooled(streaming, preserve, listener):
 def tool_round(listener, name: str, arguments: dict, result: str) -> None:
     """The follow-up request carries the assistant's joined tool call and the tool's result."""
     first, second = [
-        request.json()["messages"] for request in listener.requests_to("/v1/chat/completions")
+        upstream.conversation(request.json())
+        for request in listener.requests_to("/v1/chat/completions")
     ][:2]
     joined = second[len(first) :]
     for call in joined[0].get("tool_calls", []):
@@ -589,8 +594,9 @@ def test_a_knowledge_tool_result_keeps_its_source(tooled, streaming):
 
     replies, deltas = converse(socket, client, SECOND_MODEL, ["when is the meeting?"])
 
-    [call_item, result_item, answer_item] = replies[0]["output"]
-    result = json.loads(result_item["output"][0]["text"])
+    [call_item, result_item, answer_item] = without_hidden_calls(replies[0]["output"])
+    result_text = result_item["output"][0]["text"]
+    result, result_end = json.JSONDecoder().raw_decode(result_text)
     assert (result["filename"], result["content"]) == ("notes.txt", "The meeting is at noon.")
     assert (json.loads(call_item["arguments"]), answer_item["content"][0]["text"]) == (
         arguments,
@@ -605,11 +611,13 @@ def test_a_knowledge_tool_result_keeps_its_source(tooled, streaming):
             ],
         }
     ]
-    tool_round(listener, "view_knowledge_file", arguments, result_item["output"][0]["text"])
-    [request, follow_up] = [
-        r.json()["messages"] for r in listener.requests_to("/v1/chat/completions")
+    tool_round(listener, "view_knowledge_file", arguments, result_text)
+    [request, _] = [
+        upstream.conversation(r.json()) for r in listener.requests_to("/v1/chat/completions")
     ]
     assert request == [{"role": "user", "content": "when is the meeting?"}]
     file_id = arguments["file_id"]
     tag = f'<source id="1" name="notes.txt" resource-type="file" resource-id="{file_id}">'
-    assert tag in follow_up[0]["content"]
+    assert tag in result_text[result_end:], (
+        f"the tool result carries no source marker: {result_text}"
+    )

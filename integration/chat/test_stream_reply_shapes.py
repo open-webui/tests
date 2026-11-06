@@ -5,7 +5,8 @@ kin, or a pair the chat settings name), often split across chunks, with attribut
 closed. The handler lifts that into a reasoning item and keeps the answer, unless the chat
 turned tag detection off. A reply of only whitespace is stored empty, an admin can stop a reply
 mid-stream and keep what arrived, and a model that keeps calling tools is cut off at the
-configured number of rounds with a message saying so.
+configured number of rounds with a message saying so. Since d87837372 (0.13.1) the call the
+limit cuts off gets an error result, so the stored calls and results stay paired.
 
 Discriminates: in a backend copy, dropping the attribute parsing fails the attributes case,
 ignoring the chat's own tag pair fails the custom-tags case, looking for the end tag only past
@@ -22,12 +23,13 @@ from harness.actors import admin_of
 from harness.chat import ask, wait_for_reply
 from harness.inflight import start_slow_reply, wait_until_streaming
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 
 def _items(message: dict, kind: str) -> list[dict]:
-    return [item for item in message["output"] if item["type"] == kind]
+    return [item for item in without_hidden_calls(message["output"]) if item["type"] == kind]
 
 
 def _reasoning_text(message: dict) -> list[str]:
@@ -50,8 +52,12 @@ def test_tags_split_across_chunks_become_a_reasoning_item(make_user, upstream):
     assert reasoning["content"][0]["text"] == "pondering more"
     assert reasoning["status"] == "completed"
     assert (reasoning["start_tag"], reasoning["end_tag"]) == ("<think>", "</think>")
-    assert [item["type"] for item in message["output"]] == ["message", "reasoning", "message"]
-    assert message["output"][-1]["content"][0]["text"] == "The answer is 4."
+    assert [item["type"] for item in without_hidden_calls(message["output"])] == [
+        "message",
+        "reasoning",
+        "message",
+    ]
+    assert without_hidden_calls(message["output"])[-1]["content"][0]["text"] == "The answer is 4."
     assert "pondering" not in message["content"]
     assert "<think>" not in message["content"]
 
@@ -115,7 +121,7 @@ def test_an_admin_stops_a_reply_and_keeps_what_arrived(admin, upstream):
 
     assert message["content"].startswith("part-0 ")
     assert "part-19" not in message["content"]
-    assert [item["status"] for item in message["output"]] == ["incomplete"]
+    assert [item["status"] for item in without_hidden_calls(message["output"])] == ["incomplete"]
 
 
 def test_only_an_admin_may_stop_a_task_by_id(make_user, upstream):
@@ -139,5 +145,10 @@ def test_a_model_that_keeps_calling_tools_is_cut_off(instance_with):
     # the third call is asked for but never run
     assert len(limited.upstream.chat_requests()) == 3
     assert len(_items(message, "function_call")) == 3
-    assert len(_items(message, "function_call_output")) == 2
-    assert "Tool-call limit reached (2 iterations)." in str(message.get("error"))
+    results = [item["output"][0]["text"] for item in _items(message, "function_call_output")]
+    assert len(results) == 3, results
+    assert all("current_timestamp" in result for result in results[:2]), results
+    assert results[2] == "Error: Tool-call iteration limit reached.", (
+        f"the third call was not cut off: {results[2]}"
+    )
+    assert "Tool-call iteration limit reached." in str(message.get("error"))
