@@ -176,9 +176,9 @@ def test_a_long_tool_run_is_compacted_mid_reply_and_the_chat_carries_on(
     upstream.queue(reply.text("They were all the same.", match=answering(follow_up)))
     send(page, follow_up)
     expect_reply(page, "They were all the same.")
-    sent = provider_rounds(upstream)[-1][0]["messages"]
-    assert sent[-1]["content"] == follow_up
-    assert unpaired(sent) == []
+    sent = provider_rounds(upstream)[-1][0]
+    assert reply.conversation(sent)[-1]["content"] == follow_up
+    assert unpaired(sent["messages"]) == []
 
     page.reload()
     expect_reply(page, "They were all the same.")

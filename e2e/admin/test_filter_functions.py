@@ -145,7 +145,7 @@ def sent_text(page: Page, upstream, question: str) -> str:
     send(page, question)
     expect_reply(page, "Moor at berth four.")
     request = next(filter(reply.answering(question), upstream.chat_requests()))
-    return request["messages"][-1]["content"]
+    return reply.conversation(request)[-1]["content"]
 
 
 def function_card(page: Page, kind: str, function_id: str) -> Locator:

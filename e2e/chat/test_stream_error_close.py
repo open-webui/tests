@@ -38,4 +38,4 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(chat_page, u
     send(chat_page, "hello again")
     expect_reply(chat_page, "back again")
     expect(chat_page.get_by_text(REFUSAL)).to_have_count(0)
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == "hello again"
+    assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == "hello again"

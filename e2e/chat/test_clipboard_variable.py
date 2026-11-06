@@ -62,7 +62,7 @@ def test_the_chat_input_pastes_the_clipboard_exactly(writer, page_for, upstream)
     upstream.queue(reply.text("Done.", match=reply.answering("Run: ")))
     page.keyboard.press("Enter")
     expect_reply(page, "Done.")
-    sent = upstream.chat_requests()[-1]["messages"][-1]["content"]
+    sent = reply.conversation(upstream.chat_requests()[-1])[-1]["content"]
     assert sent == f"Run: {COPIED}"
 
 

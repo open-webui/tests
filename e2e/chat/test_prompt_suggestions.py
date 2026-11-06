@@ -102,7 +102,10 @@ def test_a_suggestion_without_a_title_shows_and_sends_its_prompt(
 
     expect_reply(page, "Golden light.")
     sent = next(filter(reply.answering(UNTITLED["content"]), upstream.chat_requests()))
-    assert sent["messages"][-1] == {"role": "user", "content": UNTITLED["content"]}
+    assert reply.conversation(sent)[-1] == {
+        "role": "user",
+        "content": UNTITLED["content"],
+    }
 
 
 @pytest.fixture

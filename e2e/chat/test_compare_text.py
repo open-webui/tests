@@ -91,7 +91,7 @@ def test_use_in_prompt_puts_the_revision_in_the_input_without_sending(
     chat_input(page).press("Enter")
     expect_reply(page, "Noted.")
     [request] = [body for body in upstream.chat_requests() if reply.answering(revised)(body)]
-    assert request["messages"][-1]["content"] == revised
+    assert reply.conversation(request)[-1]["content"] == revised
 
 
 def test_next_and_previous_change_step_through_the_changes(page_for, make_user):

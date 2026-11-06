@@ -20,12 +20,14 @@ the last model's the knowledge test fails.
 from __future__ import annotations
 
 import contextlib
+import json
 import uuid
 from dataclasses import dataclass
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
@@ -127,14 +129,15 @@ def test_the_tool_and_filter_do_not_follow_the_chat_to_another_model(page_for, h
     on_master = sent_request(page, upstream, "who holds locker 7?")
     assert "lookup_locker" in offered_tool_names(on_master)
     assert (
-        on_master["messages"][-1]["content"] == "who holds locker 7? (checked at the harbour gate)"
+        reply.conversation(on_master)[-1]["content"]
+        == "who holds locker 7? (checked at the harbour gate)"
     )
 
     switch_model(page, models.master, models.clerk)
     on_clerk = sent_request(page, upstream, "who holds locker 8?")
 
     assert "lookup_locker" not in offered_tool_names(on_clerk)
-    assert on_clerk["messages"][-1]["content"] == "who holds locker 8?"
+    assert reply.conversation(on_clerk)[-1]["content"] == "who holds locker 8?"
 
 
 def test_a_new_chat_switched_to_another_model_carries_no_tool_or_filter(
@@ -151,7 +154,8 @@ def test_a_new_chat_switched_to_another_model_carries_no_tool_or_filter(
     on_clerk = sent_request(page, upstream, "who holds locker 9?")
 
     assert "lookup_locker" not in offered_tool_names(on_clerk)
-    assert on_clerk["messages"] == [{"role": "user", "content": "who holds locker 9?"}]
+    assert reply.conversation(on_clerk) == [{"role": "user", "content": "who holds locker 9?"}]
+    assert "<knowledge" not in json.dumps(on_clerk["messages"]), on_clerk["messages"]
 
 
 def test_the_action_shows_only_under_the_models_own_replies(page_for, harbour, upstream):

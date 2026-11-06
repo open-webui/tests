@@ -71,9 +71,8 @@ def _send_and_read(page: Page, upstream, expected: str) -> str:
     upstream.queue(reply.text("Planned.", match=reply.answering(expected)))
     page.keyboard.press("Enter")
     expect_reply(page, "Planned.")
-    return next(filter(reply.answering(expected), upstream.chat_requests()))["messages"][-1][
-        "content"
-    ]
+    sent = next(filter(reply.answering(expected), upstream.chat_requests()))
+    return reply.conversation(sent)[-1]["content"]
 
 
 def test_each_kind_of_variable_is_asked_for_and_the_filled_text_is_sent(

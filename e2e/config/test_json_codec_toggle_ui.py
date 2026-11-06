@@ -95,7 +95,7 @@ def test_a_mixed_prompt_and_streamed_reply_show_and_survive_a_reload(page_for, p
     expect_reply(page, "".join(pieces))
     expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
     sent = next(filter(reply.answering(prompt), pair[codec].upstream.chat_requests()))
-    assert sent["messages"][-1] == {"role": "user", "content": prompt}
+    assert reply.conversation(sent)[-1] == {"role": "user", "content": prompt}
 
     page.reload()
     expect(conversation(page).get_by_text(prompt)).to_be_visible()

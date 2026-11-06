@@ -328,7 +328,7 @@ def test_a_prompt_suggestion_shows_on_the_new_chat_and_sends(page_for, builder, 
 
     expect_reply(page, "At noon.")
     sent = next(filter(reply.answering(content), upstream.chat_requests()))
-    assert sent["messages"][-1] == {"role": "user", "content": content}
+    assert reply.conversation(sent)[-1] == {"role": "user", "content": content}
 
 
 def test_a_tool_ticked_in_the_editor_is_offered_with_the_chat(
@@ -398,7 +398,9 @@ def test_a_filter_ticked_in_the_editor_runs_on_the_chat(page_for, admin, builder
         open_chat_on(page, preset)
         request = sent_request(page, upstream, "may I moor here?")
 
-    assert request["messages"][-1]["content"] == "may I moor here? (checked at the harbour gate)"
+    assert reply.conversation(request)[-1]["content"] == (
+        "may I moor here? (checked at the harbour gate)"
+    )
 
 
 TOGGLE_FILTER_SOURCE = """class Filter:
@@ -430,7 +432,7 @@ def test_a_toggleable_filter_runs_only_while_switched_on_in_the_chat(
         expect(filter_switch(page, filter_id)).to_have_attribute("aria-checked", "false")
         page.keyboard.press("Escape")
         expect(page.get_by_role("menu")).to_have_count(0)
-        assert sent_request(page, upstream, "may I moor?")["messages"][-1]["content"] == (
+        assert reply.conversation(sent_request(page, upstream, "may I moor?"))[-1]["content"] == (
             "may I moor?"
         )
 
@@ -441,7 +443,9 @@ def test_a_toggleable_filter_runs_only_while_switched_on_in_the_chat(
         expect(page.get_by_role("menu")).to_have_count(0)
         request = sent_request(page, upstream, "may I moor now?")
 
-    assert request["messages"][-1]["content"] == "may I moor now? (logged by the harbour master)"
+    assert reply.conversation(request)[-1]["content"] == (
+        "may I moor now? (logged by the harbour master)"
+    )
 
 
 def test_a_default_filter_starts_switched_on_in_a_new_chat(
@@ -462,7 +466,7 @@ def test_a_default_filter_starts_switched_on_in_a_new_chat(
         expect(page.get_by_role("menu")).to_have_count(0)
         request = sent_request(page, upstream, "may I anchor here?")
 
-    assert request["messages"][-1]["content"] == (
+    assert reply.conversation(request)[-1]["content"] == (
         "may I anchor here? (logged by the harbour master)"
     )
 

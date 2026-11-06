@@ -185,7 +185,9 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
     stored = _stored_markdown(author, note_id).strip()
     assert [line.rstrip() for line in stored.splitlines()] == [kept, rewritten]
     first_request = _requests_answering(upstream, REWRITE_PROMPT)[0]
-    assert f"{SELECTION_MARKER}\n{selected}" in str(first_request["messages"][-1]["content"])
+    assert f"{SELECTION_MARKER}\n{selected}" in str(
+        reply.conversation(first_request)[-1]["content"]
+    )
 
 
 # ---------------------------------------------------------------- a plain chat

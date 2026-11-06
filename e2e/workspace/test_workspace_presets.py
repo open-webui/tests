@@ -80,7 +80,9 @@ def test_a_preset_sends_its_system_prompt_with_the_chat(page_for, builder, upstr
     expect_reply(page, "Arr, ahoy!")
 
     # later task requests (title, tags) may follow the chat request
-    messages = next(filter(reply.answering("greet me"), upstream.chat_requests()))["messages"]
+    messages = reply.conversation(
+        next(filter(reply.answering("greet me"), upstream.chat_requests()))
+    )
     assert messages[0]["role"] == "system"
     assert system_prompt in messages[0]["content"]
     assert messages[-1] == {"role": "user", "content": "greet me"}
@@ -108,4 +110,4 @@ def test_a_saved_prompt_is_offered_by_its_slash_command_and_sent(page_for, build
     upstream.queue(reply.text("Waves fold into light.", match=reply.answering(text)))
     page.keyboard.press("Enter")
     expect_reply(page, "Waves fold into light.")
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == text
+    assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == text

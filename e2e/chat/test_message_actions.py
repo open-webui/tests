@@ -63,7 +63,8 @@ def _whole_reply(reply_text: Locator) -> Locator:
 
 def _latest_request_messages(upstream) -> list[tuple[str, str]]:
     return [
-        (entry["role"], str(entry["content"])) for entry in upstream.chat_requests()[-1]["messages"]
+        (entry["role"], str(entry["content"]))
+        for entry in reply.conversation(upstream.chat_requests()[-1])
     ]
 
 
@@ -163,7 +164,7 @@ RED_PNG = base64.b64decode(
 
 def _images_sent(upstream, question: str) -> int:
     request = [body for body in upstream.chat_requests() if reply.answering(question)(body)][-1]
-    content = request["messages"][-1]["content"]
+    content = reply.conversation(request)[-1]["content"]
     parts = content if isinstance(content, list) else []
     return len([part for part in parts if part.get("type") == "image_url"])
 

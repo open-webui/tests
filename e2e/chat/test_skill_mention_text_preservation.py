@@ -35,6 +35,6 @@ def test_typed_look_alike_mentions_are_sent_and_shown_verbatim(
     send(page, typed)
     expect_reply(page, "noted")
 
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == typed
+    assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == typed
     user_message = conversation(page).locator(".chat-user").last
     expect(user_message).to_contain_text(typed)

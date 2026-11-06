@@ -61,7 +61,7 @@ def _send_and_read(page: Page, upstream, answer: str) -> str:
     page.keyboard.press("Enter")
     expect_reply(page, answer)
     sent = next(filter(reply.answering(SECOND_PARAGRAPH), reversed(upstream.chat_requests())))
-    return str(sent["messages"][-1]["content"])
+    return str(reply.conversation(sent)[-1]["content"])
 
 
 def test_explain_quotes_the_selected_passage_into_the_message(harbour_reply, upstream):
