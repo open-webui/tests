@@ -4,7 +4,8 @@
 serves `RESPONSES_MODEL`; snapshot `OPENAI_CONFIG` with `preserve` first. `provider.answer(...)`
 lines up one answer per `/v1/responses` call, each an event stream built from the helpers here
 (`message`, `reasoning`, `function_call`, `completed`, `failed`) or a whole JSON result for a
-non-streamed call; `provider.sent()` is what each call carried.
+non-streamed call; `provider.sent()` is what each call carried, and `conversation(body)` its
+`input` without the context calls Open WebUI adds before a reply.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import httpx
 
 from harness.listener import Answer, Listener, ReceivedRequest, text_answer
 from harness.second_provider import attach
+from harness.upstream import CONTEXT_TOOLS
 
 RESPONSES_MODEL = "responses-model"
 
@@ -170,3 +172,14 @@ def connect_responses(client: httpx.Client, listener: Listener, **config) -> Res
     listener.route("POST", "/v1/responses", provider.respond)
     attach(client, listener, RESPONSES_MODEL, api_type="responses", **config)
     return provider
+
+
+def conversation(body: dict) -> list[dict]:
+    """The `input` items of `body` without the context calls Open WebUI adds before each reply."""
+    items = body.get("input") or []
+    context_ids = {
+        item.get("call_id")
+        for item in items
+        if item.get("type") == "function_call" and item.get("name") in CONTEXT_TOOLS
+    }
+    return [item for item in items if item.get("call_id") not in context_ids]

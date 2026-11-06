@@ -1,27 +1,30 @@
 """Journey: deferred tools run through `call_tool` while the offered tools never change.
 
 With Tool Search on and tools large enough to defer, the model is offered `search_tools` and
-`call_tool(tool_name, params)` alone; `params` is a JSON-encoded object string. Open WebUI unwraps
-the dispatcher into the target tool before approvals and special handling, so the target keeps
-its own behaviour (approval prompt, `ask_user` pause, access, MCP and builtin tools), and stores
-the model's original call so later turns replay what the model actually sent, on Chat Completions
-and the Responses API. A malformed dispatch comes back as a failed result starting `Error: ` and
-the turn goes on. A tool already named `search_tools` or `call_tool`, a filter's included, turns
-the dispatcher off. What a dispatched tool leaves on the reply matches a direct call with Tool
-Search off: the sources of the file and knowledge tools, `fetch_url` and a tool's citation event,
-a tool's files event, an HTML embed, and pictures from `generate_image` and `edit_image` stored
-as files. The source list the citations template adds after a sourced round is the same, and
-the next turn replays `call_tool`. Added with dev 7b47c3b22.
+`call_tool(tool_name, params)` alone; `params` is a JSON-encoded object string, or since dev
+d87837372 a plain object. Open WebUI unwraps the dispatcher into the target tool before approvals
+and special handling, so the target keeps its own behaviour (approval prompt, `ask_user` pause,
+access, MCP and builtin tools), and stores the model's original call so later turns replay the
+dispatch, on Chat Completions and the Responses API; since dev 7f3e0d018 the replayed arguments
+are normalized JSON, the same on every later turn. A malformed dispatch comes back as a failed
+result starting `Error: ` and the turn goes on. A tool already named `search_tools` or
+`call_tool`, a filter's included, turns the dispatcher off. What a dispatched tool leaves on the
+reply matches a direct call with Tool Search off: the sources of the file and knowledge tools,
+`fetch_url` and a tool's citation event, a tool's files event, an HTML embed, and pictures from
+`generate_image` and `edit_image` stored as files. The source list the citations template adds
+to a sourced round's tool result (since dev 8e2ba2937) is the same, and the next turn replays
+`call_tool`. Added with dev 7b47c3b22.
 
-The admin settings decide which tools are held back. A tool goes into the `<available_tools>`
-list only when its definition, as compact JSON, is longer than the Deferral Threshold in
+The admin settings decide which tools are held back, where `search_tools` finds them. A tool is
+held back only when its definition, as compact JSON, is longer than the Deferral Threshold in
 characters; one at the threshold is sent in full. An Always Loaded pattern such as `github_*`
 keeps the tools it matches in full, and with Defer Built-in Tools off the built-in tools stay in
-full too. The list names each held-back tool in name order with its description on one line, cut
-to 100 characters ending in `…`. `search_tools` searches only the held-back tools and returns
-their full definitions, for an exact name or a keyword. With Tool Search off, or no tool over the
-threshold, the model gets every tool, no dispatch tools and no list. The admin chat settings
-store all four settings, with a negative threshold saved as 0 and blank patterns dropped.
+full too. Since dev 768a83ae7 the `<available_tools>` block holds fixed search instructions and
+names no held-back tool, so it stays the same for any tool set. `search_tools` searches only the
+held-back tools and returns their full definitions, for an exact name or a keyword. With Tool
+Search off, or no tool over the threshold, the model gets every tool, no dispatch tools and no
+instructions. The admin chat settings store all four settings, with a negative threshold saved
+as 0 and blank patterns dropped.
 
 Approvals treat a dispatched tool as the tool itself: under every approval setting (Ask, Full
 access, no choice, the admin switch off, a model preset that asks) it is asked exactly when a
@@ -50,12 +53,11 @@ an approval fails the mixed round, second round and allow-once tests.
 
 In backend copies of dev 948432b43, deferring a tool at the threshold fails the threshold test;
 ignoring Always Loaded fails the pattern and search tests; deferring built-in tools regardless
-fails the built-in and list tests; a 200-character cut fails the list test and an uncollapsed
-description the built-in and list tests; searching every tool or returning only names and
-descriptions fails the search test; ignoring the Tool Search switch fails the threshold,
-built-in, search and off tests; adding the dispatch tools with nothing held back fails the
-nothing-over-the-threshold case; and saving the threshold and patterns as sent fails the
-settings test.
+fails the built-in test (the list those mutations also failed went with 768a83ae7); searching
+every tool or returning only names and descriptions fails the search test; ignoring the Tool
+Search switch fails the threshold, built-in, search and off tests; adding the dispatch tools with
+nothing held back fails the nothing-over-the-threshold case; and saving the threshold and
+patterns as sent fails the settings test.
 
 Since 93ba628f3 (#32680, issue #32678) a picture the model draws after the user answered its
 `ask_user` question or approved or rejected a tool call is stored on the reply. Resolving the
@@ -93,6 +95,7 @@ from harness.python_tools import EVERYONE_READS, python_tool
 from harness.second_provider import OPENAI_CONFIG
 from harness.socket_client import connected
 from harness.terminal_server import read_grant
+from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID, Reply
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
@@ -166,7 +169,7 @@ def offered(request: dict) -> list[str]:
 def tool_messages(request: dict) -> dict[str, str]:
     return {
         entry["tool_call_id"]: entry["content"]
-        for entry in request["messages"]
+        for entry in reply.conversation(request)
         if entry["role"] == "tool"
     }
 
@@ -174,14 +177,15 @@ def tool_messages(request: dict) -> dict[str, str]:
 def replayed_calls(request: dict) -> dict[str, dict]:
     return {
         call["id"]: call["function"]
-        for entry in request["messages"]
+        for entry in reply.conversation(request)
         if entry["role"] == "assistant"
         for call in entry.get("tool_calls") or []
     }
 
 
 def items(message: dict, kind: str) -> dict[str, dict]:
-    return {item["call_id"]: item for item in message.get("output") or [] if item["type"] == kind}
+    output = without_hidden_calls(message.get("output") or [])
+    return {item["call_id"]: item for item in output if item["type"] == kind}
 
 
 def result_text(message: dict, call_id: str) -> str:
@@ -190,7 +194,9 @@ def result_text(message: dict, call_id: str) -> str:
 
 def stored_output(client: httpx.Client, turn: ChatTurn) -> list[dict]:
     chat = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
-    return chat["history"]["messages"][turn.assistant_message_id].get("output") or []
+    return without_hidden_calls(
+        chat["history"]["messages"][turn.assistant_message_id].get("output") or []
+    )
 
 
 def wait_for_status(client: httpx.Client, turn: ChatTurn, call_id: str, status: str) -> dict:
@@ -282,11 +288,10 @@ def test_a_deferred_tool_runs_through_call_tool_and_later_turns_replay_the_dispa
         {"harbour": "Pula"},
     )
     assert shown["status"] == "completed"
-    for request in (after_call, next_turn):
-        assert replayed_calls(request)["call_2"] == {
-            "name": "call_tool",
-            "arguments": sent_arguments,
-        }
+    replays = [replayed_calls(request)["call_2"] for request in (after_call, next_turn)]
+    assert replays[0] == replays[1], "the replayed dispatch changed between turns"
+    assert replays[0]["name"] == "call_tool"
+    assert json.loads(replays[0]["arguments"]) == json.loads(sent_arguments)
     assert tool_messages(next_turn) == tool_messages(after_call)
 
 
@@ -301,7 +306,7 @@ REFUSED_DISPATCHES = [
         "Error: call_tool requires tool_name and params.",
         id="extra-key",
     ),
-    pytest.param("[]", "Error: call_tool requires tool_name and params.", id="not-an-object"),
+    pytest.param("[]", "Error: Tool arguments must be a JSON object.", id="not-an-object"),
     pytest.param(
         {"tool_name": "", "params": "{}"},
         "Error: tool_name must be a non-empty string.",
@@ -333,14 +338,14 @@ REFUSED_DISPATCHES = [
         id="unknown-tool",
     ),
     pytest.param(
-        {"tool_name": "get_current_timestamp", "params": {}},
-        "Error: params must be a JSON-encoded object string.",
-        id="params-not-a-string",
+        {"tool_name": "get_current_timestamp", "params": "[]"},
+        "Error: Tool arguments must be a JSON object.",
+        id="params-not-an-object",
     ),
     pytest.param(
-        {"tool_name": "get_current_timestamp", "params": "[]"},
-        "Error: params must decode to a JSON object.",
-        id="params-not-an-object",
+        {"tool_name": "get_current_timestamp", "params": []},
+        "Error: Tool arguments must be a JSON object.",
+        id="params-a-list",
     ),
     pytest.param(
         {"tool_name": "get_current_timestamp", "params": "{broken"},
@@ -373,6 +378,18 @@ def test_a_refused_dispatch_reaches_the_model_as_a_failed_result(
     assert message["content"] == "retrying"
 
 
+def test_params_sent_as_an_object_run_the_tool(tool_search, user, upstream):
+    called = {"tool_name": "get_current_timestamp", "params": {}}
+    upstream.queue(Reply(tool_calls=[dispatch_call("call_1", called)]), reply.text("It is late."))
+    with user.client() as client:
+        _, message = ask(client, "what time is it?")
+
+    _, follow_up = upstream.chat_requests()
+    assert "current_timestamp" in tool_messages(follow_up)["call_1"], follow_up["messages"]
+    assert items(message, "function_call")["call_1"]["status"] == "completed"
+    assert message["content"] == "It is late."
+
+
 def test_a_refused_dispatch_does_not_stop_the_other_and_both_replay_as_sent(
     tool_search, user, upstream
 ):
@@ -393,7 +410,7 @@ def test_a_refused_dispatch_does_not_stop_the_other_and_both_replay_as_sent(
     for request in (follow_up, next_turn):
         [assistant] = [
             entry
-            for entry in request["messages"]
+            for entry in reply.conversation(request)
             if entry["role"] == "assistant" and entry.get("tool_calls")
         ]
         assert assistant["tool_calls"] == [bad, good]
@@ -435,10 +452,16 @@ def test_the_responses_api_replays_the_dispatch_as_the_model_sent_it(
     assert shown["name"] == "get_current_timestamp"
     assert "current_timestamp" in result_text(message, "call_1")
     for request in (follow_up, next_turn):
-        [call] = [entry for entry in request["input"] if entry.get("type") == "function_call"]
+        [call] = [
+            entry
+            for entry in responses_api.conversation(request)
+            if entry.get("type") == "function_call"
+        ]
         assert (call["name"], call["arguments"]) == ("call_tool", json.dumps(dispatched))
         [output] = [
-            entry for entry in request["input"] if entry.get("type") == "function_call_output"
+            entry
+            for entry in responses_api.conversation(request)
+            if entry.get("type") == "function_call_output"
         ]
         assert "current_timestamp" in output["output"]
     assert message["content"] == "It is late."
@@ -635,7 +658,7 @@ def test_a_mixed_round_asks_each_call_in_order_and_runs_only_the_allowed(
     follow_up = upstream.chat_requests()[-1]
     [assistant] = [
         entry
-        for entry in follow_up["messages"]
+        for entry in reply.conversation(follow_up)
         if entry["role"] == "assistant" and entry.get("tool_calls")
     ]
     assert assistant["tool_calls"] == calls
@@ -1066,24 +1089,36 @@ def schema_size(spec: dict) -> int:
     return len(json.dumps(spec, separators=(",", ":"), ensure_ascii=False))
 
 
-def listed_tools(request: dict) -> list[tuple[str, str]] | None:
-    """The (name, description) pairs of the `<available_tools>` list, or None without a list."""
+def available_tools_block(request: dict) -> str | None:
+    """The `<available_tools>` block of the system prompt, or None without one."""
     system = "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
     )
     block = re.search(r"<available_tools>\n.*?</available_tools>", system, re.DOTALL)
-    if block is None:
-        return None
-    return re.findall(
-        r"<tool>\n<name>(.*?)</name>\n<description>(.*?)</description>\n</tool>\n",
-        block.group(0),
-    )
+    return block.group(0) if block else None
 
 
-def listed_names(request: dict) -> list[str]:
-    listed = listed_tools(request)
-    assert listed is not None, f"the request has no <available_tools> list: {request['messages']}"
-    return [name for name, _ in listed]
+def search_call(call_id: str, query: str) -> dict:
+    arguments = json.dumps({"query": query})
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "search_tools", "arguments": arguments},
+    }
+
+
+def held_back(client: httpx.Client, upstream, tool_ids: list[str], names: list[str]) -> set[str]:
+    """Which of `names` `search_tools` finds by exact name: the tools held back from the model."""
+    searches = [search_call(f"find_{index}", name) for index, name in enumerate(names)]
+    upstream.queue(Reply(tool_calls=searches), reply.text("found them"))
+    ask(client, "which tools are held back?", tool_ids=tool_ids)
+    results = tool_messages(upstream.chat_requests()[-1])
+    found = set()
+    for index, name in enumerate(names):
+        tools = json.loads(results[f"find_{index}"])["tools"]
+        if name in [tool["name"] for tool in tools]:
+            found.add(name)
+    return found
 
 
 def request_with(client: httpx.Client, upstream, tool_ids: list[str]) -> dict:
@@ -1109,38 +1144,44 @@ def test_a_tool_is_held_back_only_when_its_definition_is_longer_than_the_thresho
             TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False,
         )
         at_threshold = request_with(client, upstream, [tool_id])
+        held_at_threshold = held_back(client, upstream, [tool_id], ["harbour_lights", "tide_table"])
         chat_settings(TOOL_SEARCH_DEFER_THRESHOLD=small - 1)
         over_threshold = request_with(client, upstream, [tool_id])
+        held_over_threshold = held_back(client, upstream, [tool_id], ["harbour_lights"])
 
     sent = offered_specs(at_threshold)
     assert sent.get("harbour_lights") == full["harbour_lights"], (
         f"a {small}-character tool at a {small} threshold was not sent in full: {sorted(sent)}"
     )
     assert DISPATCH_NAMES <= set(sent) and "tide_table" not in sent, sorted(sent)
-    assert "harbour_lights" not in listed_names(at_threshold)
-    assert "tide_table" in listed_names(at_threshold)
+    assert held_at_threshold == {"tide_table"}, held_at_threshold
 
     sent = offered_specs(over_threshold)
     assert "harbour_lights" not in sent, (
         f"a {small}-character tool at a {small - 1} threshold was sent in full"
     )
-    assert "harbour_lights" in listed_names(over_threshold)
+    assert held_over_threshold == {"harbour_lights"}, held_over_threshold
 
 
 def test_an_always_loaded_pattern_keeps_its_matching_tools_in_full(
     tool_search, admin, make_user, upstream
 ):
     tool_search(TOOL_SEARCH_ALWAYS_LOADED=["github_*"])
+    forge_names = [
+        "github_create_issue",
+        "github_list_repos",
+        "gitlab_create_issue",
+        "my_github_sync",
+    ]
     with python_tool(admin, FORGE_TOOLS) as tool_id, make_user().client() as client:
         request = request_with(client, upstream, [tool_id])
+        held = held_back(client, upstream, [tool_id], forge_names)
 
     sent = offered_specs(request)
     assert {"github_create_issue", "github_list_repos"} <= set(sent), sorted(sent)
     assert sent["github_create_issue"]["parameters"]["properties"].keys() == {"title"}
     assert not {"gitlab_create_issue", "my_github_sync"} & set(sent), sorted(sent)
-    listed = listed_names(request)
-    assert {"gitlab_create_issue", "my_github_sync"} <= set(listed), listed
-    assert not {"github_create_issue", "github_list_repos"} & set(listed), listed
+    assert held == {"gitlab_create_issue", "my_github_sync"}, held
 
 
 def test_builtin_tools_stay_in_full_with_defer_builtin_tools_off(
@@ -1158,44 +1199,39 @@ def test_builtin_tools_stay_in_full_with_defer_builtin_tools_off(
             TOOL_SEARCH_ALWAYS_LOADED=[],
             TOOL_SEARCH_DEFER_BUILTIN_TOOLS=True,
         )
+        candidates = sorted(builtins | {"harbour_lights"})
         deferring = request_with(client, upstream, [tool_id])
+        held_deferring = held_back(client, upstream, [tool_id], candidates)
         chat_settings(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
         keeping = request_with(client, upstream, [tool_id])
+        held_keeping = held_back(client, upstream, [tool_id], candidates)
 
     assert set(offered(deferring)) == DISPATCH_NAMES
-    assert set(listed_names(deferring)) == builtins | {"harbour_lights"}
+    assert held_deferring == set(candidates), sorted(set(candidates) - held_deferring)
 
     kept = offered_specs(keeping)
     assert set(kept) == builtins | DISPATCH_NAMES, sorted(kept)
     assert {name: kept[name] for name in builtins} == {name: full[name] for name in builtins}
-    assert listed_names(keeping) == ["harbour_lights"]
+    assert held_keeping == {"harbour_lights"}, held_keeping
 
 
-def test_the_list_names_each_held_back_tool_with_its_description_cut_to_100_characters(
+def test_the_search_instructions_name_no_held_back_tool_and_stay_the_same_for_any_tool_set(
     tool_search, admin, make_user, upstream
 ):
     tool_search(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
-    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
-        request = request_with(client, upstream, [tool_id])
+    with make_user().client() as client:
+        with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id:
+            desk = request_with(client, upstream, [tool_id])
+        with python_tool(admin, FORGE_TOOLS) as tool_id:
+            forge = request_with(client, upstream, [tool_id])
 
-    cut = TIDE_DESCRIPTION[:99] + "…"
-    assert len(cut) == 100
-    assert listed_tools(request) == [
-        ("beacon_status", "Report whether the beacon of a harbour is flashing."),
-        ("harbour_lights", "Report whether the lights of a harbour are lit."),
-        ("tide_table", cut),
-        ("weather_report", WEATHER_DESCRIPTION),
-    ]
-    assert TIDE_DESCRIPTION not in json.dumps(request), "the held-back definition was sent"
-
-
-def search_call(call_id: str, query: str) -> dict:
-    arguments = json.dumps({"query": query})
-    return {
-        "id": call_id,
-        "type": "function",
-        "function": {"name": "search_tools", "arguments": arguments},
-    }
+    block = available_tools_block(desk)
+    assert block and "search_tools" in block and "call_tool" in block, desk["messages"]
+    assert available_tools_block(forge) == block
+    for name in [*DESK_NAMES, "gitlab_create_issue"]:
+        assert name not in block, f"{name} was named in the instructions: {block}"
+    assert TIDE_DESCRIPTION not in json.dumps(desk), "the held-back definition was sent"
+    assert WEATHER_DESCRIPTION not in json.dumps(desk), "the held-back definition was sent"
 
 
 def test_search_tools_returns_the_full_definition_by_exact_name_and_by_keyword(
@@ -1578,7 +1614,8 @@ def test_a_round_cited_through_call_tool_gets_the_source_list_and_replays_next_t
             ask(client, "and now?", chat_id=turn.chat_id, parent_id=turn.assistant_message_id)
             first, after_call, next_turn = upstream.chat_requests()[-3:]
             [user_prompt] = [entry for entry in after_call["messages"] if entry["role"] == "user"]
-            rewritten[via] = user_prompt["content"].replace(f" ({via})", "")
+            assert user_prompt["content"] == question
+            rewritten[via] = tool_messages(after_call)["call_1"].replace(f" ({via})", "")
             assert after_call["tools"] == first["tools"] == next_turn["tools"]
             assert system_prompts(after_call) == system_prompts(first)
             assert tool_messages(next_turn) == tool_messages(after_call)
