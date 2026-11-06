@@ -67,7 +67,7 @@ def replay_stored_output(user, upstream, output: list[dict]) -> list[dict]:
             ],
         )
         ask(client, "and now?", chat_id=chat_id, parent_id=assistant_id)
-    return upstream.chat_requests()[-1]["messages"]
+    return reply.conversation(upstream.chat_requests()[-1])
 
 
 def requested_call_ids(messages: list[dict]) -> set[str]:

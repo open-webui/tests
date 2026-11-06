@@ -39,7 +39,7 @@ def wait_for_stored_error(client: httpx.Client, turn: ChatTurn, timeout: float =
 
 
 def replayed_roles_and_contents(request: dict) -> list[tuple[str, str]]:
-    return [(entry["role"], entry.get("content")) for entry in request["messages"]]
+    return [(entry["role"], entry.get("content")) for entry in reply.conversation(request)]
 
 
 @pytest.fixture

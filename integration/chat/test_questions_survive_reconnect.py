@@ -131,7 +131,7 @@ def tool_results(upstream, prompt: str) -> list[str]:
         str(entry["content"])
         for sent in upstream.chat_requests()
         if reply.answering(prompt)(sent)
-        for entry in sent["messages"]
+        for entry in reply.conversation(sent)
         if entry["role"] == "tool"
     ]
 

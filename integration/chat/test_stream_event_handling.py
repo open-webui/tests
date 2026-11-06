@@ -45,6 +45,7 @@ from harness.listener import json_answer, text_answer
 from harness.plugins import installed_function
 from harness.python_tools import python_tool
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -224,7 +225,7 @@ def test_a_stream_ending_in_reasoning_finishes_cleanly(admin, responses_connecti
     assert not message.get("error"), (
         f"closing a reasoning item without started_at failed the turn (#28872): {message['error']}"
     )
-    closed = message["output"][-1]
+    closed = without_hidden_calls(message["output"])[-1]
     assert closed["type"] == "reasoning"
     assert closed["status"] == "completed"
     assert closed["summary"][0]["text"] == "thinking it over"
@@ -238,7 +239,11 @@ def test_a_plain_responses_reply_is_stored(admin, responses_connection):
 
 
 def _tool_output(message: dict) -> dict:
-    return next(item for item in message["output"] if item["type"] == "function_call_output")
+    return next(
+        item
+        for item in without_hidden_calls(message["output"])
+        if item["type"] == "function_call_output"
+    )
 
 
 def test_a_failed_tool_call_is_stamped_failed(make_user, upstream):

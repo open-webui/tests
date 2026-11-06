@@ -43,6 +43,7 @@ from harness.plugins import installed_function
 from harness.raw_provider import RAW_MODEL_ID, chunk, sse
 from harness.second_provider import OPENAI_CONFIG
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [
@@ -93,7 +94,7 @@ def wait_for(condition, what: str, timeout: float = 30.0):
 def reasoning_of(message: dict) -> str:
     return "".join(
         part["text"]
-        for item in message["output"]
+        for item in without_hidden_calls(message["output"])
         if item["type"] == "reasoning"
         for part in item.get("content") or []
     )
@@ -403,7 +404,7 @@ def test_a_temporary_chat_streams_over_the_socket_and_its_next_turn_carries_the_
     assert answer == "The deepest lake in Carinthia is the Millstatter See."
     assert output_text(done["data"]["output"], "reasoning") == "Carinthia has many lakes. "
     follow_up = [r for r in upstream.chat_requests() if reply.answering("How deep is it?")(r)][0]
-    assert [(m["role"], m["content"]) for m in follow_up["messages"]] == [
+    assert [(m["role"], m["content"]) for m in reply.conversation(follow_up)] == [
         ("user", "Which lake is deepest?"),
         ("assistant", "The deepest lake in Carinthia is the Millstatter See."),
         ("user", "How deep is it?"),
@@ -722,4 +723,4 @@ def test_a_background_subagent_reports_its_whole_reply_and_the_chat_continues(
     assert "Forty crates in bay three." in report["content"]
     assert follow_up["content"] == "The count is in."
     sent_back = [body for body in streaming.upstream.chat_requests() if carries_the_report(body)]
-    assert "Forty crates in bay three." in str(sent_back[-1]["messages"][-1]["content"])
+    assert "Forty crates in bay three." in str(reply.conversation(sent_back[-1])[-1]["content"])

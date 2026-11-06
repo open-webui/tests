@@ -33,6 +33,7 @@ from harness.listener import text_answer
 from harness.python_tools import python_tool
 from harness.second_provider import OPENAI_CONFIG, attach, sse
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [
     pytest.mark.journey,
@@ -81,7 +82,7 @@ def _sent(listener) -> list[dict]:
 
 
 def _items(message: dict, kind: str) -> list[dict]:
-    return [item for item in message["output"] if item["type"] == kind]
+    return [item for item in without_hidden_calls(message["output"]) if item["type"] == kind]
 
 
 def _text(item: dict) -> str:
@@ -117,7 +118,9 @@ def _history_after(actor, turn, **options) -> list[dict]:
 
 
 def _replayed_assistant(request: dict) -> list[dict]:
-    return [entry for entry in request["messages"] if entry["role"] in ("assistant", "tool")]
+    return [
+        entry for entry in reply.conversation(request) if entry["role"] in ("assistant", "tool")
+    ]
 
 
 # --- answer text ----------------------------------------------------------------------------
@@ -150,10 +153,10 @@ def test_answer_text_streams_saves_and_replays_whole(streaming, owner, pieces):
 
     assert deltas == [("output_text", piece) for piece in pieces]
     assert message["content"] == expected
-    assert [(item["type"], item["status"]) for item in message["output"]] == [
+    assert [(item["type"], item["status"]) for item in without_hidden_calls(message["output"])] == [
         ("message", "completed")
     ]
-    assert _text(message["output"][0]) == expected
+    assert _text(without_hidden_calls(message["output"])[0]) == expected
 
     streaming.upstream.queue(reply.text("ok", match=reply.answering(FOLLOW_UP)))
     _history_after(owner, turn)
@@ -188,9 +191,12 @@ def test_reasoning_from_a_delta_field_is_kept_apart_from_the_answer(
         ("output_text", "The "),
         ("output_text", "answer."),
     ]
-    assert [item["type"] for item in message["output"]] == ["reasoning", "message"]
-    assert _text(message["output"][0]) == "Let me weigh this."
-    assert message["output"][0]["status"] == "completed"
+    assert [item["type"] for item in without_hidden_calls(message["output"])] == [
+        "reasoning",
+        "message",
+    ]
+    assert _text(without_hidden_calls(message["output"])[0]) == "Let me weigh this."
+    assert without_hidden_calls(message["output"])[0]["status"] == "completed"
     assert message["content"] == "The answer."
 
     _history_after(owner, turn, model=SECOND_MODEL)
@@ -225,7 +231,7 @@ def test_reasoning_between_tags_is_lifted_out_of_the_answer(streaming, owner, st
         "completed",
     )
     assert message["content"] == "Answer given."
-    assert _text(message["output"][-1]) == "Answer given."
+    assert _text(without_hidden_calls(message["output"])[-1]) == "Answer given."
     assert deltas == [
         ("reasoning_text", "deep "),
         ("reasoning_text", "and "),
@@ -345,7 +351,7 @@ def weather_tool(streaming):
 def _tool_calls_sent_back(request: dict) -> list[tuple[str, dict]]:
     calls = [
         call
-        for entry in request["messages"]
+        for entry in reply.conversation(request)
         if entry["role"] == "assistant"
         for call in entry.get("tool_calls") or []
     ]
@@ -353,7 +359,7 @@ def _tool_calls_sent_back(request: dict) -> list[tuple[str, dict]]:
 
 
 def _tool_results_sent_back(request: dict) -> list[str]:
-    return [entry["content"] for entry in request["messages"] if entry["role"] == "tool"]
+    return [entry["content"] for entry in reply.conversation(request) if entry["role"] == "tool"]
 
 
 def test_split_tool_arguments_reach_the_tool_whole(streaming, owner, second_provider, weather_tool):
@@ -492,11 +498,11 @@ def test_a_stopped_reply_keeps_whole_pieces(streaming, owner):
         streamed = "".join(text for _, text in _deltas(socket, turn.chat_id))
 
     assert stopped.status_code == 200, stopped.text
-    kept = _text(message["output"][0])
+    kept = _text(without_hidden_calls(message["output"])[0])
     assert kept == streamed
     whole_prefixes = ["".join(pieces[:count]) for count in range(3, len(pieces))]
     assert kept in whole_prefixes, kept
-    assert message["output"][0]["status"] == "incomplete"
+    assert without_hidden_calls(message["output"])[0]["status"] == "incomplete"
 
 
 def _wait_for_deltas(socket, chat_id: str, count: int, timeout: float = 30.0) -> None:
@@ -611,8 +617,8 @@ def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
         shown = _texts_a_tab_shows(socket, turn.chat_id)
 
     assert message["content"] == "Once upon a time there was a fox."
-    assert [item["type"] for item in message["output"]] == ["message"]
-    assert _text(message["output"][-1]) == "Once upon a time there was a fox."
+    assert [item["type"] for item in without_hidden_calls(message["output"])] == ["message"]
+    assert _text(without_hidden_calls(message["output"])[-1]) == "Once upon a time there was a fox."
     # the tab sees the old text first, then each piece after it, whether sent whole or as deltas
     assert shown == [
         "Once upon a time",
@@ -620,7 +626,7 @@ def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
         "Once upon a time there was ",
         "Once upon a time there was a fox.",
     ]
-    continued = streaming.upstream.chat_requests()[-1]["messages"]
+    continued = reply.conversation(streaming.upstream.chat_requests()[-1])
     assert continued[-1] == {"role": "assistant", "content": "Once upon a time"}
 
 
@@ -644,7 +650,7 @@ def test_regenerating_keeps_both_versions(streaming, owner):
         turn.assistant_message_id,
         regenerated_id,
     ]
-    regenerated_request = streaming.upstream.chat_requests()[-1]["messages"]
+    regenerated_request = reply.conversation(streaming.upstream.chat_requests()[-1])
     assert [entry["role"] for entry in regenerated_request] == ["user"]
 
 
