@@ -100,12 +100,13 @@ def _streamed_text(events: list[dict]) -> str:
 
 
 def _output_text(output: list[dict]) -> str:
-    """The text of the output items' `output_text` parts."""
+    """The text of the message items' parts, as the chat page renders it."""
+    # a reply in flight after Open WebUI's own context calls carries `text` parts, not `output_text`
     return "".join(
         part.get("text", "")
         for item in output
+        if item.get("type") == "message"
         for part in item.get("content") or []
-        if part.get("type") == "output_text"
     )
 
 

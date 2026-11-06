@@ -33,6 +33,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
 from harness.chat import ask, send_message, wait_for_reply
+from harness.file_context import file_context_ticked
 from harness.json_codecs import (
     ALL_MIXED,
     CODECS,
@@ -44,7 +45,8 @@ from harness.json_codecs import (
 )
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.socket_client import connected
-from harness.upstream import MOCK_MODEL_ID
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [
     pytest.mark.journey,
@@ -529,10 +531,12 @@ def test_a_workspace_tool_result_reaches_the_provider_and_the_chat_the_same(pair
             upstream.queue(reply.tool_call("quarterly_report", TOOL_ARGUMENTS), reply.text("done"))
             turn, stored = ask(client, "report", tool_ids=[tool_id])
             first, second = upstream.chat_requests()
-            [assistant] = [entry for entry in second["messages"] if entry.get("tool_calls")]
-            [tool_message] = [entry for entry in second["messages"] if entry["role"] == "tool"]
-            calls = [item for item in stored["output"] if item["type"] == "function_call"]
-            results = [item for item in stored["output"] if item["type"] == "function_call_output"]
+            sent = conversation(second)
+            [assistant] = [entry for entry in sent if entry.get("tool_calls")]
+            [tool_message] = [entry for entry in sent if entry["role"] == "tool"]
+            output = without_hidden_calls(stored["output"])
+            calls = [item for item in output if item["type"] == "function_call"]
+            results = [item for item in output if item["type"] == "function_call_output"]
             [output] = results
             return {
                 "offered": [tool["function"]["name"] for tool in first["tools"]],
@@ -643,7 +647,12 @@ def test_a_file_attached_to_the_chat_is_cited_the_same(pair, owner):
             "text_sent": all(MIXED_TEXT[key] in sent for key in ATTACHED_KEYS),
         }
 
-    outcomes = on_both(pair, owner, cite)
+    # without File Context a model in native function calling reads the file through its tools
+    with (
+        file_context_ticked(admin_of(pair["stdlib"])),
+        file_context_ticked(admin_of(pair["orjson"])),
+    ):
+        outcomes = on_both(pair, owner, cite)
 
     assert_same(outcomes)
     outcome = outcomes["orjson"]

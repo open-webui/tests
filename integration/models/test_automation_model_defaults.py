@@ -32,7 +32,7 @@ from harness import upstream as reply
 from harness.channel_quotes import enable_channels
 from harness.python_tools import python_tool
 from harness.second_provider import OPENAI_CONFIG
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -111,7 +111,7 @@ def _request_for(upstream, prompt: str) -> dict:
     deadline = time.monotonic() + RUN_WAIT
     while time.monotonic() < deadline:
         for request in upstream.chat_requests():
-            if prompt in str(request["messages"][-1].get("content")):
+            if prompt in str(conversation(request)[-1].get("content")):
                 return request
         time.sleep(0.2)
     raise AssertionError(f"the automation never reached the model with {prompt!r}")

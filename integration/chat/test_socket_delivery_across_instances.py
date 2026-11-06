@@ -78,7 +78,7 @@ from harness.direct_connection import answering, chunk_line, direct_model
 from harness.instance import LaunchedInstance
 from harness.python_tools import python_tool
 from harness.socket_client import SocketSession, connected, note_text
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [
     pytest.mark.journey,
@@ -337,7 +337,7 @@ def _tool_results(provider) -> list[str]:
     return [
         entry["content"]
         for sent in provider.chat_requests()
-        for entry in sent["messages"]
+        for entry in conversation(sent)
         if entry["role"] == "tool"
     ]
 

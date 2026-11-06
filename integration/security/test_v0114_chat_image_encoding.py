@@ -29,7 +29,7 @@ import pytest
 
 from harness.actors import create_user
 from harness.chat import send_message, wait_for_reply
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [
     pytest.mark.regression,
@@ -79,7 +79,7 @@ def image_the_model_was_sent(actor, local, image_url: str) -> str:
     with actor.client() as client:
         turn = send_message(client, user_message["content"], user_message=user_message)
         wait_for_reply(client, turn)
-    prompt = local.upstream.chat_requests()[-1]["messages"][-1]["content"]
+    prompt = conversation(local.upstream.chat_requests()[-1])[-1]["content"]
     image_parts = [part for part in prompt if part.get("type") == "image_url"]
     assert len(image_parts) == 1, f"the model was not sent the attached image: {prompt}"
     return image_parts[0]["image_url"]["url"]

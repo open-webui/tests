@@ -22,6 +22,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask, send_message
 from harness.chat_history import seed_chat
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -76,8 +77,8 @@ def follow_up_after_approval(upstream) -> list[dict]:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         for body in upstream.chat_requests():
-            if body.get("stream") and body["messages"][-1]["role"] == "tool":
-                return body["messages"]
+            if body.get("stream") and conversation(body)[-1]["role"] == "tool":
+                return conversation(body)
         time.sleep(0.2)
     raise AssertionError("the model was never called again after the approval")
 

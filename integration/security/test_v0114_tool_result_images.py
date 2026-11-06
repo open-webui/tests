@@ -51,6 +51,8 @@ from harness.terminal_server import (
     read_grant,
     serving_terminal,
 )
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -146,13 +148,13 @@ def request_after_the_tool(upstream) -> dict:
 
 
 def tool_message(request: dict) -> str:
-    return next(entry["content"] for entry in request["messages"] if entry["role"] == "tool")
+    return next(entry["content"] for entry in conversation(request) if entry["role"] == "tool")
 
 
 def attached_images(request: dict) -> list[str]:
     return [
         part["image_url"]["url"]
-        for entry in request["messages"]
+        for entry in conversation(request)
         if isinstance(entry["content"], list)
         for part in entry["content"]
         if part.get("type") == "image_url"
@@ -164,7 +166,8 @@ def payload_of(url: str) -> str:
 
 
 def tool_output(message: dict) -> dict:
-    return next(item for item in message["output"] if item["type"] == "function_call_output")
+    output = without_hidden_calls(message["output"])
+    return next(item for item in output if item["type"] == "function_call_output")
 
 
 def kept_image_urls(message: dict) -> list[str]:

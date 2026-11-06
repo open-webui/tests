@@ -13,7 +13,9 @@ Twin of the note chat tests in e2e/notes/test_note_files.py.
 
 Discriminates: passes on dev b5a20423e; in a backend copy with b612c8847's change to
 utils/access_control/files.py undone the reader test fails. Retargeted for b34885efc, where files
-sit in the page body and the client sends them with each message.
+sit in the page body and the client sends them with each message. Since bd6fc15be a model in
+native function calling gets an attached file's text only with File Context ticked, so the tests
+tick it in the Model Defaults; passes on dev da9bca0fc.
 """
 
 from __future__ import annotations
@@ -98,7 +100,7 @@ def sent_in_note_chat(asker: Actor, note_id: str, upstream) -> str:
 
 
 @pytest.fixture
-def shared_note(make_user) -> tuple[Actor, Actor, str]:
+def shared_note(make_user, file_context_on) -> tuple[Actor, Actor, str]:
     owner, reader = make_user(), make_user()
     note_id = create_note(owner, upload(owner), [grant("user", reader.id, "read")])
     return owner, reader, note_id

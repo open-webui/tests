@@ -20,7 +20,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -53,7 +53,7 @@ def test_a_memory_written_by_the_model_records_only_the_model_id(account, upstre
     assert memory["meta"]["chat_id"] == turn.chat_id
 
     tool_result = next(
-        entry for entry in upstream.chat_requests()[-1]["messages"] if entry["role"] == "tool"
+        entry for entry in conversation(upstream.chat_requests()[-1]) if entry["role"] == "tool"
     )
     [written] = json.loads(tool_result["content"])
     assert "meta" not in written["memory"], "the tool reply handed the model the stored meta"

@@ -12,6 +12,8 @@ Collecting the failures must not cost the hits of the collections that did answe
 runs on the Qdrant stand-in with one collection per knowledge base, four of five of them down:
 a search over all five still returns the healthy base's document. Nearby, a chat over a failing
 and a healthy base, each searched on its own, still gives the model the healthy one's text.
+File Context is ticked in the Model Defaults there: since bd6fc15be a model in native function
+calling otherwise gets the bases as references for its tools and nothing is searched up front.
 
 Discriminates: passes on dev bbfa876af, fails with ff7f35a30 reverted in a copy of it (ten
 entries for five bases, two per base). The search test passes on ef67cc3fa and fails once a copy
@@ -29,6 +31,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of
 from harness.chat import ask
+from harness.file_context import file_context_ticked
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.qdrant_server import qdrant_env, serving_qdrant
 from harness.upstream import MOCK_MODEL_ID
@@ -114,7 +117,11 @@ def partly_down(instance_with):
     """
     with serving_qdrant() as qdrant:
         launched = instance_with(qdrant_env(qdrant, multitenancy=False))
-        with admin_of(launched).client() as client, contextlib.ExitStack() as bases:
+        with (
+            file_context_ticked(admin_of(launched)),
+            admin_of(launched).client() as client,
+            contextlib.ExitStack() as bases,
+        ):
             ids = [
                 bases.enter_context(knowledge_base(client, f"kb-{index}"))
                 for index in range(KNOWLEDGE_BASES)

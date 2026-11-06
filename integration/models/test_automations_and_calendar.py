@@ -70,6 +70,7 @@ from harness.calendar_api import (
 )
 from harness.chat import ask
 from harness.json_codecs import stored_text
+from harness.upstream import conversation
 
 pytestmark = [
     pytest.mark.regression,
@@ -487,7 +488,7 @@ def _pending_timer_ids(instance, owner_id: str) -> list[str]:
 
 
 def _timer_prompts_sent(upstream) -> int:
-    last_messages = [request["messages"][-1] for request in upstream.chat_requests()]
+    last_messages = [conversation(request)[-1] for request in upstream.chat_requests()]
     return sum(TIMER_PROMPT in str(message.get("content")) for message in last_messages)
 
 

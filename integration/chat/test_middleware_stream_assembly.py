@@ -39,6 +39,7 @@ from harness.chat import ask, send_message, wait_for_reply
 from harness.plugins import installed_function
 from harness.second_provider import OPENAI_CONFIG, attach, sse, tool_call_delta
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -167,13 +168,14 @@ def test_reasoning_after_the_answer_is_stored_above_it(owner, second_provider):
     with owner.client() as client:
         _, message = ask(client, "think late", model=SECOND_MODEL)
 
-    kinds = [item["type"] for item in message["output"]]
+    shown = without_hidden_calls(message["output"])
+    kinds = [item["type"] for item in shown]
     assert kinds == ["reasoning", "message"], (
         "reasoning that arrived after the answer was stored below it, so the thinking block "
         "rendered under the answer (#26645)"
     )
-    assert message["output"][0]["status"] == "completed"
-    assert _text(message["output"][0]) == "second thoughts"
+    assert shown[0]["status"] == "completed"
+    assert _text(shown[0]) == "second thoughts"
 
 
 def test_reasoning_details_without_text_open_no_thinking_block(owner, second_provider):

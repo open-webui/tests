@@ -32,7 +32,7 @@ from harness.access import make_group
 from harness.chat import ask
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS
-from harness.upstream import MOCK_MODEL_ID
+from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -175,8 +175,8 @@ def test_a_filter_and_an_action_stay_with_their_model(admin, make_user, upstream
     }
     assert action_id in actions[master], actions
     assert action_id not in actions[clerk], actions
-    assert on_master["messages"][-1]["content"] == "may I moor? (checked at the harbour gate)"
-    assert on_clerk["messages"][-1]["content"] == "may I moor too?"
+    assert conversation(on_master)[-1]["content"] == "may I moor? (checked at the harbour gate)"
+    assert conversation(on_clerk)[-1]["content"] == "may I moor too?"
 
 
 def test_the_server_fills_what_it_knows_and_leaves_the_browsers_values_literal(

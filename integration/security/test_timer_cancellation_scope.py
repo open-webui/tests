@@ -39,6 +39,8 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask
 from harness.socket_client import connected
+from harness.tool_calls import without_hidden_calls
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -60,7 +62,8 @@ def _set_timer(owner, upstream, *, cancel_on=("chat.read",), at="3s", **turn) ->
     upstream.queue(reply.tool_call("timer", arguments), reply.text("Timer set."))
     with owner.client() as client:
         chat_turn, message = ask(client, "remind me in a few seconds", **turn)
-    result = next(item for item in message["output"] if item["type"] == "function_call_output")
+    output = without_hidden_calls(message["output"])
+    result = next(item for item in output if item["type"] == "function_call_output")
     assert json.loads(result["output"][0]["text"])["status"] == "set", result
     return chat_turn
 
@@ -72,7 +75,7 @@ def _read_chat_as(reader, chat_id: str) -> None:
 
 def _fired_count(upstream) -> int:
     """How many timer prompts have reached the model."""
-    last_messages = [request["messages"][-1] for request in upstream.chat_requests()]
+    last_messages = [conversation(request)[-1] for request in upstream.chat_requests()]
     return sum(
         1
         for message in last_messages

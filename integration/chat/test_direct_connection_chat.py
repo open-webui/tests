@@ -24,6 +24,7 @@ import pytest
 from harness.chat import send_message, wait_for_reply
 from harness.direct_connection import answering, chunk_line, direct_model
 from harness.second_provider import tool_call_delta
+from harness.upstream import conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -59,7 +60,7 @@ def test_a_streamed_reply_from_the_tab_is_stored(make_user, upstream):
     assert request["model"]["id"] == MODEL
     assert request["form_data"]["model"] == MODEL
     assert request["form_data"]["stream"] is True
-    assert request["form_data"]["messages"] == [{"role": "user", "content": "hello"}]
+    assert conversation(request["form_data"]) == [{"role": "user", "content": "hello"}]
     assert upstream.chat_requests() == [], "the server's own provider answered a direct chat"
 
 
