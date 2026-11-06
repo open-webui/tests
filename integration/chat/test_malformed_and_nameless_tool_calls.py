@@ -25,7 +25,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.chat_history import seed_chat
-from harness.tool_calls import without_context_calls, without_hidden_calls
+from harness.tool_calls import without_hidden_calls
 from harness.upstream import Reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -40,7 +40,7 @@ def tool_results(message: dict) -> list[str]:
 
 
 def replayed(upstream) -> list[dict]:
-    return without_context_calls(upstream.chat_requests()[-1]["messages"])
+    return reply.conversation(upstream.chat_requests()[-1])
 
 
 def test_an_empty_failed_turn_is_not_replayed(user, upstream):
