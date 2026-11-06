@@ -258,7 +258,7 @@ def test_the_finished_report_follows_the_reply_that_dispatched_it_and_the_model_
         answer,
     ):
         assert line in report["content"]
-    sent = continuation["messages"]
+    sent = reply.conversation(continuation)
     assert [entry["role"] for entry in sent][-3:] == ["tool", "assistant", "user"]
     assert sent[-1]["content"] == report["content"]
 
