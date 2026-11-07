@@ -17,6 +17,9 @@
 * `16f118d77a`: the check that a named Ollama backend serves the model returned early under
   `BYPASS_MODEL_ACCESS_CONTROL`, so a user could aim a request at any backend. Two Ollama
   stand-ins, the model on the first only, on an instance booted with the bypass.
+* `051c357f9` (#33759): model meta and params of any depth were stored; settings nested more
+  than 32 levels deep are now refused with 400 on create, update and import, and nothing is
+  stored. Settings exactly 32 levels deep are still saved.
 * `9cf1a0796` (#27595): native Anthropic requests to api.anthropic.com were signed with a bearer
   token, which Anthropic rejects; they now carry `x-api-key` and `anthropic-version`. The check
   matches the host name anywhere in the connection URL, so a listener path of that name stands in.
@@ -31,7 +34,8 @@ three self-reference guards, one mutation each). On dev ef67cc3fa, restoring the
 return fails all four backend cases and dropping the api.anthropic.com header rewrite fails the
 Anthropic key test. The fallback on the web client path fails on dev a5bc78300 and passes since
 PR #31353 (#31345). A re-sync on the default SQLite setup (#31346) passes since PR #31349
-(`ac00d40e3`).
+(`ac00d40e3`). The nesting tests pass on dev f659c0d12; with 051c357f9 reverted the refused
+cases answer 200 and store the model.
 """
 
 from __future__ import annotations
@@ -177,6 +181,76 @@ def test_an_ordinary_base_model_is_kept(admin, delete_after):
         assert client.post("/api/v1/models/create", json=form).status_code == 200
 
         assert _stored_model(client, model_id)["base_model_id"] == reply.MOCK_MODEL_ID
+
+
+# --- 051c357f9: model settings nested too deeply are refused --------------------------------
+
+# meta and params themselves are the first level
+MAX_DEPTH = 32
+
+
+def _nested(levels: int) -> dict:
+    """A setting whose value sits `levels` objects deep, alternating dicts and lists."""
+    value: object = "bottom"
+    for level in range(levels):
+        value = {"inner": value} if level % 2 else [value]
+    return {"deep": value}
+
+
+def _deep_form(model_id: str, field: str, levels: int) -> dict:
+    return _model_form(model_id, reply.MOCK_MODEL_ID, **{field: _nested(levels)})
+
+
+def _refused_way(client, way: str, model_id: str, field: str):
+    """Save the model with `field` nested too deeply, by `way`; the answer."""
+    too_deep = _deep_form(model_id, field, MAX_DEPTH)
+    if way == "create":
+        return client.post("/api/v1/models/create", json=too_deep)
+    if way == "import":
+        return client.post("/api/v1/models/import", json={"models": [too_deep]})
+    created = client.post("/api/v1/models/create", json=_model_form(model_id, reply.MOCK_MODEL_ID))
+    assert created.status_code == 200, created.text
+    return client.post("/api/v1/models/model/update", json=too_deep)
+
+
+@pytest.mark.parametrize("field", ["meta", "params"])
+@pytest.mark.parametrize("way", ["create", "update", "import"])
+def test_model_settings_nested_too_deeply_are_refused(admin, delete_after, way, field):
+    model_id = f"deep-{uuid.uuid4().hex[:8]}"
+    delete_after.append(model_id)
+    with admin.client() as client:
+        answer = _refused_way(client, way, model_id, field)
+        stored = client.get("/api/v1/models/model", params={"id": model_id})
+
+    assert answer.status_code == 400, (
+        f"a model whose {field} is nested {MAX_DEPTH + 1} levels deep was saved by {way}: "
+        f"HTTP {answer.status_code}"
+    )
+    if way == "update":
+        assert stored.status_code == 200, stored.text
+        assert "deep" not in stored.json()[field], f"the deep {field} was stored anyway"
+    else:
+        assert stored.status_code != 200, f"the model was stored anyway: {stored.text[:200]}"
+
+
+@pytest.mark.parametrize("way", ["create", "update"])
+def test_model_settings_nested_up_to_the_limit_are_saved(admin, delete_after, way):
+    model_id = f"deep-{uuid.uuid4().hex[:8]}"
+    delete_after.append(model_id)
+    at_limit = {"meta": _nested(MAX_DEPTH - 1), "params": _nested(MAX_DEPTH - 1)}
+    form = _model_form(model_id, reply.MOCK_MODEL_ID, **at_limit)
+    with admin.client() as client:
+        if way == "create":
+            saved = client.post("/api/v1/models/create", json=form)
+        else:
+            plain = _model_form(model_id, reply.MOCK_MODEL_ID)
+            assert client.post("/api/v1/models/create", json=plain).status_code == 200
+            saved = client.post("/api/v1/models/model/update", json=form)
+        assert saved.status_code == 200, saved.text
+        stored = _stored_model(client, model_id)
+
+    assert stored["meta"]["deep"] == at_limit["meta"]["deep"]
+    assert stored["params"]["deep"] == at_limit["params"]["deep"]
 
 
 # --- 686d8dc54 and 9cf1a0796: what a second connection is sent ----------------------------
