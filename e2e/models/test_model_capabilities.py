@@ -6,19 +6,18 @@ as it was. Without Vision a picture attached in the chat input is refused with a
 attached, while an SVG, which the models docs page says is read as a document, still goes up.
 Without Preload files (File Context) the text of a file attached in the chat stays out of the
 message and the model is offered the chat file tools to read it instead; left unset it shows off in
-native function calling and on in legacy mode, and saving another change in the editor keeps it
-unset (bd6fc15be). Without Citations the reply shows no sources, neither the inline source chips nor
-the sources row under it. With Usage ticked the provider is asked to report token counts
-(e2e/chat/test_reply_usage.py shows them). Choosing Legacy under Advanced Params turns the unset
-Preload files switch on at once. Without Image Generation the chat's Image switch is gone although
-the admin has image generation on. Without Memory a stored memory no longer reaches the model, as
-context or through the memory tools. Without Terminal a new chat drops the terminal picked before
-and the model is not handed it; the Terminal menu itself stays, as since 6ef26be29 picking a
-terminal also lists its agents as models. An unticked capability is no longer offered under Default
-Features, which since 98f23b17a (#32963) lists only a capability whose global feature is on, so the
-test turns web search and image generation on first. File Upload, Web Search, Builtin Tools and the
-Time category are covered in e2e/models/test_model_editor.py, Status Updates in
-e2e/chat/test_status_updates.py; the Code Interpreter is legacy and left out.
+native function calling, and saving another change in the editor keeps it unset (bd6fc15be). Without
+Citations the reply shows no sources, neither the inline source chips nor the sources row under it.
+With Usage ticked the provider is asked to report token counts (e2e/chat/test_reply_usage.py shows
+them). Without Image Generation the chat's Image switch is gone although the admin has image
+generation on. Without Memory a stored memory no longer reaches the model, as context or through the
+memory tools. Without Terminal a new chat drops the terminal picked before and the model is not
+handed it; the Terminal menu itself stays, as since 6ef26be29 picking a terminal also lists its
+agents as models. An unticked capability is no longer offered under Default Features, which since
+98f23b17a (#32963) lists only a capability whose global feature is on, so the test turns web search
+and image generation on first. File Upload, Web Search, Builtin Tools and the Time category are
+covered in e2e/models/test_model_editor.py, Status Updates in e2e/chat/test_status_updates.py; the
+Code Interpreter is legacy and left out.
 
 `test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tools` is red now and then
 on dev 896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload
@@ -35,10 +34,8 @@ its build with the new chat's reset of the picked terminal removed the terminal 
 Retargeted for 8d0ff76f2, whose capabilities are switches in sections that open on a click: passes
 on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's settings as they were
 loaded every test that saves an edit fails. The Preload files default test passes on dev
-f659c0d12 (3 of 3); in a backend copy that hands the editor the model without its function calling
-mode the legacy case fails, and in one that stores `file_context` off on every model update both
-cases fail. In a copy of that build whose Capabilities ignore the mode, the legacy case and the
-choose-legacy test fail.
+f659c0d12 (3 of 3), and in a backend copy that stores `file_context` off on every model update it
+fails.
 """
 
 from __future__ import annotations
@@ -69,7 +66,6 @@ from utils.model_editor import (
     sent_request,
     set_checkbox,
 )
-from utils.setting_rows import setting_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -179,10 +175,7 @@ def test_unticking_file_context_keeps_the_file_text_out_and_offers_the_file_tool
     assert CHAT_FILE_TOOLS <= offered, f"the chat file tools were not offered: {sorted(offered)}"
 
 
-@pytest.mark.parametrize(("function_calling", "shown"), [("native", "false"), ("legacy", "true")])
-def test_preload_files_shows_the_modes_default_and_saving_keeps_it_unset(
-    page_for, builder, function_calling, shown
-):
+def test_preload_files_shows_off_in_native_mode_and_saving_keeps_it_unset(page_for, builder):
     model = {"id": f"mode-{uuid.uuid4().hex[:8]}", "name": unique("Ferry desk")}
     with builder.client() as client:
         created = client.post(
@@ -191,7 +184,7 @@ def test_preload_files_shows_the_modes_default_and_saving_keeps_it_unset(
                 **model,
                 "base_model_id": MOCK_MODEL_ID,
                 "meta": {},
-                "params": {"function_calling": function_calling},
+                "params": {"function_calling": "native"},
                 "access_grants": [EVERYONE_READS],
             },
         )
@@ -201,7 +194,7 @@ def test_preload_files_shows_the_modes_default_and_saving_keeps_it_unset(
     editor = open_editor(page, model)
     capabilities = section(editor, "Capabilities")
     preload = capabilities.get_by_role("switch", name="Preload files", exact=True)
-    expect(preload).to_have_attribute("aria-checked", shown)
+    expect(preload).to_have_attribute("aria-checked", "false")
     # Save stays greyed out until something changed, so the admin renames the model
     editor.get_by_placeholder("Model Name").fill(unique("Ferry counter"))
     save(editor)
@@ -210,26 +203,6 @@ def test_preload_files_shows_the_modes_default_and_saving_keeps_it_unset(
         stored = client.get("/api/v1/models/model", params={"id": model["id"]}).json()
     # an untouched switch must keep following the mode, not freeze what it showed
     assert "file_context" not in (stored["meta"].get("capabilities") or {}), stored["meta"]
-
-
-def test_choosing_legacy_function_calling_turns_preload_files_on_in_the_editor(
-    page_for, builder, preset
-):
-    page = page_for(builder)
-    editor = open_editor(page, preset)
-    preload = section(editor, "Capabilities").get_by_role(
-        "switch", name="Preload files", exact=True
-    )
-    expect(preload).to_have_attribute("aria-checked", "false")
-
-    editor.get_by_role("button", name="Advanced Params").click()
-    function_calling = setting_button(editor, "Function Calling")
-    # the button steps through Default, Native and Legacy
-    for mode in ("Native", "Legacy"):
-        function_calling.click()
-        expect(function_calling).to_have_text(mode)
-
-    expect(preload).to_have_attribute("aria-checked", "true")
 
 
 def cited_answer(page: Page, upstream, question: str) -> Locator:

@@ -2,13 +2,12 @@
 
 Since 0.13.1 (bd6fc15be) a model's Preload files capability (File Context until 131783e54) decides
 whether an attachment's text goes into the prompt up front or the model reads it through its builtin
-tools. Left unset it follows the function calling mode: off in native mode, where the model is
-offered the reader of that kind (`view_file` for an uploaded file, `view_knowledge_file` for a
-knowledge base, `view_chat` for a referenced chat, `view_note` for a note) and calling it returns
-the text, and on in legacy mode, whether the model or the chat (its Chat Controls) picks legacy.
-Ticked, the text goes into the prompt in native mode as well; unticked, it stays out in legacy mode
-too. A model with Preload files off and the matching builtin tool category off gets nothing on
-purpose (closed open-webui/open-webui#33818), so that pairing is not tested here.
+tools. Left unset it is off in native mode, where the model is offered the reader of that kind
+(`view_file` for an uploaded file, `view_knowledge_file` for a knowledge base, `view_chat` for a
+referenced chat, `view_note` for a note) and calling it returns the text. Ticked, the text goes into
+the prompt in native mode as well. Legacy function calling is out of scope. A model with Preload
+files off and the matching builtin tool category off gets nothing on purpose (closed
+open-webui/open-webui#33818), so that pairing is not tested here.
 
 The retrieval settings behind the preloaded text are pinned too: since 98f7a6146 Top K defaults
 to 10, the chunk size to 1024 and the new Full Text Threshold to 50000 characters, which the
@@ -18,14 +17,12 @@ whole-document switch); Always Use Full Text shows there as full context. A nega
 refused. The threshold boundary itself is in integration/retrieval/test_chat_retrieval.py, the
 API path without a session in integration/chat/test_api_client.py.
 
-Discriminates: on dev f659c0d12, in backend copies: `is_file_context_enabled` answering True
-fails the four native default and the four legacy unticked cases; answering False fails the four
-native ticked and the four legacy default cases; answering the mode default whatever the
-capability fails the native ticked and legacy unticked cases; the threshold left out of the
-settings response fails the defaults, round trip, negative and env tests; dropping `ge=0` fails the
-negative threshold test; `/api/config` without the threshold fails the round trip test; the env
-var ignored fails the env test; Top K defaulting to 3 again fails the defaults test; and the
-mode read from the model only, not the chat, fails the four chat-picked legacy cases.
+Discriminates: on dev f659c0d12, in backend copies: `is_file_context_enabled` answering True fails
+the four native default cases; answering False or the mode default whatever the capability fails the
+four native ticked cases; the threshold left out of the settings response fails the defaults, round
+trip, negative and env tests; dropping `ge=0` fails the negative threshold test; `/api/config`
+without the threshold fails the round trip test; the env var ignored fails the env test; and Top K
+defaulting to 3 again fails the defaults test.
 """
 
 from __future__ import annotations
@@ -123,16 +120,14 @@ def prompt_text(request: dict) -> str:
     return str(conversation(request))
 
 
-def ask_with(
-    person: Actor, upstream, model_id: str, attachment: dict, *replies, **options
-) -> list[dict]:
+def ask_with(person: Actor, upstream, model_id: str, attachment: dict, *replies) -> list[dict]:
     """Ask on `model_id` with `attachment`, the way the web client sends it; the requests the
     provider got for the question, oldest first."""
     question = f"what is the locker code? {uuid.uuid4().hex[:8]}"
     answering = reply.answering(question)
     upstream.queue(*[scripted(answering) for scripted in replies])
     with person.client() as client:
-        ask(client, question, model=model_id, chat_files=[attachment], **options)
+        ask(client, question, model=model_id, chat_files=[attachment])
     requests = [request for request in upstream.chat_requests() if answering(request)]
     assert requests, f"the provider never received {question!r}"
     return requests
@@ -169,56 +164,21 @@ def test_in_native_mode_the_model_reads_an_attachment_through_its_tool(
 
 
 @KINDS
-@pytest.mark.parametrize(
-    ("function_calling", "capabilities", "preloaded"),
-    [
-        ("native", {"file_context": True}, True),
-        ("legacy", {}, True),
-        ("legacy", {"file_context": False}, False),
-    ],
-    ids=["native ticked", "legacy default", "legacy unticked"],
-)
-def test_preload_files_puts_the_text_in_the_prompt_only_when_on(
-    kind, function_calling, capabilities, preloaded, admin, make_user, upstream
+def test_preload_files_ticked_puts_the_text_in_the_prompt_in_native_mode(
+    kind, admin, make_user, upstream
 ):
     person = make_user()
     secret = f"The locker code is {uuid.uuid4().hex[:6]}."
     with contextlib.ExitStack() as stack:
         attachment, _ = ATTACH[kind](stack, admin, person, secret)
-        preset = preset_with_capabilities(admin, capabilities, function_calling)
-        model_id = stack.enter_context(preset)
+        model_id = stack.enter_context(preset_with_capabilities(admin, {"file_context": True}))
         [request] = ask_with(
             person, upstream, model_id, attachment, lambda match: reply.text("ok", match=match)
         )
 
-    sent = prompt_text(request)
-    assert (secret in sent) == preloaded, (
-        f"{function_calling} mode with {capabilities or 'Preload files unset'}: the {kind}'s text "
-        f"was {'missing from' if preloaded else 'put into'} the prompt: {sent}"
-    )
-
-
-@KINDS
-def test_legacy_function_calling_chosen_for_the_chat_preloads_the_text(
-    kind, admin, make_user, upstream
-):
-    # Chat Controls (or the account's own Advanced Params) send the mode with each message
-    person = make_user()
-    secret = f"The locker code is {uuid.uuid4().hex[:6]}."
-    with contextlib.ExitStack() as stack:
-        attachment, _ = ATTACH[kind](stack, admin, person, secret)
-        model_id = stack.enter_context(preset_with_capabilities(admin, {}))
-        [request] = ask_with(
-            person,
-            upstream,
-            model_id,
-            attachment,
-            lambda match: reply.text("ok", match=match),
-            params={"function_calling": "legacy"},
-        )
-
     assert secret in prompt_text(request), (
-        f"the {kind} was not preloaded with legacy chosen for the chat: {prompt_text(request)}"
+        f"the {kind}'s text was missing from the prompt with Preload files ticked: "
+        f"{prompt_text(request)}"
     )
 
 
