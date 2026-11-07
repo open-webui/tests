@@ -21,7 +21,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
-from utils.chat_ui import chat_input, open_input_menu
+from utils.chat_ui import chat_input, open_add_context
 from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -84,8 +84,7 @@ def test_arrow_down_reaches_an_earlier_upload_in_attach_files(page_for, make_use
     name = f"tide-table-{uuid.uuid4().hex[:6]}.txt"
     upload(account, name)
     page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
-    menu = open_input_menu(page)
+    menu = open_add_context(page)
     menu.get_by_role("menuitem", name="Attach Files").click()
     entry = late_menu_entry(menu, name, exact=True)
     expect(entry).to_be_visible()

@@ -22,6 +22,7 @@ from utils.chat_ui import (
     chat_input,
     close_menu,
     expect_reply,
+    open_add_context,
     open_input_menu,
     open_integrations_menu,
     send,
@@ -41,10 +42,8 @@ def attach(page: Page, name: str, content: str | bytes, mime_type: str = "text/p
 
 
 def attach_from_menu(page: Page, submenu: str, name: str) -> None:
-    """Attach a knowledge base, note or chat through the chat input's More menu."""
-    menu = open_input_menu(page)
-    if menu.get_by_role("menuitem", name=submenu).count() == 0:
-        menu.get_by_role("menuitem").first.click()  # it reopens on the list last picked from
+    """Attach a knowledge base, note or chat through the chat input's More menu, Add Context."""
+    menu = open_add_context(page)
     menu.get_by_role("menuitem", name=submenu).click()
     late_menu_entry(menu, name).first.click()
     expect(page.locator("form").get_by_text(name).first).to_be_visible()

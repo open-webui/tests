@@ -26,7 +26,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.actors import Actor
 from utils.cached_chat import attach, attach_from_menu, this_turns_tool_results
-from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.chat_ui import conversation, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -69,9 +69,7 @@ def question(text: str) -> str:
 
 
 def open_attach_files(page: Page) -> Locator:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="More", exact=True).last.click()
-    menu = page.get_by_role("menu")
+    menu = open_add_context(page)
     menu.get_by_role("menuitem", name="Attach Files").click()
     expect(menu.get_by_placeholder("Search Files")).to_be_visible()
     return menu

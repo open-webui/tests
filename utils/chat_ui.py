@@ -127,3 +127,12 @@ def turn_on_integration(page: Page, name: str) -> None:
     switch.click()
     expect(switch).to_have_attribute("aria-checked", "true")
     close_menu(page)
+
+
+def open_add_context(page: Page) -> Locator:
+    """The More menu's Add Context list (webpages, files, knowledge, notes, chats), once it shows:
+    since dev 834c47ee0 they sit there, a level down from the menu's first page."""
+    menu = open_input_menu(page)
+    menu.get_by_role("menuitem", name="Add Context").click()
+    expect(menu.get_by_role("menuitem", name="Upload Files")).to_have_count(0)
+    return menu
