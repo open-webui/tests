@@ -292,8 +292,9 @@ def test_side_does_nothing_without_allow_side_chat(page_for, admin, make_user, u
     send(page, f"/side {question}")
 
     expect(page.get_by_text("You do not have permission to use side chat.")).to_be_visible()
-    # an unsent side chat keeps its "Side chat 1" label, so no tab may open at all
-    expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab")).to_have_count(0)
+    # an unsent side chat keeps its "Side chat 1" label, so no tab may open beside the chat's own,
+    # which leads the tab bar on a wide screen since 617618c9e
+    expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab")).to_have_count(1)
     expect(side_chat_tab(page, question)).to_have_count(0)
     expect(replies(page)).to_have_count(2)
     asked = [body for body in upstream.chat_requests() if reply.mentioning(question)(body)]
