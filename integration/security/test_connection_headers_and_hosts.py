@@ -10,12 +10,18 @@
 * Dotless host addresses (`6f55514c5`, PR #29945, issue #28161): with local web fetching on, an
   address such as "http://apprise:8000" (here `localhost`) is accepted instead of refused as
   invalid.
+* Client IP placeholders (`d39cb17b9`, #33833, issue #33819): `{{USER_IP}}` and
+  `{{X_FORWARDED_FOR}}` in a connection's custom headers carry the client address Open WebUI
+  resolves for the request, the address a trusted proxy forwarded included, on an API completion
+  and on a chat sent the way the web client does.
 
 Twin of unit/security/test_connection_headers_and_hosts.py.
 
 Discriminates: passes on dev bbfa876af; reverting 7a4a4b93d sends the name raw and the group
 name's line break fails the provider request; reverting ee46e2664 drops the auth-type header and
 leaves `{{AUTH_TYPE}}` unsubstituted; reverting 6f55514c5 makes the localhost fetch a 400.
+The three IP placeholder tests pass on dev f659c0d12 and fail with d39cb17b9 reverted in a backend
+copy (the provider gets the placeholders as written).
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from __future__ import annotations
 import pytest
 
 from harness.actors import admin_of, create_user
+from harness.chat import send_message, wait_for_reply
 from harness.listener import text_answer
 
 pytestmark = [
@@ -45,6 +52,8 @@ CUSTOM_HEADERS = {
     "X-Source": "{{AUTH_TYPE}}",
     "X-Tag": "team-a/b (core)",
     "X-Path": "files/a%20b.txt",
+    "X-Real-IP": "{{USER_IP}}",
+    "X-Client-Chain": "{{X_FORWARDED_FOR}}",
 }
 
 
@@ -66,10 +75,12 @@ def provider(forwarding):
     return forwarding.upstream
 
 
-def _complete(client) -> None:
+def _complete(client, headers: dict[str, str] | None = None) -> None:
     """A plain API completion, the way an API-key caller makes one."""
     body = {"model": "mock-model", "messages": [{"role": "user", "content": "hi"}]}
-    response = client.post("/api/chat/completions", json={**body, "stream": False})
+    response = client.post(
+        "/api/chat/completions", json={**body, "stream": False}, headers=headers or {}
+    )
     assert response.status_code == 200, f"completion failed: {response.text}"
 
 
@@ -147,6 +158,42 @@ def test_an_api_key_is_forwarded_as_api_key(forwarding, provider):
         f"an API-key call sent auth type {headers.get('x-caller-auth')!r} (ee46e2664)"
     )
     assert headers["x-source"] == "api_key", "{{AUTH_TYPE}} did not resolve (ee46e2664)"
+
+
+def test_the_client_address_fills_the_ip_placeholders(forwarding, provider):
+    with create_user(forwarding).client() as client:
+        _complete(client)
+
+    headers = _sent_headers(provider)
+    assert headers["x-real-ip"] == "127.0.0.1", (
+        f"{{{{USER_IP}}}} reached the provider as {headers['x-real-ip']!r}, not the caller's IP"
+    )
+    assert headers["x-client-chain"] == "127.0.0.1", headers["x-client-chain"]
+
+
+def test_the_address_a_trusted_proxy_forwards_fills_the_ip_placeholders(forwarding, provider):
+    # the instance trusts a proxy on loopback, as a reverse proxy in front of it is
+    with create_user(forwarding).client() as client:
+        _complete(client, headers={"X-Forwarded-For": "203.0.113.7"})
+
+    headers = _sent_headers(provider)
+    assert headers["x-real-ip"] == "203.0.113.7", (
+        f"{{{{USER_IP}}}} reached the provider as {headers['x-real-ip']!r}, "
+        "not the address the proxy forwarded"
+    )
+    assert headers["x-client-chain"] == "203.0.113.7", headers["x-client-chain"]
+
+
+def test_a_chat_sent_from_the_web_client_carries_the_client_address(forwarding, provider):
+    with create_user(forwarding).client() as client:
+        client.headers["X-Forwarded-For"] = "198.51.100.23"
+        turn = send_message(client, "where am I writing from?")
+        wait_for_reply(client, turn)
+
+    headers = _sent_headers(provider)
+    assert headers["x-real-ip"] == "198.51.100.23", (
+        f"a web client chat sent {{{{USER_IP}}}} as {headers['x-real-ip']!r}"
+    )
 
 
 def _fetch(client, url: str):
