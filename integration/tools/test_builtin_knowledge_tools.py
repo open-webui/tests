@@ -9,7 +9,9 @@ it; an attached note comes back whole. On a model that reads attached files thro
 account cannot read is left out even when the chat names it. `display_file` (`f2cdbbebe`) is
 offered wherever a knowledge base or chat file can be read and shows a file the account can
 read, named in `path` by its id or content URL, at the asked page; anyone else's file, or a
-missing one, answers "File not found".
+missing one, answers "File not found". A file read by a line range stops at the last whole
+line within the read size limit and says where to go on (`ad66f2c41`, PR #33696, issue #33607:
+the range came back whole, however large).
 
 The scripted model calls each tool and the test reads the result it was sent back.
 
@@ -21,7 +23,8 @@ search test red; `_get_accessible_chat_files` skipping `_has_read_access_to_file
 foreign chat file test red; and the knowledge toggle ignored turned the toggle test red. On dev
 c5981aaea: `display_file` skipping its access check turned the cannot-read test red; dropping
 it from the chat-file tools, or offering it always, turned the offered test red; and dropping
-the page turned the page test red.
+the page turned the page test red. Reverting ad66f2c41 on dev f659c0d12 turned the line range
+test red (both tools returned all 2,500 lines, past the limit).
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.python_tools import EVERYONE_READS
 from harness.tool_calls import offered_tools, run_tool, without_citation_context
 from harness.upstream import MOCK_MODEL_ID
+from harness.web_retrieval import RETRIEVAL_CONFIG
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -402,6 +406,45 @@ def test_a_chat_naming_someone_elses_file_cannot_read_it(library, file_reader, u
 
     assert listed == [], f"a foreign file was listed as the chat's own: {listed}"
     assert grepped == {"error": "No accessible files found"}
+
+
+# the server's read size limit when VIEW_FILE_MAX_CHARS is unset
+READ_LIMIT = 100_000
+LONG_LINES = [f"line {number}: {'heron ' * 9}" for number in range(1, 2501)]
+
+
+def test_a_line_range_read_stops_at_the_read_size_limit(admin, file_reader, preserve, upstream):
+    # a whole-file line range once returned every line and overflowed the context (#33607)
+    tag = uuid.uuid4().hex[:8]
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client, knowledge_base(client, f"Long {tag}") as knowledge_id:
+        # embedding a file this long takes minutes; the tools read the stored text
+        bypass = {"BYPASS_EMBEDDING_AND_RETRIEVAL": True}
+        assert client.post(RETRIEVAL_CONFIG[1], json=bypass).status_code == 200
+        file_id = add_text_file(client, knowledge_id, f"long-{tag}.txt", "\n".join(LONG_LINES))
+        whole_file = {"file_id": file_id, "start_line": 1, "end_line": len(LONG_LINES)}
+        reads = {
+            "view_knowledge_file": call(admin, upstream, "view_knowledge_file", **whole_file),
+            "view_file": call(
+                admin,
+                upstream,
+                "view_file",
+                model=file_reader,
+                chat_files=chat_files(file_id),
+                **whole_file,
+            ),
+        }
+
+    assert len("\n".join(LONG_LINES)) > READ_LIMIT
+    for tool, read in reads.items():
+        assert len(read["content"]) <= READ_LIMIT, (
+            f"{tool} returned {len(read['content'])} characters for a line range"
+        )
+        last_shown = read["next_start_line"] - 1
+        assert read["truncated"] and read["showing_lines"] == f"1-{last_shown}", read.keys()
+        assert read["content"].endswith(f"\n{last_shown}: {LONG_LINES[last_shown - 1]}"), (
+            f"{tool} did not end on whole line {last_shown}"
+        )
 
 
 # --- showing a file in the chat ---------------------------------------------------------------
