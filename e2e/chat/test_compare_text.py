@@ -1,12 +1,13 @@
 """Journey: comparing a draft with a revision in the chat input's Compare text view.
 
-More > Compare text opens the side-by-side compare and merge view with the message being typed on
-the left as the original. Use in prompt puts the revision on the right into the message box and
+The `/compare` command, typed after the message being written, opens the side-by-side compare and
+merge view with that message on the left as the original (the More menu entry is gone since
+834c47ee0). Use in prompt puts the revision on the right into the message box and
 sends nothing until the person sends it. In the comparison the view counts the changes ("Change 1
 of 2") and steps through them with Previous change and Next change, copies the current change from
 the original to the proposed revision or back, and says "No differences" for two identical texts.
 Closing after an edit asks to discard the comparison first and leaves the message as it was;
-closing with nothing edited asks nothing. Opening the view from the `/compare` command is
+closing with nothing edited asks nothing. Opening it from an empty message box is
 e2e/chat/test_slash_commands.py.
 
 Discriminates: passes on the dev 3b8205505 build (backend at 3b8205505, frontend of 226dca18c,
@@ -26,7 +27,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, expect_reply, open_input_menu
+from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -42,7 +43,13 @@ def _type_draft(page: Page, text: str) -> None:
 
 
 def _open_compare(page: Page) -> Locator:
-    open_input_menu(page).get_by_role("menuitem", name="Compare text").click()
+    """Open the compare view from the `/compare` command typed after the draft, if any."""
+    expect(chat_input(page)).to_be_visible()
+    draft = chat_input(page).inner_text().strip()
+    chat_input(page).click()
+    page.keyboard.press("End")
+    page.keyboard.type(" /compare" if draft else "/compare")
+    page.get_by_role("tooltip").get_by_role("button", name="Compare text").click()
     compare = page.get_by_role("dialog", name="Compare text")
     expect(compare).to_be_visible()
     return compare
