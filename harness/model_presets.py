@@ -1,8 +1,8 @@
 """Workspace models over the scripted model, the way the model editor saves one.
 
 `preset_with_capabilities(admin, capabilities)` is a preset every account may read, with
-`capabilities` as its Capabilities checkboxes and native function calling; it yields the
-preset's id and deletes it again afterwards.
+`capabilities` as its Capabilities checkboxes and native function calling (or the
+`function_calling` mode given); it yields the preset's id and deletes it again afterwards.
 """
 
 from __future__ import annotations
@@ -17,14 +17,16 @@ from harness.upstream import MOCK_MODEL_ID
 
 
 @contextlib.contextmanager
-def preset_with_capabilities(admin: Actor, capabilities: dict) -> Iterator[str]:
+def preset_with_capabilities(
+    admin: Actor, capabilities: dict, function_calling: str = "native"
+) -> Iterator[str]:
     model_id = f"capable-{uuid.uuid4().hex[:8]}"
     form = {
         "id": model_id,
         "name": model_id,
         "base_model_id": MOCK_MODEL_ID,
         "meta": {"capabilities": capabilities},
-        "params": {"function_calling": "native"},
+        "params": {"function_calling": function_calling},
         "access_grants": [EVERYONE_READS],
     }
     with admin.client() as client:

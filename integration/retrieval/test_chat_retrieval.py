@@ -12,7 +12,10 @@ The instance embeds through a local service whose vectors follow a few keywords,
 about herons is nearest the chunks about herons and nothing else; a local service also plays the
 reranker. File Context is ticked in the Model Defaults: without it a model in native function
 calling gets the file as a reference to read through its tools, and nothing is retrieved up front.
-Files under `RAG_FULL_TEXT_CHAR_THRESHOLD` go whole, so the threshold is off here.
+Files under `RAG_FULL_TEXT_CHAR_THRESHOLD` go whole, so the threshold is off here except in the
+threshold tests: since 98f7a6146 a file of up to that many characters is sent whole and one
+character more is searched by its chunks, while a knowledge base is searched whatever its files
+measure (d43759c2c).
 
 Discriminates: in a backend copy, the files handler asking for `TOP_K` + 1 chunks turned both
 top-k tests red; `get_all_items_from_collections` returning nothing turned the full context test
@@ -20,7 +23,10 @@ red; the file branch ignoring the bypass switch turned the bypass test red; `Rer
 ignoring `r_score` turned the threshold test red; the external reranker pairing its scores with
 the wrong chunks turned the reranker test red; the reply dropping its sources turned the citation
 test red; the character splitter built without `chunk_overlap` turned the overlap test red; and
-`merge_docs_to_target_size` returning its input turned the minimum size test red.
+`merge_docs_to_target_size` returning its input turned the minimum size test red. On dev
+f659c0d12: the file threshold ignored turned the at-the-threshold case red, counted in bytes or
+compared with `<` turned it red as well, and every knowledge base sent whole turned the knowledge
+base test red.
 """
 
 from __future__ import annotations
@@ -186,7 +192,13 @@ def test_bypassing_embedding_sends_the_text_without_embedding_the_question(
 
 
 def test_a_knowledge_base_attached_to_the_chat_is_searched(ranked, settings, reader):
-    settings(TOP_K=2, RAG_FULL_CONTEXT=False, ENABLE_RAG_HYBRID_SEARCH=False)
+    # the full text threshold counts single files only (d43759c2c), so the base is still searched
+    settings(
+        TOP_K=2,
+        RAG_FULL_CONTEXT=False,
+        ENABLE_RAG_HYBRID_SEARCH=False,
+        RAG_FULL_TEXT_CHAR_THRESHOLD=10 * len(FIELD_NOTES),
+    )
     grant = {"principal_type": "user", "principal_id": reader.id, "permission": "read"}
     with (
         admin_of(ranked).client() as client,
@@ -198,6 +210,34 @@ def test_a_knowledge_base_attached_to_the_chat_is_searched(ranked, settings, rea
         sent, _ = ask_about(ranked, reader, "Where does the heron hunt?", [guide])
 
     assert paragraphs_in(sent) == HERON_PARAGRAPHS, sent
+
+
+# a paragraph no question is about, with letters that take two bytes each
+CAFE = "Ébène's café opens by the weir at seven."
+NOTES_WITH_CAFE = f"{FIELD_NOTES}\n\n{CAFE}"
+
+
+@pytest.mark.parametrize(
+    ("over", "whole"), [(0, True), (1, False)], ids=["at the threshold", "one character over"]
+)
+def test_a_file_up_to_the_full_text_threshold_is_sent_whole(ranked, settings, reader, over, whole):
+    # the threshold counts characters: in bytes this file is over it in both cases
+    settings(
+        TOP_K=2,
+        RAG_FULL_CONTEXT=False,
+        ENABLE_RAG_HYBRID_SEARCH=False,
+        RAG_FULL_TEXT_CHAR_THRESHOLD=len(NOTES_WITH_CAFE) - over,
+    )
+    notes = attached_file(reader, NOTES_WITH_CAFE, "cafe-notes.txt")
+
+    sent, _ = ask_about(ranked, reader, "Where does the heron hunt?", [notes])
+
+    if whole:
+        assert NOTES_WITH_CAFE in sent, f"a file at the threshold was not sent whole: {sent}"
+    else:
+        assert CAFE not in sent and paragraphs_in(sent) == HERON_PARAGRAPHS, (
+            f"a file over the threshold was not searched by its chunks: {sent}"
+        )
 
 
 # --- hybrid search and reranking ----------------------------------------------------------------

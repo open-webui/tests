@@ -22,13 +22,16 @@ The two file and two knowledge runs are red on dev da9bca0fc: since bd6fc15be Fi
 by default outside legacy mode, and a call without a session id gets no file tools either, so
 the provider got only the bare question (open-webui/open-webui#33808, fix branch
 fix/api-chat-files). `test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools`
-pins the other half: a client that sends a session id gets the file tools.
+pins the other half: a client that sends a session id gets the file tools and not the text. A
+note or an earlier chat named in `files` reaches the model the same way (#33815, fix 071770989).
 
 Discriminates: on dev 0f5a58f5f, in backend copies: `get_current_user_by_api_key` finding no user
 fails every API-key run; an unknown key answered 403 fails the wrong-key test; dropping the
 `/api/v1/models` alias fails both model list runs; dropping the client's `temperature`,
 `max_tokens`, `seed` and `stop` fails the parameters test; an empty `files` list in the retrieval
-handler fails both file and both knowledge runs; discarding `tool_ids` fails both tool runs and
+handler fails both file and both knowledge runs (on dev f659c0d12, `is_file_context_enabled`
+ignoring the missing session id fails the note and chat runs, and answering True fails the
+session id test); discarding `tool_ids` fails both tool runs and
 both saved chat loop runs; answering a saved chat without a session id before its reply is stored
 fails both blocking runs; reading `features.memory` as always off fails the memory-on runs and as
 always on the memory-off runs; an unknown model falling back to the first one fails the
@@ -54,6 +57,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import NO_BACKGROUND_TASKS
+from harness.chat_history import seed_chat
 from harness.knowledge_bases import knowledge_base
 from harness.python_tools import python_tool
 from harness.upstream import MOCK_MODEL_ID
@@ -319,6 +323,34 @@ def test_with_a_session_id_an_attached_file_is_offered_through_the_file_tools(
     assert answered.status_code == 200, answered.text
     offered = offered_tools(upstream)
     assert "view_file" in offered, f"the file tools were not offered, only {sorted(offered)}"
+    assert "Order 4471" not in sent_text(upstream), "the file's text was sent along with its tools"
+
+
+@pytest.mark.parametrize("kind", ["note", "chat"])
+def test_a_note_or_an_earlier_chat_in_files_reaches_the_model(instance, credential, upstream, kind):
+    upstream.queue(reply.text("Locker 12."))
+    with instance.client(credential) as client:
+        if kind == "note":
+            created = client.post(
+                "/api/v1/notes/create",
+                json={"title": "Gym", "data": {"content": {"md": "My locker is number 12."}}},
+            )
+            assert created.status_code == 200, created.text
+            attachment_id = created.json()["id"]
+        else:
+            attachment_id, _ = seed_chat(
+                client,
+                [
+                    {"role": "user", "content": "Which locker is mine?"},
+                    {"role": "assistant", "content": "My locker is number 12."},
+                ],
+            )
+        answered = complete(
+            client, "Which locker is mine?", files=[{"type": kind, "id": attachment_id}]
+        )
+
+    assert answered.status_code == 200, answered.text
+    assert "My locker is number 12." in sent_text(upstream), f"the {kind} never reached the model"
 
 
 def test_tool_ids_offer_the_tool_and_hand_its_call_back(instance, admin, credential, upstream):
