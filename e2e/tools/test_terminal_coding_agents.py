@@ -7,13 +7,14 @@ continues with the same agent. A permission request shows Allow and Deny, a ques
 question card, and an agent's error shows on the reply. Agent replies offer no Regenerate, no
 Save As Copy and no Send on an edited message, since an agent conversation cannot branch. A reply
 should keep the agent's name once its terminal is gone; on dev it shows the raw `agent:` id after
-a reload, as the stored reply never carries the name (issue draft real-nf-agents-1, not filed
-yet), so that test stays red. The agent is `harness/fake_acp_agent.py`, run by a real Open
-Terminal.
+a reload, as the stored reply never carries the name (open-webui/open-webui#33879), so that
+test stays red until its fix (branch fix/agent-reply-keeps-name) merges. The agent is
+`harness/fake_acp_agent.py`, run by a real Open Terminal.
 
 Discriminates: the other tests pass on dev f659c0d12. In a backend copy whose agent discovery
 returns no models every test fails at the model selector. The no-branching test fails on a build
-with 1ef75436f's branch guards undone (Regenerate shows).
+with 1ef75436f's branch guards undone (Regenerate shows). The name test fails on dev 1fc5b8f6d
+and passes on fix/agent-reply-keeps-name (the reloaded reply shows the raw id without the fix).
 """
 
 from __future__ import annotations
@@ -128,7 +129,7 @@ def test_an_agent_reply_keeps_the_agents_name_once_its_terminal_is_gone(agent_ch
     """Red on dev f659c0d12: the reopened reply shows the raw `agent:` model id.
 
     The page keeps the name it showed only in its own memory; the stored reply never carries it.
-    Issue draft: real-nf-agents-1 (title `issue: [dev] ...`), not filed yet.
+    open-webui/open-webui#33879; fixed on branch fix/agent-reply-keeps-name.
     """
     page = agent_chat()
 
