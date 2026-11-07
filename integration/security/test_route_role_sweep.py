@@ -5,6 +5,8 @@ route's `Depends(...)` chain, read with `ast` and followed through dependency fu
 module defines. A plain user is then refused on every admin-only route, and a pending account
 and a signed-out client on every route that wants a verified user. The request carries a body
 that fails validation, so a route that skipped its check answers 422 or better, never 401.
+Saving a chat's view checked its body first and answered both with 422
+(open-webui/open-webui#33883).
 
 A route the classifier cannot read, and a route with no auth dependency at all, fail unless
 the short tables below name them with a reason, and must still refuse a signed-out client.
