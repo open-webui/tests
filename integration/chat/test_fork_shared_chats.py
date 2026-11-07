@@ -4,7 +4,9 @@ Fork chat on a reply of a shared link or of someone else's chat stores a copy of
 up to that reply as a new chat of the forking account. A fork through a share link holds the
 snapshot the link shows and never a message the owner sent after sharing, even when asked for by
 id. A fork of someone else's chat leaves the owner's folder, pin, chat variables, tags, settings
-and share mode behind, while the owner's own fork keeps them. Each question in a fork names its
+and share mode behind, while the owner's own fork keeps them. When the owner's folder is shared
+with the forking account for writing, the fork stays in that folder, where the owner sees it
+(c31cdb4e8); everything else of the owner's is still left behind. Each question in a fork names its
 author: the owner's questions pass to the account that forked, another member's keep theirs. The
 fork stops at the chosen reply. A reply still running blocks a fork of the live chat with 409 but
 not a fork of its link, an account without the import permission cannot fork at all, and an
@@ -16,7 +18,8 @@ treating every caller as the owner fails the non-owner and author tests, skippin
 loop for non-owners fails the author tests, forking the whole branch whatever reply was chosen
 fails the snapshot and stop tests, removing the 409 fails the running reply test, removing the
 import permission check fails the permission test, and looking the chat up without the access
-check fails the open link and access tests.
+check fails the open link and access tests. The shared folder test passes on dev f659c0d12 and
+fails with c31cdb4e8 reverted (a non-owner's fork always drops the folder).
 """
 
 from __future__ import annotations
@@ -208,6 +211,36 @@ def test_a_fork_of_someone_elses_chat_leaves_their_folder_pin_variables_and_tags
     assert set(fork["meta"]) <= FORK_META, f"the fork holds the owner's metadata: {fork['meta']}"
     assert _tag_names(member, fork["id"]) == []
     assert fork["share_id"] is None
+
+
+def test_a_fork_of_someone_elses_chat_in_a_folder_shared_for_writing_stays_in_that_folder(
+    make_user, upstream
+):
+    owner, member = make_user(), make_user()
+    chat_id, folder_id, _ = _furnished(owner, upstream)
+    # the share dialog gives a writer read and write
+    writer = [grant("user", member.id, "read"), grant("user", member.id, "write")]
+    with owner.client() as client:
+        shared = client.post(
+            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": writer}
+        )
+    assert shared.status_code == 200, shared.text
+
+    fork = _forked(member, chat_id)
+    with owner.client() as client:
+        listed = client.get(f"/api/v1/folders/{folder_id}/shared/chats")
+    assert listed.status_code == 200, listed.text
+    in_folder = {chat["id"]: chat for chat in listed.json()["chats"]}
+
+    assert fork["user_id"] == member.id
+    assert _stored(member, fork["id"])["folder_id"] == folder_id, (
+        "a fork of a chat in a folder the member may write to landed outside that folder"
+    )
+    assert fork["id"] in in_folder, "the owner does not see the member's fork in the folder"
+    assert in_folder[fork["id"]]["owner_name"] == member.name
+    assert fork["pinned"] is False, "the fork came pinned with the owner's pin"
+    assert fork["variables"] == {}, f"the fork holds the owner's variables: {fork['variables']}"
+    assert _tag_names(member, fork["id"]) == []
 
 
 def test_the_owners_own_fork_keeps_its_folder_pin_variables_and_tags(make_user, upstream):
