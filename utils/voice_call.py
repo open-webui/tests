@@ -23,6 +23,19 @@ def start_call(page: Page) -> None:
     expect(end_call_button(page)).to_be_visible()
 
 
+def show_chat(page: Page) -> None:
+    """Switch from the call's tab to the chat's own; on a wide screen the call covers the chat."""
+    # the chat's tab leads the tab bar and is named by the chat's changing title
+    page.get_by_role("tablist", name="Tabs").get_by_role("tab").first.click()
+    expect(chat_input(page)).to_be_visible()
+
+
+def show_call(page: Page) -> None:
+    """Switch back from the chat's tab to the running call's."""
+    page.get_by_role("tablist", name="Tabs").get_by_role("tab", name="Voice").click()
+    expect(end_call_button(page)).to_be_visible()
+
+
 def call_status(page: Page, status: str):
     return page.get_by_text(status, exact=True)
 

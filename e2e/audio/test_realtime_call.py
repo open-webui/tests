@@ -7,7 +7,7 @@ panel is the Voice call overlay with a voice orb and a status line (Connecting..
 Speaking, Microphone off, Call disconnected). A call in an existing chat first tells the
 provider the conversation so far, since d989375b4 as one snapshot of the chat (each assistant
 reply marked with its message id and state) that a later snapshot replaces whenever the chat
-changes, so a message typed while the call panel is hidden reaches the provider too; and a
+changes, so a message typed in the chat's tab during the call reaches the provider too; and a
 question typed after the call tells the chat model what the voice said, as a historical voice
 transcript. What the provider transcribes lands in the chat as the user's
 message; a request it hands on goes to the chat's own model, whose answer shows in the chat as
@@ -16,7 +16,8 @@ gives itself is saved as a reply of its own. Both survive a reload. Stopping a s
 orb, while it reads Tap to interrupt) tells the provider where playback stopped and saves the
 answer as interrupted. The overlay has no Stop of its own any more: the chat's Stop cancels the
 chat model's request and the provider is told so. Mute stops the microphone reaching the
-provider, hiding the side panel keeps the call on and the voice button, reading Return to call
+provider, switching to the chat's tab (on a wide screen the call's tab covers the chat since
+617618c9e) keeps the call on and the voice button, reading Return to call
 while it runs, brings it back (since fa4c7fe5e there is no Review in chat button for this) and
 End call closes the overlay and the provider's session. A provider that refuses or drops the
 call ends it: the overlay stays open with its message and Retry, which calls again, and End call
@@ -46,6 +47,9 @@ for during the call).
 `test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_said` are red on dev
 c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End
 call button when the first message saves the chat, and a standard call's reply stays blank.
+`test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back` is red on dev f659c0d12:
+since 617618c9e the call's tab shares the chat's tab group on a wide screen, and Return to call no
+longer brings it to the front.
 """
 
 from __future__ import annotations
@@ -68,6 +72,8 @@ from utils.voice_call import (
     end_call_button,
     expect_screen_kept_on,
     record_wake_locks,
+    show_call,
+    show_chat,
     start_call,
 )
 
@@ -142,6 +148,7 @@ def test_a_spoken_question_is_answered_by_the_chat_model_and_spoken(
     page = voice_page_for(caller)
 
     start_call(page)
+    show_chat(page)
 
     expect(conversation(page).get_by_text(question)).to_be_visible(timeout=TURN_TIMEOUT_MS)
     expect_reply(page, answer)
@@ -172,6 +179,7 @@ def test_an_answer_the_voice_model_gives_itself_is_saved_as_a_reply(
     page = voice_page_for(caller)
 
     start_call(page)
+    show_chat(page)
 
     expect(conversation(page).get_by_text(greeting)).to_be_visible(timeout=TURN_TIMEOUT_MS)
     expect_reply(page, answer)
@@ -314,8 +322,7 @@ def test_a_message_typed_during_the_call_replaces_the_providers_snapshot_of_the_
     start_call(page)
     call = realtime.wait_for_call()
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
-    # the call panel covers the chat input until it is hidden
-    page.get_by_role("button", name="Hide tabs").click()
+    show_chat(page)
 
     send(page, question)
 
@@ -345,9 +352,9 @@ def test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back(
     call = realtime.wait_for_call()
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
 
-    page.get_by_role("button", name="Hide tabs").click()
+    show_chat(page)
 
-    expect(page.get_by_role("button", name="End call")).to_have_count(0)
+    expect(end_call_button(page)).to_have_count(0)
     assert not call.ended.wait(1), "hiding the call panel ended the call"
     expect(page.get_by_role("button", name="Voice mode")).to_have_count(0)
     page.get_by_role("button", name="Return to call").click()
@@ -365,6 +372,7 @@ def test_stopping_the_chat_model_tells_the_provider_it_was_cancelled(
     realtime.hears(question)
     page = voice_page_for(make_user())
     start_call(page)
+    show_chat(page)
     expect_reply(page, pages[0].strip())
 
     # the chat's own Stop; the call overlay has none since 4f1f38541
@@ -378,6 +386,7 @@ def test_stopping_the_chat_model_tells_the_provider_it_was_cancelled(
         if event["item"]["type"] == "function_call_output"
     ]
     assert [output["status"] for output in outputs] == ["cancelled"]
+    show_call(page)
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
 
 

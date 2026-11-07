@@ -49,7 +49,7 @@ from harness.upstream import MOCK_MODEL_ID
 from harness.voice_avatars import SERVER_CHECKED_BONES, animation, avatar, upload
 from utils.chat_ui import conversation, expect_reply
 from utils.model_editor import open_chat_on
-from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
+from utils.voice_call import TURN_TIMEOUT_MS, call_status, show_chat, start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -211,6 +211,7 @@ def test_the_voice_model_plays_a_gesture_on_the_avatar_and_hears_it_started(
     assert tools["play_animation"]["parameters"]["properties"]["name"]["enum"] == ["wave"]
     assert WAVE in tools["play_animation"]["description"]
     assert "Your avatar is your visible presence in this call." in call.session["instructions"]
+    show_chat(page)
     expect(conversation(page).get_by_text(answer)).to_be_visible()
 
 

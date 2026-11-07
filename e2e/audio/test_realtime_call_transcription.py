@@ -33,7 +33,7 @@ from playwright.sync_api import expect
 
 from harness.realtime_provider import serving_realtime_provider, using_realtime
 from utils.chat_ui import conversation
-from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
+from utils.voice_call import TURN_TIMEOUT_MS, call_status, show_chat, start_call
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -65,6 +65,7 @@ def test_a_segment_without_words_gets_no_reply_and_the_next_question_is_answered
     page = voice_page_for(make_user())
 
     start_call(page)
+    show_chat(page)
 
     expect(conversation(page).get_by_text(question)).to_be_visible(timeout=TURN_TIMEOUT_MS)
     realtime.wait_for(lambda: answer in realtime.spoken, "the answer spoken")
@@ -84,11 +85,12 @@ def test_a_segment_that_cannot_be_transcribed_shows_an_error_and_gets_no_reply(
     start_call(page)
 
     expect(page.get_by_text(FAILED_SEGMENT)).to_be_visible(timeout=TURN_TIMEOUT_MS)
-    expect(conversation(page).get_by_text(question)).to_be_visible(timeout=TURN_TIMEOUT_MS)
     realtime.wait_for(lambda: answer in realtime.spoken, "the answer spoken")
     assert realtime.spoken == [answer], "the voice spoke about the failed segment"
-    expect(conversation(page).locator(".chat-user")).to_have_count(1)
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    show_chat(page)
+    expect(conversation(page).get_by_text(question)).to_be_visible(timeout=TURN_TIMEOUT_MS)
+    expect(conversation(page).locator(".chat-user")).to_have_count(1)
 
 
 def test_the_voice_waits_for_speech_that_runs_on_past_an_earlier_transcript_and_answers_once(
@@ -100,6 +102,7 @@ def test_the_voice_waits_for_speech_that_runs_on_past_an_earlier_transcript_and_
     page = voice_page_for(make_user())
 
     start_call(page)
+    show_chat(page)
 
     expect(conversation(page).get_by_text(first)).to_be_visible(timeout=TURN_TIMEOUT_MS)
     call = realtime.calls[-1]

@@ -18,7 +18,13 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from utils.chat_ui import chat_input, expect_reply
-from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call, wait_for_transcriptions
+from utils.voice_call import (
+    TURN_TIMEOUT_MS,
+    call_status,
+    show_chat,
+    start_call,
+    wait_for_transcriptions,
+)
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -65,6 +71,7 @@ def test_typing_m_into_the_chat_box_during_a_call_still_types(
     page = voice_page_for(make_user())
     start_call(page)
     finish_turn(page, speech_engine, 1)
+    show_chat(page)
 
     chat_input(page).click()
     page.keyboard.type("mm")

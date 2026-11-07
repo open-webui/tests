@@ -30,7 +30,7 @@ from utils.chat_ui import (
     expect_reply,
     set_tool_approval_mode,
 )
-from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
+from utils.voice_call import TURN_TIMEOUT_MS, call_status, show_call, show_chat, start_call
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -72,6 +72,7 @@ def test_a_spoken_request_waits_for_the_approval_in_chat_and_is_then_answered(
     realtime.hears(question)
 
     start_call(page)
+    show_chat(page)
 
     allow = conversation(page).get_by_role("button", name="Allow", exact=True)
     expect(allow).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
@@ -82,4 +83,5 @@ def test_a_spoken_request_waits_for_the_approval_in_chat_and_is_then_answered(
 
     expect_reply(page, answer)
     realtime.wait_for(lambda: answer in realtime.spoken, "the answer spoken")
+    show_call(page)
     expect(call_status(page, "Listening")).to_be_visible(timeout=TURN_TIMEOUT_MS)
