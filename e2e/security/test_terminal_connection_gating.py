@@ -36,8 +36,8 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from integration.stateful_redis import StatefulRedis
-from utils.chat_ui import chat_input, conversation, send
-from utils.tooltips import tooltip_button
+from utils.cached_chat import pick_terminal
+from utils.chat_ui import conversation, send, split_screen
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -84,10 +84,8 @@ def test_a_terminal_switched_off_mid_chat_offers_no_tools(page_for, cached_insta
             configure_terminals(client, connection)
 
         page = page_for(member)
-        expect(chat_input(page)).to_be_visible()
-        tooltip_button(page.get_by_role("main"), "Terminal").click()
-        page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
-        expect(page.get_by_role("region", name="File browser")).to_be_visible()
+        pick_terminal(page, NAME)
+        split_screen(page)
 
         with cached_instance.client() as client:
             switched_off = {**connection, "enabled": False}

@@ -5,9 +5,9 @@ person opens the file in the File browser, selects one of its lines and the "Ask
 opens under the selection. What they type there is sent as a chat message: the model gets the
 selected line quoted with "> " above the instruction, and the stored message carries the file
 with its path in the terminal. Asking while a reply is still running queues the request, which
-is sent once that reply ends. Asking about a file with unsaved edits first offers Save and send
-or Cancel: Cancel sends nothing and leaves the file on disk alone, Save and send writes the edit
-to the file and then sends.
+is sent once that reply ends. Asking about a file with unsaved edits first asks to save the
+changes before sending (Confirm or Cancel, since d4e8493cc): Cancel sends nothing and leaves the
+file on disk alone, Confirm writes the edit to the file and then sends.
 
 Discriminates: passes on dev 3b8205505; on a build where the file browser's ask box drops the
 quote, where asking during a reply sends at once instead of queueing, and where the unsaved-edit
@@ -26,7 +26,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
-from utils.chat_ui import expect_reply, send, stop_button
+from utils.chat_ui import expect_reply, send, split_screen, stop_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -49,6 +49,7 @@ def browser(person, page_for, admin, preserve, open_terminal):
         configure_terminals(client, connection)
     page = page_for(person)
     pick_terminal(page, connection["name"])
+    split_screen(page)
     return page.get_by_role("region", name="File browser")
 
 
@@ -152,9 +153,7 @@ def test_asking_while_a_reply_runs_sends_after_it_ends(browser, plan, upstream):
     )
 
 
-def test_unsaved_edits_are_kept_unsent_on_cancel_and_saved_on_save_and_send(
-    browser, plan, upstream
-):
+def test_unsaved_edits_are_kept_unsent_on_cancel_and_saved_on_confirm(browser, plan, upstream):
     page = browser.page
     instruction = "Check the harvest count"
     upstream.queue(reply.text("Thirteen it is.", match=reply.answering(instruction)))
@@ -167,7 +166,8 @@ def test_unsaved_edits_are_kept_unsent_on_cancel_and_saved_on_save_and_send(
     select_line(browser, SELECTED)
     ask(page, instruction)
     prompt = page.get_by_role("dialog", name="Unsaved changes")
-    expect(prompt.get_by_role("button", name="Save and send")).to_be_visible()
+    expect(prompt).to_contain_text("Save your changes before sending?")
+    expect(prompt.get_by_role("button", name="Confirm")).to_be_visible()
     expect(prompt.get_by_role("button", name="Cancel")).to_be_visible()
     expect(prompt.get_by_role("button", name="Discard changes")).to_have_count(0)
     prompt.get_by_role("button", name="Cancel").click()
@@ -179,9 +179,9 @@ def test_unsaved_edits_are_kept_unsent_on_cancel_and_saved_on_save_and_send(
     assert requests_asking(upstream, instruction) == [], "Cancel should send nothing"
 
     ask_box(page).get_by_role("button", name="Send").click()
-    prompt.get_by_role("button", name="Save and send").click()
+    prompt.get_by_role("button", name="Confirm").click()
 
     expect_reply(page, "Thirteen it is.")
-    assert plan.read_text() == PLAN.replace("12", "13"), "Save and send should save the edit"
+    assert plan.read_text() == PLAN.replace("12", "13"), "Confirm should save the edit"
     asked = requests_asking(upstream, instruction)
-    assert len(asked) == 1, f"Save and send should send the request once: {len(asked)}"
+    assert len(asked) == 1, f"Confirm should send the request once: {len(asked)}"

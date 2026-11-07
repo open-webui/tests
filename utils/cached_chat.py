@@ -92,8 +92,13 @@ def open_files_tab(page: Page) -> Locator:
 
 
 def open_new_terminal(page: Page) -> Locator:
-    """Open a shell of the picked terminal from the side panel's New tab menu; returns its panel."""
-    page.get_by_role("button", name="New tab", exact=True).click()
+    """Open a shell of the picked terminal from the New tab menu of the Files tab's pane; returns
+    its panel."""
+    # a new tab opens in the pane whose New tab was pressed, beside the conversation once split
+    files_pane = page.locator("[data-panel-tab-bar]").filter(
+        has=page.get_by_role("tab", name="Files", exact=True)
+    )
+    files_pane.get_by_role("button", name="New tab", exact=True).click()
     page.get_by_role("menu").get_by_role("menuitem", name="New Terminal").click()
     shell = page.get_by_role("tabpanel", name=re.compile(r"^Terminal \d+$"))
     expect(shell).to_be_visible()

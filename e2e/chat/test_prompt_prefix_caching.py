@@ -79,7 +79,14 @@ from utils.cached_chat import (
     turn_on_tool,
 )
 from utils.chat_controls import control_button, open_chat_controls, open_section
-from utils.chat_ui import chat_input, close_menu, conversation, expect_reply, last_reply
+from utils.chat_ui import (
+    chat_input,
+    close_menu,
+    conversation,
+    expect_reply,
+    last_reply,
+    split_screen,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -199,6 +206,7 @@ def _terminal_chat(page_for, cached_setup, admin, person, preserve, open_termina
     (open_terminal.home / "tickets").mkdir(exist_ok=True)
     page = page_for(person, path=f"/?models={cached_setup.id}")
     pick_terminal(page, connection["name"])
+    split_screen(page)
     return page
 
 
@@ -242,7 +250,8 @@ def test_a_chat_with_an_open_terminal_only_appends(terminal_chat, open_terminal,
 def test_opening_a_folder_in_the_terminal_file_browser_keeps_the_prefix(terminal_chat, upstream):
     page = terminal_chat
     ask(page, upstream, "good morning", reply.text("Morning."))
-    with page.expect_request(lambda sent: sent.method == "POST" and "/files/cwd" in sent.url):
+    # since 686307f75 browsing a saved chat lists the folder without moving its working directory
+    with page.expect_request(lambda sent: "/files/list" in sent.url and "tickets" in sent.url):
         page.get_by_role("region", name="File browser").get_by_text("tickets").first.click()
     ask(page, upstream, "anything new?", reply.text("Nothing new."))
 
@@ -302,6 +311,9 @@ def test_every_terminal_tool_only_appends(terminal_chat, open_terminal, upstream
         calling("display_file", {"path": str(open_terminal.home / "tides.txt")}),
         reply.text("Found it."),
     )
+    # display_file opened the file as a tab over the conversation
+    page.get_by_role("button", name="Close tides.txt", exact=True).click()
+    expect(chat_input(page)).to_be_visible()
     ask(
         page,
         upstream,

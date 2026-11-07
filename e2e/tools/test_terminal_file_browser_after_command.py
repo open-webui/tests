@@ -24,8 +24,8 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.listener import json_answer
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
-from utils.chat_ui import chat_input, expect_reply, send
-from utils.tooltips import tooltip_button
+from utils.cached_chat import pick_terminal
+from utils.chat_ui import expect_reply, send, split_screen
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -88,9 +88,8 @@ def terminal(admin, preserve):
 
 
 def _open_terminal_browser(page: Page):
-    expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
-    page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
+    pick_terminal(page, NAME)
+    split_screen(page)
     browser = page.get_by_role("region", name="File browser")
     expect(browser.get_by_text("readme.md")).to_be_visible()
     return browser

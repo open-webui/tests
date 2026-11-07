@@ -290,9 +290,9 @@ def test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat(
     open_chat_on(page, preset)
     terminal_menu(page, "Terminal").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=TERMINAL_NAME).click()
-    expect(page.get_by_role("region", name="File browser")).to_be_visible()
-    assert "run_command" in offered_tool_names(sent_request(page, upstream, "list the berths"))
+    # since def1d048b a pick opens no file browser; the menu takes the terminal's name
     expect(terminal_menu(page, TERMINAL_NAME)).to_be_visible()
+    assert "run_command" in offered_tool_names(sent_request(page, upstream, "list the berths"))
 
     switch_capability(page, preset, "Terminal", False)
 

@@ -76,7 +76,7 @@ from utils.cached_chat import (
     tool_results,
     turn_on_tool,
 )
-from utils.chat_ui import chat_input, conversation, expect_reply, turn_on_integration
+from utils.chat_ui import chat_input, conversation, expect_reply, split_screen, turn_on_integration
 from utils.model_editor import section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -128,6 +128,7 @@ def terminal_chat(page_for, cached_setup, admin, make_user, preserve, open_termi
         configure_terminals(client, connection)
     page = page_for(person, path=f"/?models={cached_setup.id}")
     pick_terminal(page, connection["name"])
+    split_screen(page)
     return page
 
 
