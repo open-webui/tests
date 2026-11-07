@@ -10,6 +10,9 @@ the message box.
 Discriminates: passes on the 015dbc861 build; with `e797a4480` reverted in a frontend copy the
 two phone tests go red (the message box, then the automation's text field, holds the focus) and
 the desktop test stays green.
+Retargeted for dev 834c47ee0, which moved the integrations into the + (More) menu: that menu hands
+the focus back to the message box on a phone too, so the phone test is red on dev f659c0d12 until
+the + menu skips it on a narrow screen as the Integrations menu did.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, open_integrations_menu
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -59,7 +62,7 @@ def dismiss_the_keyboard(page: Page) -> None:
 
 
 def open_and_close_the_integrations_menu(page: Page) -> None:
-    page.get_by_label("Integrations").click()
+    open_integrations_menu(page)
     menu = page.get_by_role("menu")
     expect(menu).to_be_visible()
     # a tap on the empty top of the page, outside the menu

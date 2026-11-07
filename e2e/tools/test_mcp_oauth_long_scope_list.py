@@ -30,7 +30,7 @@ from harness import upstream as reply
 from harness.mcp_oauth import GOOGLE_WORKSPACE_SCOPES, register_oauth_mcp, serving_protected_mcp
 from harness.mcp_server import TOOL_SERVERS
 from harness.terminal_server import read_grant
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
 from utils.tool_servers import press_to_sign_in
 
 pytestmark = [
@@ -53,7 +53,7 @@ def test_pressing_a_server_that_asks_for_many_scopes_connects_it(
         page = page_for(person)
         expect(chat_input(page)).to_be_visible()
 
-        page.get_by_label("Integrations").click()
+        open_integrations_menu(page)
         page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
         press_to_sign_in(page.get_by_role("menu"), server_id)
 
@@ -72,7 +72,7 @@ def test_pressing_a_server_that_asks_for_many_scopes_connects_it(
             reply.tool_call(f"{server_id}_echo", {"text": PHRASE}, match=reply.answering(question)),
             reply.text("Done.", match=reply.answering(question)),
         )
-        page.get_by_label("Integrations").click()
+        open_integrations_menu(page)
         page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
         expect(page.get_by_role("menuitemcheckbox", name=server_id)).to_have_attribute(
             "aria-checked", "true"

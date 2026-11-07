@@ -31,7 +31,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, open_integrations_menu
 from utils.model_selector import model_options
 from utils.workspace_list import item_row
 
@@ -138,7 +138,7 @@ def _slash_menu(page: Page, typed: str) -> Locator:
 def _integration_tools(page: Page) -> Locator:
     page.goto("/")
     expect(chat_input(page)).to_be_visible()
-    page.get_by_label("Integrations").click()
+    open_integrations_menu(page)
     page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
     return page.get_by_role("menuitemcheckbox")
 

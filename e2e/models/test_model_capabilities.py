@@ -53,12 +53,11 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings
 from utils.cached_chat import attach
-from utils.chat_ui import conversation, expect_reply, last_reply, send
+from utils.chat_ui import conversation, expect_reply, last_reply, open_integrations_menu, send
 from utils.model_editor import (
     offered_tool_names,
     open_chat_on,
     open_editor,
-    open_menu,
     save,
     section,
     sent_request,
@@ -227,15 +226,13 @@ def test_unticking_image_generation_takes_the_image_switch_out(
     page = page_for(builder)
     open_chat_on(page, preset)
     expect(
-        open_menu(page, "Integrations").get_by_role("menuitemcheckbox", name="Image")
+        open_integrations_menu(page).get_by_role("menuitemcheckbox", name="Image")
     ).to_be_visible()
 
     switch_capability(page, preset, "Image Generation", False)
 
     open_chat_on(page, preset)
-    integrations = page.get_by_role("button", name="Integrations", exact=True)
-    if integrations.count():
-        open_menu(page, "Integrations")
+    open_integrations_menu(page)
     expect(page.get_by_role("menu").get_by_role("menuitemcheckbox", name="Image")).to_have_count(0)
 
 

@@ -7,10 +7,19 @@ off is offered no Web Search either. Tools and Skills each open a list with a se
 narrows it by name or description and says when nothing matches; a tool picked from the narrowed
 list is offered to the model with the next message.
 
+Since dev 834c47ee0 the integrations sit in the chat input's + (More) menu, under its own entries,
+and the Integrations button is gone. The Tools and Skills rows count what is picked ("2 selected"),
+also after the menu is closed and opened again. The picked tools, skills and switches show beside
+the + button only once a person turns on Show Input Selections in Settings > Interface (off by
+default); hiding them keeps the picks, so a tool picked before shows at once.
+
 Discriminates: passes on dev ebc6add67. On a build whose Web Search item ignores the permission and
 the model's capabilities the withdrawn and capability tests fail; on one that never offers Web
 Search the offered test fails; on one whose tool and skill search boxes filter nothing both search
 tests fail; on one where a picked tool stays off the picked tool test fails.
+The count and Show Input Selections tests pass on dev f659c0d12; in a build of it whose
+chips beside + show whatever the setting says the Show Input Selections test fails, and in one
+whose Tools and Skills rows show no count the count test fails.
 """
 
 from __future__ import annotations
@@ -25,7 +34,15 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
-from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
+from utils.chat_ui import (
+    chat_input,
+    close_menu,
+    expect_picked,
+    expect_reply,
+    open_integrations_menu,
+    send,
+)
+from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -47,10 +64,7 @@ def open_integrations(page: Page) -> Locator:
 
 
 def offers_web_search(page: Page) -> bool:
-    """Whether the Integrations menu holds Web Search; no menu at all offers nothing."""
-    ready(page)
-    if page.get_by_role("button", name="Integrations", exact=True).count() == 0:
-        return False
+    """Whether the integrations in the More menu hold Web Search."""
     menu = open_integrations(page)
     return menu.get_by_role("menuitemcheckbox", name="Web Search").count() > 0
 
@@ -203,8 +217,8 @@ def test_a_tool_picked_from_the_search_is_offered_to_the_model(page_for, builder
     menu = open_list(page, "Tools")
     menu.get_by_placeholder("Search tools").fill("seabirds")
     menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}").click()
-    page.keyboard.press("Escape")
-    expect(page.get_by_role("button", name="Available Tools")).to_have_text("1")
+    close_menu(page)
+    expect_picked(page, "Tools", 1)
 
     question = f"how many puffins? {suffix}"
     upstream.queue(reply.text("Plenty.", match=reply.answering(question)))
@@ -235,3 +249,60 @@ def test_the_skill_search_narrows_the_list(page_for, builder):
 
     menu.get_by_placeholder("Search skills").fill(f"anchor {suffix}")
     expect(menu.get_by_text("No skills found")).to_be_visible()
+
+
+def test_the_tools_and_skills_rows_count_what_is_picked(page_for, builder):
+    account, suffix = builder
+    page = page_for(account)
+    menu = open_list(page, "Tools")
+    menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}").click()
+    menu.get_by_role("menuitemcheckbox", name=f"Tide table {suffix}").click()
+    # the list's heading leads back to the menu's first page
+    menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    tools_row = menu.get_by_role("menuitem", name=re.compile(r"^Tools"))
+    expect(tools_row).to_contain_text("2 selected")
+    skills_row = menu.get_by_role("menuitem", name=re.compile(r"^Skills"))
+    expect(skills_row).not_to_contain_text("selected")
+
+    skills_row.click()
+    menu.get_by_role("menuitemcheckbox", name=re.compile(f"Rigging {suffix}")).click()
+    menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
+    expect(menu.get_by_role("menuitem", name=re.compile(r"^Skills"))).to_contain_text("1 selected")
+
+    close_menu(page)
+    menu = open_integrations(page)
+    expect(menu.get_by_role("menuitem", name=re.compile(r"^Tools"))).to_contain_text("2 selected")
+
+
+def pick_from_list(page: Page, entry: str, name: str) -> None:
+    item = open_list(page, entry).get_by_role("menuitemcheckbox", name=name)
+    item.click()
+    expect(item).to_have_attribute("aria-checked", "true")
+    close_menu(page)
+
+
+def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(page_for, builder):
+    account, suffix = builder
+    page = page_for(account)
+    pick_from_list(page, "Tools", f"Puffin counter {suffix}")
+    expect_picked(page, "Tools", 1)
+    tools_chip = page.get_by_role("button", name="Available Tools")
+    expect(tools_chip).to_have_count(0)
+
+    open_settings(page)
+    settings = page.get_by_role("dialog")
+    settings.get_by_label("Personal").get_by_role("tab", name="Interface", exact=True).click()
+    switch = settings.get_by_role("switch", name="Show Input Selections")
+    expect(switch).to_have_attribute("aria-checked", "false")
+    switch.click()
+    expect(switch).to_have_attribute("aria-checked", "true")
+    page.keyboard.press("Escape")
+    expect(settings).to_be_hidden()
+
+    # hiding the chips kept the pick, so it shows at once
+    expect(tools_chip).to_have_text("1")
+
+    page.reload()
+    expect(chat_input(page)).to_be_visible()
+    pick_from_list(page, "Tools", f"Tide table {suffix}")
+    expect(tools_chip).to_have_text("1")
