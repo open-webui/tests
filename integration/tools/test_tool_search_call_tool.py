@@ -66,9 +66,10 @@ sent, under its id, with one combined result listing each member's tool, status 
 Chat Completions, the Responses API and Ollama, on later turns too, and when a client relays the
 stored reply. A batch an approval pause left half done is never sent back with a call lacking its
 result. A malformed batch, like any malformed dispatch, reaches the model as a failed result and
-the model keeps its tools to try again; on f659c0d12 a malformed batch or arguments that are not
-a JSON object end tool use for the reply instead (the refused-dispatch cases not-an-object,
-arguments-malformed and batch-*, red there; the first two pass on b3b07a658, before batches).
+the model keeps its tools to try again (open-webui/open-webui#33871); on f659c0d12 a malformed
+batch or arguments that are not a JSON object end tool use for the reply instead (the
+refused-dispatch cases not-an-object, arguments-malformed and batch-*, red there; the first two
+pass on b3b07a658, before batches).
 
 Since dev 0f3bd0a7e the admin picks how `search_tools` matches: BM25 by words, the Documents
 embedding model by meaning (every held-back tool ranked, best first) or a decisions model asked
