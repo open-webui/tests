@@ -4,11 +4,16 @@ Max Upload Count and Max Upload Size refuse, in the chat input, the files beyond
 limit named. Allowed File Extensions refuses a file of another kind. Top K decides how many
 pieces of an uploaded file the model is given (with File Context ticked, which native function
 calling leaves off since bd6fc15be, and the full text threshold of 98f7a6146 at 0), and Bypass
-Embedding and Retrieval gives it the whole file.
+Embedding and Retrieval gives it the whole file. The Full Text Threshold (98f7a6146) sends a
+file of up to that many characters whole and searches one a character longer; it is kept after a
+reload, and Always Use Full Text (renamed from Full Context Mode in c5f24f588) is kept with it and
+greys the threshold out.
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose retrieval settings update ignores
 Top K, Bypass Embedding and Retrieval, Max Upload Size, Max Upload Count and Allowed File
-Extensions, every test but the default upload fails.
+Extensions, every test but the default upload fails. On dev f659c0d12, in a backend copy whose
+file threshold is ignored the at-the-threshold case fails, and in one whose settings answer leaves
+the threshold out the reload test fails (the field comes back empty).
 """
 
 from __future__ import annotations
@@ -70,10 +75,12 @@ def text_file(name: str, text: str) -> dict:
     return {"name": name, "mimeType": "text/plain", "buffer": text.encode()}
 
 
+GUIDE = "\n\n".join(f"{castle} castle stands above the valley floor." for castle in LANDMARKS)
+
+
 def guide() -> dict:
     """A guide whose paragraphs each make one chunk of their own at a chunk size of 60."""
-    paragraphs = [f"{castle} castle stands above the valley floor." for castle in LANDMARKS]
-    return text_file("castles.txt", "\n\n".join(paragraphs))
+    return text_file("castles.txt", GUIDE)
 
 
 def landmarks_sent(upstream) -> list[str]:
@@ -175,3 +182,56 @@ def test_bypass_embedding_and_retrieval_gives_the_model_the_whole_file(
     sent = ask_about_the_guide(page_for(make_user()), upstream)
 
     assert sent == LANDMARKS
+
+
+def test_the_full_text_threshold_and_always_use_full_text_are_kept_after_a_reload(
+    admin, admin_page, preserve
+):
+    preserve(RETRIEVAL_CONFIG)
+    settings = open_documents(admin_page)
+    set_switch(settings, "Bypass Embedding and Retrieval", turn_on=False)
+    set_switch(settings, "Always Use Full Text", turn_on=False)
+    expect(field(settings, "Full Text Threshold (Characters)")).to_be_enabled()
+    field(settings, "Full Text Threshold (Characters)").fill("4321")
+    save(admin_page, settings)
+
+    settings = open_documents(admin_page)
+    expect(field(settings, "Full Text Threshold (Characters)")).to_have_value("4321")
+    set_switch(settings, "Always Use Full Text", turn_on=True)
+    # Always Use Full Text sends every file whole, so the threshold has nothing left to decide
+    expect(field(settings, "Full Text Threshold (Characters)")).to_be_disabled()
+    save(admin_page, settings)
+
+    settings = open_documents(admin_page)
+    always = settings.get_by_role("switch", name="Always Use Full Text", exact=True)
+    expect(always).to_have_attribute("aria-checked", "true")
+    expect(field(settings, "Full Text Threshold (Characters)")).to_be_disabled()
+    expect(field(settings, "Full Text Threshold (Characters)")).to_have_value("4321")
+    with admin.client() as client:
+        stored = client.get(RETRIEVAL_CONFIG[0]).json()
+    assert (stored["RAG_FULL_TEXT_CHAR_THRESHOLD"], stored["RAG_FULL_CONTEXT"]) == (4321, True)
+
+
+@pytest.mark.usefixtures("file_context_on")
+@pytest.mark.parametrize(
+    ("over", "expected"), [(0, LANDMARKS), (1, 2)], ids=["at the threshold", "one character over"]
+)
+def test_a_file_up_to_the_full_text_threshold_reaches_the_model_whole(
+    admin_page, page_for, make_user, preserve, upstream, over, expected
+):
+    preserve(RETRIEVAL_CONFIG)
+    settings = open_documents(admin_page)
+    set_switch(settings, "Bypass Embedding and Retrieval", turn_on=False)
+    set_switch(settings, "Always Use Full Text", turn_on=False)
+    field(settings, "Chunk Size").fill("60")
+    field(settings, "Chunk Overlap").fill("0")
+    field(settings, "Top K").fill("2")
+    field(settings, "Full Text Threshold (Characters)").fill(str(len(GUIDE) - over))
+    save(admin_page, settings)
+
+    sent = ask_about_the_guide(page_for(make_user()), upstream)
+
+    if expected == LANDMARKS:
+        assert sent == LANDMARKS, f"a file at the threshold was not sent whole: {sent}"
+    else:
+        assert len(sent) == expected, f"a file over the threshold was not searched: {sent}"
