@@ -5,14 +5,18 @@ models docs page describes them. The browser fills the person's name, email, lan
 weekday and date as it sees them, so a person in Auckland gets Auckland's day; the server fills
 the groups the person belongs to, inherited ones included. A user variable that a person saves
 under Settings > Account (`{{user.variables.<key>}}`) reaches the model in that person's chats
-only, and is empty for someone who never saved it. Chat variables are covered in
+only, and is empty for someone who never saved it. With User Location on, the browser's
+position fills `{{USER_LOCATION}}`, and the message does not wait for the page to save that
+position on the server (3e6f8b7f4). Chat variables are covered in
 e2e/chat/test_chat_variables.py, placing the system prompt in
 e2e/workspace/test_workspace_presets.py.
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose chat sends no
 variables with the message the browser test fails (the time zone and language stay literal); in a
 backend copy that renders user variables from an empty set the user variable test fails, and in
-one that leaves the groups out the group test fails.
+one that leaves the groups out the group test fails. The location test passes on dev
+f659c0d12 and fails in a frontend copy with 3e6f8b7f4 undone (the message waits for a save
+that never answers and is never sent).
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from utils.user_menu import open_settings
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 AUCKLAND = "Pacific/Auckland"
+VIENNA = {"latitude": 48.20849, "longitude": 16.37208}
 
 
 @pytest.fixture
@@ -156,3 +161,36 @@ def test_a_user_variable_saved_in_the_account_settings_reaches_only_that_persons
     assert system_message(page_for(deckhand), upstream, preset, "where do I moor too?") == (
         "Moor at ."
     )
+
+
+def test_the_persons_location_fills_the_prompt_without_waiting_for_it_to_be_saved(
+    page_for, builder, make_user, upstream
+):
+    model = {"id": f"pilot-{uuid.uuid4().hex[:8]}", "name": f"Harbour pilot {uuid.uuid4().hex[:6]}"}
+    with builder.client() as client:
+        created = client.post(
+            "/api/v1/models/create",
+            json={
+                **model,
+                "base_model_id": MOCK_MODEL_ID,
+                "meta": {},
+                "params": {"system": "Guide the ship from {{USER_LOCATION}}."},
+                "access_grants": [EVERYONE_READS],
+            },
+        )
+    assert created.status_code == 200, created.text
+    sailor = make_user()
+    with sailor.client() as client:
+        shared = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"userLocation": True}}
+        )
+    assert shared.status_code == 200, shared.text
+    page = page_for(sailor, geolocation=VIENNA, permissions=["geolocation"])
+    # the server never answers the page's save of the location
+    saving: list = []
+    page.route("**/api/v1/users/user/info/update", lambda route: saving.append(route))
+
+    filled = system_message(page, upstream, model, "which way to the harbour?")
+
+    assert filled == "Guide the ship from 48.208, 16.372 (lat, long).", filled
+    assert saving, "the page never saved the location, so nothing showed it does not wait for it"
