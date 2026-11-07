@@ -77,7 +77,7 @@ def choose_terminal(page: Page, name: str) -> None:
 
 def pick_terminal(page: Page, name: str) -> None:
     choose_terminal(page, name)
-    # since 617618c9e the conversation is a tab and stays in front; Files opens from New tab
+    # since def1d048b picking a terminal no longer opens Files; it opens from New tab
     open_files_tab(page)
 
 
