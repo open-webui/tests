@@ -17,11 +17,25 @@ tests fail on what the model was sent.
 A side chat opened next to a chat on a model with default tools sends its first message with those
 tools on (#33788, 18f199b80); it passes on dev f659c0d12 and fails in a build of it whose side
 chat leaves the model's defaults off.
+
+The saved side chat is a chat like any other: it is listed in the sidebar under its question, its
+tab is one of the chat's saved tabs and is back after a reload, and opening it from the sidebar
+carries on from the chat so far and its own exchange without touching the chat it came from.
+Deleting it from the sidebar takes it off the list and leaves that chat as it was. Any saved chat
+dragged from the sidebar onto the right side of the open chat shows "Open in side panel" and
+opens in a tab beside it, without copying it; without the Side Chat permission it does not.
+
+Discriminates (the saved side chat tests): pass on the dev f659c0d12 build. On that build patched
+to save a side chat as "New Chat" every test that asks aside fails, as neither a tab nor a row
+carries the question; with saved side chat tabs left out of the saved view, the first test and the
+drop test fail after the reload; with the Side Chat check dropped from the drop target, the test
+without the permission fails as the drop hint shows.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 import pytest
@@ -29,6 +43,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask, wait_for_reply
+from harness.chat_history import seed_chat
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import (
@@ -40,6 +55,7 @@ from utils.chat_ui import (
     side_chat_panel,
     side_chat_tab,
 )
+from utils.sidebar_chats import chat_menu, chat_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -49,6 +65,11 @@ SIDE_QUESTION = "By the way, how long is that tunnel? ({tag})"
 SIDE_ANSWER = "The Felbertauern tunnel is 5.3 kilometres long."
 SECOND_SIDE_QUESTION = "Unrelated, what is the capital of Carinthia? ({tag})"
 SECOND_SIDE_ANSWER = "Klagenfurt is the capital of Carinthia."
+OTHER_TITLE = "Packing for the Grossglockner"
+OTHER_CHAT = [
+    {"role": "user", "content": "What should I pack for the Grossglockner road?"},
+    {"role": "assistant", "content": "A warm jacket, the road tops out at 2,504 metres."},
+]
 
 
 @pytest.fixture
@@ -60,6 +81,25 @@ def side_chat_allowed(admin, preserve) -> None:
         permissions["chat"].update(side_chat=True)
         saved = client.post("/api/v1/users/default/permissions", json=permissions)
     assert saved.status_code == 200, saved.text
+
+
+@pytest.fixture
+def side_chat_denied(admin, preserve) -> None:
+    """Switch Side Chat off in the default permissions."""
+    preserve("permissions")
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"].update(side_chat=False)
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+
+
+def seed_titled_chat(account, messages: list[dict], title: str) -> str:
+    with account.client() as client:
+        chat_id, _ = seed_chat(client, messages)
+        renamed = client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"title": title}})
+    assert renamed.status_code == 200, renamed.text
+    return chat_id
 
 
 def tagged(question: str) -> str:
@@ -118,6 +158,32 @@ def stored_reply_to(account, chat_id: str, question: str) -> dict:
         return wait_for_reply(client, turn)
 
 
+def main_chat(page: Page) -> Locator:
+    """The chat's own messages; a side chat's tab carries the same label but not this id."""
+    return page.locator("#messages-container")
+
+
+def open_sidebar(page: Page) -> Locator:
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+    expect(sidebar.get_by_role("button", name="Chats", exact=True)).to_be_visible()
+    return sidebar
+
+
+def drag_onto_the_chat(page: Page, row: Locator) -> Locator:
+    """Drag a sidebar chat over the right side of the open conversation; returns the drop hint.
+
+    The mouse is still down when this returns, so the caller sees the hint and then drops."""
+    target = main_chat(page).bounding_box()
+    start = row.bounding_box()
+    page.mouse.move(start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(
+        target["x"] + target["width"] * 0.9, target["y"] + target["height"] / 2, steps=20
+    )
+    return page.get_by_role("status").filter(has_text="Open in side panel")
+
+
 def listed_chats(account) -> dict[str, str]:
     """The account's chats in its chat list, as id to title."""
     with account.client() as client:
@@ -137,8 +203,7 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
 
     expect(panel).to_contain_text(question)
     expect(chat_input(page)).to_have_text("")
-    # both conversations carry the same label; only the chat's own message list has this id
-    main_messages = page.locator("#messages-container")
+    main_messages = main_chat(page)
     expect(main_messages).to_contain_text(ANSWER)
     expect(main_messages.get_by_text(SIDE_ANSWER)).to_have_count(0)
     expect(main_messages.get_by_text(question)).to_have_count(0)
@@ -164,11 +229,13 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
 
     page.reload()
 
-    expect_reply(page, ANSWER)
-    expect(conversation(page).get_by_text(PROMPT)).to_be_visible()
-    # the side chat's title also shows in the sidebar's chat list
+    expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
+    expect(main_chat(page).get_by_text(PROMPT)).to_be_visible()
     expect(main_messages.get_by_text(SIDE_ANSWER)).to_have_count(0)
     expect(main_messages.get_by_text(question)).to_have_count(0)
+    # the saved side chat's tab is back after the reload, with its exchange
+    expect(side_chat_panel(page, question)).to_contain_text(SIDE_ANSWER)
+    expect(chat_row(open_sidebar(page), question)).to_be_visible()
 
 
 def test_a_closed_side_chat_is_gone_and_the_next_one_starts_empty(
@@ -244,3 +311,113 @@ def test_a_side_chat_starts_with_the_models_default_tools(
     assert "tide_times" in offered, (
         f"the side chat's first message went out without the model's default tool: {offered}"
     )
+
+
+def test_a_saved_side_chat_reopens_from_the_sidebar_and_carries_on(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    question = tagged(SIDE_QUESTION)
+    page, chat_id = open_answered_chat(page_for, account, upstream)
+    ask_aside(page, upstream, question, SIDE_ANSWER)
+    side_chat_ids = [listed for listed, title in listed_chats(account).items() if title == question]
+    assert len(side_chat_ids) == 1, f"no side chat titled {question!r}: {listed_chats(account)}"
+
+    chat_row(open_sidebar(page), question).click()
+
+    expect(page).to_have_url(re.compile(rf"/c/{side_chat_ids[0]}$"))
+    expect_reply(page, SIDE_ANSWER)
+    expect(conversation(page).get_by_text(question)).to_be_visible()
+    follow_up = tagged("And how high is the pass road? ({tag})")
+    upstream.queue(reply.text("It climbs to 1,650 metres.", match=reply.answering(follow_up)))
+    send(page, follow_up)
+    expect_reply(page, "It climbs to 1,650 metres.")
+    assert conversation_sent_for(upstream, follow_up) == [
+        ("user", PROMPT),
+        ("assistant", ANSWER),
+        ("user", question),
+        ("assistant", SIDE_ANSWER),
+        ("user", follow_up),
+    ], "the reopened side chat did not carry on from the chat so far and its own exchange"
+    parent = json.dumps(stored_chat(account, chat_id))
+    assert follow_up not in parent and question not in parent, (
+        f"carrying on in the side chat wrote into the chat it came from: {parent}"
+    )
+
+
+def test_a_deleted_side_chat_is_gone_and_the_chat_it_came_from_stays(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    question = tagged(SIDE_QUESTION)
+    page, chat_id = open_answered_chat(page_for, account, upstream)
+    ask_aside(page, upstream, question, SIDE_ANSWER)
+    sidebar = open_sidebar(page)
+    expect(chat_row(sidebar, question)).to_be_visible()
+
+    chat_menu(sidebar, question).get_by_role("menuitem", name="Delete").click()
+    confirm = page.get_by_role("dialog", name="Delete chat?").get_by_role("button", name="Confirm")
+    with page.expect_response(lambda response: response.request.method == "DELETE") as deleted:
+        confirm.click()
+
+    assert deleted.value.ok, f"deleting the side chat answered {deleted.value.status}"
+    expect(chat_row(sidebar, question)).to_have_count(0)
+    chats = listed_chats(account)
+    assert list(chats) == [chat_id], f"deleting the side chat left {chats}"
+    page.reload()
+    expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
+    # the parent's saved tabs may still name the side chat, but its exchange is gone
+    expect(page.get_by_text(SIDE_ANSWER)).to_have_count(0)
+    # the sidebar stays open across the reload
+    expect(sidebar.get_by_role("button", name="Chats", exact=True)).to_be_visible()
+    expect(chat_row(sidebar, chats[chat_id])).to_be_visible()
+    expect(chat_row(sidebar, question)).to_have_count(0)
+    assert ANSWER in json.dumps(stored_chat(account, chat_id))
+
+
+def test_a_chat_dropped_from_the_sidebar_opens_beside_the_chat(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    other_id = seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
+    page, chat_id = open_answered_chat(page_for, account, upstream)
+    row = chat_row(open_sidebar(page), OTHER_TITLE)
+    expect(row).to_be_visible()
+
+    hint = drag_onto_the_chat(page, row)
+    expect(hint).to_be_visible()
+    page.mouse.up()
+
+    expect(hint).to_have_count(0)
+    panel = page.get_by_role("tabpanel", name=OTHER_TITLE, exact=True)
+    expect(panel).to_contain_text(OTHER_CHAT[1]["content"])
+    expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
+    expect(main_chat(page)).to_contain_text(ANSWER)
+    assert set(listed_chats(account)) == {chat_id, other_id}, (
+        f"dropping a chat created or lost chats: {listed_chats(account)}"
+    )
+    # a saved chat's tab is part of the chat's saved tabs
+    page.reload()
+    expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
+    expect(page.get_by_role("tabpanel", name=OTHER_TITLE, exact=True)).to_contain_text(
+        OTHER_CHAT[1]["content"]
+    )
+
+
+def test_without_side_chat_a_chat_dropped_from_the_sidebar_opens_nothing(
+    page_for, make_user, upstream, side_chat_denied
+):
+    account = make_user()
+    seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
+    page, chat_id = open_answered_chat(page_for, account, upstream)
+    row = chat_row(open_sidebar(page), OTHER_TITLE)
+    expect(row).to_be_visible()
+
+    hint = drag_onto_the_chat(page, row)
+    # the same drag shows the hint for an account with Side Chat on
+    expect(hint).to_have_count(0)
+    page.mouse.up()
+
+    expect(page.get_by_role("tab", name=OTHER_TITLE, exact=True)).to_have_count(0)
+    expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
+    expect_reply(page, ANSWER)
