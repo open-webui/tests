@@ -14,6 +14,10 @@ Discriminates: passes on dev bc2416c5d; with the fix reverted in `routers/ollama
 list, loaded-model list, version and verify requests carry neither the custom header nor the
 forwarded cookie, and the key goes out as a bearer token despite `auth_type: none`; the chat
 test passes on both.
+
+The client IP placeholders (#33833, d39cb17b9) fill an Ollama connection's custom headers on a
+chat as they do an OpenAI connection's: passes on dev f659c0d12 and fails with d39cb17b9 reverted
+in a backend copy (the header goes out as written).
 """
 
 from __future__ import annotations
@@ -177,3 +181,17 @@ def test_cookies_are_not_forwarded_unless_asked(operator, ollama):
         client.get("/ollama/api/tags", headers={"Cookie": "CF_Authorization=gate-jwt"})
 
     assert "gate-jwt" not in (header(last_request_to(ollama, "/api/tags"), "Cookie") or "")
+
+
+def test_a_chat_fills_the_ip_placeholders_in_the_custom_headers(operator, ollama):
+    # the client IP placeholders (#33833) work on Ollama connections as on OpenAI ones
+    connect(operator, ollama, headers={"X-Real-IP": "{{USER_IP}}"})
+
+    with operator.client() as client:
+        client.headers["X-Forwarded-For"] = "203.0.113.41"
+        client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+        _, message = ask(client, "hi", model=OLLAMA_MODEL)
+
+    assert message["content"] == "pong"
+    sent = header(last_request_to(ollama, "/api/chat"), "X-Real-IP")
+    assert sent == "203.0.113.41", f"{{{{USER_IP}}}} reached the Ollama server as {sent!r}"

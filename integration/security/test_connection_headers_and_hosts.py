@@ -13,24 +13,31 @@
 * Client IP placeholders (`d39cb17b9`, #33833, issue #33819): `{{USER_IP}}` and
   `{{X_FORWARDED_FOR}}` in a connection's custom headers carry the client address Open WebUI
   resolves for the request, the address a trusted proxy forwarded included, on an API completion
-  and on a chat sent the way the web client does.
+  and on a chat sent the way the web client does, and a tool server connection's custom headers
+  take them as well when the model calls its tool.
 
 Twin of unit/security/test_connection_headers_and_hosts.py.
 
 Discriminates: passes on dev bbfa876af; reverting 7a4a4b93d sends the name raw and the group
 name's line break fails the provider request; reverting ee46e2664 drops the auth-type header and
 leaves `{{AUTH_TYPE}}` unsubstituted; reverting 6f55514c5 makes the localhost fetch a 400.
-The three IP placeholder tests pass on dev f659c0d12 and fail with d39cb17b9 reverted in a backend
+The four IP placeholder tests pass on dev f659c0d12 and fail with d39cb17b9 reverted in a backend
 copy (the provider gets the placeholders as written).
 """
 
 from __future__ import annotations
 
+import secrets
+
 import pytest
 
+from harness import upstream as reply
 from harness.actors import admin_of, create_user
-from harness.chat import send_message, wait_for_reply
-from harness.listener import text_answer
+from harness.chat import ask, send_message, wait_for_reply
+from harness.listener import json_answer, text_answer
+from harness.mcp_server import TOOL_SERVERS
+from harness.openapi_server import calls_to, openapi_connection, serve_openapi
+from harness.python_tools import EVERYONE_READS
 
 pytestmark = [
     pytest.mark.regression,
@@ -218,3 +225,28 @@ def test_a_dotless_host_stays_refused_without_local_fetch(make_user, listener):
 
     assert fetched.status_code == 400, fetched.text
     assert listener.requests_to("/notify") == []
+
+
+def test_a_tool_server_call_carries_the_client_address(
+    admin, make_user, preserve, listener, upstream
+):
+    # a tool server connection's custom headers take the same placeholders as a model connection's
+    preserve(TOOL_SERVERS)
+    title = f"Harbour desk {secrets.token_hex(3)}"
+    serve_openapi(listener, title, {"get_tides": json_answer({"high": "12:04"})})
+    connection = openapi_connection(
+        listener.base_url, title, [EVERYONE_READS], headers={"X-Real-IP": "{{USER_IP}}"}
+    )
+    with admin.client() as client:
+        saved = client.post(TOOL_SERVERS[1], json={"TOOL_SERVER_CONNECTIONS": [connection]})
+    assert saved.status_code == 200, saved.text
+
+    upstream.queue(reply.tool_call("get_tides", {}), reply.text("High water at 12:04."))
+    with make_user().client() as client:
+        client.headers["X-Forwarded-For"] = "198.51.100.77"
+        ask(client, "when is high water?", tool_ids=[f"server:{connection['info']['id']}"])
+
+    calls = calls_to(listener, "get_tides")
+    assert calls, "the model's call never reached the tool server"
+    sent = {name.lower(): value for name, value in calls[-1].headers.items()}.get("x-real-ip")
+    assert sent == "198.51.100.77", f"{{{{USER_IP}}}} reached the tool server as {sent!r}"
