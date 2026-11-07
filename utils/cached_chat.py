@@ -73,6 +73,8 @@ def choose_terminal(page: Page, name: str) -> None:
     tooltip_button(page.get_by_role("main"), "Terminal").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name).click()
     expect(page.get_by_role("main").get_by_role("button", name=name, exact=True)).to_be_visible()
+    # while the menu fades out, keys like the voice note's Esc are left to it
+    expect(page.get_by_role("menu")).to_have_count(0)
 
 
 def pick_terminal(page: Page, name: str) -> None:

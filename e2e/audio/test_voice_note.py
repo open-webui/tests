@@ -17,9 +17,10 @@ while the message box has focus, which it has after the shortcut (the editor mar
 the panel skips handled keys).
 
 Discriminates: on the f659c0d12 build patched to report the saved path before closing, the first
-test passes; with Transcribe offered whatever the permission and the name check removed, the
-permission and slash tests fail; with a second note of the same name replacing the first, the
-same-name test fails.
+test passes (open-webui/open-webui#33886), and on one patched to focus the panel as it opens, the
+Esc test passes (open-webui/open-webui#33887); with Transcribe offered whatever the permission and
+the name check removed, the permission and slash tests fail; with a second note of the same name
+replacing the first, the same-name test fails.
 """
 
 from __future__ import annotations
@@ -93,7 +94,7 @@ def _record(page: Page) -> Locator:
 def test_a_voice_note_is_transcribed_and_saved_into_the_terminal(
     terminal_chat, speech_engine, open_terminal
 ):
-    """Red on dev f659c0d12: the files are saved but the note does not open in a tab."""
+    """Red on dev f659c0d12 (open-webui/open-webui#33886): the note does not open in a tab."""
     page = terminal_chat()
     name = f"Harbour walk {uuid.uuid4().hex[:6]}"
     before = _files(open_terminal)
@@ -158,7 +159,7 @@ def test_a_name_with_a_slash_is_refused_and_cancel_saves_nothing(
 def test_escape_while_recording_throws_the_note_away_and_frees_the_microphone(
     terminal_chat, open_terminal
 ):
-    """Red on dev f659c0d12: Esc pressed in the message box never reaches the voice note."""
+    """Red on dev f659c0d12 (open-webui/open-webui#33887): Esc from the message box is lost."""
     page = terminal_chat(watch_microphone=True)
     before = _files(open_terminal)
     chat_input(page).click()
