@@ -15,7 +15,7 @@ chosen folder.
 
 The personal terminal test is red on dev f659c0d12: the picked folder is set on the terminal
 without the chat's session and the server leaves personal terminals alone since 5fae57b03, so the
-commands run in the terminal's home (issue draft real-nf-wd-1, not filed yet).
+commands run in the terminal's home (open-webui/open-webui#33876).
 
 A real Open Terminal serves the files and runs the commands; its `run_command` answer names the
 folder the command ran in, which the test reads from what the model was sent.
