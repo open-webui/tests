@@ -11,24 +11,38 @@ canvas where it can), the only screen a test can read.
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the terminal WebSocket proxy
 dropping what the browser sends the typed command never reaches the shell and nothing comes
 back.
+
+Show Files on Terminal Select left Settings > Interface in def1d048b (#33855). A person who had
+saved it off finds no such switch there, and can still pick a terminal in the chat.
+On dev f659c0d12, a frontend copy with the switch put back turns that test red.
 """
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.listener import json_answer
-from harness.terminal_server import TERMINAL_SERVERS_CONFIG, serving_terminal
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from utils.cached_chat import open_new_terminal, pick_terminal
+from utils.chat_ui import chat_input
 from utils.tooltips import tooltip_button
+from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 NAME = "Lab shell"
 TYPED = "echo lighthouse"
+# the label, or its translation key where the build has no English text for it
+REMOVED_SETTING = re.compile(r"show\s*files\s*on\s*terminal\s*select", re.IGNORECASE)
 NO_WEBGL = """
 const getContext = HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext = function (type, ...options) {
@@ -106,3 +120,33 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
     assert session.path.startswith("/api/terminals/session-1")
     typed = b"".join(part for part in session.messages if isinstance(part, bytes))
     assert typed == TYPED.encode(), session.messages
+
+
+def test_a_saved_show_files_choice_is_gone_from_settings_and_a_terminal_still_gets_picked(
+    page_for, make_user, admin, preserve, fake_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    connection = fake_terminal.connection(
+        name=NAME, config={"access_grants": [read_grant(person.id)]}
+    )
+    with admin.client() as client:
+        configure_terminals(client, connection)
+    # a choice saved before the setting was removed stays in the account's settings
+    with person.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"showFilesOnTerminalSelect": False}}
+        )
+    assert saved.status_code == 200, saved.text
+
+    page = page_for(person)
+    expect(chat_input(page)).to_be_visible()
+    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
+    expect(page.get_by_role("main").get_by_role("button", name=NAME, exact=True)).to_be_visible()
+
+    open_settings(page)
+    page.get_by_role("tab", name="Interface").click()
+    interface = page.locator("#tab-interface")
+    expect(interface.get_by_role("button", name="Terminal File Display")).to_be_visible()
+    expect(interface.get_by_role("switch", name=REMOVED_SETTING)).to_have_count(0)
