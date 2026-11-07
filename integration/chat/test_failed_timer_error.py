@@ -22,6 +22,11 @@ Discriminates: passes on dev efe63bd34; with b0650d04b reverted in a backend cop
 fails (the timer's reply stays empty and not done). On dev ef67cc3fa, with the try/except around
 the timer's completion removed, the error escapes the scheduler task and the narrow test fails
 the same way. The nearby test passes on both.
+
+`test_a_timer_run_has_no_client_address_for_the_ip_placeholders`: a fired timer filled the client
+IP header placeholders (#33833) with 127.0.0.1, the address of the request timers build for
+themselves (issue open-webui/open-webui#33882). Red on dev 1fc5b8f6d (sends 127.0.0.1), green with
+fix 2ea13e650 (branch fix/user-ip-empty-for-automations).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
+from harness.second_provider import OPENAI_CONFIG
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -123,3 +129,38 @@ def test_a_timer_on_a_working_model_still_gets_its_answer(timers_enabled, make_u
 
     assert timer_reply.get("error") is None, timer_reply
     assert timer_reply["content"] == "Pour it now."
+
+
+def _sent_ip(entry) -> str:
+    """What the provider received for the X-Real-IP header, empty when it was not sent."""
+    return {name.lower(): value for name, value in entry.headers.items()}.get("x-real-ip", "")
+
+
+def test_a_timer_run_has_no_client_address_for_the_ip_placeholders(
+    timers_enabled, admin, preserve, make_user, upstream
+):
+    preserve(OPENAI_CONFIG)
+    with admin.client() as client:
+        config = client.get(OPENAI_CONFIG[0]).json()
+        connection = config["OPENAI_API_CONFIGS"].get("0", {})
+        config["OPENAI_API_CONFIGS"] = {
+            "0": {**connection, "headers": {"X-Real-IP": "{{USER_IP}}"}}
+        }
+        client.post(OPENAI_CONFIG[1], json=config).raise_for_status()
+    upstream.queue(reply.text("Pour it now.", match=reply.answering(TIMER_PROMPT)))
+    owner = make_user(role="admin")
+    with owner.client() as client:
+        chat_id = _set_timer(client, upstream, MOCK_MODEL_ID)
+        timer_reply = _timer_reply(client, chat_id)
+    assert timer_reply["content"] == "Pour it now.", timer_reply
+
+    requests = [entry for entry in upstream.requests_to("/chat/completions") if entry.body]
+    fired = [_sent_ip(entry) for entry in requests if reply.answering(TIMER_PROMPT)(entry.body)]
+    chatted = [
+        _sent_ip(entry) for entry in requests if not reply.answering(TIMER_PROMPT)(entry.body)
+    ]
+    assert chatted and all(chatted), (
+        f"the chat that set the timer sent no client address: {chatted}"
+    )
+    # a timer fires with no client, so no address may stand in for one (#33882)
+    assert fired == [""], f"a timer run sent {{{{USER_IP}}}} as {fired}"

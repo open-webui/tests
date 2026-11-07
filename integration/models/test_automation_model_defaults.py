@@ -27,9 +27,9 @@ dev f659c0d12; in backend copies of it, leaving the default tools out of the mod
 first test, and letting the defaults replace an empty list fails the second.
 
 Client IP placeholders (#33833, d39cb17b9) are meant to be empty for a run with no client. Red on
-dev f659c0d12: a run sends 127.0.0.1, the address of the request automations build for
-themselves (issue draft real-nf-admin-2). Reverting d39cb17b9 also turns it red, with the
-placeholder sent as written.
+dev f659c0d12 and 1fc5b8f6d: a run sends 127.0.0.1, the address of the request automations build
+for themselves (issue open-webui/open-webui#33882). Reverting d39cb17b9 also turns it red, with
+the placeholder sent as written. Green with fix 2ea13e650.
 """
 
 from __future__ import annotations

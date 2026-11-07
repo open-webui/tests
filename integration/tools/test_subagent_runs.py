@@ -18,6 +18,11 @@ Discriminates: passes on dev 176d31d1d. In backend copies each test turns red wi
 context left off the task, the default prompt dropped, the delegation tool left in the sub-agent's
 kit, the internal marker dropped, the file check removed, the empty-task check removed, the limit
 forced to one or to none.
+
+`test_a_subagent_run_has_no_client_address_for_the_ip_placeholders` is a regression test: a
+sub-agent's request filled the client IP header placeholders (#33833) with 127.0.0.1, the address
+of the request sub-agents build for themselves (issue open-webui/open-webui#33882). Red on dev
+1fc5b8f6d (sends 127.0.0.1), green with fix 2ea13e650 (branch fix/user-ip-empty-for-automations).
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import create_user
 from harness.chat import ask, send_message, wait_for_reply
+from harness.second_provider import OPENAI_CONFIG
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -124,6 +130,40 @@ def test_the_subagents_own_chat_is_not_in_the_persons_chat_list(subagents_on, ma
 
     assert [chat["id"] for chat in listed] == [turn.chat_id]
     assert searched == []
+
+
+def _sent_ip(entry) -> str:
+    """What the provider received for the X-Real-IP header, empty when it was not sent."""
+    return {name.lower(): value for name, value in entry.headers.items()}.get("x-real-ip", "")
+
+
+def test_a_subagent_run_has_no_client_address_for_the_ip_placeholders(
+    subagents_on, admin, preserve, make_user, upstream
+):
+    subagents_on()
+    preserve(OPENAI_CONFIG)
+    with admin.client() as client:
+        config = client.get(OPENAI_CONFIG[0]).json()
+        connection = config["OPENAI_API_CONFIGS"].get("0", {})
+        config["OPENAI_API_CONFIGS"] = {
+            "0": {**connection, "headers": {"X-Real-IP": "{{USER_IP}}"}}
+        }
+        client.post(OPENAI_CONFIG[1], json=config).raise_for_status()
+    prompt, task = unique("hand this over"), unique("count the boxes")
+    upstream.queue(
+        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
+        reply.text("Twelve boxes.", match=reply.answering(task)),
+        reply.text("Counted.", match=reply.answering(prompt)),
+    )
+    with make_user().client() as client:
+        ask(client, prompt)
+
+    requests = [entry for entry in upstream.requests_to("/chat/completions") if entry.body]
+    delegated = [_sent_ip(entry) for entry in requests if reply.answering(task)(entry.body)]
+    chatted = [_sent_ip(entry) for entry in requests if reply.answering(prompt)(entry.body)]
+    assert chatted and all(chatted), f"the person's chat sent no client address: {chatted}"
+    # the sub-agent's request is the server's own, so no address may stand in for a client (#33882)
+    assert delegated == [""], f"a sub-agent run sent {{{{USER_IP}}}} as {delegated}"
 
 
 def test_a_file_the_chat_does_not_hold_is_refused_before_the_subagent_starts(
