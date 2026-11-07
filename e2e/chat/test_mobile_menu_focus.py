@@ -12,7 +12,7 @@ two phone tests go red (the message box, then the automation's text field, holds
 the desktop test stays green.
 Retargeted for dev 834c47ee0, which moved the integrations into the + (More) menu: that menu hands
 the focus back to the message box on a phone too, so the phone test is red on dev f659c0d12 until
-the + menu skips it on a narrow screen as the Integrations menu did.
+the + menu skips it on a narrow screen as the Integrations menu did (open-webui/open-webui#33881).
 """
 
 from __future__ import annotations
