@@ -57,6 +57,8 @@ def fake_terminal():
         # the side panel offers a shell only to a terminal whose config has it on
         server.route("GET", "/api/config", json_answer({"features": {"terminal": True}}))
         server.route("POST", "/api/terminals", json_answer({"id": "session-1"}))
+        # since d4e8493cc the shell looks the session up before it connects
+        server.route("GET", "/api/terminals/session-1", json_answer({"id": "session-1"}))
         yield server
 
 
