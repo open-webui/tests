@@ -244,6 +244,15 @@ def open_terminal() -> Generator:
         yield terminal
 
 
+@pytest.fixture(scope="session")
+def agent_terminal() -> Generator:
+    """A real Open Terminal with the stand-in coding agent; skips without open-terminal."""
+    from harness.coding_agent import serving_agent_terminal
+
+    with serving_agent_terminal() as terminal:
+        yield terminal
+
+
 @pytest.fixture
 def terminal_orchestrator() -> Generator:
     """A Terminals orchestrator stand-in giving each terminal context a real Open Terminal."""

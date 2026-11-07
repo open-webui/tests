@@ -56,7 +56,8 @@ def open_terminal_binary() -> str | None:
 
 
 @contextlib.contextmanager
-def serving_open_terminal() -> Iterator[OpenTerminal]:
+def serving_open_terminal(env: dict[str, str] | None = None) -> Iterator[OpenTerminal]:
+    """Run the terminal; `env` adds to its environment, such as an agent command override."""
     binary = open_terminal_binary()
     if binary is None:
         pytest.skip("needs open-terminal (set OPEN_TERMINAL_BIN or put it on PATH)")
@@ -70,6 +71,7 @@ def serving_open_terminal() -> Iterator[OpenTerminal]:
         "XDG_CONFIG_HOME": str(scratch / "config"),
         "XDG_STATE_HOME": str(scratch / "state"),
         "OPEN_TERMINAL_API_KEY": API_KEY,
+        **(env or {}),
     }
     command = [binary, "run", "--host", "127.0.0.1", "--port", str(port), "--cwd", str(home)]
     log = open(scratch / "server.log", "w", encoding="utf-8")
