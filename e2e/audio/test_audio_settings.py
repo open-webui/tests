@@ -3,8 +3,9 @@
 The admin's Audio tab points speech and transcription at `harness.audio_engine`, which is what
 e2e/admin/test_admin_settings_tabs.py saves through the tab itself. On top of that a user's
 Settings > Audio tab: the voice a user picks is the one sent when a reply is read aloud, and the
-audio plays; Auto-Playback reads a fresh reply with no tap; dictation from the chat input sends
-the recording to the engine and its transcript lands in the chat input, unsent; Instant
+audio plays; Auto-Playback reads a fresh reply with no tap, and with it off a click or a key in
+the chat plays no sound of its own; dictation from the chat input sends the recording to the
+engine and its transcript lands in the chat input, unsent; Instant
 Auto-Send sends that transcript as the message. On the admin side, moving either engine to the
 browser's Web API hides that engine's controls, and once saved the user's tab and the voice call
 button follow.
@@ -16,12 +17,13 @@ that answers each sentence with silence, and speechSynthesis records what it is 
 
 Discriminates: passes on the dev 176d31d1d build; in a frontend copy, a read aloud that ignores
 the user's saved voice turns the voice test red, a finished reply that never presses its speak
-button turns the auto-playback test red, a recording that is never transcribed turns the
-dictation test red, a transcript that is not submitted turns the auto-send test red, and the
-speech-to-text controls or the chat's call button staying on the page for the Web API turn the
-hide test red. The Kokoro
-call test passes on dev c31423955 and turns red in a build of it whose call plays its audio only
-for a server speech engine, as before 78613d86f (the reply goes to speechSynthesis, no Kokoro
+button turns the auto-playback test red (on dev f659c0d12, a copy with 456849a4f undone, whose
+first click plays a silent clip to unlock audio whatever the setting, turns the auto-playback
+off test red), a recording that is never transcribed turns the dictation test red, a transcript
+that is not submitted turns the auto-send test red, and the speech-to-text controls or the chat's
+call button staying on the page for the Web API turn the hide test red. The Kokoro call test
+passes on dev c31423955 and turns red in a build of it whose call plays its audio only for a
+server speech engine, as before 78613d86f (the reply goes to speechSynthesis, no Kokoro
 audio plays).
 
 `test_a_call_speaks_with_the_users_kokoro_voice_when_the_server_has_no_speech_engine` is red on dev
@@ -164,6 +166,32 @@ def test_auto_playback_reads_a_new_reply_without_a_tap(
     page.wait_for_function(PLAYED)
     request = spoken_with(playable_speech, answer)
     assert (request["voice"], request["model"]) == (VOICE, SPEECH_MODEL), request
+
+
+def test_with_auto_playback_off_clicks_and_keys_in_the_chat_play_no_sound(
+    page_for, make_user, playable_speech
+):
+    owner = make_user()
+    with owner.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"responseAutoPlayback": False}}
+        )
+    assert saved.status_code == 200, saved.text
+    page = page_for(owner)
+    page.add_init_script(RECORD_PLAYBACK)
+    answer = f"The keeper lights lamp {uuid.uuid4().hex[:6]}."
+    open_answer(page, owner, answer)
+
+    chat_input(page).click()
+    page.keyboard.type("one more question")
+    # the reply read aloud plays after anything the clicks and keys started
+    with page.expect_response(_is_speech):
+        page.get_by_role("button", name="Read Aloud").click()
+    page.wait_for_function(PLAYED)
+
+    played = page.evaluate("window.playedSources")
+    unasked = [source[:30] for source in played if not source.startswith("blob:")]
+    assert not unasked, f"the page played sound nobody asked for: {unasked}"
 
 
 def test_dictation_puts_the_engines_transcript_in_the_chat_input(
