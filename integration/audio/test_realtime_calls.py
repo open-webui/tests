@@ -56,12 +56,26 @@ Discriminates: on dev 948432b43, a backend copy that leaves the input parameters
 session turns the noise reduction, turn detection override and env cases red, one that applies
 them before the default turn detection turns the override case red, and one that ignores the env
 var turns the env case red.
+
+Since 6da3e7a5d a call can talk with an agent (`agent:<terminal>:<agent>:<model>`) in place of a
+chat model: the call names the terminal picked in the chat, and the server asks that terminal for
+its agents, as the user and with the user's session for a terminal that signs in with it, before
+opening the provider session. A call without a terminal, a malformed agent id, an agent or model
+the terminal does not list as available and a terminal the user may not use are refused with a
+message saying so, and the call permission still applies.
+
+Discriminates: on dev f659c0d12, a backend copy without the session token on the call turns the
+agent call case red (the call fails before the terminal is asked), one whose agent list ignores
+an agent's availability turns the agent not available case red, and one that resolves the
+terminal without the access check turns the stranger case red; with the call handler from before
+6da3e7a5d every agent case but the permission one is red (a call took only server chat models).
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -71,6 +85,7 @@ from harness.audio_engine import AUDIO_CONFIG, CONFIG_IMPORT
 from harness.chat import send_message, wait_for_reply
 from harness.chat_history import seed_chat
 from harness.instance import free_port
+from harness.listener import json_answer
 from harness.realtime_provider import (
     API_KEY,
     PROVIDER_ERROR_TEXT,
@@ -87,11 +102,18 @@ from harness.realtime_provider import (
     spoken_audio,
     using_realtime,
 )
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from harness.upstream import MOCK_MODEL_ID
 from harness.voice_avatars import animation, avatar, upload
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
+AGENT_UNAVAILABLE = "Agent model is unavailable in the selected terminal"
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 ENV_NOISE_REDUCTION = {"noise_reduction": {"type": "far_field"}}
 # only the environment credential, unset here, so no token is fetched and nothing leaves the host;
@@ -819,3 +841,115 @@ def test_a_standard_call_offers_the_models_gestures_to_the_chat_model(
             "nod",
         ]
         assert "Wave when greeting." in tools["play_animation"]["description"]
+
+
+AGENT_CATALOG = {
+    "protocol_version": 1,
+    "agents": [
+        {"id": "claude", "available": True, "models": [{"id": "sonnet"}]},
+        {"id": "codex", "available": False, "models": [{"id": "gpt-5"}]},
+    ],
+}
+
+
+@pytest.fixture
+def agent_terminal(admin, preserve):
+    """`agent_terminal(account, auth_type)`: a terminal listing agents that `account` may use."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    with serving_terminal() as terminal:
+        terminal.route("GET", "/agents", json_answer(AGENT_CATALOG))
+        terminal.route("GET", "/files/cwd", json_answer({"cwd": "/home/ada/harbour"}))
+
+        def connect(account, auth_type: str = "none") -> str:
+            connection = terminal.connection(
+                auth_type=auth_type, config={"access_grants": [read_grant(account.id)]}
+            )
+            with admin.client() as client:
+                configure_terminals(client, connection)
+            terminal.clear()
+            return connection["id"]
+
+        connect.server = terminal
+        yield connect
+
+
+def agent_model(terminal_id: str, provider: str = "claude", model: str = "sonnet") -> str:
+    return f"agent:{terminal_id}:{provider}:{model}"
+
+
+def test_a_call_with_an_agent_model_opens_through_the_users_terminal(
+    realtime, agent_terminal, make_user
+):
+    caller = make_user()
+    terminal_id = agent_terminal(caller, auth_type="session")
+
+    with realtime_call(
+        caller.base_url, caller.token, agent_model(terminal_id), terminal_id=terminal_id
+    ) as session:
+        assert next_event(session, "bridge.ready")["voice"] == VOICE
+
+    asked = agent_terminal.server.requests_to("/agents")
+    assert asked, "the call never asked the terminal which agents it has"
+    query = parse_qs(urlsplit(asked[-1].path).query)
+    assert query == {"provider": ["claude"], "cwd": ["/home/ada/harbour"]}, asked[-1].path
+    # a terminal signing in with the user's session gets the caller's own token
+    assert asked[-1].headers.get("authorization") == f"Bearer {caller.token}"
+
+
+@pytest.mark.parametrize(
+    ("model_for", "with_terminal", "expected"),
+    [
+        (agent_model, False, "Select a terminal to call an agent"),
+        (lambda terminal_id: f"agent:{terminal_id}:claude", True, "Invalid agent model"),
+        (lambda terminal_id: agent_model(terminal_id, model="opus"), True, AGENT_UNAVAILABLE),
+        (lambda terminal_id: agent_model(terminal_id, "codex", "gpt-5"), True, AGENT_UNAVAILABLE),
+    ],
+    ids=["no terminal picked", "malformed id", "model not listed", "agent not available"],
+)
+def test_a_call_with_an_agent_the_terminal_does_not_offer_is_refused(
+    realtime, agent_terminal, make_user, model_for, with_terminal, expected
+):
+    caller = make_user()
+    terminal_id = agent_terminal(caller)
+    with realtime_call(
+        caller.base_url,
+        caller.token,
+        model_for(terminal_id),
+        terminal_id=terminal_id if with_terminal else None,
+    ) as session:
+        assert call_error(session) == expected
+    assert realtime.calls == [], "a refused agent call still opened a provider session"
+
+
+def test_an_agent_call_through_a_terminal_the_user_may_not_use_is_refused(
+    realtime, agent_terminal, make_user
+):
+    owner, stranger = make_user(), make_user()
+    terminal_id = agent_terminal(owner)
+
+    with realtime_call(
+        stranger.base_url, stranger.token, agent_model(terminal_id), terminal_id=terminal_id
+    ) as session:
+        assert call_error(session) == AGENT_UNAVAILABLE
+    assert agent_terminal.server.requests_to("/agents") == [], (
+        "the terminal was asked for its agents on behalf of a user without access to it"
+    )
+
+
+def test_without_the_call_permission_an_agent_call_is_refused(
+    realtime, agent_terminal, admin, make_user, preserve
+):
+    preserve("permissions")
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"]["call"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+    caller = make_user()
+    terminal_id = agent_terminal(caller)
+
+    with realtime_call(
+        caller.base_url, caller.token, agent_model(terminal_id), terminal_id=terminal_id
+    ) as session:
+        assert call_error(session) == "Call permission denied"
+    assert agent_terminal.server.requests_to("/agents") == []
