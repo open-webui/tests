@@ -5,17 +5,22 @@ plain text, Markdown, JSON and other source files as they are; CSV one row at a 
 `column: value` lines; HTML without its markup; Word documents, spreadsheets and slide decks
 through their own readers; PDFs page by page, or as one document when the admin chooses single
 mode. An Office archive that unpacks far larger than the file is refused before it is opened.
+A sheet of many small tables reads about as fast as the same rows as one table (`e9cb194f4`, PR
+#33770, issue #33768: the spreadsheet reader looked for each table on the sheet, which took
+minutes on a large sparse sheet and stalled the server).
 The stored file text and its chunks are what a chat later retrieves from.
 
 Discriminates: in a backend copy, the CSV loader joining values without their column turned the
 CSV test red; the PDF loader ignoring `PDF_LOADER_MODE` turned the single mode test red; the
 archive size check skipped turned the oversized archive test red; and the spreadsheet branch
-sent to the plain text loader turned the spreadsheet test red.
+sent to the plain text loader turned the spreadsheet test red. Reverting e9cb194f4 on dev
+f659c0d12 turned the small tables test red (19.7s against 4.4s for one table).
 """
 
 from __future__ import annotations
 
 import io
+import time
 import zipfile
 
 import httpx
@@ -93,7 +98,7 @@ def docx_bytes(*paragraphs: str) -> bytes:
     return buffer.getvalue()
 
 
-def xlsx_bytes(rows: list[list[str]]) -> bytes:
+def xlsx_bytes(rows: list[list[str | int]]) -> bytes:
     openpyxl = pytest.importorskip("openpyxl")
     workbook = openpyxl.Workbook()
     sheet = workbook.active
@@ -210,6 +215,39 @@ def test_a_spreadsheet_is_read_cell_by_cell(local_loaders, make_user):
     for cell in ("bird", "count", "heron", "grebe", "7"):
         assert cell in content, f"{cell!r} missing from the spreadsheet text: {content!r}"
     assert "PK" not in content[:4], "the spreadsheet was read as raw bytes"
+
+
+# one row of numbers per table; on the pre-fix ref each table cost a parse of its own
+TABLES, COLUMNS = 1000, 60
+
+
+def numbered_rows() -> list[list[int]]:
+    return [[table * 1000 + column for column in range(COLUMNS)] for table in range(TABLES)]
+
+
+def timed_read(client: httpx.Client, filename: str, workbook: bytes) -> tuple[float, str]:
+    started = time.monotonic()
+    content = extracted(client, filename, workbook, XLSX)
+    return time.monotonic() - started, content
+
+
+def test_a_sheet_of_many_small_tables_reads_as_fast_as_one_table(local_loaders, make_user):
+    # a large sparse sheet once took minutes and stalled the server (#33768)
+    local_loaders(BYPASS_EMBEDDING_AND_RETRIEVAL=True)
+    rows = numbered_rows()
+    one_table = xlsx_bytes(rows)
+    small_tables = xlsx_bytes([row for pair in zip(rows, [[]] * TABLES) for row in pair])
+    with make_user().client() as client:
+        dense_seconds, _ = timed_read(client, "dense.xlsx", one_table)
+        sparse_seconds, content = timed_read(client, "sparse.xlsx", small_tables)
+
+    for value in (rows[0][0], rows[0][-1], rows[-1][0], rows[-1][-1]):
+        assert str(value) in content, f"{value} missing from the sparse sheet's text"
+    # bounded: the pre-fix ref takes about six times as long, not minutes, at this size
+    assert sparse_seconds < 2 * dense_seconds + 2, (
+        f"a sheet of {TABLES} small tables took {sparse_seconds:.1f}s to read, "
+        f"the same rows as one table {dense_seconds:.1f}s"
+    )
 
 
 def test_a_slide_deck_is_read(local_loaders, make_user):
