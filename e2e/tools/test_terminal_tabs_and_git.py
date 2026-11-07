@@ -1,30 +1,60 @@
-"""Journey: the tabbed workspace of a chat and its Git panel, on a real Open Terminal.
+"""Journey: the tabbed workspace of a chat, its split panes, its shortcuts and its Git panel.
 
-Since v0.13.0 (2d7cf5ec9 and 58926cfe7) the Tabs button of a chat opens a workspace of tabs. A
-person who picked an Open Terminal adds a shell and a new file from the workspace's New tab menu
-and drags the file's tab in front of the shell. Use full-width tabs spreads the workspace over
-the chat area with the conversation as a tab of its own, and the choice is still in place after a
-reload, where a terminal picked keeps the conversation in front and Files opens from New tab
-(89b924aae). When the file browser is in a Git repository, the Git panel under the tabs shows a
-changed file's diff, stages and commits it, and the commit shows in its History and on the disk.
+Since v0.13.0 (2d7cf5ec9 and 58926cfe7) a chat has a workspace of tabs. A person who picked an
+Open Terminal adds a shell and a new file from the workspace's New tab menu and drags the file's
+tab in front of the shell. Since 617618c9e the conversation is always a tab of the workspace on a
+large screen (the Use full-width tabs switch is gone), and the workspace splits into panes
+(cd1aadd75, 0349240ce, 80ddf8e3b): Ctrl+Backslash or the Split screen button puts the
+conversation and its tabs side by side and back, a tab dragged to the edge of a pane opens in a
+pane of its own beside or below it, a tab dragged onto another pane's tab bar joins that pane,
+closing a pane's only tab closes the pane, and the divider between two panes resizes them
+between a fifth and four fifths, by mouse and by arrow keys. The layout of a saved chat (panes,
+their tabs, the active tab, the divider) is saved for its person on the server (d4e8493cc), so
+it comes back after leaving the chat and returning, after a reload and in another browser, also
+when it was arranged before the first message; an admin opening the same chat gets the
+conversation alone. Layout changes made after the browser reports the network back are still
+saved.
 
-Discriminates: passes on v0.13.0 and dev 5f1c6384e; on a v0.13.0 build whose dropped tab keeps
-its old place, whose layout toggle saves nothing and whose Git panel ignores Stage, each test
-fails (the tab order, the side layout after the reload, no Unstage), while a file browser journey
-passes on that build.
+The workspace shortcuts (80ddf8e3b) open Files (Ctrl+Shift+E), a shell (Ctrl+`), a new file
+(Ctrl+Alt+N) and a browser (Ctrl+Shift+B), step through a pane's tabs (Ctrl+Shift+] and [) and
+close the active one (Ctrl+W, never the conversation). They do nothing while a menu or a dialog
+is open or with Keyboard Shortcuts switched off; Desktop (Ctrl+Alt+D) does nothing on a terminal
+without a desktop, New Chat Tab (Ctrl+Alt+O) needs the side chat permission and Comments
+(Ctrl+Shift+Y) needs comments switched on. When the file browser is in a Git repository, the
+Git panel under the tabs shows a changed file's diff, stages and commits it, and the commit shows
+in its History and on the disk.
 
 Since c24c3d914 each changed file's stage box and Stage all are checkboxes that say whether they
 are ticked, Stage all reading mixed while only some files are staged; Discard changes also deletes
 a file the last commit does not have, after a warning saying so; the list beside a diff can be
 resized from the keyboard. The branch menu makes a branch that takes the next commit while main
-stays as it was, and the sync button pushes a commit to the remote and publishes a new branch. Undo last commit in
-History takes the last commit back and keeps its change staged.
+stays as it was, and the sync button pushes a commit to the remote and publishes a new branch.
+Undo last commit in History takes the last commit back and keeps its change staged.
 
 Discriminates: on dev f659c0d12, in a frontend copy whose Stage all never reads mixed the stage
 test fails, one that offers Discard only for tracked files (as v0.13.0) fails the discard test,
 one whose divider ignores the keyboard fails the resize test, one whose branch pick checks
 nothing out fails the branch test and one that offers Fetch in place of Push fails the push test;
 the diff and undo tests stay green on that build as its controls.
+
+Retargeted for 617618c9e: `test_the_full_width_layout_is_kept_after_a_reload` saved the removed
+full-width switch and is now the split layout test; the reorder test now counts the conversation
+tab.
+
+`test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
+started with nothing pending wedges the chat's layout saving until the next reload (issue draft
+real-nf-split-1, from d4e8493cc). The same wedge can hit the reload test when a slow divider drag
+outpaces the saves.
+
+Discriminates for the workspace tests, in frontend builds of f659c0d12: with the layout never
+sent to the server the reload, first message and reconnect tests fail; with the menu and dialog
+guard gone the menu test fails, with the Keyboard Shortcuts switch ignored the switched off test
+fails, with side chats open to everyone the side chat test fails and with edge drops never
+splitting the drag test fails (the reorder, split, divider and shortcut tests pass there). With
+the divider unclamped the divider test fails, with Ctrl+Backslash unbound the split test fails
+and with Ctrl+W unbound the shortcut test fails; with the wedge fixed (no save started when
+nothing is pending) the reconnect test passes. The reorder test fails on v0.13.0 builds whose
+dropped tab keeps its old place.
 """
 
 from __future__ import annotations
@@ -32,28 +62,38 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import upstream as reply
+from harness.access import make_group
+from harness.actors import Actor
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
-from utils.chat_ui import chat_input
-from utils.tooltips import tooltip_button
+from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 
 @pytest.fixture
-def terminal_page(page_for, make_user, admin, preserve, open_terminal) -> tuple[Page, str]:
-    """A chat page of a fresh account with read access to the Open Terminal, and its name."""
+def terminal_account(make_user, admin, preserve, open_terminal) -> tuple[Actor, str]:
+    """A fresh account with read access to the Open Terminal, and the terminal's name."""
     preserve(TERMINAL_SERVERS_CONFIG)
     person = make_user()
     connection = open_terminal.connection(config={"access_grants": [read_grant(person.id)]})
     with admin.client() as client:
         configure_terminals(client, connection)
-    return page_for(person), connection["name"]
+    return person, connection["name"]
+
+
+@pytest.fixture
+def terminal_page(page_for, terminal_account) -> tuple[Page, str]:
+    """A chat page of that account, and the terminal's name."""
+    person, terminal = terminal_account
+    return page_for(person), terminal
 
 
 @pytest.fixture
@@ -104,21 +144,6 @@ def _drag(page: Page, source: Locator, target: Locator) -> None:
     page.mouse.up()
 
 
-def _unpick_terminal(page: Page, name: str) -> None:
-    # the Terminal menu's button is named for the terminal picked in it
-    tooltip_button(page.get_by_role("main"), name).click()
-    choice = page.get_by_role("menu").get_by_role("menuitemradio", name=name)
-    expect(choice).to_have_attribute("aria-checked", "true")
-    choice.click()
-    expect(page.get_by_role("region", name="File browser")).to_have_count(0)
-
-
-def _file_browser_width(page: Page) -> float:
-    files = page.get_by_role("region", name="File browser")
-    expect(files).to_be_visible()
-    return files.bounding_box()["width"]
-
-
 def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(terminal_page):
     page, terminal = terminal_page
     pick_terminal(page, terminal)
@@ -126,7 +151,7 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     _add_tab(page, "New File")
     strip = _tab_strip(page)
     expect(strip.get_by_role("tab", name="Untitled-1")).to_be_visible()
-    assert _tab_names(page) == ["Files", "Terminal 1", "Untitled-1"], (
+    assert _tab_names(page) == ["New Chat", "Files", "Terminal 1", "Untitled-1"], (
         f"the New tab menu added the tabs as {_tab_names(page)}"
     )
 
@@ -135,46 +160,392 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
         strip.get_by_role("tab", name="Untitled-1"),
         strip.get_by_role("tab", name="Terminal 1"),
     )
-    expect(strip.get_by_role("tab").nth(1)).to_have_text("Untitled-1")
-    assert _tab_names(page) == ["Files", "Untitled-1", "Terminal 1"], (
+    expect(strip.get_by_role("tab").nth(2)).to_have_text("Untitled-1")
+    assert _tab_names(page) == ["New Chat", "Files", "Untitled-1", "Terminal 1"], (
         f"dragging the new file's tab before the shell left the tabs as {_tab_names(page)}"
     )
 
 
-def test_the_full_width_layout_is_kept_after_a_reload(terminal_page):
+def _panes(page: Page) -> list[list[str]]:
+    """The tab names of each pane, the panes from left to right and then top to bottom."""
+    strips = page.get_by_role("tablist", name="Tabs").all()
+    placed = sorted(
+        strips, key=lambda strip: (round(strip.bounding_box()["x"]), strip.bounding_box()["y"])
+    )
+    return [
+        [name.strip() for name in strip.get_by_role("tab").all_inner_texts()] for strip in placed
+    ]
+
+
+def _expect_panes(page: Page, expected: list[list[str]], any_order: bool = False) -> None:
+    """The panes hold these tabs; `any_order` where the order inside a pane is not the point."""
+    expect(page.get_by_role("tablist", name="Tabs")).to_have_count(len(expected))
+
+    def held() -> list:
+        panes = _panes(page)
+        return [sorted(names) for names in panes] if any_order else panes
+
+    wanted = [sorted(names) for names in expected] if any_order else expected
+    _wait_until(lambda: held() == wanted)
+    assert held() == wanted, f"the panes hold {_panes(page)}, expected {expected}"
+
+
+def _wait_until(condition, seconds: float = 15.0) -> None:
+    """Wait for a state the page or the server reaches on its own; the caller asserts it."""
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+
+def _selected(page: Page, name: str) -> None:
+    expect(page.get_by_role("tab", name=name, exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
+
+
+def _divider(page: Page) -> Locator:
+    return page.get_by_role("separator", name="Resize panels")
+
+
+def _drag_to(page: Page, source: Locator, x: float, y: float) -> None:
+    """Drag `source` by the mouse to the point, in steps as a hand moves."""
+    start = source.bounding_box()
+    page.mouse.move(start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(start["x"] + start["width"] / 2 + 10, start["y"] + start["height"] / 2, steps=5)
+    page.mouse.move(x, y, steps=20)
+    page.mouse.up()
+
+
+def _answered_chat(page: Page, upstream, terminal: str) -> str:
+    """Pick the terminal, ask one question with the conversation in front; returns the chat id."""
+    pick_terminal(page, terminal)
+    _tab_strip(page).get_by_role("tab", name="New Chat", exact=True).click()
+    question = f"plan the harbour walk {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Start at the lighthouse.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "Start at the lighthouse.")
+    expect(page).to_have_url(re.compile(r"/c/"))
+    return page.url.rsplit("/", 1)[-1]
+
+
+def _saved_view(person, chat_id: str) -> dict | None:
+    with person.client() as client:
+        response = client.get(f"/api/v1/chats/{chat_id}/view")
+    assert response.status_code == 200, response.text
+    return response.json()["state"]
+
+
+def test_ctrl_backslash_and_the_split_button_put_the_conversation_beside_its_tabs(terminal_page):
     page, terminal = terminal_page
     pick_terminal(page, terminal)
-    side_width = _file_browser_width(page)
+    _expect_panes(page, [["New Chat", "Files"]])
+    split = page.get_by_role("button", name="Split screen")
+    expect(split).to_have_attribute("aria-pressed", "false")
 
-    page.get_by_role("button", name="Use full-width tabs").click()
-    layout = page.get_by_role("button", name="Use side tabs")
-    expect(layout).to_have_attribute("aria-pressed", "true")
-    # the conversation becomes the first tab, in front of the Files tab
-    expect(_tab_strip(page).get_by_role("tab")).to_have_count(2)
+    page.keyboard.press("Control+Backslash")
+    _expect_panes(page, [["New Chat"], ["Files"]])
+    expect(split).to_have_attribute("aria-pressed", "true")
+    # side by side: the message box and the file browser both show
+    expect(chat_input(page)).to_be_visible()
+    expect(page.get_by_role("region", name="File browser")).to_be_visible()
+    page.keyboard.press("Control+Backslash")
+    _expect_panes(page, [["New Chat", "Files"]], any_order=True)
+    expect(split).to_have_attribute("aria-pressed", "false")
+
+    split.click()
+    _expect_panes(page, [["New Chat"], ["Files"]])
+    split.click()
+    _expect_panes(page, [["New Chat", "Files"]], any_order=True)
+
+
+def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_it(terminal_page):
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+    open_new_terminal(page)
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    shell = page.get_by_role("tabpanel", name="Terminal 1")
+
+    area = shell.bounding_box()
+    _drag_to(
+        page,
+        _tab_strip(page).get_by_role("tab", name="Terminal 1"),
+        area["x"] + area["width"] - 20,
+        area["y"] + area["height"] / 2,
+    )
+    _expect_panes(page, [["New Chat", "Files"], ["Terminal 1"]])
+    expect(_divider(page)).to_have_attribute("aria-orientation", "vertical")
+    _selected(page, "Terminal 1")
+
+    _drag_to(
+        page,
+        _tab_strip(page).get_by_role("tab", name="Terminal 1"),
+        *_empty_part_of_tab_bar(page.get_by_role("tablist", name="Tabs").filter(has_text="Files")),
+    )
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    expect(_divider(page)).to_have_count(0)
+
     _tab_strip(page).get_by_role("tab", name="Files").click()
-    full_width = _file_browser_width(page)
-    assert full_width > side_width * 1.5, (
-        f"the file browser is {full_width}px wide in full-width tabs and {side_width}px beside"
+    area = page.get_by_role("region", name="File browser").bounding_box()
+    _drag_to(
+        page,
+        _tab_strip(page).get_by_role("tab", name="Files"),
+        area["x"] + area["width"] / 2,
+        area["y"] + area["height"] - 20,
+    )
+    # a drop on the bottom edge stacks the panes, one tab bar above the other
+    expect(_divider(page)).to_have_attribute("aria-orientation", "horizontal")
+    _expect_panes(page, [["New Chat", "Terminal 1"], ["Files"]])
+    upper, lower = (
+        strip.bounding_box() for strip in page.get_by_role("tablist", name="Tabs").all()
+    )
+    assert abs(upper["x"] - lower["x"]) < 2 and abs(upper["y"] - lower["y"]) > 100, (
+        f"the two panes' tab bars are at {upper} and {lower}, not one above the other"
     )
 
-    # unpicked, so the reloaded draft brings no terminal back before the panel has loaded
-    _tab_strip(page).get_by_role("tab").first.click()
-    expect(chat_input(page)).to_be_visible()
-    _unpick_terminal(page, terminal)
+    # closing a pane's only tab closes the pane
+    _selected(page, "Files")
+    page.keyboard.press("Control+W")
+    _expect_panes(page, [["New Chat", "Terminal 1"]])
+    expect(_divider(page)).to_have_count(0)
+
+
+def _empty_part_of_tab_bar(strip: Locator) -> tuple[float, float]:
+    """A point on the bar holding `strip`, past its tabs and New tab button, where a drop joins."""
+    bar = strip.locator("xpath=ancestor::div[@data-panel-tab-bar]").bounding_box()
+    tabs = strip.bounding_box()
+    return (tabs["x"] + tabs["width"] + bar["x"] + bar["width"]) / 2, bar["y"] + bar["height"] / 2
+
+
+def test_the_divider_resizes_the_panes_between_a_fifth_and_four_fifths(terminal_page):
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+    page.get_by_role("button", name="Split screen").click()
+    _expect_panes(page, [["New Chat"], ["Files"]])
+    divider = _divider(page)
+    expect(divider).to_have_attribute("aria-valuenow", "50")
+    half = page.get_by_role("tabpanel", name="New Chat").bounding_box()["width"]
+
+    _drag_divider_to(page, 0.3)
+    _expect_ratio(divider, 30)
+    narrow = page.get_by_role("tabpanel", name="New Chat").bounding_box()["width"]
+    assert narrow < half * 0.7, f"the conversation is still {narrow}px of {half}px"
+
+    _drag_divider_to(page, 0.02)
+    expect(divider).to_have_attribute("aria-valuenow", "20")
+    _drag_divider_to(page, 0.98)
+    expect(divider).to_have_attribute("aria-valuenow", "80")
+    divider.focus()
+    page.keyboard.press("ArrowLeft")
+    expect(divider).to_have_attribute("aria-valuenow", "75")
+
+
+def _drag_divider_to(page: Page, fraction: float) -> None:
+    """Drag the divider to that fraction of the width the two side-by-side panes share."""
+    shown = [
+        box for box in (panel.bounding_box() for panel in page.get_by_role("tabpanel").all()) if box
+    ]
+    start = min(box["x"] for box in shown)
+    end = max(box["x"] + box["width"] for box in shown)
+    middle = shown[0]["y"] + shown[0]["height"] / 2
+    _drag_to(page, _divider(page), start + (end - start) * fraction, middle)
+
+
+def _expect_ratio(divider: Locator, percent: int) -> None:
+    expect(divider).to_have_attribute(
+        "aria-valuenow", re.compile("|".join(str(percent + step) for step in (-2, -1, 0, 1, 2)))
+    )
+
+
+def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
+    terminal_account, page_for, admin, upstream, config
+):
+    person, terminal = terminal_account
+    page = page_for(person)
+    chat_id = _answered_chat(page, upstream, terminal)
+    title = _tab_strip(page).get_by_role("tab").first.inner_text().strip()
+    page.keyboard.press("Control+Backslash")
+    _tab_strip(page).get_by_role("tab", name="Files").click()
+    page.keyboard.press("Control+Backquote")
+    layout = [[title], ["Files", "Terminal 1"]]
+    _expect_panes(page, layout)
+    _selected(page, "Terminal 1")
+    _drag_divider_to(page, 0.3)
+    ratio = _divider(page).get_attribute("aria-valuenow")
+    assert ratio != "50", "dragging the divider left the panes at half and half"
+
+    # wait for the server to hold the layout before reloading; a drag slower than the saves can
+    # wedge the saving on dev f659c0d12 (issue draft real-nf-split-1)
+    held = (int(ratio), "Terminal 1")
+    _wait_until(lambda: _layout_of(_saved_view(person, chat_id)) == held)
+    assert _layout_of(_saved_view(person, chat_id)) == held, _saved_view(person, chat_id)
+
+    # leaving for a new chat and coming back brings the layout back too
+    page.keyboard.press("Control+Shift+O")
+    _expect_panes(page, [["New Chat"]])
+    page.go_back()
+    _expect_panes(page, layout)
+    _selected(page, "Terminal 1")
+    expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
+
     page.reload()
-    # since 89b924aae a terminal picked in full-width tabs leaves the conversation in front
-    expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
-    page.get_by_role("menu").get_by_role("menuitemradio", name=terminal).click()
-    expect(tooltip_button(page.get_by_role("main"), terminal)).to_be_visible()
-    expect(layout).to_have_attribute("aria-pressed", "true")
-    _add_tab(page, "Files")
-    expect(_tab_strip(page).get_by_role("tab")).to_have_count(2)
-    _tab_strip(page).get_by_role("tab", name="Files").click()
-    after_reload = _file_browser_width(page)
-    assert after_reload > side_width * 1.5, (
-        f"after a reload the file browser is back to {after_reload}px, the side layout"
+    # a reload is a cold load, which page_for would otherwise wait out
+    expect(page.get_by_text("Start at the lighthouse.")).to_be_visible(
+        timeout=config.navigation_timeout
     )
+    _expect_panes(page, layout)
+    _selected(page, "Terminal 1")
+    expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
+
+    elsewhere = page_for(person, path=f"/c/{chat_id}")
+    _expect_panes(elsewhere, layout)
+    _selected(elsewhere, "Terminal 1")
+    expect(_divider(elsewhere)).to_have_attribute("aria-valuenow", ratio)
+
+    # the layout is the person's own: an admin opening the chat gets the conversation alone
+    overseer = page_for(admin, path=f"/c/{chat_id}")
+    expect(overseer.get_by_text("Start at the lighthouse.")).to_be_visible()
+    _expect_panes(overseer, [[title]])
+    expect(_divider(overseer)).to_have_count(0)
+
+
+def test_a_layout_arranged_before_the_first_message_is_kept_with_the_chat(
+    terminal_account, page_for, upstream, config
+):
+    person, terminal = terminal_account
+    page = page_for(person)
+    pick_terminal(page, terminal)
+    page.keyboard.press("Control+Backslash")
+    _expect_panes(page, [["New Chat"], ["Files"]])
+    question = f"where do the ferries leave {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("From the east pier.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "From the east pier.")
+    expect(page).to_have_url(re.compile(r"/c/"))
+    chat_id = page.url.rsplit("/", 1)[-1]
+
+    # the conversation took the focus to send, so it is the active tab
+    held = (50, "New Chat")
+    _wait_until(lambda: _layout_of(_saved_view(person, chat_id)) == held)
+    assert _layout_of(_saved_view(person, chat_id)) == held, _saved_view(person, chat_id)
+    page.reload()
+    expect(page.get_by_text("From the east pier.")).to_be_visible(timeout=config.navigation_timeout)
+    title = _panes(page)[0][0]
+    _expect_panes(page, [[title], ["Files"]])
+
+
+def test_layout_changes_after_a_network_reconnect_are_still_saved(
+    terminal_account, page_for, upstream, config
+):
+    """Red on dev f659c0d12: a save with nothing pending, as the back-online event starts, wedges
+    the chat's layout saving until the next reload (issue draft real-nf-split-1)."""
+    person, terminal = terminal_account
+    page = page_for(person)
+    chat_id = _answered_chat(page, upstream, terminal)
+    page.get_by_role("button", name="Split screen").click()
+    expect(_divider(page)).to_have_attribute("aria-valuenow", "50")
+    _wait_until(lambda: (_layout_of(_saved_view(person, chat_id)) or (0,))[0] == 50)
+    assert (_layout_of(_saved_view(person, chat_id)) or (0,))[0] == 50, "the split was not saved"
+
+    # the browser reports the network back, with the layout already saved
+    page.evaluate("window.dispatchEvent(new Event('online'))")
+    _divider(page).focus()
+    for _ in range(3):
+        page.keyboard.press("ArrowLeft")
+    expect(_divider(page)).to_have_attribute("aria-valuenow", "35")
+    _wait_until(lambda: (_layout_of(_saved_view(person, chat_id)) or (0,))[0] == 35)
+    saved = _layout_of(_saved_view(person, chat_id))
+    assert saved and saved[0] == 35, f"the divider moved to 35% but the server holds {saved}"
+
+
+def _layout_of(view: dict | None) -> tuple[int, str] | None:
+    if not view or view["panels"]["layout"]["type"] != "split":
+        return None
+    labels = {tab["id"]: tab["label"] for tab in view["panels"]["tabs"]}
+    percent = round(view["panels"]["layout"]["ratio"] * 100)
+    return percent, labels.get(view["panels"]["activeId"], "")
+
+
+def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page):
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+    _expect_panes(page, [["New Chat", "Files"]])
+
+    page.keyboard.press("Control+W")
+    _expect_panes(page, [["New Chat"]])
+    page.keyboard.press("Control+Shift+E")
+    _expect_panes(page, [["New Chat", "Files"]])
+    _selected(page, "Files")
+    page.keyboard.press("Control+Backquote")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _selected(page, "Terminal 1")
+    page.keyboard.press("Control+Alt+N")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+    _selected(page, "Untitled-1")
+    page.keyboard.press("Control+Shift+B")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1", "Browser"]])
+    _selected(page, "Browser")
+
+    page.keyboard.press("Control+Shift+BracketLeft")
+    _selected(page, "Untitled-1")
+    page.keyboard.press("Control+Shift+BracketRight")
+    _selected(page, "Browser")
+    page.keyboard.press("Control+Shift+BracketRight")
+    _selected(page, "New Chat")
+    # the conversation never closes, and this terminal offers no desktop
+    page.keyboard.press("Control+W")
+    page.keyboard.press("Control+Alt+D")
+    page.keyboard.press("Control+Shift+BracketLeft")
+    _selected(page, "Browser")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1", "Browser"]])
+    page.keyboard.press("Control+W")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+
+
+def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(terminal_page):
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+
+    page.get_by_role("button", name="New tab", exact=True).click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem", name=re.compile("^New Terminal"))).to_be_visible()
+    page.keyboard.press("Control+Backquote")
+    page.keyboard.press("Control+Backslash")
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+    # live again: a shell the menu had let through would make this one Terminal 2
+    page.keyboard.press("Control+Backquote")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+
+    page.keyboard.press("Control+Period")
+    settings = page.get_by_role("dialog")
+    expect(settings.get_by_role("tab", name="General")).to_be_visible()
+    page.keyboard.press("Control+Alt+N")
+    page.keyboard.press("Control+W")
+    page.keyboard.press("Escape")
+    expect(settings).to_have_count(0)
+    page.keyboard.press("Control+Alt+N")
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+
+
+def test_workspace_shortcuts_do_nothing_with_keyboard_shortcuts_switched_off(
+    terminal_account, page_for
+):
+    person, terminal = terminal_account
+    with person.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"keyboardShortcuts": False}}
+        )
+        assert saved.status_code == 200, saved.text
+    page = page_for(person)
+    pick_terminal(page, terminal)
+
+    page.keyboard.press("Control+Backquote")
+    page.keyboard.press("Control+Backslash")
+    page.keyboard.press("Control+W")
+    # the menu's shell comes after the shortcuts, so it is Terminal 2 if one of them answered
+    open_new_terminal(page)
+    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
 
 
 def _open_git_panel(page: Page, terminal: str, folder) -> Locator:
@@ -390,3 +761,54 @@ def test_undoing_the_last_commit_from_history_keeps_its_changes_staged(terminal_
     expect(git.get_by_text("A tide too early")).to_have_count(0)
     assert _git(repository, "log", "-1", "--format=%s").strip() == "Start the tide log"
     assert _staged(repository) == {"tides.txt"}, "the undone commit's change is not staged"
+
+
+def _set_comments(admin, enabled: bool) -> None:
+    with admin.client() as client:
+        current = client.get("/api/v1/auths/admin/config").json()
+        saved = client.post(
+            "/api/v1/auths/admin/config", json={**current, "ENABLE_COMMENTS": enabled}
+        )
+    assert saved.status_code == 200, saved.text
+
+
+def _answered(page: Page, upstream) -> str:
+    """Ask one question in the page's new chat; returns the conversation tab's name."""
+    question = f"name a quiet beach {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Try the north cove.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "Try the north cove.")
+    expect(page).to_have_url(re.compile(r"/c/"))
+    return _tab_strip(page).get_by_role("tab").first.inner_text().strip()
+
+
+def test_side_chat_and_comments_shortcuts_answer_only_where_allowed(
+    page_for, make_user, admin, preserve, upstream
+):
+    preserve("admin_config")
+    preserve("permissions")
+    _set_comments(admin, False)
+    with admin.client() as client:
+        defaults = client.get("/api/v1/users/default/permissions").json()
+        defaults["chat"]["side_chat"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=defaults)
+    assert saved.status_code == 200, saved.text
+    page = page_for(make_user())
+    title = _answered(page, upstream)
+    page.keyboard.press("Control+Alt+O")
+    page.keyboard.press("Control+Shift+Y")
+    # the search opens after both chords were handled
+    page.keyboard.press("Control+K")
+    expect(page.get_by_role("dialog").get_by_placeholder("Search")).to_be_visible()
+    _expect_panes(page, [[title]])
+
+    _set_comments(admin, True)
+    allowed = make_user()
+    make_group(admin, [allowed], {"chat": {"side_chat": True}})
+    page = page_for(allowed)
+    title = _answered(page, upstream)
+    page.keyboard.press("Control+Alt+O")
+    _expect_panes(page, [[title, "New Chat 1"]])
+    page.keyboard.press("Control+Shift+Y")
+    _expect_panes(page, [[title, "New Chat 1", "Comments"]])
+    _selected(page, "Comments")
