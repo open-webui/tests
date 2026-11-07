@@ -57,6 +57,16 @@ def side_chat_panel(page: Page, question: str) -> Locator:
     return page.get_by_role("tabpanel", name=question, exact=True)
 
 
+def chat_tab_bar(page: Page) -> Locator:
+    """The bar over the open chat: its tabs, the "Chat actions" menu and who else has it open."""
+    # the bar has no role or name of its own, only the tab list inside it
+    return (
+        page.get_by_role("main")
+        .locator("[data-panel-tab-bar]")
+        .filter(has=page.get_by_role("tablist", name="Tabs"))
+    )
+
+
 def stop_button(page: Page) -> Locator:
     return page.get_by_role("button", name="Stop")
 

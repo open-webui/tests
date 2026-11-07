@@ -9,8 +9,8 @@ to scroll, left scrolled to its end, "Scroll to Top" brings the first message ba
 unread dot has no text or role of its own, so it is found by its colour class.
 
 Since 0.12.5 (551b03ff9) Rename in the header menu turns the chat's title into a text box: Enter
-saves the new title, shown in the header, the sidebar and the stored chat, while a blank title is
-refused with a toast and nothing is sent. The owner of a shared folder sees a member's chat in it
+saves the new title, shown on the chat's tab, the sidebar and the stored chat, while a blank title
+is refused with a toast and nothing is sent. The owner of a shared folder sees a member's chat in it
 read-only yet gets Rename there and saves it (f517e528d); a member reading the owner's chat in the
 folder gets no Rename.
 
@@ -241,8 +241,13 @@ def test_header_menu_scroll_to_top_brings_the_first_message_into_view(make_user,
 
 
 def _header(page: Page) -> Locator:
-    """The bar over the open chat, holding its title and the "Chat actions" menu."""
-    return page.locator("nav").filter(has=page.get_by_label("Chat actions"))
+    """The tab bar over the open chat, holding its titled tab and the "Chat actions" menu."""
+    return page.get_by_role("main").get_by_role("tablist", name="Tabs")
+
+
+def _shown_title(page: Page) -> Locator:
+    """The title the open chat's tab shows; its accessible name stays the stored title."""
+    return _header(page).get_by_role("tab", selected=True)
 
 
 def _start_rename(page: Page, title: str) -> Locator:
@@ -252,7 +257,7 @@ def _start_rename(page: Page, title: str) -> Locator:
     box = _header(page).get_by_role("textbox", name="Title")
     expect(box).to_be_focused()
     expect(box).to_have_value(title)
-    expect(_header(page).get_by_role("heading", level=1)).to_have_count(0)
+    expect(_shown_title(page)).to_have_text("")
     return box
 
 
@@ -287,7 +292,7 @@ def test_header_menu_rename_saves_the_new_title_on_enter(make_user, page_for):
     status = _save_title(page, box, chat_id, renamed)
 
     assert status == 200, f"saving the new title got {status}"
-    expect(_header(page).get_by_role("heading", level=1)).to_have_text(renamed)
+    expect(_shown_title(page)).to_have_text(renamed)
     expect(box).to_have_count(0)
     assert _stored_title(account, chat_id) == renamed
     expect(_entry(sidebar, renamed)).to_be_visible()
@@ -314,7 +319,7 @@ def test_header_menu_rename_refuses_a_blank_title_and_keeps_the_old_one(make_use
     box.press("Enter")
 
     expect(page.get_by_text("Title cannot be an empty string.")).to_be_visible()
-    expect(_header(page).get_by_role("heading", level=1)).to_have_text(title)
+    expect(_shown_title(page)).to_have_text(title)
     assert saves == [], f"a blank title was sent to the server: {saves}"
     assert _stored_title(account, chat_id) == title
 
@@ -346,7 +351,7 @@ def test_shared_folder_owner_renames_a_members_chat_from_its_header_but_not_the_
     status = _save_title(owner_page, box, members_chat, renamed)
 
     assert status == 200, f"the owner's rename got {status}"
-    expect(_header(owner_page).get_by_role("heading", level=1)).to_have_text(renamed)
+    expect(_shown_title(owner_page)).to_have_text(renamed)
     assert _stored_title(member, members_chat) == renamed
 
     # a member reading the owner's chat in the folder gets no Rename

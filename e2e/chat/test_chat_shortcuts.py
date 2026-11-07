@@ -25,7 +25,8 @@ chat's Controls into the Model controls menu and points the shortcut at the side
 on dev d22c4449c and fails in a build whose Toggle Controls does nothing. Since 5f1c6384e the
 panel stays closed when it has no tab to show, so that test opens it as an admin, whose answered
 chat offers a side chat. Since 4615d30a6 the panel opens on its empty + menu instead of
-starting a side chat; retargeted, the test passes on dev c165ee14f.
+starting a side chat; retargeted, the test passes on dev c165ee14f. Since 617618c9e a window
+768px or wider always shows the tabs, so the test runs in a narrower one.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 QUESTION = "Name a mountain in Peru"
 ANSWER = "Huascaran is the highest."
+NARROW_WINDOW = {"width": 700, "height": 900}
 
 
 @pytest.fixture
@@ -238,7 +240,8 @@ def test_bound_toggle_controls_opens_and_closes_the_side_panel(page_for, make_us
     # the panel stays shut unless it has a tab to show or can start a side chat, as an admin can
     admin = make_user(role="admin")
     bind(admin, {"toggleControls": "Cmd+Shift+Y"})
-    page = page_for(admin)
+    # a wide window always shows the tabs; below 768px they are a panel that opens and closes
+    page = page_for(admin, viewport=NARROW_WINDOW)
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
     send(page, QUESTION)
     expect_reply(page, ANSWER)

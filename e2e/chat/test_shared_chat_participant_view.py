@@ -35,7 +35,14 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.access import grant
-from utils.chat_ui import chat_input, conversation, expect_reply, send, stop_button
+from utils.chat_ui import (
+    chat_input,
+    chat_tab_bar,
+    conversation,
+    expect_reply,
+    send,
+    stop_button,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -104,12 +111,11 @@ def _actions(page: Page, text: str) -> dict[str, int]:
 
 
 def _sees_present(page: Page, other) -> None:
-    """The navbar shows `other` with the chat open, so both pages have joined it live."""
-    navbar = page.get_by_role("navigation").filter(
-        has=page.get_by_role("button", name="Tabs", exact=True)
-    )
+    """The chat's tab bar shows `other` with the chat open, so both pages have joined it live."""
     # presence avatars carry no name, only the person's picture
-    expect(navbar.locator(f'img[src$="/users/{other.id}/profile/image"]')).to_be_visible()
+    expect(
+        chat_tab_bar(page).locator(f'img[src$="/users/{other.id}/profile/image"]')
+    ).to_be_visible()
 
 
 def _typing_line(page: Page) -> Locator:

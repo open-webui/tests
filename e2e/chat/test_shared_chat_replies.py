@@ -64,7 +64,15 @@ from harness.access import grant, make_group
 from harness.chat_history import seed_chat
 from harness.socket_client import connected
 from utils.chat_controls import open_chat_controls
-from utils.chat_ui import chat_input, close_menu, conversation, expect_reply, last_reply, send
+from utils.chat_ui import (
+    chat_input,
+    chat_tab_bar,
+    close_menu,
+    conversation,
+    expect_reply,
+    last_reply,
+    send,
+)
 from utils.member_picker import pick_member
 from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.voice_call import start_call
@@ -333,14 +341,9 @@ def test_a_clone_from_the_link_starts_without_the_owners_system_prompt(
     ] == [ANSWER]
 
 
-def _chat_header(page: Page) -> Locator:
-    # the sidebar's navigation sits outside the main landmark
-    return page.get_by_role("main").get_by_role("navigation")
-
-
 def _present(page: Page, person) -> Locator:
-    """The picture of someone with the chat open, in the chat's top bar."""
-    return _chat_header(page).get_by_role("button", name=person.name, exact=True)
+    """The picture of someone with the chat open, in the chat's tab bar."""
+    return chat_tab_bar(page).get_by_role("button", name=person.name, exact=True)
 
 
 def _profile_card(page: Page) -> Locator:
@@ -388,7 +391,7 @@ def test_the_collaborators_list_names_everyone_past_three_and_opens_their_card(
             )
             assert joined is True, f"{person.name} could not open the chat"
 
-        listed = _chat_header(owner_page).get_by_role("button", name="Collaborators")
+        listed = chat_tab_bar(owner_page).get_by_role("button", name="Collaborators")
         expect(listed).to_have_text("+1")
         listed.click()
         collaborators = owner_page.get_by_role("dialog", name="Collaborators")
