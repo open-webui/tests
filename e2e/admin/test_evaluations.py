@@ -5,6 +5,7 @@ rating one reply is a win or a loss against the other. The Leaderboard then list
 in Elo order with their won and lost counts, its column headers re-sort it both ways, and a model's
 row opens the tags its ratings were given in the rating form. The Feedback tab lists each rating,
 filters by model, lets the admin delete an entry and exports what the filter shows as JSON or CSV.
+Deleting the last rating of the model the tab is narrowed to shows all ratings again.
 An arena model the admin adds in the Evaluations settings, limited to one model and made public,
 answers a user through that model, and rating its reply names the model that answered. The admin
 settings decide where evaluations show: switching message rating off removes the thumbs from a
@@ -28,6 +29,8 @@ leaves out the top tags the tags test, an export that ignores the model filter t
 a rating form without the arena's answer the added arena test. The added arena test makes the
 model public from the Visibility menu that replaced the arena dialog's Private and Public select:
 it passes on dev b40891e0a, and a frontend copy of it whose menu changes nothing turns it red.
+The last rating test passes on dev f659c0d12 and fails in a frontend copy with 88cf7f209
+(#33794) undone (the tab stays on the deleted model and lists nothing).
 """
 
 from __future__ import annotations
@@ -210,6 +213,26 @@ def test_an_admin_deletes_a_rating_from_the_feedback_tab(duel, admin, page_for):
     with rater.client() as client:
         kept = client.get("/api/v1/evaluations/feedbacks/user").json()["items"]
     assert [item["data"]["model_id"] for item in kept] == [first_id]
+
+
+def test_deleting_the_last_rating_of_the_chosen_model_shows_all_ratings_again(
+    duel, admin, page_for
+):
+    """#33794: the filter stayed on a model with no ratings left, so the tab showed none."""
+    rater, (first_id, _), (second_id, _) = duel([(0, "Good Response"), (1, "Good Response")])
+    page = _open_evaluations(admin, page_for, "feedback")
+    expect(_feedback_row(page, rater, first_id)).to_have_count(1)
+    _narrow_to(page, second_id)
+    expect(_feedback_row(page, rater, first_id)).to_have_count(0)
+
+    _feedback_row(page, rater, second_id).get_by_role("button", name="More").click()
+    page.get_by_role("menuitem", name="Delete").click()
+
+    expect(page.get_by_text("Feedback deleted successfully")).to_be_visible()
+    expect(_feedback_row(page, rater, second_id)).to_have_count(0)
+    expect(
+        _feedback_row(page, rater, first_id), "the filter stayed on the model with no ratings"
+    ).to_have_count(1)
 
 
 def test_switching_message_rating_off_removes_the_thumbs_from_a_reply(
