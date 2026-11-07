@@ -11,12 +11,14 @@ by a marker in the prompt text:
 - `[ask]` asks the user a form question and answers with the value it got back.
 - `[refuse]` answers the prompt with a JSON-RPC error.
 - `[crash]` exits with status 3 halfway through the turn.
+- `[slow]` starts answering, then waits for the client to cancel the turn.
 - anything else thinks once and streams back what it heard, with its model and folder.
 """
 
 import json
 import os
 import sys
+import time
 import uuid
 
 MODELS = [
@@ -95,6 +97,16 @@ def run_turn(request_id, params: dict) -> None:
         sys.stderr.write(CRASH_NOTE + "\n")
         sys.stderr.flush()
         os._exit(3)
+    if "[slow]" in text:
+        say("Working on it... ")
+        # a second piece past Open WebUI's 50ms send throttle, so the first one is sent too
+        time.sleep(0.2)
+        say("still going")
+        while (message := receive()) is not None:
+            if message.get("method") == "session/cancel":
+                send({"id": request_id, "result": {"stopReason": "cancelled"}})
+                return
+        sys.exit(0)
     if "[tool]" in text:
         call = {"toolCallId": "read-1", "title": "Read notes.txt", "kind": "read"}
         update("tool_call", **call, status="in_progress", rawInput={"path": "notes.txt"})

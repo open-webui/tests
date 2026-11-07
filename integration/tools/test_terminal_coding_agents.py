@@ -8,8 +8,10 @@ and starts it, Open WebUI speaks the Agent Client Protocol with it over the term
 socket, and the agent's thinking, tool calls and answer are stored as the reply. A permission
 request asks the person (unless the chat has full access), a question goes through the question
 card, and the next message resumes the agent's own session. A new agent chat takes its first
-message as its title (18f7633af). The agent here is `harness/fake_acp_agent.py`, run by a real
-Open Terminal as its OpenCode agent.
+message as its title (18f7633af). As in any chat, an attached file reaches the agent (copied
+into its terminal, with the path in the prompt), the chat's system prompt reaches it as
+instructions, and Stop cancels the agent's turn while the chat goes on. The agent here is
+`harness/fake_acp_agent.py`, run by a real Open Terminal as its OpenCode agent.
 
 Discriminates: passes on dev f659c0d12. Mutations in a backend copy, each turning only the named
 tests red: discovery returning no models (the listing, chat and stranger tests); the access
@@ -17,7 +19,9 @@ check in `resolve_terminal_connection` skipped (the stranger listing test); the 
 allowing every permission request (the reject and someone-else tests); every agent request
 asking even with full access (the full access test); `resume` dropped from the session options
 (the continue test); the branch check removed (the branching test); the first-message title for
-agent chats removed (the title test).
+agent chats removed (the title test); the attached-files note dropped from the prompt (the
+attachment test); empty instructions (the system prompt test); no cancel sent to the agent on
+Stop (the stop test).
 """
 
 from __future__ import annotations
@@ -479,3 +483,85 @@ def test_a_new_agent_chat_is_titled_after_its_first_message(make_user, connect):
             time.sleep(0.1)
 
     assert title == prompt[:50], f"the agent chat was not titled after its first message: {title!r}"
+
+
+def test_a_file_attached_to_the_message_reaches_the_agent_in_its_terminal(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+
+    with person.client() as client:
+        uploaded = client.post(
+            "/api/v1/files/",
+            params={"process": "false"},
+            files={"file": ("brief.txt", b"ship it on friday\n", "text/plain")},
+        )
+        assert uploaded.status_code == 200, f"uploading the file failed: {uploaded.text}"
+        file_id = uploaded.json()["id"]
+        attached = [{"type": "file", "id": file_id, "name": "brief.txt"}]
+        turn = ask_agent(
+            client, terminal["id"], "read the brief", message_files=attached, files=attached
+        )
+        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    assert "error" not in reply, f"the agent turn failed: {reply.get('error')}"
+    copy = agent_terminal.terminal.home / f"{file_id}.txt"
+    assert copy.read_text() == "ship it on friday\n", "the file did not land in the terminal"
+    prompt = agent_terminal.received("session/prompt")[-1]["prompt"][-1]["text"]
+    assert f"Attached files in this environment:\n{copy}" in prompt, (
+        f"the agent was not told where the attached file is: {prompt!r}"
+    )
+
+
+def test_the_chats_system_prompt_reaches_the_agent_as_instructions(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+    system = f"Always answer in haiku {uuid.uuid4().hex[:6]}"
+
+    with person.client() as client:
+        turn = ask_agent(
+            client,
+            terminal["id"],
+            "describe the repo",
+            history=[{"role": "system", "content": system}],
+        )
+        wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    prompt = agent_terminal.received("session/prompt")[-1]["prompt"]
+    instructions = [block for block in prompt if block.get("annotations")]
+    assert [block["text"] for block in instructions] == [system], (
+        f"the agent did not get the system prompt as instructions: {prompt}"
+    )
+    assert prompt[-1]["text"] == "describe the repo"
+
+
+def test_stopping_an_agent_reply_cancels_the_turn_and_the_chat_goes_on(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+
+    with person.client() as client, connected(person) as tab:
+        turn = ask_agent(client, terminal["id"], "[slow] big refactor", session_id=tab.sid)
+        tab.wait_for(turn.chat_id, "chat:completion", content="Working on it... still going")
+        stopped = client.post(f"/api/tasks/chat/{turn.chat_id}/stop")
+        assert stopped.status_code == 200, f"stopping the reply failed: {stopped.text}"
+        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+        follow = ask_agent(
+            client,
+            terminal["id"],
+            "smaller step then",
+            chat_id=turn.chat_id,
+            parent_id=turn.assistant_message_id,
+        )
+        follow_reply = wait_for_reply(client, follow, REPLY_TIMEOUT)
+
+    assert reply["content"] == "Working on it... still going", reply
+    assert agent_terminal.received("session/cancel"), "the agent was never told to stop"
+    assert "error" not in follow_reply, (
+        f"the chat could not go on after the stop: {follow_reply.get('error')}"
+    )
+    assert follow_reply["content"].startswith("Agent heard: "), follow_reply
