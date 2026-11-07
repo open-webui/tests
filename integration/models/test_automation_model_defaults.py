@@ -19,6 +19,17 @@ sub-agents and timers prepare their reply, is refused with 409 and the reply is 
 Discriminates: passes on dev efe63bd34; with 60ded561a reverted in a backend copy both cold-cache
 tests fail (no tools offered, and the channel run says "You are <model id>"). The warm-cache test
 passes on both.
+
+Default tools for all models (#33749, 870107b34): tools an admin sets in Model Defaults are the
+tools of every model without a tool list of its own, in the model list the chat page reads and in
+an automation run on it; a model whose own list is empty, every tool unticked, keeps it. Passes on
+dev f659c0d12; in backend copies of it, leaving the default tools out of the model list fails the
+first test, and letting the defaults replace an empty list fails the second.
+
+Client IP placeholders (#33833, d39cb17b9) are meant to be empty for a run with no client. Red on
+dev f659c0d12: a run sends 127.0.0.1, the address of the request automations build for
+themselves (issue draft real-nf-admin-2). Reverting d39cb17b9 also turns it red, with the
+placeholder sent as written.
 """
 
 from __future__ import annotations
@@ -173,3 +184,119 @@ def test_a_run_on_a_warm_cache_offers_the_models_tools(scheduler, forecast_model
     _run_now(scheduler, forecast_model, prompt)
 
     assert "get_forecast" in _offered(_request_for(upstream, prompt))
+
+
+# --------------------------------------------------------------------------- Model Defaults tools
+
+MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
+
+
+@pytest.fixture
+def default_forecast_tool(admin, preserve):
+    """The forecast tool set as a default tool for every model in Model Defaults; yields its id."""
+    preserve(MODELS_CONFIG)
+    with python_tool(admin, FORECAST_TOOL, name="Forecast default") as tool_id:
+        with admin.client() as client:
+            current = client.get(MODELS_CONFIG[0]).json()
+            metadata = {**(current.get("DEFAULT_MODEL_METADATA") or {}), "toolIds": [tool_id]}
+            saved = client.post(
+                MODELS_CONFIG[1], json={**current, "DEFAULT_MODEL_METADATA": metadata}
+            )
+            assert saved.status_code == 200, saved.text
+        yield tool_id
+
+
+@pytest.fixture
+def preset(scheduler):
+    """`preset(meta)` makes a preset of the scheduler's on the scripted model; deleted after."""
+    made = []
+
+    def create(meta: dict) -> str:
+        model_id = f"defaults-{uuid.uuid4().hex[:8]}"
+        with scheduler.client() as client:
+            created = client.post(
+                "/api/v1/models/create",
+                json={
+                    "id": model_id,
+                    "base_model_id": MOCK_MODEL_ID,
+                    "name": f"Defaults {model_id}",
+                    "meta": meta,
+                    "params": {},
+                },
+            )
+        assert created.status_code == 200, created.text
+        made.append(model_id)
+        return model_id
+
+    yield create
+    with scheduler.client() as client:
+        for model_id in made:
+            client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+def _listed_tool_ids(owner, model_id: str) -> list[str] | None:
+    with owner.client() as client:
+        models = client.get("/api/models", params={"refresh": "true"}).json()["data"]
+    model = next(model for model in models if model["id"] == model_id)
+    return model.get("info", {}).get("meta", {}).get("toolIds")
+
+
+def test_a_model_without_tools_of_its_own_gets_the_default_tools(
+    scheduler, preset, default_forecast_tool, upstream
+):
+    plain = preset({})
+    assert _listed_tool_ids(scheduler, plain) == [default_forecast_tool], (
+        "the model list does not give a model without tools the Model Defaults tools"
+    )
+
+    prompt = f"Frost tonight? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("No frost.", match=reply.answering(prompt)))
+    _run_now(scheduler, plain, prompt)
+    offered = _offered(_request_for(upstream, prompt))
+    assert "get_forecast" in offered, (
+        f"a run on a model without tools of its own was offered {sorted(offered)}, "
+        "without the Model Defaults tool"
+    )
+
+
+def test_a_model_with_its_own_tool_list_keeps_it_over_the_defaults(
+    scheduler, preset, default_forecast_tool, upstream
+):
+    # an empty list is a choice too: the admin unticked every tool for this model
+    unticked = preset({"toolIds": []})
+    assert _listed_tool_ids(scheduler, unticked) == [], (
+        "the Model Defaults tools replaced a model's own empty tool list"
+    )
+
+    prompt = f"Fog at dawn? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Some fog.", match=reply.answering(prompt)))
+    _run_now(scheduler, unticked, prompt)
+    offered = _offered(_request_for(upstream, prompt))
+    assert "get_forecast" not in offered, (
+        f"a model whose own tool list is empty was offered the default tool: {sorted(offered)}"
+    )
+
+
+def test_a_run_has_no_client_address_for_the_ip_placeholders(
+    admin, preserve, scheduler, forecast_model, upstream
+):
+    preserve(OPENAI_CONFIG)
+    with admin.client() as client:
+        config = client.get(OPENAI_CONFIG[0]).json()
+        connection = config["OPENAI_API_CONFIGS"].get("0", {})
+        headers = {"X-Real-IP": "{{USER_IP}}", "X-Client-Chain": "{{X_FORWARDED_FOR}}"}
+        config["OPENAI_API_CONFIGS"] = {"0": {**connection, "headers": headers}}
+        client.post(OPENAI_CONFIG[1], json=config).raise_for_status()
+    prompt = f"Hail this week? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("No hail.", match=reply.answering(prompt)))
+
+    _run_now(scheduler, forecast_model, prompt)
+
+    body = _request_for(upstream, prompt)
+    sent = next(entry for entry in upstream.requests_to("/chat/completions") if entry.body is body)
+    received = {name.lower(): value for name, value in sent.headers.items()}
+    # a scheduled run has no client, so no address may stand in for one (#33833)
+    assert received.get("x-real-ip", "") == "", (
+        f"a run sent {{{{USER_IP}}}} as {received.get('x-real-ip')!r}"
+    )
+    assert received.get("x-client-chain", "") == "", received.get("x-client-chain")
