@@ -7,6 +7,8 @@ work there as in the chat: picking another model, attaching a file, an image or 
 The saved side chat shares and exports with its exchange from its sidebar menu, and without the
 Side Chat permission neither `/side` nor the shortcut opens one. The basic side chat flows
 (context, closing, reopening, deleting, dropping a chat beside another) are in test_side_chat.py.
+A question the model asks with Ask User shows in the side chat, and answering it finishes the
+reply.
 
 What a side chat does not offer yet is pinned as strict xfails, which turn red the day it lands:
 Regenerate, Edit, Continue Response and rating under its messages, follow-up suggestions, an HTML
@@ -18,6 +20,9 @@ timestamp tool returns no timestamp and that applies no model system prompt, the
 knowledge, tool and model tests fail on exactly those. The file, image, Copy, code block,
 reasoning, share, export, shortcut and permission tests guard frontend behaviour; their mutation
 build was held back while release fix builds had the machine, so they are not yet shown red.
+The Ask User test is red on the f659c0d12 build, a real bug: the server pauses the side chat's
+reply for the question, but the side chat never shows it (open-webui/open-webui#33890, side
+chats saved since 3b1a95383).
 """
 
 from __future__ import annotations
@@ -281,6 +286,49 @@ def test_a_tool_runs_in_a_side_chat_and_its_result_shows_there(
     assert any("timestamp" in result for result in results), (
         f"the side chat's model never got the tool's result: {results}"
     )
+
+
+PLAN_QUESTION = {
+    "id": "plan",
+    "header": "Plan",
+    "question": "Which plan fits you best?",
+    "options": [
+        {"label": "Basic", "description": "The cheapest one"},
+        {"label": "Pro", "description": "The fastest one"},
+    ],
+}
+
+
+def test_a_question_the_model_asks_in_a_side_chat_shows_there_and_its_answer_finishes_the_reply(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    """Red on f659c0d12 (open-webui/open-webui#33890): the side chat never shows the question."""
+    page = open_chat(page_for, make_user())
+    question = tagged("By the way, which plan should I take?")
+    panel = open_side_chat(
+        page,
+        upstream,
+        question,
+        reply.tool_call("ask_user", {"questions": [PLAN_QUESTION]}),
+        reply.text("Pro it is."),
+        shows="",
+    )
+
+    asked = panel.get_by_text("Which plan fits you best?")
+    expect(asked, "the side chat never showed the model's question").to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
+    card = panel.locator("section", has_text="Which plan fits you best?")
+    card.get_by_role("button", name=re.compile(r"^Pro\b")).click()
+
+    expect(side_reply(panel)).to_contain_text("Pro it is.", timeout=REPLY_TIMEOUT_MS)
+    results = [
+        str(entry["content"])
+        for entry in sent_for(upstream, question)["messages"]
+        if entry.get("role") == "tool"
+    ]
+    assert results, "the side chat's model never got the answer"
+    assert json.loads(results[-1])["answers"]["plan"]["label"] == "Pro", results
 
 
 @pytest.fixture
