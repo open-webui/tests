@@ -59,6 +59,35 @@ Search switch fails the threshold, built-in, search and off tests; adding the di
 nothing held back fails the nothing-over-the-threshold case; and saving the threshold and
 patterns as sent fails the settings test.
 
+Since dev 003299641 one `call_tool(calls=[{tool_name, params}, ...])` carries several tool calls.
+Each runs as a call of its own, shown as its own entry with its own approval and result, and one
+failing member stops none of the others. The provider gets the batch back as the one call it
+sent, under its id, with one combined result listing each member's tool, status and output, on
+Chat Completions and the Responses API, on later turns too, and when a client relays the stored
+reply. A batch an approval pause left half done is never sent back with a call lacking its
+result. A malformed batch, like any malformed dispatch, reaches the model as a failed result and
+the model keeps its tools to try again; on f659c0d12 a malformed batch or arguments that are not
+a JSON object end tool use for the reply instead (the refused-dispatch cases not-an-object,
+arguments-malformed and batch-*, red there; the first two pass on b3b07a658, before batches).
+
+Since dev 0f3bd0a7e the admin picks how `search_tools` matches: BM25 by words, the Documents
+embedding model by meaning (every held-back tool ranked, best first) or a decisions model asked
+about every held-back tool, which keeps the tools at or over its relevance threshold, best first,
+with the admin's prompt or the default one. A decisions model that fails reaches the model as a
+search error. Saving a decisions setup in use with a bad address, no model, a threshold outside
+0 to 1 or an unknown engine is refused and nothing is saved; a setup not in use is saved as
+typed; a save from an older client without the engine settings keeps the saved ones; the
+settings also carry the default decisions prompt and the embedding model's name.
+
+Discriminates (dev f659c0d12 backend copies): replaying a batch as its members fails the batch
+replay, Responses, approval pause and relayed batch tests; relaying a half-done batch fails the
+relayed half-done case (the approval pause test stays green there, as the chat history drops the
+unpaired call on its own); searching with BM25 for
+every engine fails the embedding and decisions tests; ignoring the threshold or sending a blank
+prompt in place of the default fails the decisions test; no validation fails every bad setup
+case; validating a setup not in use fails the saved-as-typed test; resetting omitted engine
+settings fails the older client test; BM25 returning every tool fails the BM25 test.
+
 Since 93ba628f3 (#32680, issue #32678) a picture the model draws after the user answered its
 `ask_user` question or approved or rejected a tool call is stored on the reply. Resolving the
 paused call saved the reply with empty fields that broke adding a file to it later in the turn,
@@ -87,7 +116,7 @@ from harness.channel_chat import serve_openai_images
 from harness.chat import ChatTurn, ask, send_message, wait_for_reply
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.knowledge_bases import add_text_file, knowledge_base
-from harness.listener import text_answer
+from harness.listener import Answer, ReceivedRequest, json_answer, text_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.ollama_provider import OLLAMA_CONFIG, chat_stream, connect_ollama, serve_ollama
 from harness.plugins import installed_function
@@ -353,6 +382,29 @@ REFUSED_DISPATCHES = [
         id="params-malformed",
     ),
     pytest.param("{broken", "Error: ", id="arguments-malformed"),
+    pytest.param(
+        {"calls": []}, "Error: call_tool requires a non-empty calls array.", id="batch-empty"
+    ),
+    pytest.param(
+        {"calls": "get_current_timestamp"},
+        "Error: call_tool requires a non-empty calls array.",
+        id="batch-not-a-list",
+    ),
+    pytest.param(
+        {"calls": [{"tool_name": "get_current_timestamp", "params": "{}"}], "extra": 1},
+        "Error: call_tool requires a non-empty calls array.",
+        id="batch-extra-key",
+    ),
+    pytest.param(
+        {"calls": [{"tool_name": "get_current_timestamp"}]},
+        "Error: Each call requires tool_name and params.",
+        id="batch-entry-without-params",
+    ),
+    pytest.param(
+        {"calls": [{"tool_name": "get_current_timestamp", "params": "{}"}, "now"]},
+        "Error: Each call requires tool_name and params.",
+        id="batch-entry-not-an-object",
+    ),
 ]
 
 
@@ -376,6 +428,184 @@ def test_a_refused_dispatch_reaches_the_model_as_a_failed_result(
     assert replayed_calls(follow_up)["call_1"]["name"] == "call_tool"
     assert follow_up["tools"] == first["tools"]
     assert message["content"] == "retrying"
+
+
+def batch_call(call_id: str, *calls: tuple[str, dict]) -> dict:
+    """One `call_tool` call carrying several tool calls, each with JSON-encoded params."""
+    entries = [{"tool_name": name, "params": json.dumps(params)} for name, params in calls]
+    return dispatch_call(call_id, {"calls": entries})
+
+
+def combined_results(content: str) -> list[tuple[str, str, str]]:
+    """Tool name, status and text of each member in a batch's one combined result."""
+    return [
+        (entry["tool_name"], entry["status"], "".join(part["text"] for part in entry["output"]))
+        for entry in json.loads(content)["results"]
+    ]
+
+
+def calls_and_results(request: dict) -> tuple[list[str], list[str]]:
+    """The ids of every tool call the history carries, and of every tool result."""
+    conversation = reply.conversation(request)
+    calls = [
+        call["id"]
+        for entry in conversation
+        if entry["role"] == "assistant"
+        for call in entry.get("tool_calls") or []
+    ]
+    results = [entry["tool_call_id"] for entry in conversation if entry["role"] == "tool"]
+    return calls, results
+
+
+UNAVAILABLE_ROCKETS = 'Error: Tool "launch_rockets" is not available. Search for an available tool.'
+
+
+def test_one_call_tool_batch_runs_each_tool_and_is_sent_back_as_one_call(
+    tool_search, admin, make_user, upstream
+):
+    batch = batch_call(
+        "call_1",
+        ("harbour_lights", {"harbour": "Pula"}),
+        ("launch_rockets", {}),
+        (TIME_TOOL, {}),
+    )
+    upstream.queue(Reply(tool_calls=[batch]), reply.text("Checked."), reply.text("Still lit."))
+    with python_tool(admin, HARBOUR_TOOLS) as tool_id, make_user().client() as client:
+        turn, message = ask(client, "lights and time?", tool_ids=[tool_id])
+        ask(
+            client,
+            "and now?",
+            tool_ids=[tool_id],
+            chat_id=turn.chat_id,
+            parent_id=turn.assistant_message_id,
+        )
+
+    shown = list(items(message, "function_call").values())
+    assert [(call["name"], call["status"]) for call in shown] == [
+        ("harbour_lights", "completed"),
+        ("call_tool", "failed"),
+        (TIME_TOOL, "completed"),
+    ], "the batch did not show as one entry per tool"
+    assert shown[0]["call_id"] == "call_1"
+    assert len({call["call_id"] for call in shown}) == 3
+    outputs = items(message, "function_call_output")
+    assert outputs["call_1"]["output"][0]["text"] == "lit at Pula"
+    assert outputs[shown[1]["call_id"]]["output"][0]["text"] == UNAVAILABLE_ROCKETS
+    assert "current_timestamp" in outputs[shown[2]["call_id"]]["output"][0]["text"]
+    assert message["content"] == "Checked."
+
+    _, after_batch, next_turn = upstream.chat_requests()
+    for request in (after_batch, next_turn):
+        assert calls_and_results(request) == (["call_1"], ["call_1"]), request["messages"]
+        assert replayed_calls(request)["call_1"] == batch["function"]
+        results = combined_results(tool_messages(request)["call_1"])
+        assert [(name, status) for name, status, _ in results] == [
+            ("harbour_lights", "completed"),
+            ("launch_rockets", "failed"),
+            (TIME_TOOL, "completed"),
+        ], results
+        assert results[0][2] == "lit at Pula" and results[1][2] == UNAVAILABLE_ROCKETS
+        assert "current_timestamp" in results[2][2]
+    assert tool_messages(next_turn) == tool_messages(after_batch)
+
+
+def test_the_responses_api_gets_a_batch_back_as_one_call_with_one_combined_result(
+    tool_search, admin, preserve, listener
+):
+    preserve(OPENAI_CONFIG)
+    entries = [
+        {"tool_name": TIME_TOOL, "params": "{}"},
+        {"tool_name": "write_note", "params": json.dumps({"title": "Tide", "content": "low"})},
+    ]
+    with admin.client() as client:
+        provider = responses_api.connect_responses(client, listener)
+        provider.answer(
+            responses_api.events_stream(
+                *responses_api.function_call("call_tool", {"calls": entries}),
+                responses_api.completed(),
+            ),
+            responses_api.events_stream(*responses_api.message("Done."), responses_api.completed()),
+            responses_api.events_stream(
+                *responses_api.message("Still done."), responses_api.completed()
+            ),
+        )
+        turn, message = ask(client, "time and a note", model=responses_api.RESPONSES_MODEL)
+        ask(
+            client,
+            "and now?",
+            model=responses_api.RESPONSES_MODEL,
+            chat_id=turn.chat_id,
+            parent_id=turn.assistant_message_id,
+        )
+
+    shown = [(call["name"], call["status"]) for call in items(message, "function_call").values()]
+    assert shown == [(TIME_TOOL, "completed"), ("write_note", "completed")], shown
+    for request in provider.sent()[1:]:
+        conversation = responses_api.conversation(request)
+        calls = [entry for entry in conversation if entry.get("type") == "function_call"]
+        outputs = [entry for entry in conversation if entry.get("type") == "function_call_output"]
+        assert [(call["call_id"], call["name"]) for call in calls] == [("call_1", "call_tool")]
+        assert json.loads(calls[0]["arguments"]) == {"calls": entries}
+        assert [output["call_id"] for output in outputs] == ["call_1"]
+        output = outputs[0]["output"]
+        text = output if isinstance(output, str) else "".join(part["text"] for part in output)
+        results = combined_results(text)
+        assert [(name, status) for name, status, _ in results] == [
+            (TIME_TOOL, "completed"),
+            ("write_note", "completed"),
+        ], results
+
+
+def test_a_batch_paused_for_approval_is_never_sent_half_done(
+    tool_search, admin, make_user, upstream
+):
+    tool_search(ENABLE_TOOL_PERMISSIONS=True)
+    batch = batch_call("call_1", (TIME_TOOL, {}), ("harbour_lights", {"harbour": "Pula"}))
+    upstream.queue(
+        Reply(tool_calls=[batch]),
+        reply.text("Both checked.", match=reply.answering("time and lights?")),
+    )
+    with python_tool(admin, HARBOUR_TOOLS) as tool_id, make_user().client() as client:
+        turn = send_message(client, "time and lights?", tool_ids=[tool_id], params=ASK)
+        wait_for_status(client, turn, "call_1", "pending")
+        resolve(client, turn, "call_1", "approve")
+        lights = next(
+            call_id
+            for call_id, call in items(stored_message(client, turn), "function_call").items()
+            if call["name"] == "harbour_lights"
+        )
+        wait_for_status(client, turn, lights, "pending")
+        half_done = stored_message(client, turn)
+
+        upstream.queue(reply.text("Meanwhile.", match=reply.answering("meanwhile?")))
+        ask(
+            client,
+            "meanwhile?",
+            tool_ids=[tool_id],
+            params=ASK,
+            chat_id=turn.chat_id,
+            parent_id=turn.assistant_message_id,
+        )
+        meanwhile = upstream.chat_requests()[-1]
+
+        resolve(client, turn, lights, "approve")
+        message = wait_for_reply(client, turn)
+
+    assert "current_timestamp" in result_text(half_done, "call_1")
+    assert lights not in items(half_done, "function_call_output")
+    calls, results = calls_and_results(meanwhile)
+    assert calls == results == [], f"a half-done batch was sent: {meanwhile['messages']}"
+
+    finished = upstream.chat_requests()[-1]
+    assert reply.answering("time and lights?")(finished)
+    assert calls_and_results(finished) == (["call_1"], ["call_1"]), finished["messages"]
+    results = combined_results(tool_messages(finished)["call_1"])
+    assert [(name, status) for name, status, _ in results] == [
+        (TIME_TOOL, "completed"),
+        ("harbour_lights", "completed"),
+    ], results
+    assert results[1][2] == "lit at Pula"
+    assert message["content"].endswith("Both checked.")
 
 
 def test_params_sent_as_an_object_run_the_tool(tool_search, user, upstream):
@@ -1334,6 +1564,274 @@ def test_the_admin_chat_settings_store_the_tool_search_settings(admin, user, pre
         assert refused.status_code == 401, refused.text
 
 
+# --- the search engine: BM25, the embedding model or a decisions model ------------------------
+
+EMBEDDING_SETTINGS = ("/api/v1/retrieval/embedding", "/api/v1/retrieval/embedding/update")
+# a query sharing no word with any tool, so only meaning can find the beacon
+MEANING_QUERY = "blinking"
+# words that mean the same thing share one dimension of the stand-in embedding model
+MEANINGS = [("flashing", "blinking"), ("tide", "water"), ("weather", "rain"), ("lit", "lamp")]
+DECISIONS_KEY = "sk-decisions-test"
+
+
+def meaning_vector(text: str) -> list[float]:
+    lowered = text.lower()
+    return [1.0 if any(word in lowered for word in words) else 0.0 for words in MEANINGS] + [0.05]
+
+
+def embed_by_meaning(request: ReceivedRequest) -> Answer:
+    inputs = request.json()["input"]
+    texts = inputs if isinstance(inputs, list) else [inputs]
+    data = [
+        {"object": "embedding", "index": index, "embedding": meaning_vector(text)}
+        for index, text in enumerate(texts)
+    ]
+    return json_answer({"object": "list", "data": data})
+
+
+def found_by(client: httpx.Client, upstream, tool_id: str, *queries: str) -> list[dict]:
+    """What `search_tools` returned for each query, asked in one round of a fresh chat."""
+    searches = [search_call(f"search_{index}", query) for index, query in enumerate(queries)]
+    upstream.queue(Reply(tool_calls=searches), reply.text("searched"))
+    _, message = ask(client, "which tool fits?", tool_ids=[tool_id])
+    assert message["content"] == "searched"
+    results = tool_messages(upstream.chat_requests()[-1])
+    return [json.loads(results[f"search_{index}"]) for index in range(len(queries))]
+
+
+def found_names(result: dict) -> list[str]:
+    return [tool["name"] for tool in result.get("tools", [])]
+
+
+@pytest.fixture
+def desk_search(tool_search):
+    """Tool Search holding back only the four harbour desk tools."""
+    tool_search(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
+    return tool_search
+
+
+def decisions_service(listener, scores: dict[str, float] | None = None) -> None:
+    """A decisions model at `/v1/decisions` scoring the tools with `scores`, or failing for
+    `outage` (HTTP 500) and leaving a tool out for `partial`."""
+
+    def decide(request: ReceivedRequest) -> Answer:
+        body = request.json()
+        if body["input"] == "outage":
+            return json_answer({"error": "down"}, status=500)
+        names = [question["name"] for question in body["questions"]]
+        if body["input"] == "partial":
+            names = names[1:]
+        answers = [
+            {"type": "predicate", "name": name, "probability": (scores or {}).get(name, 0.0)}
+            for name in names
+        ]
+        return json_answer({"answers": answers})
+
+    listener.route("POST", "/v1/decisions", decide)
+
+
+def test_bm25_finds_a_tool_by_its_words_and_nothing_by_meaning_alone(
+    desk_search, admin, make_user, upstream
+):
+    desk_search(TOOL_SEARCH_ENGINE="bm25")
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        by_word, by_meaning = found_by(client, upstream, tool_id, "flashing", MEANING_QUERY)
+
+    assert found_names(by_word) == ["beacon_status"], by_word
+    assert found_names(by_meaning) == [], by_meaning
+
+
+def test_embedding_search_finds_a_tool_by_meaning_with_the_documents_embedding_model(
+    desk_search, admin, make_user, upstream, preserve, listener
+):
+    preserve(EMBEDDING_SETTINGS)
+    listener.route("POST", "/embeddings", embed_by_meaning)
+    with admin.client() as client:
+        current = client.get(EMBEDDING_SETTINGS[0]).json()
+        saved = client.post(
+            EMBEDDING_SETTINGS[1],
+            json={
+                "RAG_EMBEDDING_ENGINE": "openai",
+                "RAG_EMBEDDING_MODEL": current["RAG_EMBEDDING_MODEL"],
+                "openai_config": {"url": listener.base_url, "key": "sk-meaning"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+    desk_search(TOOL_SEARCH_ENGINE="embeddings")
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        [result] = found_by(client, upstream, tool_id, MEANING_QUERY)
+
+    names = found_names(result)
+    assert names and names[0] == "beacon_status", result
+    assert sorted(names) == DESK_NAMES, "embedding search ranks every held-back tool"
+    embedded = [
+        text
+        for request in listener.requests_to("/embeddings")
+        for text in (request.json()["input"] if isinstance(request.json()["input"], list) else [])
+    ]
+    assert MEANING_QUERY in embedded, "the query never reached the embedding model"
+    assert sum("beacon_status" in text for text in embedded) == 1, embedded
+
+
+def test_the_decisions_model_finds_the_tools_over_the_threshold_in_order(
+    desk_search, admin, make_user, upstream, listener
+):
+    scores = {"beacon_status": 0.9, "harbour_lights": 0.75, "weather_report": 0.69}
+    decisions_service(listener, scores)
+    desk_search(
+        TOOL_SEARCH_ENGINE="decisions",
+        TOOL_SEARCH_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1/",
+        TOOL_SEARCH_DECISIONS_API_KEY=DECISIONS_KEY,
+        TOOL_SEARCH_DECISIONS_MODEL=" judge-1 ",
+        TOOL_SEARCH_DECISIONS_THRESHOLD=0.7,
+        TOOL_SEARCH_DECISIONS_PROMPT="Rate how well this harbour tool fits.",
+    )
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        [at_seventy] = found_by(client, upstream, tool_id, MEANING_QUERY)
+        desk_search(TOOL_SEARCH_DECISIONS_THRESHOLD=0.8, TOOL_SEARCH_DECISIONS_PROMPT="  ")
+        [at_eighty] = found_by(client, upstream, tool_id, MEANING_QUERY)
+    with admin.client() as client:
+        default_prompt = client.get(CHAT_CONFIG[0]).json()["DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT"]
+
+    assert found_names(at_seventy) == ["beacon_status", "harbour_lights"], at_seventy
+    assert found_names(at_eighty) == ["beacon_status"], at_eighty
+
+    asked = listener.requests_to("/v1/decisions")
+    assert len(asked) == 2, [request.path for request in asked]
+    for request, prompt in zip(asked, ["Rate how well this harbour tool fits.", default_prompt]):
+        assert request.headers.get("Authorization") == f"Bearer {DECISIONS_KEY}"
+        body = request.json()
+        assert (body["model"], body["input"]) == ("judge-1", MEANING_QUERY)
+        assert [question["name"] for question in body["questions"]] == DESK_NAMES
+        for question in body["questions"]:
+            assert question["type"] == "predicate"
+            assert question["instructions"].startswith(prompt), question["instructions"]
+            assert f'"name":"{question["name"]}"' in question["instructions"].replace(" ", "")
+
+
+def test_a_failing_decisions_model_reaches_the_model_as_a_search_error(
+    desk_search, admin, make_user, upstream, listener
+):
+    decisions_service(listener, {"beacon_status": 0.9})
+    desk_search(
+        TOOL_SEARCH_ENGINE="decisions",
+        TOOL_SEARCH_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
+        TOOL_SEARCH_DECISIONS_MODEL="judge-1",
+        TOOL_SEARCH_DECISIONS_THRESHOLD=0.5,
+    )
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        outage, partial, working = found_by(
+            client, upstream, tool_id, "outage", "partial", MEANING_QUERY
+        )
+
+    assert outage == {"error": "Decisions API request failed: HTTP 500"}
+    assert partial == {"error": "Decisions API omitted tool relevance scores."}
+    assert found_names(working) == ["beacon_status"], working
+
+
+BAD_DECISIONS_SETUPS = [
+    pytest.param({"TOOL_SEARCH_DECISIONS_API_BASE_URL": "ftp://decide.test/v1"}, id="not-http"),
+    pytest.param({"TOOL_SEARCH_DECISIONS_API_BASE_URL": "decide.test/v1"}, id="no-scheme"),
+    pytest.param(
+        {"TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://user:pw@decide.test/v1"},
+        id="credentials-in-url",
+    ),
+    pytest.param(
+        {"TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test/v1?key=1"}, id="query"
+    ),
+    pytest.param(
+        {"TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test/v1#top"}, id="fragment"
+    ),
+    pytest.param(
+        {"TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test:99999/v1"}, id="bad-port"
+    ),
+    pytest.param({"TOOL_SEARCH_DECISIONS_MODEL": "   "}, id="no-model"),
+    pytest.param({"TOOL_SEARCH_DECISIONS_THRESHOLD": 1.5}, id="threshold-over-one"),
+    pytest.param({"TOOL_SEARCH_DECISIONS_THRESHOLD": -0.1}, id="threshold-negative"),
+    pytest.param({"TOOL_SEARCH_ENGINE": "magic"}, id="unknown-engine"),
+]
+GOOD_DECISIONS = {
+    "ENABLE_TOOL_SEARCH": True,
+    "TOOL_SEARCH_ENGINE": "decisions",
+    "TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test/v1",
+    "TOOL_SEARCH_DECISIONS_API_KEY": "sk-kept",
+    "TOOL_SEARCH_DECISIONS_MODEL": "judge-1",
+    "TOOL_SEARCH_DECISIONS_THRESHOLD": 0.6,
+    "TOOL_SEARCH_DECISIONS_PROMPT": "Rate the tool.",
+}
+ENGINE_SETTINGS = [key for key in GOOD_DECISIONS if key != "ENABLE_TOOL_SEARCH"]
+
+
+def engine_settings(config: dict) -> dict:
+    return {key: config[key] for key in ENGINE_SETTINGS}
+
+
+@pytest.mark.parametrize("bad", BAD_DECISIONS_SETUPS)
+def test_a_bad_decisions_setup_is_refused_and_nothing_is_saved(admin, preserve, bad):
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(CHAT_CONFIG[1], json={**current, **GOOD_DECISIONS})
+        assert saved.status_code == 200, saved.text
+        refused = client.post(
+            CHAT_CONFIG[1],
+            json={**saved.json(), **bad, "TOOL_SEARCH_DEFER_THRESHOLD": 777},
+        )
+        stored = client.get(CHAT_CONFIG[0]).json()
+
+    assert refused.status_code == 422, refused.text
+    assert engine_settings(stored) == engine_settings(GOOD_DECISIONS)
+    assert stored["TOOL_SEARCH_DEFER_THRESHOLD"] == current["TOOL_SEARCH_DEFER_THRESHOLD"]
+
+
+def test_decisions_settings_not_in_use_are_saved_as_typed(admin, preserve):
+    preserve(CHAT_CONFIG)
+    draft = {"TOOL_SEARCH_DECISIONS_API_BASE_URL": "decide.test", "TOOL_SEARCH_DECISIONS_MODEL": ""}
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        for unused in (
+            {"ENABLE_TOOL_SEARCH": False, "TOOL_SEARCH_ENGINE": "decisions"},
+            {"ENABLE_TOOL_SEARCH": True, "TOOL_SEARCH_ENGINE": "bm25"},
+        ):
+            saved = client.post(CHAT_CONFIG[1], json={**current, **unused, **draft})
+            assert saved.status_code == 200, f"{unused}: {saved.text}"
+            stored = client.get(CHAT_CONFIG[0]).json()
+            assert stored["TOOL_SEARCH_ENGINE"] == unused["TOOL_SEARCH_ENGINE"]
+            assert {key: stored[key] for key in draft} == draft
+
+
+def test_a_save_without_the_engine_settings_keeps_the_saved_ones(admin, preserve):
+    preserve(CHAT_CONFIG)
+    typed = {
+        **GOOD_DECISIONS,
+        "TOOL_SEARCH_DECISIONS_API_BASE_URL": " https://decide.test/v1/ ",
+        "TOOL_SEARCH_DECISIONS_MODEL": " judge-1 ",
+    }
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(CHAT_CONFIG[1], json={**current, **typed})
+        assert saved.status_code == 200, saved.text
+        assert engine_settings(saved.json()) == engine_settings(GOOD_DECISIONS)
+
+        older_client = {
+            key: value
+            for key, value in saved.json().items()
+            if key not in ENGINE_SETTINGS
+            and key not in ("DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT", "TOOL_SEARCH_EMBEDDING_MODEL")
+        }
+        resaved = client.post(
+            CHAT_CONFIG[1], json={**older_client, "TOOL_SEARCH_DEFER_THRESHOLD": 4321}
+        )
+        assert resaved.status_code == 200, resaved.text
+        stored = client.get(CHAT_CONFIG[0]).json()
+        embedding_model = client.get(EMBEDDING_SETTINGS[0]).json()["RAG_EMBEDDING_MODEL"]
+
+    assert engine_settings(stored) == engine_settings(GOOD_DECISIONS), "an older client reset them"
+    assert stored["TOOL_SEARCH_DEFER_THRESHOLD"] == 4321
+    assert stored["DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT"].strip(), stored
+    assert stored["TOOL_SEARCH_EMBEDDING_MODEL"] == embedding_model
+
+
 def test_a_builtin_tool_writes_a_note_through_call_tool(tool_search, make_user, upstream):
     title = f"Harbour log {uuid.uuid4().hex[:6]}"
     upstream.queue(
@@ -1444,6 +1942,92 @@ def test_a_stored_dispatch_relayed_to_the_responses_api_keeps_the_models_call(
     [call] = [item for item in provider.sent()[-1]["input"] if item.get("type") == "function_call"]
     assert (call["name"], call["arguments"]) == ("call_tool", sent_arguments)
     assert "provider_function" not in call
+
+
+def stored_batch_member(call_id: str, tool_name: str, status: str) -> dict:
+    batch_function = {
+        "name": "call_tool",
+        "arguments": json.dumps(
+            {
+                "calls": [
+                    {"tool_name": TIME_TOOL, "params": "{}"},
+                    {"tool_name": "write_note", "params": '{"title": "Tide"}'},
+                ]
+            }
+        ),
+    }
+    return {
+        "type": "function_call",
+        "id": call_id,
+        "call_id": call_id,
+        "name": tool_name,
+        "arguments": "{}",
+        "status": status,
+        "provider_batch": {
+            "call_id": "call_1",
+            "function": batch_function,
+            "size": 2,
+            "tool_name": tool_name,
+        },
+    }
+
+
+def stored_result(call_id: str, text: str) -> dict:
+    return {
+        "type": "function_call_output",
+        "id": f"fco_{call_id}",
+        "call_id": call_id,
+        "output": [{"type": "input_text", "text": text}],
+        "status": "completed",
+    }
+
+
+@pytest.mark.parametrize("finished", [True, False], ids=["finished", "half-done"])
+def test_a_stored_batch_relayed_to_the_responses_api_is_one_call_or_none(
+    admin, preserve, listener, finished
+):
+    output = [
+        stored_batch_member("call_1", TIME_TOOL, "completed"),
+        stored_result("call_1", "noon"),
+        stored_batch_member("call_2", "write_note", "completed" if finished else "pending"),
+    ]
+    if finished:
+        output.append(stored_result("call_2", "saved"))
+    preserve(OPENAI_CONFIG)
+    with admin.client() as client:
+        provider = responses_api.connect_responses(client, listener)
+        provider.answer(
+            responses_api.events_stream(*responses_api.message("Noon."), responses_api.completed())
+        )
+        relayed = client.post(
+            "/openai/chat/completions",
+            json={
+                "model": responses_api.RESPONSES_MODEL,
+                "stream": True,
+                "messages": [
+                    {"role": "user", "content": "time and a note"},
+                    {"role": "assistant", "content": "", "output": output},
+                    {"role": "user", "content": "and now?"},
+                ],
+            },
+        )
+        assert relayed.status_code == 200, relayed.text
+
+    sent = provider.sent()[-1]["input"]
+    calls = [item for item in sent if item.get("type") == "function_call"]
+    outputs = [item for item in sent if item.get("type") == "function_call_output"]
+    if not finished:
+        assert calls == outputs == [], f"a half-done batch was relayed: {sent}"
+        return
+    assert [(call["call_id"], call["name"]) for call in calls] == [("call_1", "call_tool")]
+    assert [item["call_id"] for item in outputs] == ["call_1"]
+    output_text = outputs[0]["output"]
+    if not isinstance(output_text, str):
+        output_text = "".join(part["text"] for part in output_text)
+    assert combined_results(output_text) == [
+        (TIME_TOOL, "completed", "noon"),
+        ("write_note", "completed", "saved"),
+    ]
 
 
 # --- what a dispatched tool leaves on the reply: sources, files, embeds -----------------------
