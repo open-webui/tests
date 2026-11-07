@@ -47,9 +47,9 @@ for during the call).
 `test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_said` are red on dev
 c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab and End
 call button when the first message saves the chat, and a standard call's reply stays blank.
-`test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back` is red on dev f659c0d12:
-since 617618c9e the call's tab shares the chat's tab group on a wide screen, and Return to call no
-longer brings it to the front.
+`test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back` is red on dev f659c0d12
+(open-webui/open-webui#33884): since 617618c9e the call's tab shares the chat's tab group on a wide
+screen, and Return to call no longer brings it to the front.
 """
 
 from __future__ import annotations
