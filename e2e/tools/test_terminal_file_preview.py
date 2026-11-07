@@ -263,7 +263,7 @@ def test_ticking_a_markdown_task_saves_it_to_the_file(browser, open_terminal):
 
 def test_a_markdown_file_renders_math_alerts_and_diagrams(browser):
     # red on dev f659c0d12: since b6a77a0f1 a writable note opens in the editor, which shows all
-    # three as raw text (regression from 0.13.0, issue draft pending)
+    # three as raw text (regression from 0.13.0, open-webui/open-webui#33900)
     open_file(browser, "frost.md")
 
     expect(browser.locator("math")).to_have_count(1)
