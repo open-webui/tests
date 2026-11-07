@@ -42,9 +42,9 @@ full-width switch and is now the split layout test; the reorder test now counts 
 tab.
 
 `test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
-started with nothing pending wedges the chat's layout saving until the next reload (issue draft
-real-nf-split-1, from d4e8493cc). The same wedge can hit the reload test when a slow divider drag
-outpaces the saves.
+started with nothing pending wedges the chat's layout saving until the next reload
+(open-webui/open-webui#33892, from d4e8493cc). The same wedge can hit the reload test when a slow
+divider drag outpaces the saves.
 
 Discriminates for the workspace tests, in frontend builds of f659c0d12: with the layout never
 sent to the server the reload, first message and reconnect tests fail; with the menu and dialog
@@ -375,7 +375,7 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     assert ratio != "50", "dragging the divider left the panes at half and half"
 
     # wait for the server to hold the layout before reloading; a drag slower than the saves can
-    # wedge the saving on dev f659c0d12 (issue draft real-nf-split-1)
+    # wedge the saving on dev f659c0d12 (open-webui/open-webui#33892)
     held = (int(ratio), "Terminal 1")
     _wait_until(lambda: _layout_of(_saved_view(person, chat_id)) == held)
     assert _layout_of(_saved_view(person, chat_id)) == held, _saved_view(person, chat_id)
@@ -438,7 +438,7 @@ def test_layout_changes_after_a_network_reconnect_are_still_saved(
     terminal_account, page_for, upstream, config
 ):
     """Red on dev f659c0d12: a save with nothing pending, as the back-online event starts, wedges
-    the chat's layout saving until the next reload (issue draft real-nf-split-1)."""
+    the chat's layout saving until the next reload (open-webui/open-webui#33892)."""
     person, terminal = terminal_account
     page = page_for(person)
     chat_id = _answered_chat(page, upstream, terminal)
