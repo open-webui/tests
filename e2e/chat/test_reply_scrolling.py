@@ -100,6 +100,7 @@ def test_scrolling_up_while_it_streams_keeps_the_place_and_the_button_brings_the
 
 
 def test_a_long_chat_opens_at_its_end_and_the_button_returns_there(page_for, make_user):
+    """open-webui/open-webui#33877: on a wide window the chat opened at its first message."""
     account = make_user()
     turns = []
     for number in range(1, 5):
