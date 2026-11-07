@@ -98,15 +98,14 @@ def test_a_reply_finished_in_another_chat_shows_a_browser_notification(
     assert finish_a_reply_elsewhere(other, upstream, "When does the tide turn today?") == []
 
 
-# keeps every sound the page starts, so a test can tell whether the notification sound played
-RECORD_SOUNDS = """
-window.playedSounds = [];
-window.Audio = new Proxy(window.Audio, {
-    construct(target, args) {
-        window.playedSounds.push(args[0]);
-        return Reflect.construct(target, args);
-    }
-});
+# counts every tone the page starts; since b6a77a0f1 the notification sound is synthesised tones
+RECORD_TONES = """
+window.playedTones = 0;
+const startTone = OscillatorNode.prototype.start;
+OscillatorNode.prototype.start = function (...args) {
+    window.playedTones += 1;
+    return startTone.apply(this, args);
+};
 """
 
 
@@ -150,19 +149,20 @@ def test_dismissing_the_toast_closes_it_and_stays_in_the_new_chat(page_for, make
     expect(page).not_to_have_url(re.compile(r"/c/"))
 
 
-def sounds_played(page: Page) -> list[str]:
-    return page.evaluate("window.playedSounds")
+def tones_played(page: Page) -> int:
+    return page.evaluate("window.playedTones")
 
 
 def test_the_toast_plays_the_notification_sound_until_it_is_switched_off(
     page_for, make_user, upstream
 ):
     page = recording_page(page_for, make_user(), allow=False)
-    page.add_init_script(RECORD_SOUNDS)
+    page.add_init_script(RECORD_TONES)
     page.goto("/")
 
     finish_a_reply_elsewhere(page, upstream, "When does the tide turn at dawn?")
-    assert sounds_played(page) == ["/audio/notification.mp3"]
+    # the toast starts its tones once the page's audio has resumed
+    page.wait_for_function("window.playedTones > 0")
 
     page.goto("/?settings=notifications")
     sound = page.get_by_role("switch", name="Notification Sound")
@@ -172,4 +172,5 @@ def test_the_toast_plays_the_notification_sound_until_it_is_switched_off(
     expect(sound).to_have_attribute("aria-checked", "false")
     page.reload()
     finish_a_reply_elsewhere(page, upstream, "When does the tide turn at dusk?")
-    assert sounds_played(page) == []
+    played = tones_played(page)
+    assert played == 0, f"the toast played {played} tones with Notification Sound off"
