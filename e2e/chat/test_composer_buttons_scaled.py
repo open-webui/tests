@@ -5,6 +5,7 @@ model selector's width cap is rem based, so it grows with UI Scale, and the grou
 and Integrations buttons was allowed to shrink to nothing. On a 360px wide phone at 1.2x the
 selector covered the Integrations button, from 1.3x the + button too, leaving no way to attach a
 file. The two buttons now sit in a group that keeps its width and the model name is truncated.
+Since 834c47ee0 the Integrations menu lives inside the + menu, so the + button is the one left.
 
 Discriminates: passes on the efe63bd34 build, fails on it with `e6e9fc972` reverted (a tap on
 the button's centre lands on the model selector).
@@ -65,10 +66,7 @@ def phone_page(page_for, make_user, model_id: str, scale: float) -> Page:
 
 
 def composer_buttons(page: Page) -> dict[str, Locator]:
-    return {
-        "+": page.locator("#input-menu-button"),
-        "Integrations": page.locator("#integration-menu-button"),
-    }
+    return {"+": page.locator("#input-menu-button")}
 
 
 def covered(page: Page) -> list[str]:
