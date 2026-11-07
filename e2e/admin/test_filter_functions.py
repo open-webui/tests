@@ -9,6 +9,8 @@ the order on the next reply. A filter's user valve, set by each person in the ch
 nobody else's. A filter a person can switch on shows a chip in the message input once on, and the
 chip opens the filter's user valves, whose value then stamps the reply.
 
+The chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so the
+chip test turns it on for its account.
 Discriminates: passes on dev ebc6add67. One backend copy whose filter pipeline ignores a model's
 own filters, sorts filters by id alone and hands every filter the default user valves turned each
 test red on its own edit.
@@ -37,6 +39,7 @@ from utils.chat_ui import (
     last_reply,
     open_integrations_menu,
     send,
+    show_input_selections,
 )
 from utils.tooltips import tooltip_button
 from utils.valves import customise, valve
@@ -253,7 +256,9 @@ def test_a_switched_on_filter_chip_opens_its_user_valves_and_they_stamp_the_repl
     page_for, admin, make_user, upstream
 ):
     with installed_function(admin, STAMPING_FILTER, is_global=True) as filter_id:
-        page = page_for(make_user())
+        person = make_user()
+        show_input_selections(person)
+        page = page_for(person)
         menu = open_integrations_menu(page)
         switch = menu.get_by_role("menuitemcheckbox", name=re.compile(filter_id))
         switch.click()

@@ -16,6 +16,8 @@ picture drops out of the reply, or the reply stays blank, until a reload
 22102e4a2 lost the reply and its picture in 5 of 5 runs and a build without the per-update copy in
 none.
 
+The Image chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so
+the tests that look for it turn it on for their account.
 Discriminates: passes on dev 176d31d1d with its built frontend. In a backend copy, with
 `/api/v1/images/config/update` ignoring `IMAGES_OPENAI_API_KEY` the settings test fails (the key
 is empty after the reload), with `generate_image` not storing its files on the chat message the
@@ -48,6 +50,7 @@ from utils.chat_ui import (
     open_integrations_menu,
     replies,
     send,
+    show_input_selections,
     turn_on_integration,
 )
 from utils.tooltips import tooltip_button
@@ -207,6 +210,7 @@ def test_a_drawn_picture_is_stored_and_shows_after_a_reload(
 ):
     image_engine()
     person = make_user()
+    show_input_selections(person)
     page = open_chat(page_for(person))
     turn_on_image(page)
     expect(image_chip(page)).to_be_visible()
@@ -259,7 +263,9 @@ def test_a_model_with_image_generation_by_default_starts_with_the_chip_on(
 ):
     image_engine()
     with admin.client() as client, drawing_model(client) as model_id:
-        page = page_for(make_user(role="admin"), path=f"/?models={model_id}")
+        person = make_user(role="admin")
+        show_input_selections(person)
+        page = page_for(person, path=f"/?models={model_id}")
         open_chat(page)
         expect(image_chip(page)).to_be_visible()
         draw(page, upstream, "draw a blue circle", "Here is your blue circle.")

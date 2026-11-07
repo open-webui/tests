@@ -18,6 +18,8 @@ back, because the chat shows a tag's code but not its output on dev bbfa876af.
 
 Twin of unit/security/test_code_interpreter_module_blocking.py.
 
+The Disable Code Interpreter chip, which shows the URL switch took effect, needs Show Input
+Selections on (off by default since dev 834c47ee0), so every account here turns it on.
 Discriminates: passes on dev bbfa876af; the hook made `async def` again in `tools/builtin.py`
 fails the tool tests (the chart ones because the sandbox never answers) and in
 `utils/middleware.py` the tag test; the doubled backslashes restored fail both chart tests on
@@ -34,7 +36,7 @@ from playwright.sync_api import expect
 from harness import slow_machine
 from harness import upstream as reply
 from harness.actors import create_user
-from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply, last_reply, send
+from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply, last_reply, send, show_input_selections
 
 pytestmark = [
     pytest.mark.regression,
@@ -88,6 +90,8 @@ def page_on(page_for):
         if not launched.serves_frontend:
             pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
         account = create_user(launched)
+        # the Disable Code Interpreter chip waited on below shows only with this on
+        show_input_selections(account)
         if function_calling:
             with account.client() as client:
                 settings = {"ui": {"params": {"function_calling": function_calling}}}

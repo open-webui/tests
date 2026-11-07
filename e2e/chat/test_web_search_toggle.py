@@ -7,6 +7,8 @@ Permissions tab switches Web Search on gives it back to its members, who see the
 the search, while everyone else still has neither. A chat link carrying `web-search=true` gives a
 user without the permission no search either. The engine is a local one nobody needs to reach.
 
+The chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so the
+chip test turns it on for its account.
 Discriminates: passes on dev ebc6add67; run on a frontend build whose Web Search chip leaves the
 toggle on and whose chat sends Web Search without the permission check, against a backend copy
 that offers the web tools without the permission check and leaves the user's groups out of their
@@ -27,7 +29,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
-from utils.chat_ui import expect_reply, open_integrations_menu, send
+from utils.chat_ui import expect_reply, open_integrations_menu, send, show_input_selections
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -80,7 +82,9 @@ def offered_tools(page: Page, upstream, question: str) -> set[str]:
 def test_the_chip_by_the_input_turns_web_search_off_again(
     page_for, make_user, upstream, web_search_on
 ):
-    page = page_for(make_user())
+    person = make_user()
+    show_input_selections(person)
+    page = page_for(person)
     toggle = open_integrations_menu(page).get_by_role("menuitemcheckbox", name="Web Search")
     toggle.click()
     expect(toggle).to_have_attribute("aria-checked", "true")
