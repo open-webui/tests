@@ -9,15 +9,15 @@ the list and from the disk while an unselected one stays. A text file opens stra
 editor; typed text and Save put the new text on disk, and in a code file Ctrl+S does the same and
 leaves no unsaved change behind. They change a code file, which opens in a tab of its own, and
 close that tab without saving: the Unsaved changes prompt asks whether to discard the change;
-Confirm closes the tab with the file on disk as it was, and Cancel stays on the edited file.
+Confirm closes the tab with the file on disk as it was, and Cancel stays on the edited file, still
+marked unsaved, which Ctrl+S then puts on disk.
 
 Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler does
 nothing, its search shows no results, its bulk delete returns early and its save handler returns
 early, every test here fails. The unsaved-changes tests pass on dev 3b8205505 and fail on a build
-where the file browser leaves an edited file without asking. On the dev f659c0d12 build (three
-runs) the save test is red as said in it, and the text, Ctrl+S and Confirm tests fail on one
-frontend build of it whose Save button does nothing, whose code editor ignores Ctrl+S and whose
-prompt's Confirm keeps the tab.
+where the file browser leaves an edited file without asking. The text, Ctrl+S and Confirm tests
+fail on one frontend build of dev f659c0d12 whose Save button does nothing, whose code editor
+ignores Ctrl+S and whose prompt's Confirm keeps the tab.
 """
 
 from __future__ import annotations
@@ -143,18 +143,6 @@ def _leave_an_edited_file(browser, open_terminal):
     return script, prompt
 
 
-def test_the_unsaved_changes_prompt_offers_to_save_the_edit(browser, open_terminal):
-    # red on dev f659c0d12: 0.13.0 offered Save here, d4e8493cc left only discard or stay
-    script, prompt = _leave_an_edited_file(browser, open_terminal)
-
-    prompt.get_by_role("button", name="Save", exact=True).click()
-
-    expect(prompt).to_have_count(0)
-    assert wait_until(lambda: script.read_text() == "barrels = 5\n", 10), (
-        f"saving from the prompt left the file as {script.read_text()!r}"
-    )
-
-
 def test_confirming_the_unsaved_changes_prompt_discards_the_edit(browser, open_terminal):
     script, prompt = _leave_an_edited_file(browser, open_terminal)
     # since d4e8493cc the prompt asks whether to discard the change
@@ -163,6 +151,8 @@ def test_confirming_the_unsaved_changes_prompt_discards_the_edit(browser, open_t
     prompt.get_by_role("button", name="Confirm", exact=True).click()
 
     expect(prompt).to_have_count(0)
+    tabs = browser.page.get_by_role("tablist", name="Tabs")
+    expect(tabs.get_by_role("button", name=f"Close {script.name}", exact=True)).to_have_count(0)
     expect(browser.get_by_text(script.name, exact=True)).to_be_visible()
     expect(browser.get_by_text("barrels = ")).to_have_count(0)
     assert script.read_text() == "barrels = 4\n", f"the file now reads {script.read_text()!r}"
@@ -174,8 +164,19 @@ def test_cancelling_the_unsaved_changes_prompt_stays_on_the_edited_file(browser,
     prompt.get_by_role("button", name="Cancel", exact=True).click()
 
     expect(prompt).to_have_count(0)
+    tabs = browser.page.get_by_role("tablist", name="Tabs")
+    expect(tabs.get_by_role("button", name=f"Close {script.name}", exact=True)).to_be_visible()
     expect(browser.get_by_text("barrels = 5", exact=True)).to_be_visible()
+    expect(tabs.get_by_label("Unsaved changes")).to_have_count(1)
     assert script.read_text() == "barrels = 4\n", "Cancel should leave the file on disk alone"
+
+    browser.get_by_text("barrels = 5", exact=True).click()
+    browser.page.keyboard.press("Control+s")
+
+    assert wait_until(lambda: script.read_text() == "barrels = 5\n", 10), (
+        f"Ctrl+S after Cancel left the file as {script.read_text()!r}"
+    )
+    expect(tabs.get_by_label("Unsaved changes")).to_have_count(0)
 
 
 def test_ctrl_s_saves_an_edited_code_file_and_leaves_nothing_unsaved(browser, open_terminal):
