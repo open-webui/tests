@@ -4,10 +4,10 @@
 a tool round and the answer after it are one call. `attach` uploads a file through the chat
 input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
 `choose_terminal` picks an Open Terminal for the chat before the first message, `pick_terminal`
-also waits for its file browser, and `open_new_terminal` opens a shell of it in the side panel;
-`chat_requests` is every streamed
-request the provider received, the ones the cache sees, and `this_turns_tool_results` what the
-model's own tool calls returned since the last question.
+also opens its file browser (`open_files_tab` alone opens it again), and `open_new_terminal`
+opens a shell of it in the side panel; `chat_requests` is every streamed request the provider
+received, the ones the cache sees, and `this_turns_tool_results` what the model's own tool calls
+returned since the last question.
 """
 
 from __future__ import annotations
@@ -77,7 +77,18 @@ def choose_terminal(page: Page, name: str) -> None:
 
 def pick_terminal(page: Page, name: str) -> None:
     choose_terminal(page, name)
-    expect(page.get_by_role("region", name="File browser")).to_be_visible()
+    # since 617618c9e the conversation is a tab and stays in front; Files opens from New tab
+    open_files_tab(page)
+
+
+def open_files_tab(page: Page) -> Locator:
+    """Open the picked terminal's File browser from the New tab menu; returns its region."""
+    page.get_by_role("button", name="New tab", exact=True).click()
+    # the item's name carries its shortcut hint once the shortcuts have loaded
+    page.get_by_role("menu").get_by_role("menuitem", name=re.compile(r"^Files\b")).click()
+    files = page.get_by_role("region", name="File browser")
+    expect(files).to_be_visible()
+    return files
 
 
 def open_new_terminal(page: Page) -> Locator:
