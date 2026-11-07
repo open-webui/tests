@@ -17,6 +17,11 @@ Since 24e30d1cb the audit log keeps no request or response body for the sign-in 
 was made; the mask is checked on the admin reset and the retrieval settings, which still log
 their bodies.
 
+Fix `a7e51207c` (#33746): the mask covered passwords only, so API keys, secrets and tokens
+(the connection keys of the OpenAI settings, a web search engine's API key) were logged as typed
+in both the request and the response. Fields named for a key, secret, token or authorization are
+now masked too, a list of them as a whole; the fields around them still are logged.
+
 The tests run on an instance of their own with request and response auditing on, reads
 included and bodies kept whole, and read the audit log file in its data directory.
 
@@ -24,6 +29,7 @@ Discriminates: passes on dev b859124f9; with the masking pattern reverted to the
 `"password"` field the YaCy test goes red (the new value is in the log). With `3ef0d1543`
 reverted the double quote, spaced colon and retrieval response tests go red. With bodies
 captured again under `/api/v1/auths` the self-service change, add-user and LDAP tests go red.
+The key tests pass on dev f659c0d12 and fail with a7e51207c reverted (the keys are logged).
 """
 
 from __future__ import annotations
@@ -284,3 +290,52 @@ def test_the_yacy_password_sent_back_is_masked_in_the_logged_responses(audited, 
             f"the YaCy password in the {verb} response reached the audit log (#31659): {logged}"
         )
         assert json.loads(logged)["web"]["YACY_PASSWORD"] == MASK
+
+
+OPENAI_CONFIG = ("/openai/config", "/openai/config/update")
+
+
+def test_connection_api_keys_are_masked_in_the_logged_request_and_response(audited, preserve):
+    preserve(OPENAI_CONFIG, on=audited)
+    with audited.client() as client:
+        current = client.get(OPENAI_CONFIG[0])
+        assert current.status_code == 200, current.text
+        urls = current.json()["OPENAI_API_BASE_URLS"]
+        keys = [_secret(f"sk-{index}") for index in range(len(urls))]
+        saved = client.post(OPENAI_CONFIG[1], json={**current.json(), "OPENAI_API_KEYS": keys})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["OPENAI_API_KEYS"] == keys
+
+    entry = _logged_entry(audited, OPENAI_CONFIG[1], ADMIN_EMAIL, "POST", urls[0])
+    for side in ("request_object", "response_object"):
+        logged = entry[side]
+        leaked = [key for key in keys if key in logged]
+        assert leaked == [], f"connection API keys reached the audit log's {side} (#33746)"
+        assert json.loads(logged)["OPENAI_API_KEYS"] == MASK
+        assert json.loads(logged)["OPENAI_API_BASE_URLS"] == urls
+
+
+def test_a_web_search_api_key_is_masked_in_the_retrieval_settings_save_and_read(audited, preserve):
+    preserve(RETRIEVAL_CONFIG, on=audited)
+    api_key = _secret("brave")
+    engine_user = f"yacy-{uuid.uuid4().hex[:8]}"
+
+    with audited.client() as client:
+        saved = client.post(
+            RETRIEVAL_CONFIG[1],
+            json={"web": {"YACY_USERNAME": engine_user, "BRAVE_SEARCH_API_KEY": api_key}},
+        )
+        read = client.get(RETRIEVAL_CONFIG[0])
+    assert saved.status_code == 200, saved.text
+    assert read.json()["web"]["BRAVE_SEARCH_API_KEY"] == api_key
+
+    logged = {
+        "the request": _logged_request(audited, RETRIEVAL_CONFIG[1], ADMIN_EMAIL, engine_user),
+        "the read back": _logged_response(
+            audited, RETRIEVAL_CONFIG[0], ADMIN_EMAIL, "GET", engine_user
+        ),
+    }
+    for where, text in logged.items():
+        assert api_key not in text, f"the search API key in {where} reached the audit log (#33746)"
+        assert json.loads(text)["web"]["BRAVE_SEARCH_API_KEY"] == MASK
+        assert json.loads(text)["web"]["YACY_USERNAME"] == engine_user

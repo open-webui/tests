@@ -9,11 +9,16 @@
   was created at sign-in, including those `OAUTH_BLOCKED_GROUPS` excludes. Membership sync
   already skipped them, so a provider sending a user's whole directory membership filled the
   groups list with empty groups. A blocked group is no longer created.
+- Exchange without a groups claim (fix `184eada9e`, #33846): with group management on, an
+  exchange whose userinfo and token carried no groups claim signed in and took the account out
+  of every group. For an account in a group it is now refused with 403 and the groups stay; the
+  same exchange with the claim on the token still signs in.
 
 Discriminates: passes on dev efe63bd34; with f41253875 reverted in a backend copy the
 token-claims exchange test fails (the account joins no group), and with fcb0af3fd reverted the
-blocked-creation test fails (the blocked group exists after the sign-in). The nearby tests pass
-on both.
+blocked-creation test fails (the blocked group exists after the sign-in). The missing-claim
+test passes on dev f659c0d12 and fails with 184eada9e reverted (the exchange answers 200 and the
+account leaves its group). The nearby tests pass on both.
 """
 
 from __future__ import annotations
@@ -132,6 +137,30 @@ def test_an_opaque_token_without_groups_still_signs_in(sso, idp, group):
 
     assert answer.status_code == 200, answer.text
     assert account["id"] not in group_member_ids(sso, group)
+
+
+# --- an exchange with no readable groups claim keeps the groups (184eada9e) ----------------
+
+
+@pytest.mark.parametrize("token", ["signed", "opaque"])
+def test_an_exchange_without_a_groups_claim_is_refused_for_a_group_member(sso, idp, group, token):
+    with oauth_settings(sso, ENABLE_OAUTH_GROUP_MANAGEMENT=True):
+        person = idp.sign_in_as(groups=[group["name"]])
+        account = _signed_in_user(sso)
+        assert account["id"] in group_member_ids(sso, group)
+        without_groups = {key: value for key, value in person.items() if key != "groups"}
+
+        refused = _exchange(sso, idp, without_groups, opaque=token == "opaque")
+        still_member = account["id"] in group_member_ids(sso, group)
+        with_groups = _exchange(sso, idp, without_groups, claims={"groups": [group["name"]]})
+
+    assert refused.status_code == 403, (
+        f"an exchange whose {token} token and userinfo carry no groups claim signed in "
+        f"(HTTP {refused.status_code}) (#33846)"
+    )
+    assert still_member, "an exchange with no groups claim took the account out of its group"
+    assert with_groups.status_code == 200, with_groups.text
+    assert account["id"] in group_member_ids(sso, group)
 
 
 # --- blocked groups are not created (fcb0af3fd) ----------------------------------------------
