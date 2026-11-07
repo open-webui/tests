@@ -6,9 +6,14 @@ note's live document (`ydoc:document:join`), received what others typed, had the
 saved to the note, and followed the note's changes through `note:join`. Both socket events now
 check the Notes permission first. A user whose group grants Notes and an admin still edit live.
 
+Since a715f569d (#33797) live note editing also follows the instance's Notes switch: with Notes
+switched off nobody, the admin included, opens a note's live document or saves by typing, and a
+note left open when the switch goes off stops saving. Switched back on, typing saves again.
+
 Discriminates: passes on dev a5bc78300; with 6d409da9d reverted in a backend copy the restricted
 user's typing is saved to the note and the owner's typing and the note's rename reach their tab.
-The allowed cases pass on both.
+The allowed cases pass on both. The Notes switch tests pass on dev f659c0d12 and fail with
+a715f569d reverted (the owner's and the admin's typing is saved with Notes off).
 """
 
 from __future__ import annotations
@@ -191,3 +196,66 @@ def test_an_admin_still_edits_a_users_note_live(admin, make_user, notes_off_by_d
 
     assert tab.note_state(note_id) == ""
     assert stored == "typed by an admin"
+
+
+ADMIN_CONFIG = "/api/v1/auths/admin/config"
+
+
+@pytest.fixture
+def notes_switch(admin, preserve):
+    """`notes_switch(enabled)` sets the instance's Notes switch in the admin settings."""
+    preserve("admin_config")
+
+    def switch(enabled: bool) -> None:
+        with admin.client() as client:
+            current = client.get(ADMIN_CONFIG)
+            assert current.status_code == 200, current.text
+            saved = client.post(ADMIN_CONFIG, json={**current.json(), "ENABLE_NOTES": enabled})
+        assert saved.status_code == 200, saved.text
+
+    return switch
+
+
+@pytest.mark.parametrize("editor", ["owner", "admin"])
+def test_with_notes_switched_off_nobody_opens_or_saves_a_note_live(
+    admin, make_user, notes_switch, editor
+):
+    owner = make_user()
+    note_id = _create_note(owner)
+    account = owner if editor == "owner" else admin
+    notes_switch(False)
+
+    with connected(account) as tab:
+        tab.join_note(note_id)
+        tab.edit_note(note_id, "typed while Notes are off")
+    notes_switch(True)
+    stored = _saved_markdown(admin, note_id, "typed while Notes are off", REFUSED_SAVE_WAIT)
+
+    assert tab.document_states == [], (
+        f"with Notes switched off the {editor} opened a note's live document"
+    )
+    assert stored == "", f"with Notes switched off the {editor} saved {stored!r} by typing live"
+
+    with connected(account) as tab:
+        tab.join_note(note_id)
+        tab.edit_note(note_id, "typed with Notes on again")
+        stored = _saved_markdown(admin, note_id, "typed with Notes on again", SAVE_WAIT)
+    assert stored == "typed with Notes on again", "switched back on, typing live saved nothing"
+
+
+def test_a_note_open_when_notes_are_switched_off_stops_saving(admin, make_user, notes_switch):
+    owner = make_user()
+    note_id = _create_note(owner)
+    notes_switch(True)
+
+    with connected(owner) as tab:
+        tab.join_note(note_id)
+        assert tab.note_state(note_id) == ""
+        notes_switch(False)
+        tab.edit_note(note_id, "typed after the switch")
+        notes_switch(True)
+        stored = _saved_markdown(admin, note_id, "typed after the switch", REFUSED_SAVE_WAIT)
+
+    assert stored == "", (
+        f"a note left open while Notes were switched off still saved {stored!r} by typing live"
+    )

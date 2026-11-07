@@ -4,10 +4,12 @@ A note's live document serves and accepts edits only from an account the note is
 a stranger who joins under either spelling of the document id is served nothing, cannot follow
 the note's HTTP edits through `note:join` and cannot push cursor updates to the owner's tab, and
 neither a stranger's nor a reader's edit reaches the owner's open tab, a later tab or the saved
-note. The routes that push an event into a chat owner's `user:{id}` room (a message event, a
-message edit) take the chat id from the caller, so a stranger naming someone else's chat is
-refused and the owner's socket gets nothing. Each case has a granted account or the owner as
-its positive control.
+note. A live document that is not a note has no access check, so it opens no room at all
+(d221a4f69): two accounts joining the same such id are served nothing and never see each
+other's edits, while the same two tabs share a note's edits. The routes that push an event into
+a chat owner's `user:{id}` room (a message event, a message edit) take the chat id from the
+caller, so a stranger naming someone else's chat is refused and the owner's socket gets nothing.
+Each case has a granted account or the owner as its positive control.
 
 Discriminates: in a backend copy, dropping the read check from `ydoc_document_join` turned the
 stranger cases of the served test (both spellings) and the cursor test red;
@@ -16,7 +18,9 @@ dropping the write check from `yjs_document_update` turned the reader case of th
 red, and together with the join check the stranger-edit test too; dropping the read check from
 `join_note` turned the note:join test red; dropping the room check from `yjs_awareness_update`
 turned the cursor test red; dropping the owner check from the message event route and from the
-message edit route each turned that route's stranger case red.
+message edit route each turned that route's stranger case red. The test of a document that is
+not a note passes on dev f659c0d12 and fails with d221a4f69 reverted (both accounts are served
+the document and share its room).
 """
 
 from __future__ import annotations
@@ -156,6 +160,35 @@ def test_only_a_writers_edit_reaches_the_owners_open_tab(make_user, permission):
         assert note_text(passed_on["update"]) == "<paragraph>from the collaborator</paragraph>"
     else:
         assert passed_on is None, "a reader's edit reached the owner's open tab"
+
+
+@pytest.mark.parametrize("spelling", ["chat:{}", "{}"])
+def test_a_document_that_is_not_a_note_opens_no_shared_room(make_user, spelling):
+    first, second = make_user(), make_user()
+    document_id = spelling.format(uuid.uuid4())
+    note_id = _create_note(first)
+    _share_note(first, note_id, second, "write")
+
+    with connected(first) as first_tab, connected(second) as second_tab:
+        for tab in (first_tab, second_tab):
+            tab.call("ydoc:document:join", {"document_id": document_id})
+        first_tab.call("ydoc:document:update", {"document_id": document_id, "update": [1, 0]})
+        # control: the same two tabs do share a note's edits
+        first_tab.join_note(note_id)
+        second_tab.join_note(note_id)
+        first_tab.edit_note(note_id, "shared through the note")
+        through_note = second_tab.note_update(note_id, timeout=ARRIVAL_TIMEOUT)
+        served = [
+            state["document_id"]
+            for state in [*first_tab.document_states, *second_tab.document_states]
+        ]
+        passed_on = [update["document_id"] for update in second_tab.document_updates]
+
+    assert note_text(through_note["update"]) == "<paragraph>shared through the note</paragraph>"
+    assert document_id not in served, f"{document_id!r} was opened as a live document"
+    assert document_id not in passed_on, (
+        f"an edit to {document_id!r}, which has no access check, reached another account"
+    )
 
 
 @pytest.mark.parametrize("permission", [None, "read"])
