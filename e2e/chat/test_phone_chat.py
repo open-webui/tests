@@ -161,7 +161,7 @@ def test_signing_in_on_a_phone_opens_the_chat_with_the_composer_on_screen(
     sign_in.tap()
 
     expect_on_screen(chat_input(page))
-    for button in ("More", "Integrations", "Voice mode"):
+    for button in ("More", "Voice mode"):
         expect_on_screen(page.get_by_role("button", name=button, exact=True).last)
     expect_on_screen(page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID}"))
     expect_on_screen(open_sidebar_button(page))

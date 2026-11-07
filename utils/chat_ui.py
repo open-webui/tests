@@ -110,8 +110,26 @@ def open_input_menu(page: Page) -> Locator:
 
 
 def open_integrations_menu(page: Page) -> Locator:
-    """The chat input's Integrations menu (tools, skills, filters, web search), once it shows."""
-    return _open_composer_menu(page, "Integrations")
+    """The chat input's integrations (tools, skills, filters, web search), once they show: since
+    dev 834c47ee0 they sit in the More menu, under its own entries."""
+    return _open_composer_menu(page, "More")
+
+
+def expect_picked(page: Page, entry: str, count: int) -> None:
+    """Check that the integrations' `entry` row (Tools, Skills) counts `count` picks, then close."""
+    row = open_integrations_menu(page).get_by_role("menuitem", name=re.compile(rf"^{entry}"))
+    expect(row).to_contain_text(f"{count} selected")
+    close_menu(page)
+
+
+def show_input_selections(actor) -> None:
+    """Turn on the account's Show Input Selections, which puts the picked tools, skills and
+    switches beside the + button (off by default since dev 834c47ee0)."""
+    with actor.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"showInputSelections": True}}
+        )
+    assert saved.status_code == 200, saved.text
 
 
 def integration_row(menu: Locator, name: str, role: str = "menuitemcheckbox") -> Locator:

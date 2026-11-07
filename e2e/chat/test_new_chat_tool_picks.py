@@ -1,9 +1,10 @@
 """Regression: a tool picked in a new chat was dropped after leaving the chat and coming back.
 
-Issue open-webui/open-webui#32084. A user opens a new chat, picks a tool from the Integrations
-menu and sends the first message. Opening another chat from the sidebar and going back, or
+Issue open-webui/open-webui#32084. A user opens a new chat, picks a tool from the More menu's
+integrations and sends the first message. Opening another chat from the sidebar and going back, or
 reloading the page, used to drop the tool: the chat fell back to the model's default tools, so the
-next message went out without it. Picks made later in an existing chat were always kept.
+next message went out without it. Picks made later in an existing chat were always kept. The menu's
+Tools entry counts the picks.
 
 Discriminates: both tests fail on the dev ee1d9255f build (the next message carries no picked
 tool) and pass with the picks saved for the chat once its first message creates it.
@@ -20,7 +21,7 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.python_tools import python_tool
 from utils.cached_chat import turn_on_tool
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_picked, expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -39,13 +40,9 @@ def puffin_tool(admin) -> str:
         yield name
 
 
-def tool_badge(page: Page):
-    return page.get_by_role("button", name="Available Tools")
-
-
 def pick_tool(page: Page, name: str) -> None:
     turn_on_tool(page, name)
-    expect(tool_badge(page)).to_have_text("1")
+    expect_picked(page, "Tools", 1)
 
 
 def ask(page: Page, upstream, question: str) -> dict:
@@ -92,7 +89,7 @@ def test_a_tool_picked_in_a_new_chat_stays_after_switching_chats(
     open_from_sidebar(page, other_chat)
     open_from_sidebar(page, picked_chat)
 
-    expect(tool_badge(page)).to_have_text("1")
+    expect_picked(page, "Tools", 1)
     follow_up = ask(page, upstream, f"follow-up {uuid.uuid4().hex[:6]}")
     assert "count_puffins" in offered_tools(follow_up)
 
@@ -103,6 +100,6 @@ def test_a_tool_picked_in_a_new_chat_stays_after_a_reload(page_for, user, upstre
 
     page.reload()
 
-    expect(tool_badge(page)).to_have_text("1")
+    expect_picked(page, "Tools", 1)
     follow_up = ask(page, upstream, f"follow-up {uuid.uuid4().hex[:6]}")
     assert "count_puffins" in offered_tools(follow_up)

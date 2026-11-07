@@ -1,6 +1,7 @@
 """Journey: the chat's Available Tools dialog lists what an MCP tool server offers.
 
-A person turns on an MCP tool server for the chat and opens Available Tools. The server's entry
+A person turns on an MCP tool server for the chat and opens Available Tools, shown beside the
++ button with Show Input Selections on (off by default since dev 834c47ee0). The server's entry
 folds open to its tools, each with its description and the count beside the name, fetched when the
 entry is first opened. A server that cannot be reached shows "Unable to load tools" with a Retry
 that fetches again once the server is back. The sign-in states ("Auth required", Reconnect) are
@@ -22,7 +23,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.instance import free_port
 from harness.mcp_server import ECHO_DESCRIPTION, TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.terminal_server import read_grant
-from utils.chat_ui import chat_input
+from utils.chat_ui import close_menu, open_integrations_menu, show_input_selections
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -45,11 +46,10 @@ def named(connection: dict, name: str) -> dict:
 
 def open_tools_dialog(page: Page, server_name: str) -> Locator:
     page.goto("/")
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_label("Integrations").click()
-    page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
-    page.get_by_role("menuitemcheckbox", name=re.compile(server_name)).click()
-    page.keyboard.press("Escape")
+    menu = open_integrations_menu(page)
+    menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    menu.get_by_role("menuitemcheckbox", name=re.compile(server_name)).click()
+    close_menu(page)
     page.get_by_role("button", name="Available Tools").click()
     dialog = page.get_by_role("dialog").filter(has_text="Available Tools")
     expect(dialog).to_be_visible()
@@ -60,6 +60,7 @@ def test_an_mcp_servers_tools_are_listed_with_their_descriptions(
     page_for, make_user, admin, preserve, server_name
 ):
     person = make_user()
+    show_input_selections(person)
     server_id = f"chart_{secrets.token_hex(3)}"
     with serving_mcp(media=True) as url:
         connection = mcp_connection(url, server_id, [read_grant("*")])
@@ -78,6 +79,7 @@ def test_a_server_that_is_down_offers_a_retry_that_lists_its_tools_once_it_is_ba
     page_for, make_user, admin, preserve, server_name
 ):
     person = make_user()
+    show_input_selections(person)
     server_id = f"chart_{secrets.token_hex(3)}"
     port = free_port()
     connection = mcp_connection(f"http://127.0.0.1:{port}/mcp", server_id, [read_grant("*")])
