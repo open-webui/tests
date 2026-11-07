@@ -23,12 +23,20 @@ no longer required for Milvus the refusal test does, and with the source's colum
 the custom-columns test does. Passes on dev 5032e834e; with 1369027db (open-webui#32233)
 reverted both chat tests cite a file id (the point id, or `external-<knowledge id>` from the
 tool), and with only its tool half reverted the tool test does.
+
+With Retrieval Query Generation on, a chat searches the collection once per generated query, and
+since 35d946f27 (open-webui/open-webui#33704, issue #33184) the best points of every search reach
+the model, merged by rank; before, the first search filled the whole count and the others were
+dropped. That test passes on dev f659c0d12 and fails on a backend copy with 35d946f27 reverted
+(only the first search's points reach the model).
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import threading
+import uuid
 
 import pytest
 
@@ -50,6 +58,7 @@ from harness.external_knowledge import (
     serve_milvus,
     serve_qdrant,
 )
+from harness.listener import Answer, ReceivedRequest, json_answer
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -409,3 +418,70 @@ def test_a_milvus_source_is_searched_on_the_columns_it_names(admin, milvus_servi
     [(_, vector_field, _, output_fields)] = searches_of(milvus_service, "berths")
     assert vector_field == "embedding"
     assert set(output_fields) == {"body", "tags", "id"}
+
+
+def _each_search_answering(listener, collection: str, answers: list[list[dict]]) -> None:
+    """Answer the collection's searches with `answers` in turn, one list of points per search."""
+    remaining = list(answers)
+    lock = threading.Lock()
+
+    def query(request: ReceivedRequest) -> Answer:
+        with lock:
+            points = remaining.pop(0) if remaining else []
+        nearest = points[: request.json().get("limit", 10)]
+        return json_answer({"result": {"points": nearest}, "status": "ok", "time": 0.001})
+
+    listener.route("POST", f"/collections/{collection}/points/query", query)
+
+
+@pytest.mark.regression
+@pytest.mark.usefixtures("file_context_on")
+def test_every_generated_query_adds_its_best_points_to_the_chat(
+    admin, listener, upstream, connection_id, preserve
+):
+    """Fix 35d946f27 (PR open-webui/open-webui#33704, issue #33184): with Retrieval Query
+    Generation on, each generated query searched the collection, but only the first search's
+    points reached the model."""
+    # each search fills the whole count (top k, 10 by default) on its own
+    gate_points = [point(100 + rank, f"Gate fact {rank}.", 0.9 - rank / 100) for rank in range(12)]
+    visitor_points = [
+        point(200 + rank, f"Visitor fact {rank}.", 0.9 - rank / 100) for rank in range(12)
+    ]
+    _each_search_answering(listener, COLLECTION, [gate_points, visitor_points])
+    preserve("tasks")
+    with admin.client() as client:
+        current = client.get("/api/v1/tasks/config").json()
+        switched = client.post(
+            "/api/v1/tasks/config/update",
+            json={**current, "ENABLE_RETRIEVAL_QUERY_GENERATION": True},
+        )
+        assert switched.status_code == 200, switched.text
+
+    question = f"how do I get through the harbour gate as a visitor? {uuid.uuid4().hex[:8]}"
+
+    def generating_queries(body: dict) -> bool:
+        task = str(body["messages"][-1].get("content"))
+        return "<chat_history>" in task and question in task
+
+    def chatting(body: dict) -> bool:
+        return reply.answering(question)(body) and not generating_queries(body)
+
+    upstream.queue(
+        reply.text('{"queries": ["harbour gate", "visitor sign in"]}', match=generating_queries),
+        reply.text("Sign in, then use the gate.", match=chatting),
+    )
+    with admin.client() as client, external_knowledge_base(client, connection_id, COLLECTION) as kb:
+        _, answer = ask(
+            client, question, files=[{"type": "collection", "id": kb, "name": "Team vectors"}]
+        )
+
+    assert answer["content"] == "Sign in, then use the gate.", answer
+    assert len(queries_to(listener, COLLECTION)) == 2, "each generated query is one search"
+    [chat_request] = [body for body in upstream.chat_requests() if chatting(body)]
+    sent = json.dumps(chat_request["messages"])
+    tops = {"Gate fact 0.", "Visitor fact 0."}
+    missing = sorted(top for top in tops if top not in sent)
+    assert not missing, (
+        f"the best point of a generated query's search never reached the model: {missing}; only "
+        "the first search's points were kept (#33184)"
+    )
