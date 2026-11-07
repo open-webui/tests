@@ -9,9 +9,10 @@ check widened the window, and the owner as well.
 
 Here a tab sends bursts of edits without waiting for the server, each carrying the full text so
 far, on several notes at once; once the save delay has passed every note must hold the last text.
-Each round of notes gets a tab of its own, kept open until the saves are checked: since f56db6913
-(PR #31603) a connection may hold only 20 documents open and the server refuses further joins, so
-one tab joining all 48 notes left 28 of them unjoined and never saved.
+Each round of notes gets a tab of its own, kept open until that round's saves are checked and
+closed before the next: since f56db6913 (PR #31603) the server refuses joins past 20 open
+documents, per connection and since de90e1305 (#33864) per user across all its tabs, so tabs
+kept open for all 48 notes left 28 of them unjoined and never saved.
 On Postgres the instance gets the pool the scaling docs suggest to start from
 (`DATABASE_POOL_SIZE=15`, `DATABASE_POOL_MAX_OVERFLOW=20`) and the notes get their bursts one at a
 time: with the default pool even one note's burst runs out of connections and the server answers
@@ -28,7 +29,6 @@ both fail on SQLite.
 
 from __future__ import annotations
 
-import contextlib
 import time
 import uuid
 
@@ -98,10 +98,10 @@ def _type_bursts(writer, owner, note_ids: list[str]) -> str:
     steps = range(EDITS_PER_NOTE)
     texts = [SENTENCE[: 1 + step * len(SENTENCE) // EDITS_PER_NOTE] for step in steps]
     texts[-1] = SENTENCE
-    with contextlib.ExitStack() as tabs:
-        for start in range(0, len(note_ids), NOTES_PER_ROUND):
-            round_ids = note_ids[start : start + NOTES_PER_ROUND]
-            tab = tabs.enter_context(connected(writer))
+    behind: dict[str, str] = {}
+    for start in range(0, len(note_ids), NOTES_PER_ROUND):
+        round_ids = note_ids[start : start + NOTES_PER_ROUND]
+        with connected(writer) as tab:
             for note_id in round_ids:
                 tab.join_note(note_id)
             for text in texts:
@@ -110,10 +110,17 @@ def _type_bursts(writer, owner, note_ids: list[str]) -> str:
                 time.sleep(EDIT_SPACING)
             # a call is answered after the emits before it, so the round has been read
             tab.join_note(round_ids[0])
-        return _wait_for_saves(owner, note_ids, SENTENCE)
+            behind |= _notes_behind(owner, round_ids, SENTENCE)
+    assert not behind, (
+        f"#31585: after a burst of edits the saved note is behind the editor in {len(behind)} "
+        f"of {len(note_ids)} notes; it should read {SENTENCE!r} "
+        f"but holds {sorted(set(behind.values()))}"
+    )
+    return SENTENCE
 
 
-def _wait_for_saves(reader, note_ids: list[str], last_text: str) -> str:
+def _notes_behind(reader, note_ids: list[str], last_text: str) -> dict[str, str]:
+    """The notes still holding an older text than `last_text` once the save delay has passed."""
     deadline = time.monotonic() + SAVE_WAIT
     behind: dict[str, str] = {}
     while time.monotonic() < deadline:
@@ -125,12 +132,7 @@ def _wait_for_saves(reader, note_ids: list[str], last_text: str) -> str:
         if not behind:
             break
         time.sleep(0.5)
-    assert not behind, (
-        f"#31585: after a burst of edits the saved note is behind the editor in {len(behind)} "
-        f"of {len(note_ids)} notes; it should read {last_text!r} "
-        f"but holds {sorted(set(behind.values()))}"
-    )
-    return last_text
+    return behind
 
 
 def test_a_writers_burst_of_edits_saves_the_last_text(make_user):
