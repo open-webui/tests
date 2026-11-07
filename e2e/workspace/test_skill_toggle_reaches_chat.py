@@ -21,7 +21,7 @@ import uuid
 import pytest
 from playwright.sync_api import Page, expect
 
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, open_integrations_menu
 from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -72,7 +72,7 @@ def _switch_in_workspace(page: Page, name: str) -> None:
 def _skills_in_chat_menu(page: Page, anchor: str):
     """Open the chat's Integrations > Skills list; returns it once `anchor` shows in it."""
     expect(chat_input(page)).to_be_visible()
-    page.get_by_label("Integrations").click()
+    open_integrations_menu(page)
     page.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitemcheckbox", name=re.compile(re.escape(anchor)))).to_be_visible()

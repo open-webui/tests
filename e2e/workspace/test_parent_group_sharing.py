@@ -38,7 +38,7 @@ from harness.actors import Actor
 from harness.channel_quotes import enable_channels
 from harness.group_tree import move_group
 from harness.python_tools import EVERYONE_READS
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, open_integrations_menu
 from utils.member_picker import pick_member
 from utils.notes_page import note_rows
 from utils.workspace_list import item_row
@@ -286,7 +286,7 @@ def test_a_tool_shared_with_the_parent_is_listed_under_integrations_for_a_subgro
     try:
         page = page_for(family.member)
         expect(chat_input(page)).to_be_visible()
-        page.get_by_label("Integrations").click()
+        open_integrations_menu(page)
         page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
         expect(page.get_by_role("menuitemcheckbox", name=name)).to_be_visible()
     finally:

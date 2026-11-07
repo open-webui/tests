@@ -55,7 +55,7 @@ from utils.access_control import (
     remove_access,
     visibility_choices,
 )
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
 from utils.model_selector import model_options, select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -190,7 +190,7 @@ def _prompt_offered(page: Page, item: dict) -> Locator:
 
 def _tool_offered(page: Page, item: dict) -> Locator:
     _new_chat(page)
-    page.get_by_label("Integrations").click()
+    open_integrations_menu(page)
     page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
     return page.get_by_role("menuitemcheckbox", name=item["name"])
 
