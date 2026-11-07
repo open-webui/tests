@@ -17,7 +17,9 @@ registration answers, `token_base` names the token endpoint of its metadata by a
 `access_type=offline`, the way Google's does. With `bot_challenge` the authorize endpoint
 answers Open WebUI's own server-side requests the way Cloudflare's bot protection does: a 403
 with `cf-mitigated: challenge` and an HTML page that repeats the requested URL, while a browser
-passes as before. `revoke_refresh_tokens()` withdraws the live refresh tokens, `forget_clients()`
+passes as before. With `refresh_outage` set to a status (503, 429) every refresh grant answers
+it without spending the refresh token, as a provider does during an outage or under a rate
+limit. `revoke_refresh_tokens()` withdraws the live refresh tokens, `forget_clients()`
 drops every registered client so the authorize answers `invalid_client`, and
 `ProtectedMcp.presented` lists every bearer token the MCP server was shown.
 `register_oauth_mcp()` registers the server as the admin panel does and saves the connection (after
@@ -122,6 +124,7 @@ class McpAuthorizationServer:
     authorize_base: str | None = None  # the same for the authorize endpoint
     offline_access_only: bool = False
     bot_challenge: bool = False
+    refresh_outage: int | None = None  # the status every refresh grant answers while set
 
     @property
     def issuer(self) -> str:
@@ -220,6 +223,8 @@ class McpAuthorizationServer:
         form = request.form
         if form.get("grant_type") == "authorization_code":
             return self._exchange_code(client_id, form)
+        if form.get("grant_type") == "refresh_token" and self.refresh_outage:
+            return self.refresh_outage, {"error": "temporarily_unavailable"}
         if form.get("grant_type") == "refresh_token":
             return self._refresh(client_id, form)
         return 400, {"error": "unsupported_grant_type"}

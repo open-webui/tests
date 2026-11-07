@@ -13,8 +13,10 @@ after one. Each test serves the MCP server and its authorization server by a hos
 and expects the same outcome under both resolvers: the server registered with the scope its
 resource names, the user connected and the tool call carrying the token, an expiring token
 refreshed and the new one presented. A server or a token endpoint whose name does not resolve
-fails the same way under both: a refused registration, and a dropped connection with no tool
-offered.
+fails the same way under both: a refused registration, and a refresh that fails at once with no
+tool offered. Since 14c2cad84 (open-webui/open-webui#33805) a token endpoint that cannot be
+reached is a passing outage, so the user's sign-in is kept for the next try; before it the
+session was deleted.
 
 The connect itself (authlib's code exchange) and the tool calls (the MCP SDK) run over httpx and
 are not affected by the flag.
@@ -210,7 +212,7 @@ def test_static_credentials_discover_a_server_named_by_host(
 
 
 @pytest.mark.usefixtures("refuses_unknown_names")
-def test_a_token_endpoint_that_does_not_resolve_drops_the_connection(
+def test_a_token_endpoint_that_does_not_resolve_keeps_the_sign_in_for_later(
     resolver, resolving_instance, registered
 ):
     with _serving("localhost") as mcp:
@@ -228,7 +230,9 @@ def test_a_token_endpoint_that_does_not_resolve_drops_the_connection(
 
     offered = resolving_instance.upstream.chat_requests()[-1].get("tools") or []
     assert not [tool for tool in offered if server_id in str(tool)], "the tool was still offered"
-    assert disconnected.status_code == 404, "the failed refresh left the session behind"
+    assert disconnected.status_code == 200, (
+        "a token endpoint that could not be reached deleted the user's sign-in (#33803)"
+    )
     assert seconds < FAILS_WITHIN, f"the refresh took {seconds:.1f}s to fail"
 
 

@@ -32,6 +32,14 @@ re-registration". A challenge now skips the check. Nearby: a provider that no lo
 client still gets a new registration and the connect goes through with it. The challenge test
 passes on dev ad8da5921 and fails on a backend copy with 4f9f04cee reverted (the authorize answers
 500 after a second registration).
+
+The outage test pins a fixed bug (PR open-webui/open-webui#33805, fix 14c2cad84, issue #33803):
+a refresh the provider answered with a 5xx or a 429 deleted the user's stored sign-in, so one
+provider blip made them connect again, and for a provider that rotates refresh tokens the session
+was the only copy. Such an answer now keeps the session and the next call refreshes with the same
+refresh token, while a refused refresh (the revoked-token test) still drops it. Passes on dev
+f659c0d12, fails on a backend copy with 14c2cad84 reverted (the session is gone after the 503 and
+after the 429).
 """
 
 from __future__ import annotations
@@ -180,6 +188,44 @@ def test_a_revoked_refresh_token_drops_the_connection(instance, upstream, mcp, p
     offered = upstream.chat_requests()[-1].get("tools") or []
     assert not [tool for tool in offered if server_id in str(tool)], "the tool was still offered"
     assert disconnected.status_code == 404, "the failed refresh left the session behind"
+
+
+def stored_sessions(admin, person) -> list[str]:
+    """The providers of the OAuth sessions Open WebUI keeps for `person`."""
+    with admin.client() as client:
+        listed = client.get(f"/api/v1/users/{person.id}/oauth/sessions")
+    if listed.status_code == 400:  # the route's answer for a user without sessions
+        return []
+    assert listed.status_code == 200, listed.text
+    return [session["provider"] for session in listed.json()]
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize("status", [503, 429], ids=["outage", "rate-limited"])
+def test_a_provider_outage_during_the_refresh_keeps_the_connection(
+    instance, admin, upstream, mcp, person, server_id, status
+):
+    auth_server = mcp.auth_server
+    auth_server.access_token_lifetime = EXPIRING_SOON
+    connect(instance, person, server_id)
+    connected = auth_server.issued[-1]
+    auth_server.refresh_outage = status
+
+    prompt = f"echo it during a {status}"
+    upstream.queue(reply.text("the server is busy", match=reply.answering(prompt)))
+    with person.client() as client:
+        ask(client, prompt, tool_ids=[f"server:mcp:{server_id}"])
+
+    assert auth_server.token_grants("refresh_token"), "the refresh was never tried"
+    assert f"mcp:{server_id}" in stored_sessions(admin, person), (
+        f"a {status} from the provider during the refresh deleted the user's MCP sign-in, so "
+        "they have to connect again (#33803)"
+    )
+    auth_server.refresh_outage = None
+    assert echo_through_chat(person, upstream, server_id) == PHRASE
+    refreshes = auth_server.token_grants("refresh_token")
+    assert refreshes[-1]["refresh_token"] == connected["refresh_token"]
+    assert mcp.presented[-1] == auth_server.issued[-1]["access_token"]
 
 
 def test_registering_the_server_again_connects_with_the_new_client(
