@@ -59,7 +59,8 @@ def pick(editor: Locator, label: str, name: str, ticked: bool = True) -> None:
     Filters, Actions)."""
     selector_row(editor, label).click()
     editor.page.get_by_placeholder(f"Search {label.lower()}").fill(name)
-    item = editor.page.get_by_role("menuitem", name=name, exact=True)
+    # an entry reads out its description after its name since e6beee356
+    item = editor.page.get_by_role("menuitem").filter(has=editor.page.get_by_text(name, exact=True))
     if (item.get_attribute("aria-pressed") == "true") != ticked:
         item.click()
     expect(item).to_have_attribute("aria-pressed", str(ticked).lower())
