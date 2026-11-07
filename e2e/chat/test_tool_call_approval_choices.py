@@ -18,7 +18,8 @@ test fails. On f659c0d12, in a backend copy that never marks a chat as waiting t
 fails, in one whose Auto never stops a call the Auto test fails, and in one that drops the picked
 mode from the saved account settings the kept-mode test fails. The side chat test is red on
 f659c0d12, a real bug: the server pauses the side chat's call, but the side chat shows no Allow or
-Deny, so it stays on "Preparing" for good (issue to be filed, side chats saved since 3b1a95383).
+Deny, so it stays on "Preparing" for good (open-webui/open-webui#33873, side chats saved since
+3b1a95383).
 """
 
 from __future__ import annotations
@@ -288,7 +289,7 @@ def side_chat_allowed(admin, preserve) -> None:
 def test_a_side_chat_asks_before_a_tool_call_like_its_chat(
     tool_approval_on, side_chat_allowed, page_for, make_user, upstream
 ):
-    """Red on f659c0d12: the side chat never shows Allow or Deny for its paused call."""
+    """Red on f659c0d12 (open-webui/open-webui#33873): the side chat shows no Allow or Deny."""
     page = page_for(make_user())
     set_tool_approval_mode(page, "Ask for approval")
     _ask_for_the_time(page, upstream, "The chat checked the clock.")
@@ -304,12 +305,16 @@ def test_a_side_chat_asks_before_a_tool_call_like_its_chat(
     panel = side_chat_panel(page, aside)
     allow = panel.get_by_role("button", name="Allow", exact=True)
     expect(allow).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
-    assert _tool_results(upstream, aside) == [], "the side chat ran the tool before it was allowed"
+    asked = [body for body in upstream.chat_requests() if reply.answering(aside)(body)]
+    assert len(asked) == 1, "the side chat ran the tool before it was allowed"
+    # the chat's own tool result travels along as the side chat's context
+    context_results = _tool_results(upstream, aside)
     allow.click()
 
     expect(panel).to_contain_text("The side chat checked the clock.", timeout=REPLY_TIMEOUT_MS)
-    [result] = _tool_results(upstream, aside)
-    assert result != REJECTED
+    results = _tool_results(upstream, aside)
+    assert results[:-1] == context_results, results
+    assert results[-1] != REJECTED
 
 
 @pytest.mark.xfail(
