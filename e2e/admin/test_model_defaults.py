@@ -4,24 +4,37 @@ Model Defaults holds what a model without settings of its own starts from. A pro
 added there shows on a user's new chat and sends its prompt when pressed; a parameter set there
 reaches the provider with the user's chat; a capability switched off there takes that ability
 from the model, so an image attached to a chat with it is refused where it attached before.
+A tool picked under Tools there (#33749) stays picked after a reload and is on in a user's new
+chat, so the provider is offered it; a model whose own tool list is empty does not take it, a
+default tool the user may not use is left out of their chat while one they may use is kept, and
+a new model in the workspace editor starts with the default tools ticked (#33787).
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Model Defaults save sends the
 stored defaults back in place of the edited ones, every test but the untouched attach fails.
 The prompt suggestion and capability tests were retargeted for 8d0ff76f2, whose defaults use
 the model editor's prompt rows and Capabilities switches: they pass on dev 76ad6f97c (3 of 3)
 and fail in a build of it whose save drops the edited capabilities and prompt suggestions.
+The default tool tests pass on dev f659c0d12; in a build of it whose Model Defaults save
+leaves out the tools the picked tool test fails, and in one whose new model form starts with no
+tools the new model test fails. In a build whose rows show no picked count and whose new chat
+picks every default tool, the test of the default tool the user may not use fails on the count.
+The Skills test marks a gap with a strict xfail: Model Defaults has no default skills.
 """
 
 from __future__ import annotations
 
+import contextlib
 import uuid
+from typing import Iterator
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, expect_reply, send
-from utils.model_editor import section
+from harness.python_tools import EVERYONE_READS
+from harness.upstream import MOCK_MODEL_ID
+from utils.chat_ui import chat_input, expect_picked, expect_reply, send
+from utils.model_editor import pick, section, selector_row
 from utils.setting_rows import setting_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -150,3 +163,157 @@ def test_an_image_attaches_while_the_default_capabilities_allow_it(page_for, mak
         f"img[src*='{file_id}']"
     )
     expect(thumbnail).to_be_visible()
+
+
+# --------------------------------------------------------------------------- default tools
+
+TIDE_TOOL = '''class Tools:
+    def tide_times(self, harbour: str) -> str:
+        """Tell the tide times of a harbour.
+
+        :param harbour: Name of the harbour
+        """
+        return "high water at noon"
+'''
+
+LOG_TOOL = '''class Tools:
+    def read_harbour_log(self) -> str:
+        """Read the harbour master's log."""
+        return "all quiet"
+'''
+
+
+@contextlib.contextmanager
+def workspace_tool(admin, name: str, grants: list[dict], source: str = TIDE_TOOL) -> Iterator[str]:
+    """A tool of the admin's named `name`, readable as `grants` say; deleted afterwards."""
+    tool_id = f"tide_{uuid.uuid4().hex[:8]}"
+    with admin.client() as client:
+        created = client.post(
+            "/api/v1/tools/create",
+            json={
+                "id": tool_id,
+                "name": name,
+                "content": source,
+                "meta": {"description": "Reads the harbour tides"},
+                "access_grants": grants,
+            },
+        )
+        assert created.status_code == 200, created.text
+        try:
+            yield tool_id
+        finally:
+            client.delete(f"/api/v1/tools/id/{tool_id}/delete")
+
+
+def set_default_tools(admin, tool_ids: list[str]) -> None:
+    with admin.client() as client:
+        current = client.get(MODELS_CONFIG[0]).json()
+        metadata = {**(current.get("DEFAULT_MODEL_METADATA") or {}), "toolIds": tool_ids}
+        saved = client.post(MODELS_CONFIG[1], json={**current, "DEFAULT_MODEL_METADATA": metadata})
+    assert saved.status_code == 200, saved.text
+
+
+def offered_tools(upstream, question: str) -> set[str]:
+    sent = next(filter(reply.answering(question), upstream.chat_requests()))
+    return {tool["function"]["name"] for tool in sent.get("tools") or []}
+
+
+def test_a_default_tool_picked_in_model_defaults_is_on_in_a_users_new_chat(
+    page_for, admin, make_user, upstream, defaults_restored
+):
+    name = f"Tide desk {uuid.uuid4().hex[:6]}"
+    with workspace_tool(admin, name, [EVERYONE_READS]):
+        admin_page = page_for(admin)
+        settings = open_model_defaults(admin_page)
+        pick(settings, "Tools", name)
+        save(admin_page, settings)
+
+        admin_page.reload()
+        settings = open_model_defaults(admin_page)
+        expect(selector_row(settings, "Tools")).to_contain_text(name)
+
+        page = page_for(make_user())
+        expect_picked(page, "Tools", 1)
+        question = f"When is high water? {uuid.uuid4().hex[:6]}"
+        upstream.queue(reply.text("At noon.", match=reply.answering(question)))
+        send(page, question)
+        expect_reply(page, "At noon.")
+
+    assert "tide_times" in offered_tools(upstream, question)
+
+
+def test_a_model_with_its_own_tool_list_does_not_take_the_default_tools(
+    page_for, admin, make_user, upstream, defaults_restored
+):
+    account = make_user()
+    model_id = f"no-tools-{uuid.uuid4().hex[:8]}"
+    with workspace_tool(admin, f"Tide desk {uuid.uuid4().hex[:6]}", [EVERYONE_READS]) as tool_id:
+        set_default_tools(admin, [tool_id])
+        with admin.client() as client:
+            created = client.post(
+                "/api/v1/models/create",
+                json={
+                    "id": model_id,
+                    "base_model_id": MOCK_MODEL_ID,
+                    "name": model_id,
+                    # the admin unticked every tool for this model
+                    "meta": {"toolIds": []},
+                    "params": {},
+                    "access_grants": [EVERYONE_READS],
+                },
+            )
+            assert created.status_code == 200, created.text
+        try:
+            page = page_for(account, path=f"/?model={model_id}")
+            expect(page.get_by_role("button", name=f"Selected model: {model_id}")).to_be_visible()
+            question = f"Any tides today? {uuid.uuid4().hex[:6]}"
+            upstream.queue(reply.text("No idea.", match=reply.answering(question)))
+            send(page, question)
+            expect_reply(page, "No idea.")
+        finally:
+            with admin.client() as client:
+                client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+    assert "tide_times" not in offered_tools(upstream, question)
+
+
+def test_a_default_tool_a_user_cannot_use_is_left_out_of_their_chat(
+    page_for, admin, make_user, upstream, defaults_restored
+):
+    with (
+        workspace_tool(admin, f"Log desk {uuid.uuid4().hex[:6]}", [], LOG_TOOL) as private_id,
+        workspace_tool(admin, f"Tide desk {uuid.uuid4().hex[:6]}", [EVERYONE_READS]) as shared_id,
+    ):
+        set_default_tools(admin, [private_id, shared_id])
+        page = page_for(make_user())
+        # only the tool this account may use is picked
+        expect_picked(page, "Tools", 1)
+        question = f"Who keeps the harbour log? {uuid.uuid4().hex[:6]}"
+        upstream.queue(reply.text("The master.", match=reply.answering(question)))
+        send(page, question)
+        expect_reply(page, "The master.")
+
+    offered = offered_tools(upstream, question)
+    assert "tide_times" in offered, f"the shared default tool was not offered: {sorted(offered)}"
+    assert "read_harbour_log" not in offered, "the default tool the user may not use was offered"
+
+
+def test_a_new_model_starts_with_the_default_tools_ticked(page_for, admin, defaults_restored):
+    name = f"Tide desk {uuid.uuid4().hex[:6]}"
+    with workspace_tool(admin, name, [EVERYONE_READS]) as tool_id:
+        set_default_tools(admin, [tool_id])
+        page = page_for(admin, path="/workspace/models/create")
+        editor = page.get_by_role("main")
+        expect(selector_row(editor, "Tools")).to_contain_text(name)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="gap: Model Defaults sets default tools for every model but no default skills, "
+    "which the model editor offers right beside its tools",
+)
+def test_model_defaults_offers_default_skills_beside_the_tools(page_for, admin):
+    settings = open_model_defaults(page_for(admin))
+    expect(selector_row(settings, "Tools")).to_be_visible()
+
+    expect(selector_row(settings, "Skills")).to_be_visible()

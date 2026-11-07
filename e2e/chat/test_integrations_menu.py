@@ -302,7 +302,7 @@ def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(page
     # hiding the chips kept the pick, so it shows at once
     expect(tools_chip).to_have_text("1")
 
-    page.reload()
-    expect(chat_input(page)).to_be_visible()
+    # the setting is the account's, so a page opened afresh shows the chips too
+    page = page_for(account)
     pick_from_list(page, "Tools", f"Tide table {suffix}")
-    expect(tools_chip).to_have_text("1")
+    expect(page.get_by_role("button", name="Available Tools")).to_have_text("1")

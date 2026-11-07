@@ -36,6 +36,8 @@ list: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves 
 as they were loaded every test that saves an edit fails.
 The compare test passes on dev c143625cc (3 of 3) and fails in a build of it whose Apply hands
 back the left side, the original.
+The Tools search list shows each tool's description under its name (#33723): passes on dev
+f659c0d12 and fails in a build of it whose list shows names only.
 Retargeted for e32d2f75b, whose editor picks the base model with the chat's model selector (Select
 a base model): the sharing test passes on dev b40891e0a (3 of 3) and fails in a backend copy of it
 that makes every new model readable by everyone.
@@ -64,7 +66,7 @@ from harness.realtime_provider import (
 )
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
 from utils.member_picker import pick_member
 from utils.model_editor import pick, section, selector_row, set_checkbox
 from utils.model_selector import model_search
@@ -202,7 +204,7 @@ def test_unticking_web_search_takes_the_toggle_out_of_the_chat(
 ):
     page = page_for(builder)
     open_chat_on(page, preset)
-    open_menu(page, "Integrations")
+    open_integrations_menu(page)
     expect(web_search_toggle(page)).to_be_visible()
 
     editor = open_editor(page, preset)
@@ -210,9 +212,7 @@ def test_unticking_web_search_takes_the_toggle_out_of_the_chat(
     save(editor)
 
     open_chat_on(page, preset)
-    integrations = page.get_by_role("button", name="Integrations", exact=True)
-    if integrations.count():
-        open_menu(page, "Integrations")
+    open_integrations_menu(page)
     expect(web_search_toggle(page)).to_have_count(0)
 
 
@@ -225,7 +225,7 @@ def test_web_search_as_a_default_feature_is_on_in_a_new_chat(
     save(editor)
 
     open_chat_on(page, preset)
-    open_menu(page, "Integrations")
+    open_integrations_menu(page)
     expect(web_search_toggle(page)).to_have_attribute("aria-checked", "true")
     page.keyboard.press("Escape")
 
@@ -415,7 +415,7 @@ TOGGLE_FILTER_SOURCE = """class Filter:
 
 def filter_switch(page: Page, filter_id: str) -> Locator:
     """The filter's switch in the chat's Integrations menu."""
-    open_menu(page, "Integrations")
+    open_integrations_menu(page)
     return page.get_by_role("menu").get_by_role("menuitemcheckbox", name=re.compile(filter_id))
 
 
@@ -652,3 +652,30 @@ def test_a_revision_applied_from_compare_is_the_saved_system_prompt(page_for, bu
     with builder.client() as client:
         stored = client.get("/api/v1/models/model", params={"id": preset["id"]}).json()
     assert stored["params"]["system"] == revised
+
+
+def test_the_tools_list_shows_each_tools_description(page_for, admin, builder, preset):
+    name = unique("Locker desk")
+    description = unique("Looks up who holds a locker")
+    tool_id = f"lockers_{uuid.uuid4().hex[:8]}"
+    with admin.client() as client:
+        created = client.post(
+            "/api/v1/tools/create",
+            json={
+                "id": tool_id,
+                "name": name,
+                "content": LOCKER_TOOL,
+                "meta": {"description": description},
+                "access_grants": [EVERYONE_READS],
+            },
+        )
+        assert created.status_code == 200, created.text
+    try:
+        editor = open_editor(page_for(builder), preset)
+        selector_row(editor, "Tools").click()
+        editor.page.get_by_placeholder("Search tools").fill(name)
+        item = editor.page.get_by_role("menuitem", name=re.compile(re.escape(name)))
+        expect(item).to_contain_text(description)
+    finally:
+        with admin.client() as client:
+            client.delete(f"/api/v1/tools/id/{tool_id}/delete")

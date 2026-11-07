@@ -14,6 +14,9 @@ message of the chat, the first fails as the question shows in the chat and, with
 out, as the stored chat holds it. Retargeted for the saved side chats of 3b1a95383: passes on dev
 c165ee14f, and in its frontend build whose side chat copies none of the chat so far both
 tests fail on what the model was sent.
+A side chat opened next to a chat on a model with default tools sends its first message with those
+tools on (#33788, 18f199b80); it passes on dev f659c0d12 and fails in a build of it whose side
+chat leaves the model's defaults off.
 """
 
 from __future__ import annotations
@@ -26,6 +29,8 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask, wait_for_reply
+from harness.python_tools import EVERYONE_READS, python_tool
+from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -186,3 +191,56 @@ def test_a_closed_side_chat_is_gone_and_the_next_one_starts_empty(
         ("assistant", ANSWER),
         ("user", second),
     ], "the new side chat's model was sent more than the chat and its own question"
+
+
+TIDE_TOOL = '''class Tools:
+    def tide_times(self, harbour: str) -> str:
+        """Tell the tide times of a harbour."""
+        return "high water at noon"
+'''
+
+
+@pytest.fixture
+def model_with_a_tool(admin):
+    """A preset everyone may use whose default tools hold a tide tool; yields its id."""
+    model_id = f"tides-{uuid.uuid4().hex[:8]}"
+    with python_tool(admin, TIDE_TOOL, name=f"Tide desk {model_id}") as tool_id:
+        with admin.client() as client:
+            created = client.post(
+                "/api/v1/models/create",
+                json={
+                    "id": model_id,
+                    "base_model_id": MOCK_MODEL_ID,
+                    "name": model_id,
+                    "meta": {"toolIds": [tool_id]},
+                    "params": {},
+                    "access_grants": [EVERYONE_READS],
+                },
+            )
+            assert created.status_code == 200, created.text
+        try:
+            yield model_id
+        finally:
+            with admin.client() as client:
+                client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+def test_a_side_chat_starts_with_the_models_default_tools(
+    page_for, make_user, upstream, side_chat_allowed, model_with_a_tool
+):
+    account = make_user()
+    question = tagged(SIDE_QUESTION)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
+    with account.client() as client:
+        client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+        turn, _ = ask(client, PROMPT, model=model_with_a_tool, tool_ids=[])
+    page = page_for(account, path=f"/c/{turn.chat_id}")
+    expect_reply(page, ANSWER)
+
+    ask_aside(page, upstream, question, SIDE_ANSWER)
+
+    sent = next(filter(reply.answering(question), upstream.chat_requests()))
+    offered = {tool["function"]["name"] for tool in sent.get("tools") or []}
+    assert "tide_times" in offered, (
+        f"the side chat's first message went out without the model's default tool: {offered}"
+    )
