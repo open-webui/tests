@@ -126,7 +126,7 @@ def test_each_sheet_of_a_spreadsheet_previews_on_its_own_tab(page_for, make_user
     show_preview(dialog)
 
     expect(dialog.get_by_role("row").filter(has_text="Monday")).to_contain_text("high at noon")
-    dialog.get_by_role("button", name="Ferries", exact=True).click()
+    dialog.get_by_role("tab", name="Ferries", exact=True).click()
     expect(dialog.get_by_role("row").filter(has_text="North pier")).to_contain_text("07:15")
     expect(dialog.get_by_text("Monday")).to_have_count(0)
 
