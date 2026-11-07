@@ -8,7 +8,8 @@ lands on the activation screen, which shows the admin's own title and text when 
 once the admin changes the role in Admin > Users the account gets in with Check Again. A pending
 visitor can also sign out from that screen: signing in again before the admin acts shows the
 screen again, and after it the same credentials go straight to the chat. With sign-up switched
-off the auth page offers no sign-up form and the API refuses one.
+off the auth page offers no sign-up form and the API refuses one. An address with letters beyond
+ASCII before the @ signs up like any other (open-webui/open-webui#33681).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, showing the auth page's sign-up switch
 whatever the sign-up setting turns the sign-up-off test red, the pending overlay ignoring the
@@ -17,7 +18,9 @@ test red, and the sign-up handler sending the name as the email turns all four s
 On dev ebc6add67, a frontend copy whose sign-up handler drops the server's error turns the
 duplicate and format tests red, and one whose pending screen's Sign Out does nothing turns the
 signed-out pending test red; a backend copy whose admin settings refuse the default role `admin`
-turns the admin role test red (the newcomer gets the activation screen).
+turns the admin role test red (the newcomer gets the activation screen). On dev f659c0d12, a
+frontend copy with 3bc0ca1cb (#33693) undone, where the browser's own email check blocks such an
+address, turns the default role test red (the form never submits).
 """
 
 from __future__ import annotations
@@ -82,14 +85,19 @@ def _accounts_with(admin: Actor, email: str) -> list[str]:
     return [account["email"] for account in found.json()["users"]]
 
 
-def test_a_visitor_signs_up_and_lands_in_the_chat_with_the_default_role(page, signup_settings):
+def test_a_visitor_signs_up_and_lands_in_the_chat_with_the_default_role(
+    page, admin, signup_settings
+):
     signup_settings(ENABLE_SIGNUP=True, DEFAULT_USER_ROLE="user")
     name, email = _new_visitor()
+    # an address with letters beyond ASCII before the @ (open-webui/open-webui#33681)
+    email = f"jürgen-{email}"
 
     _sign_up(page, name, email)
 
     expect(chat_input(page)).to_be_visible(timeout=PAGE_TIMEOUT_MS)
     expect(page.get_by_text("Account Activation Pending")).to_be_hidden()
+    assert _accounts_with(admin, email) == [email], f"no account was created for {email}"
 
 
 def test_a_visitor_signing_up_with_the_pending_default_gets_the_activation_screen(

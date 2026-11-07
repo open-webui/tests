@@ -9,7 +9,9 @@ devices" in the edit dialog, after a confirmation that says API keys stay active
 session of that account. Add User with the role Admin creates an account that signs in through
 the auth page and opens the admin panel, while an email already registered is refused in the
 dialog, which stays open, and no second account appears. Each test works as a fresh admin on
-accounts of its own.
+accounts of its own. The edited and the added account use an email address with letters beyond
+ASCII (the edited one in its domain too), which both dialogs and the sign-in page accept
+(open-webui/open-webui#33681).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the edit dialog sending the stored
 role and no password turns the edit test red (the role stays user), the delete confirmation doing
@@ -18,7 +20,9 @@ sort test red; in a backend copy, the user search matching emails alone turns th
 (the name finds nobody), and the sessions route of the users router returning without revoking
 turns the sign-out test red (the account's browser stays in the chat). On dev ebc6add67, a
 frontend copy whose Add User form always sends the role `user` turns the added admin test red, and
-one whose form drops the server's error turns the duplicate test red.
+one whose form drops the server's error turns the duplicate test red. On dev f659c0d12, a
+frontend copy with 3bc0ca1cb (#33693) undone, where the browser's own email check blocks such an
+address, turns the edit and the added admin tests red (the dialog never saves).
 
 The header test fails on dev a5bc78300 (open-webui/open-webui#31581): the sorted column's
 `aria-sort`, added by #27501 to tell screen readers the sort, keeps the value it had on load,
@@ -89,7 +93,8 @@ def test_an_edited_account_signs_in_with_its_new_details_and_opens_the_admin_pan
     suffix = uuid.uuid4().hex[:8]
     new_name, new_email, new_password = (
         f"Edited {suffix}",
-        f"edited-{suffix}@example.com",
+        # letters beyond ASCII on both sides of the @ (open-webui/open-webui#33681)
+        f"édité-{suffix}@exämple.com",
         "edited-pw-1",
     )
 
@@ -230,7 +235,8 @@ def _add_user(
 
 def test_an_account_added_as_admin_signs_in_and_opens_the_admin_panel(admin_page, page, instance):
     suffix = uuid.uuid4().hex[:8]
-    email, password = f"added-admin-{suffix}@example.com", "added-admin-pw-1"
+    # letters beyond ASCII before the @ (open-webui/open-webui#33681)
+    email, password = f"ådded-admin-{suffix}@example.com", "added-admin-pw-1"
     users = _user_list(admin_page)
 
     form = _add_user(admin_page, users, f"Added Admin {suffix}", email, password, "admin")
