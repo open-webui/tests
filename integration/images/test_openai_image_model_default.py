@@ -9,12 +9,14 @@ OpenAI's images API, so the tests read the request it got.
 The default request still carries `response_format`, which Open WebUI leaves out for every model
 matching `IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN` (`^gpt-image`), as the docs promise, and does
 leave out when the admin picks `gpt-image-2` by name: the check reads the empty setting instead of
-the model it sends. `test_the_default_request_matches_the_default_model_chosen_by_name` is red on
-dev f659c0d12 for that.
+the model it sends (issue open-webui/open-webui#33874). OpenAI documents `response_format` as
+unsupported for GPT image models.
+`test_the_default_request_matches_the_default_model_chosen_by_name` stays red until that fix merges.
 
 Discriminates: on dev f659c0d12 the default and model list tests pass and fail on a backend copy
 with d780d386e reverted (the request asks for `dall-e-2`, the list offers both DALL·E models); the
-explicit model test passes on both.
+explicit model test passes on both. The default request test fails on dev 1fc5b8f6d (the default
+request carries `response_format`) and passes with the #33874 fix.
 """
 
 from __future__ import annotations
