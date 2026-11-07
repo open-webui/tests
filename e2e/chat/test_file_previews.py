@@ -12,7 +12,8 @@ whole text where focused retrieval sends a few pieces of it, and a file's switch
 mode after another attachment is removed. Since 98f7a6146 a file under the Full Text Threshold goes
 whole without a switch, so those two tests set the threshold to 0 and Top K back to 3, and since
 bd6fc15be a model in native function calling reads attached files through its tools unless File
-Context is ticked.
+Context is ticked. A file under the threshold, or any file with Always Use Full Text on, shows
+Using Entire Document with no switch and says why on hover (c81aca931).
 
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows
 "No content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never
@@ -20,7 +21,9 @@ loads a Word document, shows Markdown as plain text and ignores the Using Entire
 and whose picture preview never opens, every test fails. In the pre-fix build of 0.12.4
 (a944564c2 reverted) the remaining file shows the removed file's Using Entire Document. The
 PowerPoint title test fails on the dev 75358502c build (#32873: the left-aligned title starts 42%
-across the slide) and passes with the fix 8fa77c828 (#32876).
+across the slide) and passes with the fix 8fa77c828 (#32876). Both whole-file dialog cases fail in
+a dev f659c0d12 backend copy whose `/api/config` leaves out the threshold (no mode shown at all)
+and the first one in a copy that reads Always Use Full Text as on for every account.
 """
 
 from __future__ import annotations
@@ -331,3 +334,38 @@ def test_using_the_entire_document_sends_the_model_all_of_it(page_for, make_user
     ask_with_attachments(page, upstream, whole_question)
 
     assert landmarks_sent(upstream, whole_question, landmarks) == landmarks
+
+
+@pytest.mark.parametrize(
+    ("retrieval", "explanation"),
+    [
+        (
+            {"RAG_FULL_TEXT_CHAR_THRESHOLD": 50000, "RAG_FULL_CONTEXT": False},
+            "This attachment fits within the full text threshold, so its entire text is included "
+            "automatically.",
+        ),
+        (
+            {"RAG_FULL_TEXT_CHAR_THRESHOLD": 0, "RAG_FULL_CONTEXT": True},
+            "Full text is always enabled by your administrator.",
+        ),
+    ],
+    ids=["under the threshold", "always use full text"],
+)
+def test_a_file_the_settings_send_whole_says_so_and_offers_no_switch(
+    page_for, make_user, admin, preserve, retrieval, explanation
+):
+    preserve(RETRIEVAL_CONFIG)
+    with admin.client() as client:
+        saved = client.post(
+            RETRIEVAL_CONFIG[1], json={**retrieval, "BYPASS_EMBEDDING_AND_RETRIEVAL": False}
+        )
+    assert saved.status_code == 200, saved.text
+    page = page_for(make_user())
+
+    dialog = attach_and_open(page, "ferry.txt", "The ferry leaves at seven.", "text/plain")
+
+    mode = dialog.get_by_text("Using Entire Document")
+    expect(mode).to_be_visible()
+    expect(dialog.get_by_role("switch")).to_have_count(0)
+    mode.hover()
+    expect(page.get_by_text(explanation)).to_be_visible()
