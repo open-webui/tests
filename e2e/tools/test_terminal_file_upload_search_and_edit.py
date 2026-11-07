@@ -1,20 +1,23 @@
 """Journey: a person uploads, finds, bulk deletes and edits files in the terminal's file browser.
 
 A real Open Terminal runs with a few files in its home. In a chat the person picks the terminal
-from the input's Terminal menu. From the File browser's Actions menu they upload a file through
-the file chooser and it shows in the list and lands in the terminal's home. They open the search
-box and find one file by its contents and another by its name. They Ctrl-click two rows, press
-Select All, delete the selection and confirm: all the selected files are gone from the list and
-from the disk while an unselected one stays. They open a text file, press Edit, type new text and
-press Save: the new text is on disk. They change a code file, which opens in a tab of its own, and
-close that tab without saving: the Unsaved changes prompt offers Save, Discard changes and Cancel.
-Save writes the change and leaves, Discard changes leaves the file on disk as it was, and Cancel
-stays on the edited file.
+from the input's Terminal menu and opens Files. From the File browser's Actions menu they upload
+a file through the file chooser and it shows in the list and lands in the terminal's home. They
+open the search box and find one file by its contents and another by its name. They Ctrl-click
+two rows, press Select All, delete the selection and confirm: all the selected files are gone from
+the list and from the disk while an unselected one stays. A text file opens straight in the
+editor; typed text and Save put the new text on disk, and in a code file Ctrl+S does the same and
+leaves no unsaved change behind. They change a code file, which opens in a tab of its own, and
+close that tab without saving: the Unsaved changes prompt asks whether to discard the change;
+Confirm closes the tab with the file on disk as it was, and Cancel stays on the edited file.
 
-Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler
-does nothing, its search shows no results, its bulk delete returns early and its save handler
-returns early, every test here fails. The unsaved-changes test passes on dev 3b8205505 and fails
-on a build where the file browser leaves an edited file without asking.
+Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler does
+nothing, its search shows no results, its bulk delete returns early and its save handler returns
+early, every test here fails. The unsaved-changes tests pass on dev 3b8205505 and fail on a build
+where the file browser leaves an edited file without asking. On the dev f659c0d12 build (three
+runs) the save test is red as said in it, and the text, Ctrl+S and Confirm tests fail on one
+frontend build of it whose Save button does nothing, whose code editor ignores Ctrl+S and whose
+prompt's Confirm keeps the tab.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
+from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
 
@@ -102,18 +106,21 @@ def test_select_all_then_delete_removes_the_selected_files(browser, open_termina
 
 
 def test_an_edited_text_file_is_saved_to_the_terminal(browser, open_terminal):
-    note = open_terminal.home / "edit-me.txt"
+    note = open_terminal.home / f"edit-me-{uuid.uuid4().hex[:8]}.txt"
     note.write_text("old words\n")
     browser.get_by_label("Refresh", exact=True).first.click()
 
-    browser.get_by_text("edit-me.txt", exact=True).click()
-    browser.get_by_role("button", name="Edit").click()
-    editor = browser.get_by_role("textbox")
-    editor.fill("new words\n")
-    browser.get_by_role("button", name="Save").click()
+    # since b5eaa59d0 a text file opens straight in the editor, with no Edit step
+    browser.get_by_text(note.name, exact=True).click()
+    browser.get_by_text("old words", exact=True).click()
+    browser.page.keyboard.press("End")
+    browser.page.keyboard.type(" and new")
+    expect(browser.get_by_text("old words and new", exact=True)).to_be_visible()
+    browser.get_by_role("button", name="Save", exact=True).click()
 
-    expect(browser.get_by_role("button", name="Edit")).to_be_visible()
-    assert note.read_text() == "new words\n"
+    assert wait_until(lambda: note.read_text() == "old words and new\n", 10), (
+        f"Save left the file as {note.read_text()!r}"
+    )
 
 
 def _leave_an_edited_file(browser, open_terminal):
@@ -132,27 +139,33 @@ def _leave_an_edited_file(browser, open_terminal):
         "button", name=f"Close {script.name}", exact=True
     ).click()
     prompt = browser.page.get_by_role("dialog", name="Unsaved changes")
-    for button in ("Save", "Discard changes", "Cancel"):
-        expect(prompt.get_by_role("button", name=button, exact=True)).to_be_visible()
+    expect(prompt).to_be_visible()
     return script, prompt
 
 
-@pytest.mark.parametrize(
-    ("choice", "on_disk"),
-    [("Save", "barrels = 5\n"), ("Discard changes", "barrels = 4\n")],
-    ids=["save", "discard"],
-)
-def test_leaving_an_edited_file_saves_or_discards_as_chosen(
-    browser, open_terminal, choice, on_disk
-):
+def test_the_unsaved_changes_prompt_offers_to_save_the_edit(browser, open_terminal):
+    # red on dev f659c0d12: 0.13.0 offered Save here, d4e8493cc left only discard or stay
     script, prompt = _leave_an_edited_file(browser, open_terminal)
 
-    prompt.get_by_role("button", name=choice, exact=True).click()
+    prompt.get_by_role("button", name="Save", exact=True).click()
+
+    expect(prompt).to_have_count(0)
+    assert wait_until(lambda: script.read_text() == "barrels = 5\n", 10), (
+        f"saving from the prompt left the file as {script.read_text()!r}"
+    )
+
+
+def test_confirming_the_unsaved_changes_prompt_discards_the_edit(browser, open_terminal):
+    script, prompt = _leave_an_edited_file(browser, open_terminal)
+    # since d4e8493cc the prompt asks whether to discard the change
+    expect(prompt).to_contain_text("Discard unsaved changes and continue?")
+
+    prompt.get_by_role("button", name="Confirm", exact=True).click()
 
     expect(prompt).to_have_count(0)
     expect(browser.get_by_text(script.name, exact=True)).to_be_visible()
     expect(browser.get_by_text("barrels = ")).to_have_count(0)
-    assert script.read_text() == on_disk, f"{choice} left the file as {script.read_text()!r}"
+    assert script.read_text() == "barrels = 4\n", f"the file now reads {script.read_text()!r}"
 
 
 def test_cancelling_the_unsaved_changes_prompt_stays_on_the_edited_file(browser, open_terminal):
@@ -163,3 +176,26 @@ def test_cancelling_the_unsaved_changes_prompt_stays_on_the_edited_file(browser,
     expect(prompt).to_have_count(0)
     expect(browser.get_by_text("barrels = 5", exact=True)).to_be_visible()
     assert script.read_text() == "barrels = 4\n", "Cancel should leave the file on disk alone"
+
+
+def test_ctrl_s_saves_an_edited_code_file_and_leaves_nothing_unsaved(browser, open_terminal):
+    script = open_terminal.home / f"tally-{uuid.uuid4().hex[:8]}.py"
+    script.write_text("casks = 4\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(script.name, exact=True).click()
+    browser.get_by_text("casks = 4", exact=True).click()
+    browser.page.keyboard.press("End")
+    browser.page.keyboard.press("Backspace")
+    browser.page.keyboard.type("9")
+    expect(browser.get_by_text("casks = 9", exact=True)).to_be_visible()
+
+    browser.page.keyboard.press("Control+s")
+
+    assert wait_until(lambda: script.read_text() == "casks = 9\n", 10), (
+        f"Ctrl+S left the file as {script.read_text()!r}"
+    )
+    browser.page.get_by_role("tablist", name="Tabs").get_by_role(
+        "button", name=f"Close {script.name}", exact=True
+    ).click()
+    expect(browser.get_by_text(script.name, exact=True)).to_be_visible()
+    expect(browser.page.get_by_role("dialog", name="Unsaved changes")).to_have_count(0)
