@@ -5,6 +5,8 @@
 * `create_automation` stores a schedule on the current model for an account allowed automations,
   `toggle_automation` pauses and resumes it and `delete_automation` removes it; nobody touches
   another account's automation, and an account without the feature is not offered the tools.
+  Every example schedule in the tool's description is one the tool accepts (`9f25b1b1a`, PR
+  #33732, issue #33730: the examples showed a literal backslash-n the schedule parser refused).
 * `create_calendar_event` writes in the account's local time into its default calendar or a
   calendar shared with write access, never one shared read-only; `delete_calendar_event` deletes
   only events the account may write.
@@ -20,13 +22,15 @@ list test red; `toggle_automation` and `delete_automation` skipping the owner ch
 foreign automation test red; `create_calendar_event` checking read in place of write turned the
 read-only calendar test red; `_dt_to_ns` reading times as UTC turned the local time test red;
 `view_skill` skipping its grant check turned the private skill test red; and `_find_target`
-ignoring the default target turned the delivery test red.
+ignoring the default target turned the delivery test red. Reverting 9f25b1b1a on dev f659c0d12
+turned the schedule example test red (four of the six examples refused as an invalid RRULE).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import uuid
 
 import pytest
@@ -36,7 +40,7 @@ from harness.actors import admin_of, create_user
 from harness.calendar_api import HOUR_NS, default_calendar_id, set_timezone, to_ns
 from harness.chat import ask
 from harness.listener import json_answer
-from harness.tool_calls import offered_tools, run_tool
+from harness.tool_calls import offered_tool_specs, offered_tools, run_tool
 from harness.web_retrieval import LOCAL_WEB_FETCH
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -175,6 +179,35 @@ def test_a_bad_schedule_or_folder_is_refused(make_user, upstream):
 
     assert bad_rule["error"].startswith("Invalid schedule"), bad_rule
     assert bad_folder == {"error": "Folder not found"}
+
+
+def test_every_schedule_example_the_model_is_shown_is_accepted(make_user, upstream):
+    # the examples once showed a literal backslash-n the parser rejects (issue #33730)
+    owner = make_user(role="admin")
+    with owner.client() as client:
+        description = offered_tool_specs(client, upstream)["create_automation"]["description"]
+    examples = re.findall(r'"((?:DTSTART|RRULE):[^"]*)"', description)
+    assert any(example.startswith("DTSTART") for example in examples), description
+
+    # the examples start in the past, which a one-time schedule refuses; a model picks its own date
+    schedules = [re.sub(r"DTSTART:\d{4}", "DTSTART:2099", example) for example in examples]
+    calls = [
+        ("create_automation", {"name": f"Example {index}", "prompt": "p", "rrule": schedule})
+        for index, schedule in enumerate(schedules)
+    ]
+    _, results = call_in_turn(owner, upstream, *calls)
+    with owner.client() as client:
+        for result in results:
+            if "id" in result:
+                client.delete(f"/api/v1/automations/{result['id']}/delete").raise_for_status()
+
+    refused = {
+        schedule: result["error"]
+        for schedule, result in zip(schedules, results)
+        if "error" in result
+    }
+    assert not refused, f"schedules copied from the tool description were refused: {refused}"
+    assert len(results) == len(examples), results
 
 
 def test_automation_tools_are_offered_only_with_the_feature(make_user, upstream):
