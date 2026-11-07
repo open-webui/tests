@@ -1,4 +1,4 @@
-"""Three chat-pipeline fixes from 0.11.4 around failed turns and broken tool calls.
+"""Chat-pipeline fixes around failed turns and broken tool calls.
 
 * `dbb17a572`: an assistant turn that failed with nothing written was replayed to the model as
   an empty assistant message on the next turn. Such rows are now dropped from the replay.
@@ -9,13 +9,17 @@
 * `66e021a92` (PR #29690, issue #29686): a streamed tool call whose `function.name` was JSON null
   kept the null, which was stored and sent back for the provider to reject. It is now `""`, so
   the call fails once with the ordinary unknown-tool error.
+* `c384d8e51` (PR #33779, issue #33778): a streamed call carrying two argument objects glued
+  together ran as two calls, but the original call also stayed in the reply with no result,
+  showing an extra unfinished call. The first part now keeps the original call's id.
 
 Twin of unit/chat/test_malformed_and_nameless_tool_calls.py.
 
 Discriminates: reverting dbb17a572 replays the empty failed turn; reverting fed94c9f5 ends the
 reply in an error ("'list' object has no attribute 'items'") with no tool result; reverting
-66e021a92 stores and replays the name as null. Each revert fails only its own tests; the
-nearby tests pass on all three.
+66e021a92 stores and replays the name as null; reverting c384d8e51 on dev f659c0d12 stores
+three calls, one of them unanswered. Each revert fails only its own tests; the nearby tests pass
+on all of them.
 """
 
 from __future__ import annotations
@@ -120,3 +124,20 @@ def test_a_tool_call_with_a_null_name_is_stored_and_replayed_as_empty(user, upst
         for call in entry.get("tool_calls") or []
     ]
     assert replayed_calls == [""]
+
+
+def test_a_call_carrying_two_argument_sets_is_stored_as_two_answered_calls(user, upstream):
+    # GPT-5.4 glues two argument objects into one streamed call (issue #33778)
+    upstream.queue(reply.tool_call("get_current_timestamp", "{}{}"), reply.text("both ran"))
+    with user.client() as client:
+        _, message = ask(client, "what time is it, twice?")
+
+    output = without_hidden_calls(message["output"])
+    calls = [item["call_id"] for item in output if item["type"] == "function_call"]
+    answered = [item["call_id"] for item in output if item["type"] == "function_call_output"]
+    assert len(calls) == 2 and sorted(answered) == sorted(calls), (
+        f"the glued call was stored as calls {calls} with results for {answered}"
+    )
+    assert "call_1" in calls, f"the original call id was replaced: {calls}"
+    assert all("current_timestamp" in result for result in tool_results(message)), message
+    assert message["content"] == "both ran"
