@@ -63,8 +63,8 @@ Since dev 003299641 one `call_tool(calls=[{tool_name, params}, ...])` carries se
 Each runs as a call of its own, shown as its own entry with its own approval and result, and one
 failing member stops none of the others. The provider gets the batch back as the one call it
 sent, under its id, with one combined result listing each member's tool, status and output, on
-Chat Completions and the Responses API, on later turns too, and when a client relays the stored
-reply. A batch an approval pause left half done is never sent back with a call lacking its
+Chat Completions, the Responses API and Ollama, on later turns too, and when a client relays the
+stored reply. A batch an approval pause left half done is never sent back with a call lacking its
 result. A malformed batch, like any malformed dispatch, reaches the model as a failed result and
 the model keeps its tools to try again; on f659c0d12 a malformed batch or arguments that are not
 a JSON object end tool use for the reply instead (the refused-dispatch cases not-an-object,
@@ -73,20 +73,23 @@ arguments-malformed and batch-*, red there; the first two pass on b3b07a658, bef
 Since dev 0f3bd0a7e the admin picks how `search_tools` matches: BM25 by words, the Documents
 embedding model by meaning (every held-back tool ranked, best first) or a decisions model asked
 about every held-back tool, which keeps the tools at or over its relevance threshold, best first,
-with the admin's prompt or the default one. A decisions model that fails reaches the model as a
-search error. Saving a decisions setup in use with a bad address, no model, a threshold outside
-0 to 1 or an unknown engine is refused and nothing is saved; a setup not in use is saved as
-typed; a save from an older client without the engine settings keeps the saved ones; the
-settings also carry the default decisions prompt and the embedding model's name.
+with the admin's prompt or the default one. Every engine keeps to the result count asked for and
+finds an exact tool name without asking a model. A decisions or embedding model that fails reaches
+the model as a search error. Saving a decisions setup in use with a bad address, no model, a
+threshold outside 0 to 1 or an unknown engine is refused and nothing is saved; a setup not in use is
+saved as typed; a save from an older client without the engine settings keeps the saved ones; the
+settings also carry the default decisions prompt and the embedding model's name, and the environment
+sets the engine and the decisions setup of a new instance.
 
 Discriminates (dev f659c0d12 backend copies): replaying a batch as its members fails the batch
-replay, Responses, approval pause and relayed batch tests; relaying a half-done batch fails the
-relayed half-done case (the approval pause test stays green there, as the chat history drops the
-unpaired call on its own); searching with BM25 for
-every engine fails the embedding and decisions tests; ignoring the threshold or sending a blank
-prompt in place of the default fails the decisions test; no validation fails every bad setup
-case; validating a setup not in use fails the saved-as-typed test; resetting omitted engine
-settings fails the older client test; BM25 returning every tool fails the BM25 test.
+replay, Responses, approval pause, relayed batch and Ollama batch tests; relaying a half-done batch
+fails the relayed half-done case (the approval pause test stays green there, as the chat history
+drops the unpaired call on its own); searching with BM25 for every engine fails the embedding,
+embedding failure and decisions tests; ignoring the engine's environment variable fails the
+environment test; ignoring the threshold or sending a blank prompt in place of the default fails the
+decisions test; no validation fails every bad setup case; validating a setup not in use fails the
+saved-as-typed test; resetting omitted engine settings fails the older client test; BM25 returning
+every tool fails the BM25 test.
 
 Since 93ba628f3 (#32680, issue #32678) a picture the model draws after the user answered its
 `ask_user` question or approved or rejected a tool call is stored on the reply. Resolving the
@@ -1589,9 +1592,19 @@ def embed_by_meaning(request: ReceivedRequest) -> Answer:
     return json_answer({"object": "list", "data": data})
 
 
-def found_by(client: httpx.Client, upstream, tool_id: str, *queries: str) -> list[dict]:
-    """What `search_tools` returned for each query, asked in one round of a fresh chat."""
-    searches = [search_call(f"search_{index}", query) for index, query in enumerate(queries)]
+def found_by(client: httpx.Client, upstream, tool_id: str, *queries: str | dict) -> list[dict]:
+    """What `search_tools` returned for each query (or its arguments), asked in one round."""
+    searches = [
+        {
+            "id": f"search_{index}",
+            "type": "function",
+            "function": {
+                "name": "search_tools",
+                "arguments": json.dumps(query if isinstance(query, dict) else {"query": query}),
+            },
+        }
+        for index, query in enumerate(queries)
+    ]
     upstream.queue(Reply(tool_calls=searches), reply.text("searched"))
     _, message = ask(client, "which tool fits?", tool_ids=[tool_id])
     assert message["content"] == "searched"
@@ -1659,18 +1672,53 @@ def test_embedding_search_finds_a_tool_by_meaning_with_the_documents_embedding_m
         assert saved.status_code == 200, saved.text
     desk_search(TOOL_SEARCH_ENGINE="embeddings")
     with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
-        [result] = found_by(client, upstream, tool_id, MEANING_QUERY)
+        result, best_only, by_name = found_by(
+            client,
+            upstream,
+            tool_id,
+            MEANING_QUERY,
+            {"query": MEANING_QUERY, "count": 1},
+            "tide_table",
+        )
 
     names = found_names(result)
     assert names and names[0] == "beacon_status", result
     assert sorted(names) == DESK_NAMES, "embedding search ranks every held-back tool"
+    assert found_names(best_only) == ["beacon_status"], best_only
+    assert found_names(by_name) == ["tide_table"], by_name
     embedded = [
         text
         for request in listener.requests_to("/embeddings")
         for text in (request.json()["input"] if isinstance(request.json()["input"], list) else [])
     ]
     assert MEANING_QUERY in embedded, "the query never reached the embedding model"
+    assert "tide_table" not in embedded, "an exact tool name was searched by meaning"
     assert sum("beacon_status" in text for text in embedded) == 1, embedded
+
+
+def test_a_failing_embedding_model_reaches_the_model_as_a_search_error(
+    desk_search, admin, make_user, upstream, preserve, listener
+):
+    preserve(EMBEDDING_SETTINGS)
+    listener.route("POST", "/embeddings", json_answer({"error": "down"}, status=500))
+    with admin.client() as client:
+        current = client.get(EMBEDDING_SETTINGS[0]).json()
+        saved = client.post(
+            EMBEDDING_SETTINGS[1],
+            json={
+                "RAG_EMBEDDING_ENGINE": "openai",
+                "RAG_EMBEDDING_MODEL": current["RAG_EMBEDDING_MODEL"],
+                "openai_config": {"url": listener.base_url, "key": "sk-down"},
+            },
+        )
+        assert saved.status_code == 200, saved.text
+    desk_search(TOOL_SEARCH_ENGINE="embeddings")
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        failed, by_name = found_by(client, upstream, tool_id, MEANING_QUERY, "tide_table")
+
+    assert listener.requests_to("/embeddings"), "the embedding model was never asked"
+    assert set(failed) == {"error"} and "Embedding" in failed["error"], failed
+    assert found_names(by_name) == ["tide_table"], by_name
 
 
 def test_the_decisions_model_finds_the_tools_over_the_threshold_in_order(
@@ -1687,18 +1735,29 @@ def test_the_decisions_model_finds_the_tools_over_the_threshold_in_order(
         TOOL_SEARCH_DECISIONS_PROMPT="Rate how well this harbour tool fits.",
     )
     with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
-        [at_seventy] = found_by(client, upstream, tool_id, MEANING_QUERY)
+        at_seventy, best_only, by_name = found_by(
+            client,
+            upstream,
+            tool_id,
+            MEANING_QUERY,
+            {"query": MEANING_QUERY, "count": 1},
+            "tide_table",
+        )
         desk_search(TOOL_SEARCH_DECISIONS_THRESHOLD=0.8, TOOL_SEARCH_DECISIONS_PROMPT="  ")
         [at_eighty] = found_by(client, upstream, tool_id, MEANING_QUERY)
     with admin.client() as client:
         default_prompt = client.get(CHAT_CONFIG[0]).json()["DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT"]
 
     assert found_names(at_seventy) == ["beacon_status", "harbour_lights"], at_seventy
+    assert found_names(best_only) == ["beacon_status"], best_only
+    # an exact tool name is found without asking the decisions model
+    assert found_names(by_name) == ["tide_table"], by_name
     assert found_names(at_eighty) == ["beacon_status"], at_eighty
 
     asked = listener.requests_to("/v1/decisions")
-    assert len(asked) == 2, [request.path for request in asked]
-    for request, prompt in zip(asked, ["Rate how well this harbour tool fits.", default_prompt]):
+    assert len(asked) == 3, [request.json()["input"] for request in asked]
+    typed_prompt = "Rate how well this harbour tool fits."
+    for request, prompt in zip(asked, [typed_prompt, typed_prompt, default_prompt]):
         assert request.headers.get("Authorization") == f"Bearer {DECISIONS_KEY}"
         body = request.json()
         assert (body["model"], body["input"]) == ("judge-1", MEANING_QUERY)
@@ -1897,6 +1956,67 @@ def test_an_ollama_model_dispatches_through_call_tool(tool_search, admin, preser
     assert [entry["function"] for entry in assistant["tool_calls"]] == [call["function"]]
     assert "current_timestamp" in tool["content"]
     assert message["content"] == "It is late."
+
+
+def test_an_ollama_model_batches_through_call_tool_and_gets_one_combined_result(
+    tool_search, admin, preserve, listener
+):
+    preserve(OLLAMA_CONFIG)
+    server = serve_ollama(listener, OLLAMA_MODEL)
+    batch = {
+        "calls": [
+            {"tool_name": "get_current_timestamp", "params": "{}"},
+            {"tool_name": "launch_rockets", "params": "{}"},
+        ]
+    }
+    call = {"function": {"name": "call_tool", "arguments": batch}}
+    with admin.client() as client:
+        connect_ollama(client, listener)
+        client.get("/api/models").raise_for_status()
+        server.queue_chat(
+            chat_stream(OLLAMA_MODEL, {"tool_calls": [call]}),
+            chat_stream(OLLAMA_MODEL, {"content": "One of two."}),
+        )
+        _, message = ask(client, "time and rockets?", model=OLLAMA_MODEL)
+
+    _, follow_up = server.chat_requests()
+    shown = [(item["name"], item["status"]) for item in items(message, "function_call").values()]
+    assert shown == [("get_current_timestamp", "completed"), ("call_tool", "failed")], shown
+    assistant, tool = follow_up["messages"][-2:]
+    assert [entry["function"] for entry in assistant["tool_calls"]] == [call["function"]]
+    results = combined_results(tool["content"])
+    assert [(name, status) for name, status, _ in results] == [
+        ("get_current_timestamp", "completed"),
+        ("launch_rockets", "failed"),
+    ], results
+    assert follow_up["tools"], "the model lost its tools after a batch with one failed call"
+    assert message["content"] == "One of two."
+
+
+@pytest.mark.slow
+def test_the_search_engine_and_decisions_setup_can_be_set_by_environment(instance_with):
+    launched = instance_with(
+        {
+            "ENABLE_TOOL_SEARCH": "true",
+            "TOOL_SEARCH_ENGINE": "decisions",
+            "TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test/v1",
+            "TOOL_SEARCH_DECISIONS_API_KEY": "sk-from-env",
+            "TOOL_SEARCH_DECISIONS_MODEL": "judge-env",
+            "TOOL_SEARCH_DECISIONS_THRESHOLD": "0.3",
+            "TOOL_SEARCH_DECISIONS_PROMPT": "Rate it from the environment.",
+        }
+    )
+    with admin_of(launched).client() as client:
+        config = client.get(CHAT_CONFIG[0]).json()
+
+    assert engine_settings(config) == {
+        "TOOL_SEARCH_ENGINE": "decisions",
+        "TOOL_SEARCH_DECISIONS_API_BASE_URL": "https://decide.test/v1",
+        "TOOL_SEARCH_DECISIONS_API_KEY": "sk-from-env",
+        "TOOL_SEARCH_DECISIONS_MODEL": "judge-env",
+        "TOOL_SEARCH_DECISIONS_THRESHOLD": 0.3,
+        "TOOL_SEARCH_DECISIONS_PROMPT": "Rate it from the environment.",
+    }
 
 
 def test_a_stored_dispatch_relayed_to_the_responses_api_keeps_the_models_call(
