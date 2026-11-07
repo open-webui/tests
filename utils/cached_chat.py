@@ -3,8 +3,9 @@
 `ask` sends a prompt and waits for the last of its scripted replies, each tied to that prompt, so
 a tool round and the answer after it are one call. `attach` uploads a file through the chat
 input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
-`pick_terminal` picks an Open Terminal for the chat before the first message and
-`open_new_terminal` opens a shell of it in the side panel; `chat_requests` is every streamed
+`choose_terminal` picks an Open Terminal for the chat before the first message, `pick_terminal`
+also waits for its file browser, and `open_new_terminal` opens a shell of it in the side panel;
+`chat_requests` is every streamed
 request the provider received, the ones the cache sees, and `this_turns_tool_results` what the
 model's own tool calls returned since the last question.
 """
@@ -66,10 +67,16 @@ def calling_together(*calls: tuple[str, dict]) -> Reply:
     return Reply(tool_calls=[calling(name, arguments).tool_calls[0] for name, arguments in calls])
 
 
-def pick_terminal(page: Page, name: str) -> None:
+def choose_terminal(page: Page, name: str) -> None:
+    """Pick the terminal in the Terminal menu; the composer's terminal button then shows it."""
     expect(chat_input(page)).to_be_visible()
     tooltip_button(page.get_by_role("main"), "Terminal").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name).click()
+    expect(page.get_by_role("main").get_by_role("button", name=name, exact=True)).to_be_visible()
+
+
+def pick_terminal(page: Page, name: str) -> None:
+    choose_terminal(page, name)
     expect(page.get_by_role("region", name="File browser")).to_be_visible()
 
 
