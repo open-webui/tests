@@ -67,6 +67,16 @@ def chat_tab_bar(page: Page) -> Locator:
     )
 
 
+def split_screen(page: Page) -> None:
+    """Show the conversation beside the other tabs. Since 617618c9e the tabs fill the window, so
+    a tab opened by the chat (artifacts, a call) covers the conversation; with no other tab yet,
+    Split screen opens the first one the chat offers."""
+    button = page.get_by_role("button", name="Split screen", exact=True)
+    button.click()
+    expect(button).to_have_attribute("aria-pressed", "true")
+    expect(chat_input(page)).to_be_visible()
+
+
 def stop_button(page: Page) -> Locator:
     return page.get_by_role("button", name="Stop")
 

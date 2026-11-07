@@ -15,7 +15,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply, send, split_screen
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -43,6 +43,7 @@ def two_artifacts(page_for, make_user, upstream):
     )
     send(page, "make me the first page")
     expect_reply(page, "Done with first card.")
+    split_screen(page)
     send(page, "make me the second page")
     expect_reply(page, "Done with second card.")
     return page
