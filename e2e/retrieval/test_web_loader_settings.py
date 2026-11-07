@@ -44,6 +44,7 @@ from utils.chat_ui import (
     conversation,
     expect_reply,
     last_reply,
+    open_add_context,
     send,
     turn_on_integration,
 )
@@ -245,8 +246,7 @@ def test_the_fetch_length_limit_cuts_what_the_model_reads(page_for, reader, read
 
 def attach_webpage(page: Page, link: str) -> None:
     expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="More", exact=True).last.click()
-    page.get_by_role("menuitem", name="Attach Webpage").click()
+    open_add_context(page).get_by_role("menuitem", name="Attach Webpage").click()
     page.get_by_role("textbox", name="Webpage URLs").fill(link)
     page.get_by_role("button", name="Add", exact=True).click()
     expect(page.get_by_text(link)).to_be_visible()

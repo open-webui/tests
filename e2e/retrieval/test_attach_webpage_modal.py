@@ -1,14 +1,14 @@
 """The Attach Webpage modal in the composer: links go in, pages come out as attachments.
 
-The plus menu offers Attach Webpage; the modal takes one link per line, refuses text that is not
-an http(s) link, and the page behind each link is fetched by the server and shown in the composer
-as an attachment named by its link. The text of the page reaches the model with the next message,
-and a page the server cannot read is refused with a toast and leaves no attachment. A link in the
-`load-url` parameter of a chat link is attached the same way once the person confirms it in the
-Open link dialog, and nothing is fetched before that (since 0ffd86967). Without the web upload
-permission the menu entry does nothing for a user and still opens for an admin; without the file
-upload permission an attached page stays and reaches the model. The pages are a
-local service, on an instance that may fetch loopback addresses.
+The plus menu offers Attach Webpage under Add Context (since dev 834c47ee0); the modal takes one
+link per line, refuses text that is not an http(s) link, and the page behind each link is fetched
+by the server and shown in the composer as an attachment named by its link. The text of the page
+reaches the model with the next message, and a page the server cannot read is refused with a toast
+and leaves no attachment. A link in the `load-url` parameter of a chat link is attached the same
+way once the person confirms it in the Open link dialog, and nothing is fetched before that (since
+0ffd86967). Without the web upload permission the menu entry does nothing for a user and still
+opens for an admin; without the file upload permission an attached page stays and reaches the
+model. The pages are a local service, on an instance that may fetch loopback addresses.
 
 Discriminates: passes on the 176d31d1d build; with the link validation removed the refused-text
 test goes red, with the de-duplication removed the several-links test does, with the handoff to
@@ -31,7 +31,7 @@ from harness.actors import admin_of, create_user
 from harness.file_context import file_context_ticked
 from harness.listener import listening, text_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
-from utils.chat_ui import chat_input, expect_reply, link_dialog, send
+from utils.chat_ui import chat_input, expect_reply, link_dialog, open_add_context, send
 
 pytestmark = [
     pytest.mark.journey,
@@ -76,8 +76,7 @@ def link(pages, path: str) -> str:
 
 def open_modal(page: Page):
     expect(chat_input(page)).to_be_visible(timeout=30_000)
-    page.get_by_role("button", name="More", exact=True).last.click()
-    page.get_by_role("menuitem", name="Attach Webpage").click()
+    open_add_context(page).get_by_role("menuitem", name="Attach Webpage").click()
     modal = page.get_by_role("textbox", name="Webpage URLs")
     expect(modal).to_be_visible()
     return modal
@@ -225,7 +224,7 @@ def test_a_user_without_the_web_upload_permission_cannot_open_the_modal(
 ):
     page = open_chat(page_for, restricted_instance)
     expect(chat_input(page)).to_be_visible(timeout=30_000)
-    page.get_by_role("button", name="More", exact=True).last.click()
+    open_add_context(page)
 
     page.get_by_role("menuitem", name="Attach Webpage").hover()
 

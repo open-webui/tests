@@ -21,7 +21,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.chat_history import seed_chat
-from utils.chat_ui import chat_input, conversation, open_input_menu
+from utils.chat_ui import chat_input, conversation, open_add_context
 from utils.setting_rows import setting_button
 from utils.sidebar_chats import chat_menu, chat_row
 from utils.user_menu import open_settings
@@ -92,13 +92,13 @@ def test_attach_webpage_switched_off_leaves_the_users_menu_but_not_the_admins(
         settings.get_by_role("button", name="Save", exact=True).click()
     assert saved.value.ok, saved.value.text()
 
-    user_menu = open_input_menu(page_for(make_user()))
+    user_menu = open_add_context(page_for(make_user()))
     expect(user_menu.get_by_role("menuitem", name="Attach Files")).to_be_visible()
     expect(user_menu.get_by_role("menuitem", name="Attach Webpage")).to_have_count(0)
 
     admin_page.goto("/")
     expect(chat_input(admin_page)).to_be_visible()
-    admin_menu = open_input_menu(admin_page)
+    admin_menu = open_add_context(admin_page)
     expect(admin_menu.get_by_role("menuitem", name="Attach Webpage")).to_be_visible()
 
 
