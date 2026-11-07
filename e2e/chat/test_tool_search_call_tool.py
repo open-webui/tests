@@ -15,6 +15,19 @@ prompt survives a reload and another tab of the account can allow it; switching 
 runs the pending calls; a denied dispatch is asked anew on Regenerate while Continue runs nothing;
 a temporary chat asks in a dialog naming the dispatched tool.
 
+Since dev 003299641 the search itself is not shown on the reply, only the tool it found, and one
+`call_tool` call may carry several tool calls: each shows as its own tool with its input and
+result (also on a fresh load of the chat), the reply goes on, and the provider gets one
+combined result. With Ask for approval each call of a batch asks in turn, and only the allowed
+one runs.
+
+Since dev 0f3bd0a7e Admin Settings > Interface offers a search engine for Tool Search: picking
+the Decisions API shows its address, key, model, relevance threshold and prompt fields (the
+prompt showing the default until one is typed); they are saved, shown again on a fresh load and
+used by the next search. A decisions address with credentials is refused with the server's
+message and nothing is saved. Picking Embeddings names the Documents embedding model with a link
+to its settings and is kept.
+
 Discriminates: passes on dev 6276e81ce; in a backend copy without the streaming handler's unwrap
 the display and approval tests fail (the reply shows call_tool), without the replay of the
 model's original call the display test fails on the next turn's history, and without the unknown
@@ -28,7 +41,11 @@ copies of dev 81f5b8adf, skipping the Ask pause for a round holding a dispatched
 approval test but the temporary chat one, which fails when its confirmation is skipped for a
 dispatched call; marking every pending call approved on one approval, or resuming with full
 access after an approval, fails the mixed round test. A frontend build whose Full access switch
-leaves pending calls alone fails the Full access test.
+leaves pending calls alone fails the Full access test. In a backend copy of dev f659c0d12 that
+shows the search call the display test fails; one that runs a batch as a single call fails both
+batch tests; one whose settings read back BM25 fails the decisions and embeddings tests; one
+without the decisions check fails the refused address test; and one that names no embedding
+model fails the embeddings test.
 """
 
 from __future__ import annotations
@@ -40,14 +57,15 @@ import uuid
 from typing import Iterator
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.channel_chat import serve_openai_images
+from harness.chat import ask
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.knowledge_bases import add_text_file, knowledge_base
-from harness.listener import text_answer
+from harness.listener import json_answer, text_answer
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import (
@@ -78,6 +96,10 @@ class Tools:
     def shout(self, text: str) -> str:
         """Shout the text."""
         return text.upper()
+
+    def mumble(self, text: str) -> str:
+        """Mumble the text."""
+        return text.lower()
 '''
 
 
@@ -145,12 +167,11 @@ def tool_results(upstream, prompt: str) -> list[str]:
 
 
 def expect_shout_shown(page: Page, word: str) -> None:
-    group = last_reply(page).get_by_text("Explored search_tools, shout")
-    expect(group).to_be_visible()
-    group.click()
     last_reply(page).get_by_text("View Result from shout").click()
     shown = re.compile(rf"Input\s*text\s*{word}\s*Output\s*{word.upper()}")
     expect(last_reply(page)).to_contain_text(shown)
+    # since dev 003299641 the search itself is not shown, only the tool it found
+    expect(last_reply(page)).not_to_contain_text("search_tools")
     expect(last_reply(page)).not_to_contain_text("call_tool")
 
 
@@ -688,3 +709,246 @@ def test_a_temporary_chat_asks_before_running_the_dispatched_tool(
         expect_reply(page, answer)
         assert tool_results(upstream, prompt)[-1:] == [result]
     assert "/c/" not in page.url
+
+
+# --- one call_tool call carrying several tool calls -------------------------------------------
+
+
+def expect_batch_shown(page: Page) -> None:
+    group = last_reply(page).get_by_text(re.compile(r"^Explored shout, mumble"))
+    expect(group).to_be_visible()
+    group.click()
+    for name, shown in (
+        ("shout", r"Input\s*text\s*ahoy\s*Output\s*AHOY"),
+        ("mumble", r"Input\s*text\s*HUSH\s*Output\s*hush"),
+    ):
+        last_reply(page).get_by_text(f"View Result from {name}").click()
+        expect(last_reply(page)).to_contain_text(re.compile(shown))
+    expect(last_reply(page)).not_to_contain_text("call_tool")
+
+
+def test_a_batch_of_calls_shows_each_tool_and_the_reply_goes_on(
+    tool_search_on, page_for, make_user, upstream, shouter
+):
+    prompt = f"shout and mumble {uuid.uuid4().hex[:6]}"
+    calls = [
+        {"tool_name": "shout", "params": json.dumps({"text": "ahoy"})},
+        {"tool_name": "mumble", "params": json.dumps({"text": "HUSH"})},
+    ]
+    upstream.queue(
+        reply.tool_call(
+            "call_tool", {"calls": calls}, call_id="call_b", match=reply.answering(prompt)
+        ),
+        reply.text("Shouted and mumbled.", match=reply.answering(prompt)),
+    )
+    account = make_user()
+    page = page_for(account)
+    select_model(page, shouter)
+    send(page, prompt)
+    expect_reply(page, "Shouted and mumbled.")
+    expect_batch_shown(page)
+
+    [combined] = tool_results(upstream, prompt)
+    results = json.loads(combined)["results"]
+    assert [(entry["tool_name"], entry["output"][0]["text"]) for entry in results] == [
+        ("shout", "AHOY"),
+        ("mumble", "hush"),
+    ], combined
+
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    chat_path = page.url[page.url.index("/c/") :]
+    expect_batch_shown(page_for(account, path=chat_path))
+
+
+# --- the search engine in Admin Settings > Interface -------------------------------------------
+
+DECISIONS_PROMPT = "Rate how well this tool fits the request."
+DECISIONS_FIELDS = [
+    "TOOL_SEARCH_ENGINE",
+    "TOOL_SEARCH_DECISIONS_API_BASE_URL",
+    "TOOL_SEARCH_DECISIONS_API_KEY",
+    "TOOL_SEARCH_DECISIONS_MODEL",
+    "TOOL_SEARCH_DECISIONS_THRESHOLD",
+    "TOOL_SEARCH_DECISIONS_PROMPT",
+]
+
+
+@pytest.fixture
+def interface_settings(admin, tool_search_on, page_for) -> Locator:
+    """Admin Settings > Interface open, Tool Search on with BM25 and no auto permissions."""
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        client.post(
+            CHAT_CONFIG[1],
+            json={**current, "TOOL_SEARCH_ENGINE": "bm25", "ENABLE_TOOL_PERMISSIONS_AUTO": False},
+        ).raise_for_status()
+    return open_interface_settings(page_for(admin, path="/admin/settings/interface"))
+
+
+def open_interface_settings(page: Page) -> Locator:
+    settings = page.get_by_role("dialog")
+    # the settings load their models before they show, which takes a few seconds on a busy runner
+    settings.get_by_label("Search engine").wait_for()
+    expect(settings.get_by_role("switch", name="Tool Search")).to_be_checked()
+    return settings
+
+
+def save_interface(settings: Locator) -> None:
+    settings.get_by_role("button", name="Save", exact=True).click()
+
+
+def stored_chat_config(admin) -> dict:
+    with admin.client() as client:
+        return client.get(CHAT_CONFIG[0]).json()
+
+
+def default_decisions_prompt(admin) -> str:
+    return stored_chat_config(admin)["DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT"]
+
+
+def decisions_field(settings: Locator, label: str) -> Locator:
+    return settings.get_by_label(label, exact=True)
+
+
+def test_an_admin_picks_the_decisions_engine_and_it_is_kept_and_used(
+    interface_settings, page_for, admin, make_user, upstream, listener
+):
+    listener.route(
+        "POST",
+        "/v1/decisions",
+        lambda request: json_answer(
+            {
+                "answers": [
+                    {"type": "predicate", "name": question["name"], "probability": 0.9}
+                    for question in request.json()["questions"]
+                ]
+            }
+        ),
+    )
+    settings = interface_settings
+    engine = settings.get_by_label("Search engine")
+    expect(engine).to_have_value("bm25")
+    expect(decisions_field(settings, "API Base URL")).to_have_count(0)
+    engine.select_option(label="Decisions API")
+    # the prompt field shows the default prompt until the admin types one
+    prompt = settings.get_by_placeholder(default_decisions_prompt(admin), exact=True)
+    expect(prompt).to_be_visible()
+    decisions_field(settings, "API Base URL").fill(f"{listener.base_url}/v1")
+    decisions_field(settings, "API Key").fill("sk-typed-in-the-form")
+    decisions_field(settings, "Model").fill("judge-2")
+    decisions_field(settings, "Relevance threshold").fill("0.65")
+    prompt.fill(DECISIONS_PROMPT)
+    save_interface(settings)
+    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
+
+    stored = stored_chat_config(admin)
+    assert {key: stored[key] for key in DECISIONS_FIELDS} == {
+        "TOOL_SEARCH_ENGINE": "decisions",
+        "TOOL_SEARCH_DECISIONS_API_BASE_URL": f"{listener.base_url}/v1",
+        "TOOL_SEARCH_DECISIONS_API_KEY": "sk-typed-in-the-form",
+        "TOOL_SEARCH_DECISIONS_MODEL": "judge-2",
+        "TOOL_SEARCH_DECISIONS_THRESHOLD": 0.65,
+        "TOOL_SEARCH_DECISIONS_PROMPT": DECISIONS_PROMPT,
+    }
+
+    settings = open_interface_settings(page_for(admin, path="/admin/settings/interface"))
+    expect(settings.get_by_label("Search engine")).to_have_value("decisions")
+    expect(decisions_field(settings, "API Base URL")).to_have_value(f"{listener.base_url}/v1")
+    expect(decisions_field(settings, "Model")).to_have_value("judge-2")
+    expect(decisions_field(settings, "API Key")).to_have_value("sk-typed-in-the-form")
+    expect(decisions_field(settings, "Relevance threshold")).to_have_value("0.65")
+    expect(settings.get_by_placeholder(default_decisions_prompt(admin))).to_have_value(
+        DECISIONS_PROMPT
+    )
+
+    upstream.queue(
+        reply.tool_call("search_tools", {"query": "shout loudly"}, call_id="call_s"),
+        reply.text("searched"),
+    )
+    with python_tool(admin, SHOUTING_TOOL) as tool_id, make_user().client() as client:
+        _, message = ask(client, "find a shouting tool", tool_ids=[tool_id])
+    assert message["content"] == "searched"
+    [decided] = listener.requests_to("/v1/decisions")
+    assert decided.headers.get("Authorization") == "Bearer sk-typed-in-the-form"
+    body = decided.json()
+    assert (body["model"], body["input"]) == ("judge-2", "shout loudly")
+    assert body["questions"][0]["instructions"].startswith(DECISIONS_PROMPT)
+
+
+def test_a_decisions_address_with_credentials_is_refused_with_a_message(interface_settings, admin):
+    settings = interface_settings
+    settings.get_by_label("Search engine").select_option(label="Decisions API")
+    decisions_field(settings, "API Base URL").fill("https://user:secret@decide.test/v1")
+    decisions_field(settings, "Model").fill("judge-2")
+    save_interface(settings)
+
+    expect(
+        settings.page.get_by_text(
+            "Decisions API requires an HTTP(S) base URL without credentials, query, or fragment."
+        )
+    ).to_be_visible()
+    stored = stored_chat_config(admin)
+    assert stored["TOOL_SEARCH_ENGINE"] == "bm25", "a refused setup was saved"
+    assert "secret" not in json.dumps(stored)
+
+
+def test_the_embeddings_engine_names_the_documents_embedding_model_and_is_kept(
+    interface_settings, page_for, admin
+):
+    with admin.client() as client:
+        model = client.get("/api/v1/retrieval/embedding").json()["RAG_EMBEDDING_MODEL"]
+    assert model, "the instance has no embedding model to name"
+    settings = interface_settings
+    settings.get_by_label("Search engine").select_option(label="Embeddings")
+    expect(settings).to_contain_text(f"Uses the Documents embedding model: {model}.")
+    link = settings.get_by_role("link", name="Configure in Documents settings")
+    expect(link).to_have_attribute("href", "/admin/settings/documents")
+    save_interface(settings)
+    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
+    assert stored_chat_config(admin)["TOOL_SEARCH_ENGINE"] == "embeddings"
+
+    reopened = open_interface_settings(page_for(admin, path="/admin/settings/interface"))
+    expect(reopened.get_by_label("Search engine")).to_have_value("embeddings")
+
+
+def test_each_call_of_a_batch_asks_for_approval_in_turn(
+    tool_approval_on, page_for, make_user, upstream, shouter
+):
+    page = page_for(make_user())
+    select_model(page, shouter)
+    set_tool_approval_mode(page, "Ask for approval")
+
+    prompt = f"shout and mumble {uuid.uuid4().hex[:6]}"
+    calls = [
+        {"tool_name": "shout", "params": json.dumps({"text": "one"})},
+        {"tool_name": "mumble", "params": json.dumps({"text": "TWO"})},
+    ]
+    upstream.queue(
+        reply.tool_call(
+            "call_tool", {"calls": calls}, call_id="call_b", match=reply.answering(prompt)
+        ),
+        reply.text("Shouted, not mumbled.", match=reply.answering(prompt)),
+    )
+    send(page, prompt)
+    for name, word, action in (("shout", "one", "Allow"), ("mumble", "TWO", "Deny")):
+        buttons = last_reply(page).get_by_role("button", name=action, exact=True)
+        expect(buttons).not_to_have_count(0, timeout=REPLY_TIMEOUT_MS)
+        card = last_reply(page).get_by_text(f"Allow {name}?")
+        closed_group = last_reply(page).get_by_role("button", name="Toggle details", expanded=False)
+        # the pending calls sit in a folded group; clicking an open group closes it
+        expect(card.or_(closed_group).first).to_be_visible()
+        if not card.is_visible() and closed_group.count():
+            closed_group.last.click()
+        card.click()
+        expect(last_reply(page)).to_contain_text(re.compile(rf"Input\s*text\s*{word}"))
+        buttons.last.click()
+    expect_reply(page, "Shouted, not mumbled.")
+    expect(last_reply(page)).to_contain_text("Denied mumble")
+
+    [combined] = tool_results(upstream, prompt)
+    results = json.loads(combined)["results"]
+    assert [(entry["tool_name"], entry["status"]) for entry in results] == [
+        ("shout", "completed"),
+        ("mumble", "rejected"),
+    ], combined
+    assert results[0]["output"][0]["text"] == "ONE"
