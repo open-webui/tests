@@ -19,7 +19,9 @@ blocks restored (the a5bc78300 mutation build), the tilde-fence test finds one p
 With `99f1eaa3f` reverted (the 015dbc861 mutation build) both dollar sign tests go red. On dev
 ebc6add67, in its mutation build (the `rendering-front` copy: Run shown whatever the switch and
 the buttons no longer sticky) the Code Execution off test and the long block test go red, the
-Run-while-on test stays green.
+Run-while-on test stays green. On dev f659c0d12 the HTML-and-SVG preview test goes red: the
+Artifacts view the HTML block opened on its own took the chat's place and hid the reply's buttons
+(open-webui/open-webui#33878).
 """
 
 from __future__ import annotations

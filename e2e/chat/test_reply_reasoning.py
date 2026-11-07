@@ -17,7 +17,9 @@ Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `re
 copy: the label's duration dropped) the reload test goes red, and in the `rendering-front2` copy
 (reasoning left in the text the artifacts are read from) the stored reply case goes red, and in
 the `rendering-front3` copy (artifacts read from every output item, thoughts included) the
-streamed case goes red.
+streamed case goes red. On dev f659c0d12 both cases of the reasoning artifact test go red: the
+Artifacts view the answer's HTML block opened took the chat's place and hid the reply
+(open-webui/open-webui#33878).
 """
 
 from __future__ import annotations
