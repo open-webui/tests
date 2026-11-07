@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 REPLY_TIMEOUT_MS = 30_000
 
@@ -93,8 +94,16 @@ def typing_cursor(reply: Locator) -> Locator:
 
 def close_menu(page: Page) -> None:
     """Close the open menu and wait until it is gone, so the next click or key reaches the page."""
-    page.keyboard.press("Escape")
-    expect(page.get_by_role("menu")).to_have_count(0)
+    menu = page.get_by_role("menu")
+    # a tooltip the pointer left open over the menu takes the first Escape for itself
+    for _ in range(3):
+        page.keyboard.press("Escape")
+        try:
+            menu.first.wait_for(state="detached", timeout=2_000)
+            break
+        except PlaywrightTimeoutError:
+            continue
+    expect(menu).to_have_count(0)
 
 
 def menu_entries(menu: Locator) -> Locator:
