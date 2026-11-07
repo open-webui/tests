@@ -41,7 +41,7 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import Actor
 from utils.cached_chat import this_turns_tool_results
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
 from utils.notes_page import note_row
 
@@ -236,9 +236,7 @@ def test_the_notes_search_keeps_only_matching_notes(page_for, make_user):
 
 
 def _open_note_picker(page: Page) -> Locator:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="More", exact=True).last.click()
-    menu = page.get_by_role("menu")
+    menu = open_add_context(page)
     menu.get_by_role("menuitem", name="Attach Notes").click()
     return menu
 

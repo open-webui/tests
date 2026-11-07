@@ -257,7 +257,8 @@ def test_a_reader_previews_a_spreadsheet_the_owner_put_on_the_note(page_for, mak
     dialog = page.get_by_role("dialog").filter(has_text=SHEET_NAME)
     dialog.get_by_role("button", name="Preview", exact=True).click()
 
-    expect(dialog.get_by_role("cell", name="06:40")).to_be_visible()
+    # the preview is a grid of cells since d4e8493cc
+    expect(dialog.get_by_role("gridcell", name="06:40")).to_be_visible()
     expect(dialog.get_by_text("Failed to load Excel/CSV file")).to_have_count(0)
 
 
