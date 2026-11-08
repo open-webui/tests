@@ -3,11 +3,12 @@
 Dev 7b47c3b22 lets the model dispatch a deferred tool through `call_tool(tool_name, params)`. The
 chat unwraps the call before approvals and execution, so the reply shows the target tool by name
 with its own input and result (also after a reload), and an approval prompt names it. A call to
-an unknown tool comes back as an error the reply continues past. The next turn replays the call
-the model actually made, so the provider sees its own `call_tool` call in the history. A
-dispatched tool shows on the reply as a direct call does: knowledge sources listed with each
-`[n]` marker opening its passage (after a reload too), a workspace tool's citation, a page read
-with `fetch_url`, a picture from `generate_image` kept as a stored file and an HTML embed.
+an unknown tool comes back to the model as an error the reply continues past; since dev 9126f2262
+it stays off the reply, like the search (on 2416b1fc0 it shows as call_tool). The next turn
+replays the call the model actually made, so the provider sees its own `call_tool` call in the
+history. A dispatched tool shows on the reply as a direct call does: knowledge sources listed
+with each `[n]` marker opening its passage (after a reload too), a workspace tool's citation, a
+page read with `fetch_url`, a picture from `generate_image` kept as a stored file and an HTML embed.
 
 With Ask for approval, a round mixing a dispatched call, a direct call and a refused dispatch asks
 about each call in turn and runs only the allowed ones, and a second round asks again. A pending
@@ -31,7 +32,7 @@ to its settings and is kept.
 Discriminates: passes on dev 6276e81ce; in a backend copy without the streaming handler's unwrap
 the display and approval tests fail (the reply shows call_tool), without the replay of the
 model's original call the display test fails on the next turn's history, and without the unknown
-tool check the failure test fails (a different error reaches the model and the chat). Skipping
+tool check the failure test fails (a different error reaches the model). Skipping
 citation sources for dispatched calls fails the knowledge and page tests; no unwrap at all also
 fails the citation event, embed and picture tests.
 
@@ -223,7 +224,7 @@ def test_a_dispatched_call_shows_as_its_tool_and_is_replayed_as_sent(
     }
 
 
-def test_a_call_to_an_unknown_tool_shows_the_error_and_the_reply_goes_on(
+def test_a_call_to_an_unknown_tool_stays_off_the_reply_and_the_reply_goes_on(
     tool_search_on, page_for, make_user, upstream, shouter
 ):
     prompt = f"whisper hush {uuid.uuid4().hex[:6]}"
@@ -238,8 +239,12 @@ def test_a_call_to_an_unknown_tool_shows_the_error_and_the_reply_goes_on(
 
     error = 'Error: Tool "whisper" is not available. Search for an available tool.'
     assert tool_results(upstream, prompt) == [error]
-    last_reply(page).get_by_text("View Result from call_tool").click()
-    expect(last_reply(page)).to_contain_text('Tool "whisper" is not available')
+    # since dev 9126f2262 a refused dispatch is kept out of view like the search
+    expect(last_reply(page)).not_to_contain_text("call_tool")
+
+    page.reload()
+    expect_reply(page, "No whispering here.")
+    expect(last_reply(page)).not_to_contain_text("call_tool")
 
 
 def test_an_approval_prompt_names_the_dispatched_tool(

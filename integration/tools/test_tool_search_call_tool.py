@@ -71,6 +71,11 @@ batch or arguments that are not a JSON object end tool use for the reply instead
 refused-dispatch cases not-an-object, arguments-malformed and batch-*, red there; the first two
 pass on b3b07a658, before batches).
 
+Since dev 9126f2262 `call_tool` is kept out of view like `search_tools`: a dispatch that resolves
+shows as its target tool, and a refused one is stored as a failed `call_tool` call marked hidden,
+its error still reaching the model. On 2416b1fc0, before it, every refused-dispatch case and the
+batch, mixed round and Ollama tests fail (the refused call is shown).
+
 Since dev 0f3bd0a7e the admin picks how `search_tools` matches: BM25 by words, the Documents
 embedding model by meaning (every held-back tool ranked, best first) or a decisions model asked
 about every held-back tool, which keeps the tools at or over its relevance threshold, best first,
@@ -221,8 +226,22 @@ def items(message: dict, kind: str) -> dict[str, dict]:
     return {item["call_id"]: item for item in output if item["type"] == kind}
 
 
+def stored_items(message: dict, kind: str) -> dict[str, dict]:
+    """Every stored output item of `kind` by call id, the ones kept out of view included."""
+    return {item["call_id"]: item for item in message.get("output") or [] if item["type"] == kind}
+
+
+def refused_dispatches(message: dict) -> list[dict]:
+    """The failed `call_tool` calls of a reply, which it stores but does not show."""
+    return [
+        call
+        for call in stored_items(message, "function_call").values()
+        if call["name"] == "call_tool"
+    ]
+
+
 def result_text(message: dict, call_id: str) -> str:
-    return items(message, "function_call_output")[call_id]["output"][0]["text"]
+    return stored_items(message, "function_call_output")[call_id]["output"][0]["text"]
 
 
 def stored_output(client: httpx.Client, turn: ChatTurn) -> list[dict]:
@@ -427,8 +446,14 @@ def test_a_refused_dispatch_reaches_the_model_as_a_failed_result(
     else:
         assert sent_back == expected
     assert result_text(message, "call_1") == sent_back
-    assert items(message, "function_call_output")["call_1"]["status"] == "failed"
-    assert items(message, "function_call")["call_1"]["status"] == "failed"
+    assert stored_items(message, "function_call_output")["call_1"]["status"] == "failed"
+    [refused] = refused_dispatches(message)
+    assert (refused["call_id"], refused["status"], refused.get("hidden")) == (
+        "call_1",
+        "failed",
+        True,
+    ), f"the refused dispatch shows on the reply: {refused}"
+    assert items(message, "function_call") == {}
     assert replayed_calls(follow_up)["call_1"]["name"] == "call_tool"
     assert follow_up["tools"] == first["tools"]
     assert message["content"] == "retrying"
@@ -487,15 +512,16 @@ def test_one_call_tool_batch_runs_each_tool_and_is_sent_back_as_one_call(
     shown = list(items(message, "function_call").values())
     assert [(call["name"], call["status"]) for call in shown] == [
         ("harbour_lights", "completed"),
-        ("call_tool", "failed"),
         (TIME_TOOL, "completed"),
-    ], "the batch did not show as one entry per tool"
+    ], "the batch did not show as one entry per tool it ran"
+    [refused] = refused_dispatches(message)
+    assert (refused["status"], refused.get("hidden")) == ("failed", True), refused
     assert shown[0]["call_id"] == "call_1"
-    assert len({call["call_id"] for call in shown}) == 3
+    assert len({call["call_id"] for call in [*shown, refused]}) == 3
     outputs = items(message, "function_call_output")
     assert outputs["call_1"]["output"][0]["text"] == "lit at Pula"
-    assert outputs[shown[1]["call_id"]]["output"][0]["text"] == UNAVAILABLE_ROCKETS
-    assert "current_timestamp" in outputs[shown[2]["call_id"]]["output"][0]["text"]
+    assert result_text(message, refused["call_id"]) == UNAVAILABLE_ROCKETS
+    assert "current_timestamp" in outputs[shown[1]["call_id"]]["output"][0]["text"]
     assert message["content"] == "Checked."
 
     _, after_batch, next_turn = upstream.chat_requests()
@@ -879,14 +905,19 @@ def test_a_mixed_round_asks_each_call_in_order_and_runs_only_the_allowed(
         titles = note_titles(client)
 
     shown = items(paused, "function_call")
-    assert [(item["name"], item["status"]) for item in shown.values()] == [
-        (TIME_TOOL, "pending"),
-        ("write_note", "queued"),
-        ("call_tool", "failed"),
-        ("write_note", "queued"),
+    assert [(call_id, item["name"], item["status"]) for call_id, item in shown.items()] == [
+        ("call_1", TIME_TOOL, "pending"),
+        ("call_2", "write_note", "queued"),
+        ("call_4", "write_note", "queued"),
     ]
+    [refused] = refused_dispatches(paused)
+    assert (refused["call_id"], refused["status"], refused.get("hidden")) == (
+        "call_3",
+        "failed",
+        True,
+    )
     assert result_text(paused, "call_3") == unavailable
-    assert list(items(paused, "function_call_output")) == ["call_3"]
+    assert list(stored_items(paused, "function_call_output")) == ["call_3"]
     assert titles_before_second == [] and titles_before_fourth == titles == [kept]
 
     follow_up = upstream.chat_requests()[-1]
@@ -900,12 +931,13 @@ def test_a_mixed_round_asks_each_call_in_order_and_runs_only_the_allowed(
     assert "current_timestamp" in results["call_1"]
     assert not results["call_2"].startswith("Error")
     assert (results["call_3"], results["call_4"]) == (unavailable, REJECTED)
-    assert [item["status"] for item in items(message, "function_call").values()] == [
+    assert [item["status"] for item in stored_items(message, "function_call").values()] == [
         "completed",
         "completed",
         "failed",
         "rejected",
     ]
+    assert list(items(message, "function_call")) == ["call_1", "call_2", "call_4"]
     assert message["content"].endswith("Two of four.")
 
 
@@ -1982,7 +2014,9 @@ def test_an_ollama_model_batches_through_call_tool_and_gets_one_combined_result(
 
     _, follow_up = server.chat_requests()
     shown = [(item["name"], item["status"]) for item in items(message, "function_call").values()]
-    assert shown == [("get_current_timestamp", "completed"), ("call_tool", "failed")], shown
+    assert shown == [("get_current_timestamp", "completed")], shown
+    [refused] = refused_dispatches(message)
+    assert (refused["status"], refused.get("hidden")) == ("failed", True), refused
     assistant, tool = follow_up["messages"][-2:]
     assert [entry["function"] for entry in assistant["tool_calls"]] == [call["function"]]
     results = combined_results(tool["content"])
