@@ -12,7 +12,12 @@ hold several pages: `view_note` reads one page by `page_id` or, without it, list
 `search_notes` names the page holding the match and links to it with `?page=`; and on a note
 with several pages `replace_note_content` edits only the named page, and refuses with
 `page_conflict` an edit without a page or of a page changed after the model read it. The chat
-tools search and read the account's own earlier chats and never the one being answered.
+tools search and read the account's own earlier chats and never the one being answered. Since
+0.13.1 (#33695, issue #33608) the admin's Chat Read Limit (`VIEW_CHAT_MAX_CHARS`, unset by
+default) caps what `view_chat` returns: the newest messages are kept, the oldest one kept is cut
+to fit, and the result says it was cut and how many messages came back. Empty and non-text
+messages are counted as text. The limit is a positive whole number, a save that leaves it out
+keeps it and the env var seeds a fresh instance.
 
 The scripted model calls each tool and the test reads the result it was sent back, and the
 stored note or chat.
@@ -31,7 +36,11 @@ find turned its two-range case red. For pages (dev 05e115366): `view_note` ignor
 turned the page read test red, `matching_page` always answering the first page turned the
 search test red, an edit without a page falling back to the first page turned the named-page
 test red, and skipping the read-revision check together with the revision sent with the write
-(either one alone still refuses) turned the changed-page test red.
+(either one alone still refuses) turned the changed-page test red. For the chat read limit (dev
+e8c0ad85e): never reading the limit turned the cut and empty-message tests red, counting
+`len(content)` without the text fallback turned the empty-message test red, the field without
+`gt=0, strict=True` turned the 0, -5 and "500" cases red, dropping the keep-when-omitted pop
+turned the omitted-save test red and the env default ignored turned the env test red.
 """
 
 from __future__ import annotations
@@ -468,3 +477,134 @@ def test_view_chat_returns_the_conversation_in_order(make_user, upstream):
         {"role": "assistant", "content": "in the reeds"},
     ]
     assert refused == {"error": "Chat not found or access denied"}
+    assert "truncated" not in viewed, f"a chat read with no limit set was cut: {viewed}"
+
+
+# --- chat read limit (#33695) -------------------------------------------------------------------
+
+ADMIN_CONFIG = "/api/v1/auths/admin/config"
+
+
+@pytest.fixture
+def chat_read_limit(admin, preserve):
+    """`chat_read_limit(limit)` saves the admin's Chat Read Limit; None leaves it unset."""
+    preserve("admin_config")
+
+    def save(limit: int | None) -> None:
+        with admin.client() as client:
+            current = client.get(ADMIN_CONFIG)
+            assert current.status_code == 200, current.text
+            saved = client.post(ADMIN_CONFIG, json={**current.json(), "VIEW_CHAT_MAX_CHARS": limit})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["VIEW_CHAT_MAX_CHARS"] == limit, saved.json()
+
+    return save
+
+
+def stored_chat(actor, *contents) -> str:
+    """A chat holding `contents` as alternating user and assistant messages, as an import does."""
+    ids = [str(uuid.uuid4()) for _ in contents]
+    messages = {
+        message_id: {
+            "id": message_id,
+            "parentId": ids[index - 1] if index else None,
+            "childrenIds": ids[index + 1 : index + 2],
+            "role": "assistant" if index % 2 else "user",
+            "content": content,
+            "timestamp": int(time.time()),
+        }
+        for index, (message_id, content) in enumerate(zip(ids, contents))
+    }
+    chat = {"title": "harbour log", "history": {"messages": messages, "currentId": ids[-1]}}
+    with actor.client() as client:
+        created = client.post("/api/v1/chats/new", json={"chat": chat})
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
+HERON_CHAT = ("where do herons nest?", "in the reeds", "and where do they fish?", "in the shallows")
+
+
+def test_a_chat_read_limit_keeps_the_newest_messages_and_says_what_was_cut(
+    chat_read_limit, make_user, upstream
+):
+    chat_read_limit(30)
+    account = make_user()
+    chat_id = stored_chat(account, *HERON_CHAT)
+
+    viewed = call(account, upstream, "view_chat", chat_id=chat_id)
+
+    assert viewed["messages"] == [
+        {"role": "user", "content": "and where do th"},
+        {"role": "assistant", "content": "in the shallows"},
+    ], f"the read did not keep the newest 30 characters: {viewed}"
+    assert (viewed["truncated"], viewed["total_messages"], viewed["returned_messages"]) == (
+        True,
+        4,
+        2,
+    ), viewed
+
+
+def test_a_chat_within_the_read_limit_comes_back_whole(chat_read_limit, make_user, upstream):
+    chat_read_limit(sum(map(len, HERON_CHAT)))
+    account = make_user()
+    chat_id = stored_chat(account, *HERON_CHAT)
+
+    viewed = call(account, upstream, "view_chat", chat_id=chat_id)
+
+    assert [message["content"] for message in viewed["messages"]] == list(HERON_CHAT)
+    assert "truncated" not in viewed, f"a chat exactly at the limit was cut: {viewed}"
+
+
+def test_a_chat_read_limit_reads_a_chat_with_empty_and_non_text_messages(
+    chat_read_limit, make_user, upstream
+):
+    chat_read_limit(10)
+    account = make_user()
+    chat_id = stored_chat(
+        account, "", None, [{"type": "text", "text": "tide tables?"}], "the tide turns at noon"
+    )
+
+    viewed = call(account, upstream, "view_chat", chat_id=chat_id)
+
+    assert "error" not in viewed, f"a chat with empty messages could not be read: {viewed}"
+    assert viewed["messages"] == [{"role": "assistant", "content": "the tide t"}], viewed
+    assert (viewed["total_messages"], viewed["returned_messages"]) == (4, 1), viewed
+
+
+@pytest.mark.parametrize("limit", [0, -5, "500", 2.5])
+def test_a_chat_read_limit_that_is_not_a_positive_whole_number_is_refused(
+    limit, admin, preserve, chat_read_limit
+):
+    chat_read_limit(500)
+    with admin.client() as client:
+        current = client.get(ADMIN_CONFIG).json()
+        refused = client.post(ADMIN_CONFIG, json={**current, "VIEW_CHAT_MAX_CHARS": limit})
+        kept = client.get(ADMIN_CONFIG).json()["VIEW_CHAT_MAX_CHARS"]
+
+    assert refused.status_code == 422, f"a limit of {limit!r} was accepted: {refused.text}"
+    assert kept == 500
+
+
+def test_a_save_without_the_chat_read_limit_keeps_it_and_clearing_it_lifts_it(
+    admin, chat_read_limit
+):
+    chat_read_limit(500)
+    with admin.client() as client:
+        current = client.get(ADMIN_CONFIG).json()
+        current.pop("VIEW_CHAT_MAX_CHARS")
+        saved = client.post(ADMIN_CONFIG, json=current)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["VIEW_CHAT_MAX_CHARS"] == 500, "a save that left the limit out cleared it"
+
+    chat_read_limit(None)
+
+
+@pytest.mark.slow
+def test_the_chat_read_limit_env_var_seeds_a_fresh_instance(instance_with):
+    launched = instance_with({"VIEW_CHAT_MAX_CHARS": "1234"})
+    with launched.client() as client:
+        seeded = client.get(ADMIN_CONFIG)
+
+    assert seeded.status_code == 200, seeded.text
+    assert seeded.json()["VIEW_CHAT_MAX_CHARS"] == 1234, seeded.json()
