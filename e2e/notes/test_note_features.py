@@ -184,7 +184,7 @@ def test_an_account_the_note_was_not_shared_with_is_sent_away(page_for, make_use
     note_id = _create_note(owner, _unique("Private"), "for my eyes only")
     page = page_for(stranger, path=f"/notes/{note_id}")
 
-    expect(page).to_have_url(f"{stranger.base_url}/")
+    expect(page).to_have_url("/")
     expect(chat_input(page)).to_be_visible()
     expect(page.get_by_text("for my eyes only")).to_have_count(0)
 

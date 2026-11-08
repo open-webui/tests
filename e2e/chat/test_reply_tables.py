@@ -20,6 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import expect_reply, last_reply, send
+from utils.clipboard import wait_for_text
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -60,8 +61,7 @@ def test_the_table_is_drawn_and_copies_as_its_markdown(table_reply):
 
     tooltip_button(_table_buttons(table_reply), "Copy").click()
 
-    table_reply.wait_for_function("navigator.clipboard.readText().then(text => text !== '')")
-    assert table_reply.evaluate("navigator.clipboard.readText()") == TABLE
+    assert wait_for_text(table_reply) == TABLE
 
 
 def test_export_to_csv_downloads_the_rows_with_cells_quoted(table_reply):

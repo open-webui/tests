@@ -36,6 +36,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
+from utils.clipboard import on_clipboard, read_text, write_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -136,14 +137,15 @@ def copy_reply(page: Page) -> tuple[str, str | None]:
     last_reply(page).hover()
     conversation(page).get_by_role("button", name="Copy").last.click()
     expect(page.get_by_text("Copying to clipboard was successful!")).to_be_visible()
-    return page.evaluate(
+    return on_clipboard(
+        page,
         """async () => {
             const [item] = await navigator.clipboard.read();
             const html = item.types.includes('text/html')
                 ? await (await item.getType('text/html')).text()
                 : null;
             return [item.types.join(','), html];
-        }"""
+        }""",
     )
 
 
@@ -362,13 +364,10 @@ def test_keep_follow_up_prompts_leaves_an_earlier_replys_follow_ups_in_the_chat(
     expect(follow_up_button(other, "Who lit it?")).to_have_count(0)
 
 
-def clipboard_text(page: Page) -> str:
-    return page.evaluate("navigator.clipboard.readText()")
-
-
 def clipboard_becomes(page: Page, expected: str) -> bool:
     """Whether the clipboard holds `expected` within ten seconds."""
-    return page.evaluate(
+    return on_clipboard(
+        page,
         """async expected => {
             for (let attempt = 0; attempt < 100; attempt++) {
                 if ((await navigator.clipboard.readText()) === expected) return true;
@@ -384,18 +383,18 @@ def test_auto_copy_response_puts_a_finished_reply_on_the_clipboard(page_for, mak
     page = page_for(make_user(), permissions=CLIPBOARD)
     flip(page, "Auto-Copy Response to Clipboard")
     page.goto("/")
-    page.evaluate("navigator.clipboard.writeText('nothing copied')")
+    write_text(page, "nothing copied")
 
     chat_once(page, upstream, "Is the lamp lit tonight?")
     assert clipboard_becomes(page, ANSWER), (
-        f"the reply never reached the clipboard: {clipboard_text(page)!r}"
+        f"the reply never reached the clipboard: {read_text(page)!r}"
     )
 
     other = page_for(make_user(), permissions=CLIPBOARD)
-    other.evaluate("navigator.clipboard.writeText('nothing copied')")
+    write_text(other, "nothing copied")
     chat_once(other, upstream, "Is the lamp lit this night?")
     other.wait_for_timeout(1000)
-    assert clipboard_text(other) == "nothing copied"
+    assert read_text(other) == "nothing copied"
 
 
 def stored_chats(account, text: str) -> list[dict]:

@@ -22,6 +22,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.clipboard import write_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -67,7 +68,7 @@ def test_a_large_paste_into_a_note_is_still_there_after_a_reload(page_for, make_
     editor = _note_editor(page)
     expect(editor).to_have_attribute("contenteditable", "true")
 
-    page.evaluate("(text) => navigator.clipboard.writeText(text)", LARGE_TEXT)
+    write_text(page, LARGE_TEXT)
     editor.click()
     page.keyboard.press("Control+V")
     expect(editor).to_contain_text(LAST_WORD)

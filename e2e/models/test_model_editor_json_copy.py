@@ -23,6 +23,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.upstream import MOCK_MODEL_ID
+from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -60,7 +61,7 @@ def open_editor_with_preview(page: Page, model: dict):
 
 
 def copied(page: Page) -> str:
-    return page.evaluate("() => navigator.clipboard.readText()")
+    return read_text(page)
 
 
 def test_the_copy_button_puts_the_models_json_on_the_clipboard(page_for, builder, own_model):

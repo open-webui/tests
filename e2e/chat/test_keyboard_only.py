@@ -45,6 +45,7 @@ from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.clipboard import wait_for_text
 from utils.model_selector import model_search
 from utils.user_menu import settings_item
 
@@ -151,8 +152,7 @@ def test_enter_on_copy_puts_the_reply_on_the_clipboard(keyboard_page, upstream):
     press_until_focused(keyboard_page, "Shift+Tab", reply_button(keyboard_page, "Copy"))
     keyboard_page.keyboard.press("Enter")
 
-    keyboard_page.wait_for_function("navigator.clipboard.readText().then(text => text !== '')")
-    assert keyboard_page.evaluate("navigator.clipboard.readText()") == "Slow and steady."
+    assert wait_for_text(keyboard_page) == "Slow and steady."
 
 
 @pytest.fixture

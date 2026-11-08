@@ -20,6 +20,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
+from utils.clipboard import write_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -54,7 +55,7 @@ def open_thread(page: Page, text: str) -> Locator:
 
 
 def paste(page: Page, box: Locator, text: str) -> None:
-    page.evaluate("(text) => navigator.clipboard.writeText(text)", text)
+    write_text(page, text)
     box.click()
     page.keyboard.press("Control+V")
 

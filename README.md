@@ -100,6 +100,10 @@ They combine. The Redis switch needs `redis-server` on `PATH` and skips without 
 
 Every browser page runs with its CPU throttled fourfold by default (`OWUI_TEST_SLOW=<n>` for n-fold, `OWUI_TEST_SLOW=0` for full speed), and the scripted provider waits as much longer before each reply when the run includes browser tests. A run without them has no page to wait for and keeps the provider at full speed. A test that races the page, which a fast machine wins and a busy CI runner loses, fails locally instead of on CI.
 
+### Plain HTTP
+
+Every browser page opens the instance by a host name that maps to loopback but is not one (`owui-lan.test`), so it is not a secure context, as for a user who opens Open WebUI over plain HTTP by address (a LAN address, Docker without TLS). The browser then offers no `navigator.clipboard`, `crypto.randomUUID` or `crypto.subtle`; test code reads and writes the clipboard through `utils/clipboard.py`. A test of a feature that the browser itself offers only in a secure context (the microphone, the location, encrypted chat) carries `pytest.mark.secure_context` and opens the loopback address.
+
 ### Preloaded boots
 
 On Linux every scratch instance after the first is forked from a process that has already imported torch, transformers and the rest of the heavy libraries Open WebUI loads at startup, which takes about half off each boot. A forked instance has the same environment, modules, threads and open files as a plain start. An instance whose settings change what those libraries read when they load (`HF_HOME`, `TZ`, `PYTHONPATH`) starts the plain way. Forked instances share one hash seed, Arrow's memory pool runs without its background purge thread, and the process lists the preload server as its parent and command line. `OWUI_TEST_PRELOAD=0` starts every instance the plain way.

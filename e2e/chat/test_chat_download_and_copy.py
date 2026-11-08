@@ -21,6 +21,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.chat_history import seed_chat
+from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -137,7 +138,7 @@ def test_copy_puts_the_whole_chat_on_the_clipboard(page_for, owner, chat_id):
     _header_menu(page, chat_id).get_by_role("menuitem", name="Copy", exact=True).click()
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()") == CHAT_TEXT
+    assert read_text(page) == CHAT_TEXT
 
 
 def test_the_default_pdf_is_a_picture_of_the_chat(page_for, owner, chat_id, tmp_path):

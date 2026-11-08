@@ -23,11 +23,12 @@ load_dotenv()
 
 pytest_plugins = ["harness.fixtures"]
 
-from harness import coverage_run, slow_machine  # noqa: E402
+from harness import coverage_run, plain_http, slow_machine  # noqa: E402
 
 # before anything imports open_webui, so module-level lines count too
 coverage_run.start()
 slow_machine.install()
+plain_http.install()
 
 # The venv ships a .pth that puts a fixed open-webui checkout on sys.path at
 # interpreter startup. It otherwise wins over OPEN_WEBUI_SOURCE_DIR, and once
@@ -336,6 +337,10 @@ def _is_drift(excinfo) -> bool:
 
 def pytest_collection_finish(session) -> None:
     slow_machine.limit_to_browser_runs(session.items)
+
+
+def pytest_runtest_setup(item) -> None:
+    plain_http.follow(item)
 
 
 @pytest.hookimpl(hookwrapper=True)

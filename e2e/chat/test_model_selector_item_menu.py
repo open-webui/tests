@@ -29,6 +29,7 @@ from harness.actors import Actor
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input
+from utils.clipboard import read_text
 from utils.model_selector import model_search
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -164,10 +165,10 @@ def test_edit_opens_the_settings_of_a_provider_model(page, owner, provider_model
 def test_edit_opens_the_editor_of_a_workspace_model(page, owner, workspace_model):
     click_menu_item(page, workspace_model, "Edit")
 
-    expect(page).to_have_url(f"{owner.base_url}/workspace/models/edit?id={workspace_model}")
+    expect(page).to_have_url(f"/workspace/models/edit?id={workspace_model}")
     edit_and_save(page.get_by_role("main"))
 
-    expect(page).to_have_url(f"{owner.base_url}/workspace/models")
+    expect(page).to_have_url("/workspace/models")
     assert _stored_model(owner, workspace_model)["meta"]["description"] == NEW_DESCRIPTION
 
 
@@ -189,7 +190,7 @@ def test_copy_link_puts_the_model_link_on_the_clipboard(page, owner, provider_mo
     click_menu_item(page, provider_model, "Copy Link")
 
     expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
-    copied = page.evaluate("navigator.clipboard.readText()")
+    copied = read_text(page)
     assert copied == f"{owner.base_url}/?model={provider_model}"
 
 

@@ -57,6 +57,7 @@ from harness.mfa import (
 )
 from harness.oidc_provider import shared_provider, sso_env
 from utils.chat_ui import chat_input
+from utils.clipboard import write_text
 from utils.setting_rows import setting_button
 from utils.user_menu import open_settings
 
@@ -397,7 +398,7 @@ def test_the_keyboard_alone_signs_in_with_a_pasted_code(secured, open_page):
             break
         page.keyboard.press("Tab")
     expect(code_field).to_be_focused()
-    page.evaluate("code => navigator.clipboard.writeText(code)", account.authenticator.code())
+    write_text(page, account.authenticator.code())
     page.keyboard.press("Control+V")
     page.keyboard.press("Enter")
 

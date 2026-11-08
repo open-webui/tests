@@ -30,7 +30,13 @@ from playwright.sync_api import Locator, Page, expect
 from harness.access import make_group
 from harness.channel_quotes import enable_channels
 
-pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+# encrypted chat refuses to start outside a secure context
+pytestmark = [
+    pytest.mark.journey,
+    pytest.mark.requires_browser,
+    pytest.mark.requires_source,
+    pytest.mark.secure_context,
+]
 
 ADMIN_CONFIG = "/api/v1/auths/admin/config"
 DEFAULT_PERMISSIONS = "/api/v1/users/default/permissions"

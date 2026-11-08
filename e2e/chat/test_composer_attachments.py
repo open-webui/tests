@@ -30,6 +30,7 @@ from harness.chat_history import seed_chat
 from harness.upstream import Reply
 from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.clipboard import on_clipboard, write_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -159,7 +160,8 @@ def test_a_sidebar_chat_dropped_on_the_composer_is_referenced(page_for, make_use
 def test_a_pasted_picture_is_sent_to_the_model_as_an_image(page_for, make_user, upstream):
     page = page_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
     expect(chat_input(page)).to_be_visible()
-    page.evaluate(
+    on_clipboard(
+        page,
         """async (encoded) => {
             const bytes = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
             const picture = new Blob([bytes], { type: 'image/png' });
@@ -191,7 +193,7 @@ def test_a_long_paste_becomes_an_attached_file_when_the_account_asks(page_for, m
     page = page_for(account, permissions=["clipboard-read", "clipboard-write"])
     long_text = "The tide table for the harbour. " * 100
     expect(chat_input(page)).to_be_visible()
-    page.evaluate("(text) => navigator.clipboard.writeText(text)", long_text)
+    write_text(page, long_text)
     chat_input(page).click()
     page.keyboard.press("Control+V")
 

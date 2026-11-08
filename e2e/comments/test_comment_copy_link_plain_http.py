@@ -70,6 +70,7 @@ def test_copy_link_copies_the_comment_link_over_plain_http(lan_page_for, comment
     )
 
 
+@pytest.mark.secure_context
 def test_copy_link_copies_the_comment_link_on_a_secure_page(page_for, commented_prompt):
     owner, prompt_id, comment_id = commented_prompt
     page = page_for(owner, permissions=CLIPBOARD)

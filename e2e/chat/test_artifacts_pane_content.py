@@ -27,6 +27,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
+from utils.clipboard import read_text
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -143,7 +144,7 @@ def test_copy_and_download_give_the_whole_page(page_for, make_user, upstream):
     pane.get_by_role("button", name="Copy", exact=True).click()
 
     expect(pane.get_by_role("button", name="Copied", exact=True)).to_be_visible()
-    copied = page.evaluate("navigator.clipboard.readText()")
+    copied = read_text(page)
     assert re.search(r"<!DOCTYPE html>.*<h1>saved card</h1>", copied, re.S), copied
     with page.expect_download() as download_info:
         tooltip_button(pane, "Download").click()

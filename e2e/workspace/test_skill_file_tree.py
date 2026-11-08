@@ -40,6 +40,7 @@ from harness.skill_files import (
     save,
     skill_md,
 )
+from utils.clipboard import read_text
 from utils.skill_editor import actions, code_editor, file_row, open_row, replace_text, row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -227,5 +228,5 @@ def test_copy_puts_the_open_file_on_the_clipboard(page_for, owner):
     page.get_by_role("main").get_by_role("button", name="Copy content").click()
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
-    copied = page.evaluate("() => navigator.clipboard.readText()")
+    copied = read_text(page)
     assert copied == "High water at three.\n", f"Copy put {copied!r} on the clipboard"

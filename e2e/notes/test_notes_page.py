@@ -192,7 +192,7 @@ def test_a_note_opens_from_the_list_in_either_layout(page_for, make_user, layout
     else:
         _list_row(page, title).click()
 
-    expect(page).to_have_url(f"{author.base_url}/notes/{note_id}")
+    expect(page).to_have_url(f"/notes/{note_id}")
     editor_page = page.get_by_role("main")
     expect(editor_page.get_by_role("textbox", name="Title")).to_have_value(title)
     expect(editor_page.get_by_label("Write something...")).to_have_text("sow the broad beans")

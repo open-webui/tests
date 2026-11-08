@@ -55,7 +55,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, expect_reply
-from utils.clipboard import copied, loopback_clipboard
+from utils.clipboard import copied, loopback_clipboard, read_text
 from utils.search_dialog import (
     answers_query,
     choose_content_type,
@@ -480,7 +480,7 @@ def test_copy_link_copies_the_results_address(page_for, make_user):
 
     expect(page.get_by_text("Link copied to clipboard")).to_be_visible()
     origin = page.evaluate("location.origin")
-    assert page.evaluate("navigator.clipboard.readText()") == f"{origin}/c/{chat_id}?message=a"
+    assert read_text(page) == f"{origin}/c/{chat_id}?message=a"
 
 
 def test_copy_link_copies_the_results_address_over_plain_http(lan_page_for, make_user):

@@ -314,7 +314,7 @@ def test_a_user_is_kept_out_of_the_session_explorer_and_refused_its_api(page_for
     user = make_user()
     page = page_for(user, path="/admin/analytics")
     expect(chat_input(page)).to_be_visible()
-    expect(page).to_have_url(f"{user.base_url}/")
+    expect(page).to_have_url("/")
     expect(page.get_by_role("dialog")).to_have_count(0)
 
     page.goto("/?settings=admin%3Aanalytics")

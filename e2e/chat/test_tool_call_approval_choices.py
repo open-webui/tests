@@ -42,6 +42,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.backends import wait_until
 from harness.listener import ReceivedRequest, json_answer
+from harness.plain_http import loopback_url
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -131,7 +132,8 @@ def _wait_until_the_server_asks(page: Page) -> None:
 
     def waiting() -> bool:
         stored = page.request.get(
-            f"/api/v1/chats/{chat_id}", headers={"Authorization": f"Bearer {token}"}
+            loopback_url(page.url, f"/api/v1/chats/{chat_id}"),
+            headers={"Authorization": f"Bearer {token}"},
         ).json()["chat"]["history"]
         output = stored["messages"][stored["currentId"]].get("output") or []
         return any(

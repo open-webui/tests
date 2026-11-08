@@ -20,6 +20,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
+from utils.clipboard import wait_for_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -46,8 +47,7 @@ def test_the_shortcut_copies_the_last_code_block_with_the_artifacts_pane_open(
 
     page.keyboard.press("Control+Shift+;")
 
-    page.wait_for_function("navigator.clipboard.readText().then(text => text !== '')")
-    copied = page.evaluate("navigator.clipboard.readText()")
+    copied = wait_for_text(page)
     assert copied == LAST_BLOCK, (
         f"the shortcut copied something else than the last block: {copied!r}"
     )

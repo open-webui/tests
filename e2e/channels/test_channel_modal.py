@@ -36,6 +36,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, send
+from utils.clipboard import read_text
 from utils.member_picker import pick_member
 from utils.tooltips import tooltip_button
 
@@ -228,7 +229,7 @@ def test_a_webhook_made_in_the_modal_posts_under_its_name_until_it_is_deleted(
     expect(page.get_by_text("Saved", exact=True)).to_be_visible()
     expect(webhooks.get_by_role("button", name="Tide Bot")).to_be_visible()
     tooltip_button(webhooks, "Copy URL").click()
-    url = urljoin(owner.base_url, page.evaluate("navigator.clipboard.readText()"))
+    url = urljoin(owner.base_url, read_text(page))
 
     assert "/channels/webhooks/" in url
     posted = httpx.post(url, json={"content": "high tide at six"}, timeout=30)

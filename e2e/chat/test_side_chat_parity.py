@@ -58,6 +58,7 @@ from utils.chat_ui import (
     send,
     side_chat_panel,
 )
+from utils.clipboard import read_text
 from utils.menus import late_menu_entry
 from utils.sidebar_chats import chat_menu, chat_row
 
@@ -491,7 +492,7 @@ def test_copy_under_a_side_chat_reply_puts_the_reply_on_the_clipboard(
     action(side_reply(panel), "Copy").click()
 
     expect(page.get_by_text("Copying to clipboard was successful!")).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()").strip() == SIDE_ANSWER
+    assert read_text(page).strip() == SIDE_ANSWER
 
 
 def test_a_code_block_in_a_side_chat_reply_shows_its_language_and_copies(
@@ -515,7 +516,7 @@ def test_a_code_block_in_a_side_chat_reply_shows_its_language_and_copies(
     expect(box.get_by_text(code, exact=True)).to_be_visible()
     box.get_by_role("button", name="Copy", exact=True).first.click()
     expect(box.get_by_role("button", name="Copied", exact=True)).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()") == code
+    assert read_text(page) == code
 
 
 def test_reasoning_in_a_side_chat_reply_is_folded_away_above_the_answer(

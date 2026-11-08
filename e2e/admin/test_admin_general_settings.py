@@ -33,6 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.channel_chat import enable_channels, mention, model_reply
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
+from utils.clipboard import read_text
 from utils.sidebar_folders import click_folder_menu_button, folder_row, open_advanced
 from utils.user_menu import settings_item
 
@@ -209,7 +210,7 @@ def test_a_response_watermark_is_appended_to_a_copied_reply(
 
     expect(page.get_by_text("Copying to clipboard was successful!")).to_be_visible()
     expect(last_reply(page)).not_to_contain_text(watermark)
-    copied = page.evaluate("navigator.clipboard.readText()")
+    copied = read_text(page)
     assert copied.startswith(ANSWER), copied
     assert copied.rstrip().endswith(watermark), copied
 

@@ -27,6 +27,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.actors import Actor
 from harness.channel_quotes import enable_channels, group_channel
 from utils.chat_ui import chat_input
+from utils.clipboard import on_clipboard
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -83,7 +84,7 @@ def test_a_pasted_picture_posts_at_the_size_the_persons_compression_asks_for(
     channel_id = group_channel(sender, member)
     page = open_channel(page_for, sender, channel_id)
 
-    page.evaluate(COPY_PICTURE, buoy_png())
+    on_clipboard(page, COPY_PICTURE, buoy_png())
     chat_input(page).click()
     page.keyboard.press("Control+V")
     # the spinner is the only sign the upload is still running

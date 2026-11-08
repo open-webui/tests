@@ -34,6 +34,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from utils.chat_ui import expect_reply, last_reply, send
+from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -96,7 +97,7 @@ def test_copy_puts_the_exact_code_on_the_clipboard(page_for, make_user, upstream
     button(box, "Copy").click()
 
     expect(button(box, "Copied")).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()") == SCRIPT
+    assert read_text(page) == SCRIPT
     expect(button(box, "Copy")).to_be_visible()
 
 
@@ -117,7 +118,7 @@ def test_a_tilde_fence_is_a_code_block_with_a_label_and_a_copy_button(
     expect(editor_lines(box).last).to_have_text("second = 2")
     button(box, "Copy").click()
     expect(button(box, "Copied")).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()") == "first = 1\nsecond = 2"
+    assert read_text(page) == "first = 1\nsecond = 2"
 
 
 def test_each_block_copies_its_own_code(page_for, make_user, upstream):
@@ -129,7 +130,7 @@ def test_each_block_copies_its_own_code(page_for, make_user, upstream):
     button(box, "Copy").last.click()
 
     expect(button(box, "Copied")).to_be_visible()
-    assert page.evaluate("navigator.clipboard.readText()") == "echo second"
+    assert read_text(page) == "echo second"
 
 
 def test_a_mermaid_fence_is_drawn_as_a_diagram(page_for, make_user, upstream):

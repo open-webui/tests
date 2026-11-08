@@ -50,6 +50,7 @@ from harness.access import make_group
 from harness.actors import Actor
 from utils.access_control import choose_visibility
 from utils.chat_ui import chat_input
+from utils.clipboard import on_clipboard, read_text
 from utils.member_picker import pick_member
 from utils.note_content import note_files
 from utils.note_menu import open_note_menu
@@ -110,7 +111,7 @@ def _eventually(read: Callable[[], object], expected: object, timeout: float = 1
 
 
 def _clipboard_text(page: Page) -> str:
-    return page.evaluate("navigator.clipboard.readText()")
+    return read_text(page)
 
 
 # ---------------------------------------------------------------- copy
@@ -160,7 +161,7 @@ def test_copy_to_clipboard_copies_the_markdown_and_the_formatting(page_for, make
 
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
     assert _clipboard_text(page) == "# Soup\n\nuse **fresh** leeks"
-    html = page.evaluate(READ_CLIPBOARD_HTML)
+    html = on_clipboard(page, READ_CLIPBOARD_HTML)
     assert "<strong>fresh</strong>" in html, html
     assert re.search(r"<h1[^>]*>Soup</h1>", html), html
 
@@ -415,7 +416,7 @@ def test_removing_a_person_from_the_access_list_shuts_them_out(page_for, sharer,
     expect(panel.get_by_text("No access grants. Private to you.")).to_be_visible()
     _eventually(lambda: _stored_grants(sharer, note_id), set())
     shut_out = page_for(former, path=f"/notes/{note_id}")
-    expect(shut_out).to_have_url(f"{former.base_url}/")
+    expect(shut_out).to_have_url("/")
     expect(chat_input(shut_out)).to_be_visible()
 
 

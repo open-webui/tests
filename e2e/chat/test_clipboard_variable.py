@@ -19,6 +19,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from utils.chat_ui import chat_input, expect_reply
+from utils.clipboard import write_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -39,7 +40,7 @@ def writer(make_user):
 
 def with_clipboard(page: Page, text: str) -> None:
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-    page.evaluate("(text) => navigator.clipboard.writeText(text)", text)
+    write_text(page, text)
 
 
 def use_prompt(page: Page, command: str) -> None:

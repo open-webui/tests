@@ -47,6 +47,7 @@ from utils.chat_ui import (
     send,
     stop_button,
 )
+from utils.clipboard import wait_for_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -106,8 +107,7 @@ def test_ctrl_r_in_the_message_box_regenerates_the_last_reply(answered, upstream
 def test_ctrl_shift_c_copies_the_last_reply(answered):
     answered.keyboard.press("Control+Shift+C")
 
-    answered.wait_for_function("navigator.clipboard.readText().then(text => text !== '')")
-    assert answered.evaluate("navigator.clipboard.readText()") == ANSWER
+    assert wait_for_text(answered) == ANSWER
 
 
 def test_ctrl_shift_backspace_deletes_the_chat_after_confirming(answered, account):

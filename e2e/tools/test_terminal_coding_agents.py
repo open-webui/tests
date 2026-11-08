@@ -33,6 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.coding_agent import FAST, connect_agent_terminal
 from harness.fake_acp_agent import REFUSAL
+from harness.plain_http import loopback_url
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
@@ -170,12 +171,12 @@ def test_once_the_agents_terminal_is_gone_its_chat_and_a_new_chat_take_the_defau
     _wait_until_saved(page)
     token = page.evaluate("localStorage.token")
     stored = page.request.get(
-        f"/api/v1/chats/{page.url.rsplit('/c/', 1)[1]}",
+        loopback_url(page.url, f"/api/v1/chats/{page.url.rsplit('/c/', 1)[1]}"),
         headers={"Authorization": f"Bearer {token}"},
     ).json()["chat"]
     [agent_model] = stored["models"]
     saved = page.request.post(
-        "/api/v1/users/user/settings/update",
+        loopback_url(page.url, "/api/v1/users/user/settings/update"),
         headers={"Authorization": f"Bearer {token}"},
         data={"ui": {"models": [agent_model]}},
     )

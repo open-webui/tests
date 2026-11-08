@@ -87,7 +87,7 @@ def test_a_pinned_model_opens_a_chat_with_that_model(page_for, pinned_model, ups
 
     sidebar.get_by_role("link", name=model_id).click()
 
-    expect(page).to_have_url(f"{owner.base_url}/?model={model_id}")
+    expect(page).to_have_url(f"/?model={model_id}")
     expect(page.get_by_role("button", name=f"Selected model: {model_id}")).to_be_visible()
     prompt = "which model is this?"
     upstream.queue(reply.text("answered by the pin", match=reply.answering(prompt)))
@@ -161,7 +161,7 @@ def test_a_note_pinned_from_the_notes_page_shows_in_the_sidebar_and_opens(page_f
     section = _notes_section(_sidebar(page))
     section.get_by_role("link", name=title).click()
 
-    expect(page).to_have_url(f"{author.base_url}/notes/{note_id}")
+    expect(page).to_have_url(f"/notes/{note_id}")
     expect(page.get_by_role("main").get_by_role("textbox", name="Title")).to_have_value(title)
 
 

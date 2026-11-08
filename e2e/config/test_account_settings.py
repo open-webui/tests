@@ -29,6 +29,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.clipboard import read_text
 from utils.setting_rows import setting_button
 from utils.user_menu import open_settings
 
@@ -164,7 +165,7 @@ def test_copy_api_key_puts_the_shown_key_on_the_clipboard(page_for, keys_allowed
 
     secrets.get_by_role("button", name="Copy API Key").click()
 
-    copied = page.evaluate("navigator.clipboard.readText()")
+    copied = read_text(page)
     assert copied == key
     assert _models_status(copied, keys_allowed.base_url) == 200
 

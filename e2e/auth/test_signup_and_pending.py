@@ -31,6 +31,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.actors import Actor
+from harness.plain_http import loopback_url
 from utils.chat_ui import chat_input
 from utils.user_roles import expect_role, role_button
 
@@ -166,7 +167,8 @@ def test_with_sign_up_off_the_auth_page_offers_no_form_and_the_api_refuses_one(
     expect(page.get_by_role("button", name="Sign in", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Sign up")).to_have_count(0)
     refused = page.request.post(
-        "/api/v1/auths/signup", data={"name": name, "email": email, "password": PASSWORD}
+        loopback_url(page.url, "/api/v1/auths/signup"),
+        data={"name": name, "email": email, "password": PASSWORD},
     )
     assert refused.status == 403, refused.text()
 
@@ -208,7 +210,7 @@ def test_with_the_admin_default_role_a_newcomer_is_offered_the_admin_panel(page,
     expect(chat_input(page)).to_be_visible(timeout=PAGE_TIMEOUT_MS)
     # the changelog modal covers an admin's first page load
     page.request.post(
-        "/api/v1/users/user/settings/update",
+        loopback_url(page.url, "/api/v1/users/user/settings/update"),
         data={"ui": {"showChangelog": False}},
         headers={"Authorization": f"Bearer {page.evaluate('localStorage.token')}"},
     )
