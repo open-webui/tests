@@ -1,6 +1,7 @@
-"""Regression: kb_exec grep reported every hit as line 1, missed alternations and ignored -c/-l.
+"""Regression: knowledge grep reported every hit as line 1, missed alternations and escaped
+punctuation, and ignored -c/-l.
 
-Three fixes in `tools/knowledge_fs.py`, all shipped in 0.11.0:
+Three fixes in `tools/knowledge_fs.py` shipped in 0.11.0, a fourth is open:
 
 * `e18e249d5` (PR #27249, issue #26744): the piped and single-file grep branches split their
   text on the two characters backslash-n instead of a newline, so a whole file was one "line":
@@ -9,16 +10,20 @@ Three fixes in `tools/knowledge_fs.py`, all shipped in 0.11.0:
   "alpha|omega" was searched as one literal string and silently matched nothing.
 * `8d2fee5d4` (PR #26721, issue #26715): the piped branch ignored -c and -l and returned the
   matching lines, while the file branches honoured both flags.
+* issue #33933: `is_regex_pattern` did not count escaped punctuation as regex, so `Art\\. 40` was
+  searched literally, backslash included, and `grep_knowledge_files` and kb_exec found nothing.
 
-The model calls kb_exec on a preset with the knowledge base attached, and the test reads the
-tool result the provider is sent back.
+The model calls kb_exec on a preset with the knowledge base attached, or `grep_knowledge_files`
+on a file of a fresh account's, and the test reads the tool result the provider is sent back.
 
 Twin of unit/tools/test_knowledge_file_search.py.
 
 Discriminates: passes on dev bbfa876af; fails with the literal backslash-n split restored in
 both grep branches (the hit is reported as line 1 of one long line), with `|` dropped from the
 regex detection (the alternation finds nothing) and with the piped branch's -c/-l handling
-removed (the pipe returns the matching line); the nearby tests pass on all three.
+removed (the pipe returns the matching line); the nearby tests pass on all three. The escaped
+punctuation tests fail on dev dedf9e65c (every escaped pattern finds nothing) and pass with the
+fix for #33933; the literal search tests pass on both.
 """
 
 from __future__ import annotations
@@ -28,6 +33,16 @@ import pytest
 from harness.actors import admin_of
 from harness.knowledge_bases import KB_EXEC, add_text_file, knowledge_base, model_with_knowledge
 from harness.tool_calls import run_tool
+
+ESCAPED_LINES = [
+    "Art. 40 (Abs. 2) DSGVO kostet $100?",
+    "Artx 40 Abs 2 DSGVOs kostet 100",
+    "C++ ab Version 1.5",
+    "Version 105 ohne Punkt",
+    r"Pfad C:\Users\bob\law.md",
+]
+ESCAPED_HIT = ESCAPED_LINES[0]
+ESCAPED_PATTERNS = [r"Art\. 40", r"\(Abs\. 2\)", r"\$100\?"]
 
 pytestmark = [
     pytest.mark.regression,
@@ -56,6 +71,7 @@ def notes_model(instance_with):
         add_text_file(client, knowledge_id, "notes.md", "\n".join(NOTES_LINES))
         add_text_file(client, knowledge_id, "other.md", "\n".join(OTHER_LINES))
         add_text_file(client, knowledge_id, "many.md", "\n".join(["hit"] * MANY_HITS))
+        add_text_file(client, knowledge_id, "law.md", "\n".join(ESCAPED_LINES))
         with model_with_knowledge(client, knowledge_id) as model_id:
             yield model_id
 
@@ -69,6 +85,29 @@ def kb_exec(instance_with, notes_model):
         client, launched.upstream, "kb_exec", {"command": command}, model=notes_model
     )
     client.close()
+
+
+@pytest.fixture
+def grep_knowledge_files(make_user, upstream):
+    """`grep_knowledge_files(pattern)` has the model grep law.md of a fresh account's."""
+    client = make_user().client()
+    uploaded = client.post(
+        "/api/v1/files/",
+        params={"process": "true", "process_in_background": "false"},
+        files={"file": ("law.md", "\n".join(ESCAPED_LINES).encode(), "text/plain")},
+    )
+    assert uploaded.status_code == 200, f"uploading law.md failed: {uploaded.text}"
+    file_id = uploaded.json()["id"]
+    yield lambda pattern: run_tool(
+        client, upstream, "grep_knowledge_files", {"pattern": pattern, "file_id": file_id}
+    )
+    client.close()
+
+
+def _matched_lines(output: str) -> list[str]:
+    if output.startswith("No matches"):
+        return []
+    return [hit.split(": ", 1)[1] for hit in output.splitlines()]
 
 
 # narrow
@@ -100,6 +139,16 @@ def test_piped_grep_with_the_filenames_flag_names_the_source(kb_exec):
     )
 
 
+@pytest.mark.parametrize("pattern", ESCAPED_PATTERNS)
+def test_escaped_punctuation_is_read_as_regex_by_grep_knowledge_files(
+    grep_knowledge_files, pattern
+):
+    output = grep_knowledge_files(pattern)
+    assert _matched_lines(output) == [ESCAPED_HIT], (
+        f"{pattern!r} must find the line it spells out, got {output!r} (#33933)"
+    )
+
+
 # broad: a pipe and a file agree on every flag
 
 
@@ -127,7 +176,33 @@ def test_the_count_flag_agrees_for_files_and_pipes(kb_exec):
     assert int(from_file.rsplit(":", 1)[1]) == int(from_pipe.strip()) == 2
 
 
+@pytest.mark.parametrize("pattern", ESCAPED_PATTERNS)
+def test_escaped_punctuation_is_read_as_regex_by_kb_exec_grep(kb_exec, pattern):
+    output = kb_exec(f"grep '{pattern}' law.md")
+    assert output == f"1: {ESCAPED_HIT}", (
+        f"{pattern!r} must find the line it spells out, got {output!r} (#33933)"
+    )
+
+
 # nearby
+
+
+@pytest.mark.parametrize(
+    "pattern, expected",
+    [
+        ("C++", ESCAPED_LINES[2]),
+        ("1.5", ESCAPED_LINES[2]),
+        ("$100", ESCAPED_HIT),
+        (r"C:\Users\bob", ESCAPED_LINES[4]),
+    ],
+)
+def test_text_without_escaped_metacharacters_is_searched_literally(
+    grep_knowledge_files, pattern, expected
+):
+    output = grep_knowledge_files(pattern)
+    assert _matched_lines(output) == [expected], (
+        f"{pattern!r} must match only its literal text, got {output!r} (#33933)"
+    )
 
 
 def test_an_absent_pattern_reports_no_matches(kb_exec):
