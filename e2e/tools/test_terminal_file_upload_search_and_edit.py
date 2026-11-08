@@ -22,10 +22,17 @@ ignores Ctrl+S and whose prompt's Confirm keeps the tab.
 Since 10f1226f0 selecting a file no longer pushes the rows down to make room for the bulk action
 bar, and a click on an empty part of the file list, such as the grid's edge, clears the selection.
 The selection test passes on dev e8c0ad85e and fails in a frontend copy with 10f1226f0 reverted.
+
+Since 3797ce419 (0.13.1) Sign Out in the user menu warns while a file has unsaved edits: the
+Unsaved changes dialog asks to discard them and sign out; Cancel keeps the person signed in on
+the edited file and Sign Out there signs them out. With no unsaved edit Sign Out asks nothing.
+Both pass on dev e8c0ad85e; the warning test fails on a frontend build of it whose Sign Out skips
+the check for unsaved edits, where the no-edit test stays green.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -34,6 +41,7 @@ from playwright.sync_api import expect
 from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
+from utils.user_menu import user_menu_trigger
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -234,3 +242,50 @@ def test_ctrl_s_saves_an_edited_code_file_and_leaves_nothing_unsaved(browser, op
     ).click()
     expect(browser.get_by_text(script.name, exact=True)).to_be_visible()
     expect(browser.page.get_by_role("dialog", name="Unsaved changes")).to_have_count(0)
+
+
+def _edit_a_code_file(browser, open_terminal) -> None:
+    script = open_terminal.home / f"unsaved-{uuid.uuid4().hex[:8]}.py"
+    script.write_text("ropes = 2\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(script.name, exact=True).click()
+    browser.get_by_text("ropes = 2", exact=True).click()
+    browser.page.keyboard.press("End")
+    browser.page.keyboard.type("0")
+    expect(browser.get_by_text("ropes = 20", exact=True)).to_be_visible()
+
+
+def _sign_out(page) -> None:
+    user_menu_trigger(page).click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Sign Out").click()
+
+
+def test_signing_out_with_an_unsaved_file_edit_asks_first(browser, open_terminal):
+    page = browser.page
+    _edit_a_code_file(browser, open_terminal)
+
+    _sign_out(page)
+    warning = page.get_by_role("dialog", name="Unsaved changes")
+    expect(warning).to_contain_text("Discard unsaved file edits and sign out?")
+    warning.get_by_role("button", name="Cancel", exact=True).click()
+
+    expect(warning).to_have_count(0)
+    expect(browser.get_by_text("ropes = 20", exact=True)).to_be_visible()
+    expect(page).not_to_have_url(re.compile(r"/auth"))
+
+    # the user menu may still be open behind the closed warning
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menu")).to_have_count(0)
+    _sign_out(page)
+    page.get_by_role("dialog", name="Unsaved changes").get_by_role(
+        "button", name="Sign Out", exact=True
+    ).click()
+    expect(page).to_have_url(re.compile(r"/auth"))
+
+
+def test_signing_out_without_unsaved_edits_asks_nothing(browser):
+    page = browser.page
+
+    _sign_out(page)
+
+    expect(page).to_have_url(re.compile(r"/auth"))

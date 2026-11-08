@@ -4,13 +4,17 @@ Title, follow-up, tag, image prompt, query, autocompletion, emoji and mixture-of
 generation each take the chat's model and call it. A user naming a provider model with no
 workspace entry, or one whose entry is shared with nobody, is refused and the provider never
 sees the task; once the entry is shared with them the same request is answered by that model.
-Saving the task settings is refused to a user and leaves them as they were.
+Saving the task settings is refused to a user and leaves them as they were. Since 0.13.1 (#33857)
+autocompletion while a coding agent is the chat's model (`agent:<terminal>:<agent>:<model>`, a
+model the instance does not list) runs on the admin's task model, and with no task model it is
+skipped with a 200 and no completion, where it used to fail with "Model not found".
 
 Discriminates: in a backend copy, skipping the model check both in `generate_chat_completion`
 of `utils/chat.py` and in the OpenAI route it hands the task to (`bypass_filter` forced on)
 turns all 16 refusal rows red (the provider runs the task for the user); either one alone stays
 green, as the other still refuses. Switching `update_task_config` to `get_verified_user` turns
-the settings test red.
+the settings test red. The agent autocompletion tests pass on dev e8c0ad85e and fail on
+e1aa2e30f^ in a backend copy (both answer 404).
 """
 
 from __future__ import annotations
@@ -141,3 +145,44 @@ def test_a_user_cannot_change_the_task_settings(admin, make_user, preserve):
 
     assert refused.status_code == 401, refused.text
     assert after == before
+
+
+AGENT_MODEL = "agent:harbour-terminal:opencode:big-model"
+
+
+def _autocomplete_for_an_agent_chat(actor):
+    path, body = TASKS["autocompletion"]
+    with actor.client() as client:
+        return client.post(path, json={**body, "model": AGENT_MODEL})
+
+
+def test_autocompletion_in_an_agent_chat_runs_on_the_task_model(
+    tasks_on, admin, make_user, upstream
+):
+    with admin.client() as client:
+        current = client.get(TASK_CONFIG[0]).json()
+        saved = client.post(TASK_CONFIG[1], json={**current, "TASK_MODEL_EXTERNAL": "mock-model"})
+    assert saved.status_code == 200, saved.text
+    upstream.queue(reply.text('{"text": " stand still"}'))
+
+    answered = _autocomplete_for_an_agent_chat(make_user())
+
+    assert answered.status_code == 200, f"autocompletion in an agent chat failed: {answered.text}"
+    assert [body["model"] for body in upstream.chat_requests()] == ["mock-model"]
+
+
+def test_autocompletion_in_an_agent_chat_without_a_task_model_is_skipped(
+    tasks_on, admin, make_user, upstream
+):
+    with admin.client() as client:
+        current = client.get(TASK_CONFIG[0]).json()
+        saved = client.post(
+            TASK_CONFIG[1], json={**current, "TASK_MODEL": "", "TASK_MODEL_EXTERNAL": ""}
+        )
+    assert saved.status_code == 200, saved.text
+
+    answered = _autocomplete_for_an_agent_chat(make_user())
+
+    assert answered.status_code == 200, f"autocompletion in an agent chat failed: {answered.text}"
+    assert "choices" not in answered.json(), answered.json()
+    assert upstream.chat_requests() == [], "the agent model was asked to autocomplete"
