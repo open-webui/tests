@@ -56,6 +56,7 @@ from harness.mfa import (
     require_mfa,
 )
 from harness.oidc_provider import shared_provider, sso_env
+from harness.plain_http import serve_at_lan_host
 from utils.chat_ui import chat_input
 from utils.clipboard import write_text
 from utils.setting_rows import setting_button
@@ -82,6 +83,7 @@ def secured(instance_with, idp):
     if not instance.serves_frontend:
         pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
     require_mfa(instance, ENABLE_MFA=True)
+    serve_at_lan_host(instance)
     return instance
 
 

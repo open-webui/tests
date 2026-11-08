@@ -25,6 +25,7 @@ from conftest import AppConfig
 from e2e.conftest import _close_context, _new_context
 from harness.actors import admin_of
 from harness.oidc_provider import OAUTH_CONFIG_PATH, session_user, shared_provider, sso_env
+from harness.plain_http import serve_at_lan_host
 from utils.chat_ui import chat_input
 
 pytestmark = [
@@ -48,6 +49,7 @@ def sso(instance_with, idp, preserve):
     if not launched.serves_frontend:
         pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
     preserve((OAUTH_CONFIG_PATH, OAUTH_CONFIG_PATH), on=launched)
+    serve_at_lan_host(launched)
     return launched
 
 

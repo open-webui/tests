@@ -34,6 +34,7 @@ from harness.prepared_data import serving
 from harness.reply_gate import hold_new_chat_events
 
 ARTIFACTS_DIR = Path("test-results")
+MICROPHONE_BROWSERS = {"speaking_browser", "capturing_browser"}
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -41,6 +42,13 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     setattr(item, f"report_{report.when}", report)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    # the browser offers the microphone only in a secure context
+    for item in items:
+        if MICROPHONE_BROWSERS & set(item.fixturenames):
+            item.add_marker(pytest.mark.secure_context)
 
 
 def _test_failed(item: pytest.Item) -> bool:

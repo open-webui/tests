@@ -187,8 +187,6 @@ def test_the_link_opens_the_owners_live_chat_straight_away(page_for, make_user, 
     expect(chat_input(member_page)).to_be_visible()
 
 
-# the member's call needs the microphone, which the browser offers only in a secure context
-@pytest.mark.secure_context
 def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
     page_for, voice_page_for, make_user, upstream
 ):
