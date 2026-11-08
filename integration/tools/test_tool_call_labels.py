@@ -6,14 +6,18 @@ every tool offered to the model gains a required `__labels__` argument asking fo
 `running` and `completed` label in the person's language. The tool runs without it; the labels go
 onto the stored call as `display_labels`, trimmed, and a label that is empty or longer than 120
 characters is dropped while the call still runs. With it off the tools are offered as they are.
-A settings save that leaves the switch out keeps it.
+A settings save that leaves the switch out keeps it. The model is sent its own call back with
+the labels it wrote, in the same turn and the next (open-webui/open-webui#33952): before the fix
+the replay carried the stripped arguments, so the model saw a call missing a required argument.
 
 Discriminates: passes on dev e8c0ad85e. In a backend copy: never adding the labels argument fails
 the offered, language and stored-labels tests, the language ignored fails the language test, the
 labels left in the arguments fails the stored-labels and every dropped-labels case (the tool
 refuses the extra argument), no length check
 fails the long-label case, the keep-when-omitted rule dropped fails the omitted-save test and the
-env default ignored fails the env test.
+env default ignored fails the env test. The replay test passes on the fix branch
+fix-replay-tool-call-labels and fails with labels on on dev b13d02e09 (the labels are missing
+from the replayed call).
 """
 
 from __future__ import annotations
@@ -184,3 +188,40 @@ def test_the_env_var_switches_labels_on_for_a_fresh_instance(instance_with):
 
     assert seeded.status_code == 200, seeded.text
     assert seeded.json()["ENABLE_TOOL_CALL_LABELS"] is True
+
+
+@pytest.mark.parametrize("labels_on", [True, False], ids=["labels_on", "labels_off"])
+def test_the_model_is_sent_its_own_call_back_as_it_made_it(
+    labels_on, labels_switch, make_user, upstream, buoy_tool
+):
+    """open-webui/open-webui#33952: the replayed call lost the required labels the model sent."""
+    labels_switch(labels_on)
+    arguments = {"__labels__": LABELS, "buoy": "red"} if labels_on else {"buoy": "red"}
+    tag = uuid.uuid4().hex[:8]
+    prompt, follow_up = f"check the red buoy ({tag})", f"and now? ({tag})"
+    upstream.queue(
+        reply.tool_call("check_buoy", arguments, match=reply.answering(prompt)),
+        reply.text("The red buoy is fine.", match=reply.answering(prompt)),
+        reply.text("Still fine.", match=reply.answering(follow_up)),
+    )
+    with make_user().client() as client:
+        first, _ = ask(client, prompt, tool_ids=[buoy_tool])
+        ask(
+            client,
+            follow_up,
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+            tool_ids=[buoy_tool],
+        )
+
+    for asking in (prompt, follow_up):
+        replayed = [
+            json.loads(call["function"]["arguments"])
+            for body in upstream.chat_requests()
+            if reply.answering(asking)(body)
+            for message in body["messages"]
+            for call in message.get("tool_calls") or []
+        ]
+        assert replayed == [arguments], (
+            f"after {asking!r} the model got its call back as {replayed}"
+        )
