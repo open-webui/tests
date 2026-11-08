@@ -12,7 +12,9 @@ and is spent (rotation), a spent, revoked or unknown one answers `invalid_grant`
 `id_token_lifetime` gives the ID token of the next sign-in a lifetime of its own, `sends_expiry`
 and `sends_refresh_token` leave either out of the answers, `revoke_refresh_tokens()` withdraws
 every refresh token issued so far and `refresh_delay` holds each refresh answer back that many
-seconds after the token was spent, so concurrent refreshes overlap. `jwks_refused_agent` makes
+seconds after the token was spent, so concurrent refreshes overlap. While `authorize_gate` is an
+unset event, the authorize endpoint answers only once it is set, as a provider showing its own
+sign-in page does. `jwks_refused_agent` makes
 the key endpoint answer 403 to a client whose User-Agent starts with it, the way a provider's
 firewall turns away anonymous scripts.
 
@@ -103,6 +105,7 @@ class OidcProvider:
     jwks_refused_agent: str | None = None  # a User-Agent prefix the key endpoint answers 403
     endpoint_bases: dict[str, str] = field(default_factory=dict)  # discovery key -> base URL
     introspected_client_id: str = CLIENT_ID  # the client the introspection endpoint names
+    authorize_gate: threading.Event | None = None  # the authorize answer waits until it is set
 
     @property
     def issuer(self) -> str:
@@ -123,6 +126,7 @@ class OidcProvider:
             self.sends_expiry = True
             self.sends_refresh_token = True
             self.jwks_refused_agent = None
+            self.authorize_gate = None
         self.sign_in_as()
 
     def sign_in_as(
@@ -376,6 +380,9 @@ def serve(addresses: Sequence[str] = ()) -> tuple[OidcProvider, Callable[[], Non
             elif entry.path == "/jwks":
                 self._send(200, provider.jwks())
             elif entry.path == "/authorize":
+                gate = provider.authorize_gate
+                if gate is not None:
+                    gate.wait(timeout=30)
                 self._send(302, {}, {"Location": provider._authorize(entry.query)})
             elif entry.path == "/userinfo":
                 self._send(*provider._userinfo(entry.headers.get("Authorization", "")))
