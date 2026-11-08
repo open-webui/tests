@@ -32,11 +32,15 @@ longer open in the comment-aware preview. The tests added for dev f659c0d12 pass
 mutations: the editor serializing every note without its front matter, the note's Save button doing
 nothing, sheet tabs not switching, the formula bar showing values only, formula cells taking edits,
 find never moving to a match, a workbook save never uploading, undo and redo doing nothing, no
-preview size limit and the CSV view cut at 1000 rows.
+preview size limit and the CSV view cut at 1000 rows. The paste, column, protected sheet and pasted
+picture tests pass on dev e8c0ad85e and fail on a copy of the dev e8c0ad85e build where every paste
+is refused as too long, the arrow keys move no column edge, sheet protection is ignored and a pasted
+picture is not taken as an image.
 """
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import re
@@ -633,3 +637,152 @@ def test_the_other_sheets_still_open_when_one_is_past_the_preview_limit(browser,
 
     grid = browser.get_by_role("grid", name="Worksheet")
     expect(grid.get_by_role("row", name=re.compile(r"Ashby\s*412"))).to_be_visible()
+
+
+# what a copy of two rows in another spreadsheet puts on the clipboard: tabs and new lines
+PASTED_ROWS = "Russet\t9\nGala\t4"
+TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def paste_into_focus(page, text: str | None = None, picture: tuple[str, bytes] | None = None):
+    """Paste into the focused element what the browser hands over for copied text or a picture."""
+    page.evaluate(
+        """([text, picture]) => {
+            const data = new DataTransfer();
+            if (text !== null) data.setData('text/plain', text);
+            if (picture !== null) {
+                const [name, bytes] = picture;
+                data.items.add(new File([new Uint8Array(bytes)], name, {type: 'image/png'}));
+            }
+            document.activeElement.dispatchEvent(
+                new ClipboardEvent('paste', {clipboardData: data, bubbles: true, cancelable: true})
+            );
+        }""",
+        [text, [picture[0], list(picture[1])] if picture else None],
+    )
+
+
+def test_rows_pasted_from_another_spreadsheet_fill_the_cells_and_are_saved(browser, open_terminal):
+    path = open_terminal.home / unique("pasted-harvest.xlsx")
+    grid = open_workbook(browser, open_terminal.home, path.name, HARVEST)
+    written = path.read_bytes()
+
+    grid.get_by_text("Bramley", exact=True).click()
+    expect(browser.get_by_label("Selected range")).to_have_text("A2")
+    paste_into_focus(browser.page, text=PASTED_ROWS)
+
+    # each edit lays the sheet's grid out anew
+    expect(grid.get_by_text("Gala", exact=True)).to_be_visible(timeout=WORKBOOK_LOAD_TIMEOUT_MS)
+    expect(grid.get_by_text("Cox", exact=True)).to_have_count(0)
+    browser.get_by_role("button", name="Save", exact=True).click()
+
+    assert wait_until(lambda: path.read_bytes() != written, 10), "Save never wrote the workbook"
+    stored = read_sheets(path)
+    assert stored["Apples"] == [
+        ("variety", "crates"),
+        ("Russet", 9),
+        ("Gala", 4),
+        ("total", "=B2+B3"),
+    ], f"the pasted rows were not saved from A2: {stored['Apples']}"
+
+
+def test_a_paste_reaching_a_formula_cell_changes_nothing(browser, open_terminal):
+    grid = open_workbook(browser, open_terminal.home, unique("guarded.xlsx"), HARVEST)
+
+    # two rows from A3 reach the total's formula in B4
+    grid.get_by_text("Cox", exact=True).click()
+    expect(browser.get_by_label("Selected range")).to_have_text("A3")
+    paste_into_focus(browser.page, text=PASTED_ROWS)
+
+    expect(browser.get_by_role("status").filter(has_text="read-only")).to_have_text(
+        "Formula cells, table headers, and protected sheets are read-only."
+    )
+    expect(grid.get_by_text("Cox", exact=True)).to_be_visible()
+    expect(grid.get_by_text("Russet", exact=True)).to_have_count(0)
+
+
+def _column_width(grid, letter: str) -> float:
+    # the header's name also carries its resize button's
+    header = grid.get_by_role("columnheader", name=re.compile(rf"^{letter}\b")).bounding_box()
+    assert header, f"column {letter} has no place on the page"
+    return header["width"]
+
+
+def test_a_column_is_resized_by_dragging_its_edge_and_by_the_arrow_keys(browser, open_terminal):
+    grid = open_workbook(browser, open_terminal.home, unique("wide.xlsx"), HARVEST)
+    before = _column_width(grid, "A")
+    edge = grid.get_by_role("button", name="Resize column A", exact=True)
+
+    edge.focus()
+    browser.page.keyboard.press("ArrowRight")
+    browser.page.keyboard.press("ArrowRight")
+    assert wait_until(lambda: _column_width(grid, "A") > before + 30, 5), (
+        f"two right arrows left column A at {_column_width(grid, 'A')}px from {before}px"
+    )
+    widened = _column_width(grid, "A")
+
+    handle = edge.bounding_box()
+    assert handle, "the column's edge has no place on the page"
+    x, y = handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2
+    browser.page.mouse.move(x, y)
+    browser.page.mouse.down()
+    browser.page.mouse.move(x - 40, y, steps=4)
+    browser.page.mouse.up()
+
+    assert abs(_column_width(grid, "A") - (widened - 40)) < 3, (
+        f"dragging the edge 40px left made column A {_column_width(grid, 'A')}px from {widened}px"
+    )
+
+
+def protected_workbook() -> bytes:
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Ledger"
+    for row in (["barrel", "litres"], ["cider", 120]):
+        sheet.append(row)
+    sheet.protection.sheet = True
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+
+
+def test_a_protected_sheet_cannot_be_edited(browser, open_terminal):
+    path = open_terminal.home / unique("ledger.xlsx")
+    path.write_bytes(protected_workbook())
+    browser.get_by_label("Refresh", exact=True).first.click()
+    open_file(browser, path.name)
+    grid = browser.get_by_role("grid", name="Worksheet")
+    expect(grid.get_by_text("cider", exact=True)).to_be_visible(timeout=WORKBOOK_LOAD_TIMEOUT_MS)
+
+    grid.get_by_text("cider", exact=True).dblclick()
+
+    expect(browser.get_by_role("status").filter(has_text="read-only")).to_have_text(
+        "Formula cells, table headers, and protected sheets are read-only."
+    )
+    expect(browser.get_by_role("textbox", name="Edit cell A2")).to_have_count(0)
+
+
+def test_a_picture_pasted_into_a_note_is_uploaded_beside_it_and_linked(browser, open_terminal):
+    folder = open_terminal.home / unique("trip.d").replace(".", "-")
+    folder.mkdir()
+    note = folder / "trip.md"
+    note.write_text("# Trip\n\nThe pier at dawn.\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    open_file(browser, folder.name)
+    open_file(browser, note.name)
+    browser.get_by_text("The pier at dawn.", exact=True).click()
+    browser.page.keyboard.press("End")
+
+    paste_into_focus(browser.page, picture=("pier.png", TINY_PNG))
+    expect(browser.get_by_role("img", name="pier.png")).to_be_visible()
+    assert wait_until((folder / "pier.png").exists, 10), "the picture was not uploaded beside it"
+    assert (folder / "pier.png").read_bytes() == TINY_PNG
+    browser.get_by_role("button", name="Save", exact=True).click()
+
+    assert wait_until(lambda: "pier.png" in note.read_text(), 10), note.read_text()
+    assert "![pier.png](./pier.png)" in note.read_text(), (
+        f"the note does not link the picture beside it: {note.read_text()!r}"
+    )

@@ -10,14 +10,16 @@ editor; typed text and Save put the new text on disk, and in a code file Ctrl+S 
 leaves no unsaved change behind. They change a code file, which opens in a tab of its own, and
 close that tab without saving: the Unsaved changes prompt asks whether to discard the change;
 Confirm closes the tab with the file on disk as it was, and Cancel stays on the edited file, still
-marked unsaved, which Ctrl+S then puts on disk.
+marked unsaved, which Ctrl+S then puts on disk. Since 055bd98f3 the code editor suggests words
+that already appear in the file, and picking one writes it in.
 
 Discriminates: passes on dev 30f3f6a8f; on a build where the file browser's upload handler does
 nothing, its search shows no results, its bulk delete returns early and its save handler returns
 early, every test here fails. The unsaved-changes tests pass on dev 3b8205505 and fail on a build
 where the file browser leaves an edited file without asking. The text, Ctrl+S and Confirm tests
 fail on one frontend build of dev f659c0d12 whose Save button does nothing, whose code editor
-ignores Ctrl+S and whose prompt's Confirm keeps the tab.
+ignores Ctrl+S and whose prompt's Confirm keeps the tab. The word suggestion test passes on dev
+e8c0ad85e and fails on a copy of the dev e8c0ad85e build whose code editor has no word completion.
 
 Since 10f1226f0 selecting a file no longer pushes the rows down to make room for the bulk action
 bar, and a click on an empty part of the file list, such as the grid's edge, clears the selection.
@@ -289,3 +291,23 @@ def test_signing_out_without_unsaved_edits_asks_nothing(browser):
     _sign_out(page)
 
     expect(page).to_have_url(re.compile(r"/auth"))
+
+
+def test_the_editor_suggests_a_word_already_in_the_file(browser, open_terminal):
+    notes = open_terminal.home / f"watch-{uuid.uuid4().hex[:8]}.txt"
+    notes.write_text("harbourmaster on duty\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(notes.name, exact=True).click()
+    browser.get_by_text("harbourmaster on duty", exact=True).click()
+    browser.page.keyboard.press("End")
+    browser.page.keyboard.press("Enter")
+
+    browser.page.keyboard.type("harb")
+    suggestion = browser.page.get_by_role("listbox").get_by_role("option", name="harbourmaster")
+    expect(suggestion).to_be_visible()
+    browser.page.keyboard.press("Enter")
+    browser.page.keyboard.press("Control+s")
+
+    assert wait_until(lambda: notes.read_text() == "harbourmaster on duty\nharbourmaster\n", 10), (
+        f"the picked suggestion was not written: {notes.read_text()!r}"
+    )
