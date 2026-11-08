@@ -29,6 +29,13 @@ called a second tool straight after the first, with no text in between, had both
 into one assistant message on the next round, so that round rewrote the assistant message the
 previous request ended with; PR #31593 fixed that (open-webui/open-webui#31588).
 
+A provider caches what the model generated as well, so each request is also checked against the
+one before it plus the tool calls the model wrote, arguments byte for byte. With Tool Call Labels
+on, the `__labels__` the model wrote (and in Auto approval its `__approval__` mark) were taken off
+its calls when they were sent back, in the same turn and every later one; PR #33953 sends the
+arguments back as the model wrote them (open-webui/open-webui#33952). The tool round tests run
+with labels off and on for that reason.
+
 `test_a_sub_agent_only_appends`, `test_a_timer_only_appends` and
 `test_a_background_sub_agent_report_only_appends` are red on dev 1c010b438: since de73bb830 a chat
 request whose reply message is already stored in the chat, the way automations, sub-agents and
@@ -41,12 +48,15 @@ Discriminates: passes on dev 015dbc861 apart from those two, which fail there; t
 tool loop test fails on dev a5bc78300, before PR #31593. In backend copies, a clock value added
 to the model's system prompt and the tool list shuffled per request each turned all twenty
 promise tests red; with no stored system prompt handed to a timer or report, all of them passed.
-The controls pass on all four.
+The controls pass on all four. The own-tool-call test, all three cases, and the single, multi-step
+and parallel tool round tests with labels on pass on dev a7b364296 and fail on it with PR #33953
+reverted in a backend copy (the replayed call lost its marks); with labels off they pass on both.
 """
 
 from __future__ import annotations
 
 import itertools
+import json
 import time
 import uuid
 
@@ -63,6 +73,7 @@ from harness.prompt_caching import (
     CAPABILITIES,
     assert_append_only,
     cache_optimal_model,
+    first_break,
     prefix_break,
     turn_off_memory_system_context,
 )
@@ -82,6 +93,8 @@ CALL_NUMBERS = itertools.count(1)
 NOTES = ("berths.txt", "Berth 3 is reserved for the pilot boat.\nBerth 5 is free on Mondays.\n")
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 TIMER_PROMPT = "Time to leave for the ferry."
+CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
+LABELS = {"running": "Checking the clock", "completed": "Checked the clock"}
 
 
 @pytest.fixture
@@ -115,12 +128,37 @@ def subagents_on(admin, preserve):
     return switch_on
 
 
-def calling(name: str, arguments: dict, **options) -> Reply:
+@pytest.fixture
+def chat_settings(admin, preserve):
+    """`chat_settings(**changes)` updates the admin chat settings for the rest of the test."""
+    preserve(CHAT_CONFIG)
+
+    def change(**changes) -> None:
+        with admin.client() as client:
+            current = client.get(CHAT_CONFIG[0]).json()
+            saved = client.post(CHAT_CONFIG[1], json={**current, **changes})
+        assert saved.status_code == 200, f"saving {changes} failed: {saved.text}"
+
+    return change
+
+
+@pytest.fixture(params=[False, True], ids=["labels_off", "labels_on"])
+def labels(request, chat_settings) -> dict | None:
+    """Tool Call Labels switched off or on; the labels the model writes on each call when on."""
+    chat_settings(ENABLE_TOOL_CALL_LABELS=request.param)
+    return LABELS if request.param else None
+
+
+def calling(name: str, arguments: dict | str, labels: dict | None = None, **options) -> Reply:
+    if labels:
+        arguments = {"__labels__": labels, **arguments}
     return reply.tool_call(name, arguments, call_id=f"call_{next(CALL_NUMBERS)}", **options)
 
 
-def calling_together(*calls: tuple[str, dict]) -> Reply:
-    return Reply(tool_calls=[calling(name, arguments).tool_calls[0] for name, arguments in calls])
+def calling_together(*calls: tuple[str, dict], labels: dict | None = None) -> Reply:
+    return Reply(
+        tool_calls=[calling(name, arguments, labels).tool_calls[0] for name, arguments in calls]
+    )
 
 
 class Conversation:
@@ -132,6 +170,7 @@ class Conversation:
         self.chat_id: str | None = None
         self.parent_id: str | None = None
         self.opening: str | None = None
+        self.generated: dict[str, dict] = {}  # the tool calls the model wrote, by call id
 
     def say(self, text: str, *replies: Reply, **options) -> dict:
         prompt = f"{text} [{uuid.uuid4().hex[:6]}]"
@@ -139,6 +178,7 @@ class Conversation:
         for scripted in replies or (reply.text(f"reply to {text}"),):
             scripted.match = reply.answering(prompt)
             self.upstream.queue(scripted)
+            self.generated.update({call["id"]: call for call in scripted.tool_calls})
         turn, message = ask(
             self.client,
             prompt,
@@ -208,14 +248,6 @@ def tool_results(request: dict) -> str:
     )
 
 
-def first_break(requests: list[dict]) -> str | None:
-    for earlier, later in zip(requests, requests[1:]):
-        broken = prefix_break(earlier, later)
-        if broken:
-            return broken
-    return None
-
-
 # --- the promise, one feature family at a time -------------------------------------------
 
 
@@ -225,40 +257,44 @@ def test_plain_turns_only_append(cached_setup, make_user, upstream):
         for text in ("good morning", "when does the ferry leave?", "and on sundays?", "thanks"):
             chat.say(text)
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
-def test_single_tool_rounds_only_append(cached_setup, make_user, upstream):
+def test_single_tool_rounds_only_append(labels, cached_setup, make_user, upstream):
     with make_user().client() as client:
         chat = Conversation(client, upstream, cached_setup.id)
         chat.say("hello")
-        chat.say("what time is it?", calling("get_current_timestamp", {}), reply.text("Early."))
+        chat.say(
+            "what time is it?",
+            calling("get_current_timestamp", {}, labels),
+            reply.text("Early."),
+        )
         chat.say(
             "and a week ago?",
-            calling("calculate_timestamp", {"weeks_ago": 1}),
+            calling("calculate_timestamp", {"weeks_ago": 1}, labels),
             reply.text("Last week."),
         )
         chat.say("thanks")
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
-def test_a_multi_step_tool_loop_only_appends(cached_setup, make_user, upstream):
+def test_a_multi_step_tool_loop_only_appends(labels, cached_setup, make_user, upstream):
     with make_user().client() as client:
         chat = Conversation(client, upstream, cached_setup.id)
         chat.say("hello")
         chat.say(
             "how many days since last friday?",
-            calling("get_current_timestamp", {}),
-            calling("calculate_timestamp", {"days_ago": 3}),
+            calling("get_current_timestamp", {}, labels),
+            calling("calculate_timestamp", {"days_ago": 3}, labels),
             reply.text("Three days."),
         )
         chat.say("thanks")
 
-    broken = first_break(chat.requests())
+    broken = first_break(chat.requests(), chat.generated)
     assert broken is None, (
-        "the second tool round folded its call into the assistant message the first round ended "
-        f"with, rewriting it (#31588): {broken}"
+        "a later tool round rewrote the assistant message an earlier round ended with, by folding "
+        f"the next call into it (#31588) or changing the model's own call (#33952): {broken}"
     )
 
 
@@ -273,22 +309,66 @@ def test_tool_rounds_with_text_between_them_only_append(cached_setup, make_user,
         )
         chat.say("thanks")
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
-def test_parallel_tool_calls_only_append(cached_setup, make_user, upstream):
+def test_parallel_tool_calls_only_append(labels, cached_setup, make_user, upstream):
     with make_user().client() as client:
         chat = Conversation(client, upstream, cached_setup.id)
         chat.say(
             "now and a week ago?",
             calling_together(
-                ("get_current_timestamp", {}), ("calculate_timestamp", {"weeks_ago": 1})
+                ("get_current_timestamp", {}),
+                ("calculate_timestamp", {"weeks_ago": 1}),
+                labels=labels,
             ),
             reply.text("Both done."),
         )
         chat.say("thanks")
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
+
+
+@pytest.mark.parametrize("written", ["labels", "approval", "labels_and_approval"])
+def test_the_model_gets_its_own_tool_call_back_as_it_wrote_it(
+    written, cached_setup, chat_settings, make_user, upstream
+):
+    """open-webui/open-webui#33952: marks Open WebUI read off a call were cut from its replay."""
+    arguments, options = {"weeks_ago": 1}, {}
+    chat_settings(ENABLE_TOOL_CALL_LABELS="labels" in written)
+    if "approval" in written:
+        chat_settings(
+            ENABLE_TOOL_PERMISSIONS=True,
+            ENABLE_TOOL_PERMISSIONS_AUTO=True,
+            TOOL_PERMISSIONS_AUTO_ENGINE="",
+        )
+        options["params"] = {"tool_approval_mode": "auto"}
+        arguments = {"__approval__": {"required": False}, **arguments}
+    if "labels" in written:
+        arguments = {"__labels__": LABELS, **arguments}
+    encoded = json.dumps(arguments)
+    with make_user().client() as client:
+        chat = Conversation(client, upstream, cached_setup.id, **options)
+        chat.say("hello")
+        chat.say(
+            "and a week ago?",
+            calling("calculate_timestamp", encoded),
+            reply.text("Last week."),
+        )
+        chat.say("thanks")
+
+    requests = chat.requests()
+    [tool] = [
+        tool for tool in requests[1]["tools"] if tool["function"]["name"] == "calculate_timestamp"
+    ]
+    asked = set(tool["function"]["parameters"]["properties"])
+    marks = {mark for mark in ("__labels__", "__approval__") if mark in encoded}
+    assert marks <= asked, f"the model was never asked for {marks - asked}: {sorted(asked)}"
+    assert "error" not in tool_results(requests[2]).lower(), tool_results(requests[2])
+    broken = first_break(requests, chat.generated)
+    assert broken is None, (
+        f"the model was sent its own call back changed from what it wrote ({encoded}): {broken}"
+    )
 
 
 def test_reasoning_replies_only_append(cached_setup, make_user, upstream):
@@ -302,7 +382,7 @@ def test_reasoning_replies_only_append(cached_setup, make_user, upstream):
         )
         chat.say("thanks")
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_the_chat_file_tools_only_append(cached_setup, make_user, upstream):
@@ -337,7 +417,7 @@ def test_the_chat_file_tools_only_append(cached_setup, make_user, upstream):
         offered_tools(requests[0])
     )
     assert tool_results(requests[-1]).count("Berth 5 is free") >= 2, tool_results(requests[-1])
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_knowledge_tools_only_append(cached_setup, make_user, upstream):
@@ -360,7 +440,7 @@ def test_knowledge_tools_only_append(cached_setup, make_user, upstream):
         )
 
     assert tool_results(chat.requests()[-1]).count("pier 7") >= 3, tool_results(chat.requests()[-1])
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_chat_attached_knowledge_notes_and_chats_only_append(cached_setup, make_user, upstream):
@@ -400,7 +480,7 @@ def test_chat_attached_knowledge_notes_and_chats_only_append(cached_setup, make_
     requests = chat.requests()
     results = tool_results(requests[-1])
     assert "07:15" in results and "rain jacket" in results and "earlier trip" in results, results
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_memory_tools_only_append(cached_setup, make_user, upstream):
@@ -421,7 +501,7 @@ def test_memory_tools_only_append(cached_setup, make_user, upstream):
 
     assert {"add_memory", "search_memories"} <= offered_tools(chat.requests()[0])
     assert "takes the early ferry" in tool_results(chat.requests()[-1])
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_unchanged_memories_in_the_system_context_only_append(
@@ -437,7 +517,7 @@ def test_unchanged_memories_in_the_system_context_only_append(
 
     requests = chat.requests()
     assert "takes the early ferry" in context_results(requests[0], "recall_memories")[0]
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_skills_only_append(cached_setup, make_user, upstream):
@@ -465,7 +545,7 @@ def test_skills_only_append(cached_setup, make_user, upstream):
 
     assert "view_skill" in offered_tools(chat.requests()[0])
     assert "Read the high tide column first." in tool_results(chat.requests()[-1])
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_a_sub_agent_only_appends(cached_setup, make_user, subagents_on, upstream):
@@ -485,7 +565,7 @@ def test_a_sub_agent_only_appends(cached_setup, make_user, subagents_on, upstrea
 
     assert "delegate_task" in offered_tools(chat.requests()[0])
     assert "It leaves at 06:40." in tool_results(chat.requests()[-1])
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 @pytest.mark.slow
@@ -515,7 +595,7 @@ def test_web_search_and_fetch_only_append(instance_with, preserve, listener):
     requests = chat.requests()
     assert {"search_web", "fetch_url"} <= offered_tools(requests[0])
     assert "High tide at noon." in tool_results(requests[-1])
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_a_tool_image_only_appends(cached_setup, admin, make_user, preserve, upstream):
@@ -541,7 +621,7 @@ def test_a_tool_image_only_appends(cached_setup, admin, make_user, preserve, ups
     assert "image_url" in str(chat.requests()[2]["messages"][-1]), (
         "the image never reached the model"
     )
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_a_timer_only_appends(cached_setup, make_user, subagents_on, upstream):
@@ -559,7 +639,7 @@ def test_a_timer_only_appends(cached_setup, make_user, subagents_on, upstream):
 
     requests = chat.requests()
     assert reply.answering(TIMER_PROMPT)(requests[2]), "the timer's turn is not the third request"
-    broken = first_break(requests)
+    broken = first_break(requests, chat.generated)
     assert broken is None, (
         "the turn a timer started was sent the chat's finished system prompt with the model's "
         f"system prompt and attached knowledge added to it a second time: {broken}"
@@ -589,7 +669,7 @@ def test_a_background_sub_agent_report_only_appends(
     assert reply.answering("[ASYNC SUBAGENT COMPLETE")(requests[2]), [
         str(request["messages"][-1])[:200] for request in requests
     ]
-    broken = first_break(requests)
+    broken = first_break(requests, chat.generated)
     assert broken is None, (
         "the turn a background sub-agent's report started was sent the chat's finished system "
         f"prompt with the model's system prompt added to it a second time: {broken}"
@@ -628,7 +708,7 @@ def test_an_open_terminal_only_appends(
     assert {"run_command", "write_file", "read_file"} <= offered_tools(requests[0])
     assert "You have access to a computer" in requests[0]["messages"][0]["content"]
     assert tool_results(requests[-1]).count("06:40 from pier 7") >= 2, tool_results(requests[-1])
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_time_passing_between_turns_changes_nothing(cached_setup, make_user, upstream):
@@ -638,7 +718,7 @@ def test_time_passing_between_turns_changes_nothing(cached_setup, make_user, ups
         time.sleep(1.5)  # a clock value in the prompt would move on between the turns
         chat.say("second")
 
-    assert_append_only(chat.requests())
+    assert_append_only(chat.requests(), chat.generated)
 
 
 def test_a_change_outside_the_prefix_changes_nothing(cached_setup, admin, make_user, upstream):
@@ -655,7 +735,7 @@ def test_a_change_outside_the_prefix_changes_nothing(cached_setup, admin, make_u
 
     requests = chat.requests()
     assert requests[1].get("temperature") == 0.2
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 # --- controls: the breakers the page names do turn the check red -------------------------
@@ -713,7 +793,7 @@ def test_citations_on_only_append(cached_setup, model_with, make_user, upstream)
     result = [entry for entry in requests[1]["messages"] if entry["role"] == "tool"][-1]["content"]
     assert "pier 7" in result, "the handbook never reached the model"
     assert '<source id="1"' in result, f"the citation context never reached the model: {result}"
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_file_context_on_rewrites_the_prefix(model_with, make_user, upstream):
@@ -723,7 +803,7 @@ def test_file_context_on_rewrites_the_prefix(model_with, make_user, upstream):
         chat.say("which berth is free?", files=None, chat_files=[attached])
         chat.say("and the pilot boat?")
 
-    assert first_break(chat.requests()) is not None
+    assert first_break(chat.requests(), chat.generated) is not None
 
 
 def test_a_memory_change_with_the_system_context_on_only_appends(
@@ -742,7 +822,7 @@ def test_a_memory_change_with_the_system_context_on_only_appends(
     assert "takes the early ferry" in recalled[-1], (
         f"the new memory never reached the model: {recalled}"
     )
-    assert_append_only(requests)
+    assert_append_only(requests, chat.generated)
 
 
 def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
@@ -756,7 +836,7 @@ def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
         chat.say("hello")
         chat.say("look it up", features={"web_search": True})
 
-    assert first_break(chat.requests()) is not None
+    assert first_break(chat.requests(), chat.generated) is not None
 
 
 def test_editing_an_earlier_message_rewrites_the_prefix(cached_setup, make_user, upstream):
@@ -768,4 +848,4 @@ def test_editing_an_earlier_message_rewrites_the_prefix(cached_setup, make_user,
         chat.parent_id = branch_point  # the edit is a new version of the second message
         chat.say("when does the bus leave?")
 
-    assert first_break(chat.requests()) is not None
+    assert first_break(chat.requests(), chat.generated) is not None

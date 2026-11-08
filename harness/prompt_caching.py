@@ -12,6 +12,12 @@ admin switch step 5 of the page offers.
 first differing byte range, and which tool or message it falls in, so a failure shows exactly
 what was rewritten. `first_break(requests)` is the first such break in a run of requests.
 
+A provider also caches what it generated, so the next request has to send the model's own tool
+calls back exactly as the model wrote them. Both checks take `generated`, the tool calls the
+model emitted keyed by call id: each request is then compared with the one before it plus the
+model's calls, arguments byte for byte, so marks Open WebUI takes off a call (the Tool Call Labels
+`__labels__`, the Auto approval `__approval__`) or arguments it reformats show up as a break.
+
 `cache_optimal_model(admin, with_knowledge=False)` leaves the knowledge base off the model, which
 is when the knowledge discovery tools are offered; capabilities passed as keywords replace the
 checklist's, for a control that turns one breaker back on.
@@ -106,19 +112,51 @@ def _part_at(parts: list[tuple[str, bytes]], offset: int) -> tuple[str, int]:
     return "the end of the earlier request", position
 
 
-def first_break(requests: list[dict]) -> str | None:
+def with_generated_calls(earlier: dict, later: dict, generated: dict[str, dict]) -> dict:
+    """`earlier` followed by the model's reply to it, its tool calls as the model wrote them.
+
+    The reply's other fields are taken from `later`, which is how Open WebUI renders them; only
+    the calls the model emitted (by id, from `generated`) are put back as it sent them.
+    """
+    messages = earlier.get("messages", [])
+    following = later.get("messages", [])[len(messages) : len(messages) + 1]
+    if not following or following[0].get("role") != "assistant":
+        return earlier
+    calls = [
+        {**call, "function": dict(generated[call["id"]]["function"])}
+        if call.get("id") in generated
+        else call
+        for call in following[0].get("tool_calls") or []
+    ]
+    if not calls:
+        return earlier
+    return {**earlier, "messages": [*messages, {**following[0], "tool_calls": calls}]}
+
+
+def replayed_call_ids(requests: list[dict]) -> set[str]:
+    return {
+        call.get("id")
+        for request in requests
+        for message in request.get("messages", [])
+        for call in message.get("tool_calls") or []
+    }
+
+
+def first_break(requests: list[dict], generated: dict[str, dict] | None = None) -> str | None:
     for earlier, later in zip(requests, requests[1:]):
-        broken = prefix_break(earlier, later)
+        broken = prefix_break(with_generated_calls(earlier, later, generated or {}), later)
         if broken:
             return broken
     return None
 
 
-def assert_append_only(requests: list[dict]) -> None:
-    """Every request keeps the cached part of the one before it, byte for byte."""
+def assert_append_only(requests: list[dict], generated: dict[str, dict] | None = None) -> None:
+    """Each request keeps the one before it and the model's calls to it, byte for byte."""
     assert len(requests) >= 2, f"expected at least two provider requests, got {len(requests)}"
+    missing = set(generated or {}) - replayed_call_ids(requests)
+    assert not missing, f"the model's tool calls {sorted(missing)} were never sent back to it"
     for number, (earlier, later) in enumerate(zip(requests, requests[1:]), start=1):
-        broken = prefix_break(earlier, later)
+        broken = prefix_break(with_generated_calls(earlier, later, generated or {}), later)
         assert broken is None, f"request {number + 1} of {len(requests)}: {broken}"
 
 
