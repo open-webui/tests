@@ -13,7 +13,7 @@ into its terminal, with the path in the prompt), the chat's system prompt reache
 instructions, and Stop cancels the agent's turn while the chat goes on. The agent here is
 `harness/fake_acp_agent.py`, run by a real Open Terminal as its OpenCode agent.
 
-Discriminates: passes on dev f659c0d12. Mutations in a backend copy, each turning only the named
+Discriminates: passes on dev 241c8c0e4. Mutations in a backend copy, each turning only the named
 tests red: discovery returning no models (the listing, chat and stranger tests); the access
 check in `resolve_terminal_connection` skipped (the stranger listing test); the ACP client
 allowing every permission request (the reject and someone-else tests); every agent request
@@ -138,7 +138,9 @@ def test_picking_a_terminal_lists_its_installed_agents_models(make_user, connect
     )
     fast = by_id[model_id(terminal["id"], FAST)]
     assert fast["name"] == f"opencode/{FAST}", fast
-    assert fast["owned_by"] == "agent", fast
+    # the page keeps agent models out of the base model pickers by this marker (d903b4ac0)
+    owners = {model["owned_by"] for model in listed}
+    assert owners == {"terminal"}, f"agent models are not marked as terminal models: {owners}"
     assert fast["agent"] == {"terminal_id": terminal["id"], "provider": "opencode", "model": FAST}
     # the terminal knows the other agents too, but none of them is installed there
     assert {model["agent"]["provider"] for model in listed} == {"opencode"}
