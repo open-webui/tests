@@ -22,6 +22,11 @@ backend copy whose delete-all leaves the account's shares in place turns the sha
 The four sidebar selection tests pass on dev 226dca18c and each fails in a frontend copy where a
 shift-click adds only the clicked chat instead of the range, the selection's Delete deletes without
 asking, that Delete ignores the chat delete permission, or Escape leaves the selection in place.
+
+An archive search answering after a newer one no longer replaces its results (Tim's
+53b1b1928). Passes on dev e8c0ad85e and fails on that build with the archived chats part of
+53b1b1928 reverted. The admin user list got the same fix but searches again on its own
+afterwards, so a late answer never stays on screen there and it has no test.
 """
 
 from __future__ import annotations
@@ -142,6 +147,47 @@ def test_archived_chats_are_searched_by_title(owner, page_for):
     expect(_archived_row(settings, "Garden layout")).to_be_visible()
 
     settings.get_by_role("button", name="Clear search").click()
+    expect(_archived_row(settings, "Tax notes")).to_be_visible()
+
+
+def test_an_older_archive_search_answering_late_does_not_replace_the_newer_results(owner, page_for):
+    # the list showed whichever search answered last, not the one typed last (53b1b1928)
+    _seed_chats(owner, "Garden notes", "Tax notes", archived=True)
+    page = page_for(owner)
+    settings = _open_settings_tab(page, "Archived Chats")
+    expect(_archived_row(settings, "Tax notes")).to_be_visible()
+    held: list = []
+
+    def hold_the_first_search(route):
+        if "query=Garden" in route.request.url:
+            held.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/v1/chats/archived**", hold_the_first_search)
+    settled: list = []
+    for event in ("requestfinished", "requestfailed"):
+        page.on(event, lambda request: settled.append(request.url))
+    search = settings.locator("#tab-archived-chats").get_by_placeholder("Search")
+    with page.expect_request(lambda request: "query=Garden" in request.url):
+        search.fill("Garden")
+    search.fill("Tax")
+    expect(_archived_row(settings, "Tax notes")).to_be_visible()
+    expect(_archived_row(settings, "Garden notes")).to_have_count(0)
+
+    [first] = held
+    first.continue_()
+    # the page may have dropped that search already; either way it ends, answered or cancelled
+    for _ in range(50):
+        if any("query=Garden" in url for url in settled):
+            break
+        page.wait_for_timeout(100)
+    else:
+        raise AssertionError("the held search never ended")
+    page.wait_for_timeout(500)  # an answer that came back has been shown by now
+
+    stale = "the older search's answer replaced the newer results"
+    expect(_archived_row(settings, "Garden notes"), stale).to_have_count(0)
     expect(_archived_row(settings, "Tax notes")).to_be_visible()
 
 
