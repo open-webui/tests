@@ -17,6 +17,11 @@ back and two models answering one message at once.
 Discriminates: in a backend copy, prefixing each piece the in-place branch appends with `|` fails
 every case with the toggle on and none with it off; the same edit to the copying branch fails every
 case with it off and none with it on.
+
+Continuing a reply on a Responses API connection is covered as well (changelog 0.13.1, Tim's
+8366e2872). It passes on dev e8c0ad85e and on v0.13.0: the stored reply and the text a tab folds
+from the socket events were right there too, so the fix shows only in the page. In a backend copy
+whose continued output keeps the new text as an item of its own, both continue tests fail.
 """
 
 from __future__ import annotations
@@ -26,11 +31,13 @@ import time
 
 import pytest
 
+from harness import responses_provider as responses_api
 from harness import upstream as reply
 from harness.actors import create_user
 from harness.chat import ask, send_message, wait_for_reply
 from harness.listener import text_answer
 from harness.python_tools import python_tool
+from harness.responses_provider import RESPONSES_MODEL
 from harness.second_provider import OPENAI_CONFIG, attach, sse
 from harness.socket_client import connected
 from harness.tool_calls import without_hidden_calls
@@ -628,6 +635,61 @@ def test_continuing_a_reply_extends_the_stored_text(streaming, owner):
     ]
     continued = reply.conversation(streaming.upstream.chat_requests()[-1])
     assert continued[-1] == {"role": "assistant", "content": "Once upon a time"}
+
+
+def test_continuing_a_reply_on_a_responses_connection_extends_the_stored_text(
+    streaming, owner, preserve, listener
+):
+    preserve(OPENAI_CONFIG, on=streaming)
+    with owner.client() as client:
+        provider = responses_api.connect_responses(client, listener)
+    # the real API repeats the round's whole output in `response.completed`
+    continued = responses_api.completed()
+    continued["response"]["output"] = [
+        {
+            "type": "message",
+            "id": "msg_2",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": " there was a fox."}],
+        }
+    ]
+    provider.answer(
+        responses_api.events_stream(
+            *responses_api.message("Once ", "upon ", "a time"), responses_api.completed()
+        ),
+        responses_api.events_stream(
+            *responses_api.message(" there ", "was ", "a fox.", item_id="msg_2"), continued
+        ),
+    )
+    turn, first, _ = _ask_watched(owner, "tell a tale", model=RESPONSES_MODEL)
+    assert first["content"] == "Once upon a time"
+
+    history = [
+        {"role": "user", "content": "tell a tale"},
+        {"role": "assistant", "content": "Once upon a time"},
+    ]
+    with connected(owner, in_order=True) as socket, owner.client() as client:
+        _resend(
+            client,
+            turn,
+            turn.assistant_message_id,
+            history,
+            model=RESPONSES_MODEL,
+            assistant_message_id=turn.assistant_message_id,
+        )
+        socket.wait_for(turn.chat_id, "chat:completion", done=True)
+        message = wait_for_reply(client, turn)
+        shown = _texts_a_tab_shows(socket, turn.chat_id)
+
+    assert message["content"] == "Once upon a time there was a fox."
+    assert [item["type"] for item in without_hidden_calls(message["output"])] == ["message"]
+    # the tab must grow the old reply, never show the new text as a reply of its own
+    assert shown == [
+        "Once upon a time",
+        "Once upon a time there ",
+        "Once upon a time there was ",
+        "Once upon a time there was a fox.",
+    ], f"a tab showed the continued Responses reply as {shown}"
 
 
 def test_regenerating_keeps_both_versions(streaming, owner):
