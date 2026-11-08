@@ -31,8 +31,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
+          python-version-file: .python-version
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - run: pip install uv
       - run: uv sync --locked --extra dev
       - run: uv run pytest --collect-only -q integration e2e

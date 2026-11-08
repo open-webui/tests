@@ -75,12 +75,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            open-webui/backend/requirements.txt
-            tests/pyproject.toml
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
 
       # torch comes in transitively via sentence-transformers and defaults to the CUDA
       # build, which is several GB of nvidia-* wheels this suite never runs. Pinning the
@@ -90,6 +87,33 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
+
+      # unstructured downloads the spaCy model on first use otherwise.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       # Importing open_webui.config creates DATA_DIR and clears STATIC_DIR, so each job
       # gets its own scratch rather than the shared temp dir the suite falls back to.
@@ -139,12 +163,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            open-webui/backend/requirements.txt
-            tests/pyproject.toml
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
 
       # The instances run offline, so the default embedding model is fetched up front.
       - name: Cache the embedding model
@@ -155,17 +176,42 @@ jobs:
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
-      # The Playwright web loader's spaCy model is installed here; an instance behind the
-      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
-          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Download the embedding model
         if: steps.embedding-model.outputs.cache-hit != 'true'
@@ -185,14 +231,19 @@ jobs:
       - name: Install the browser
         run: python -m playwright install --with-deps chromium
 
+      - name: Check out oix
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/oix
+          ref: ${{ inputs.oix-ref }}
+          path: oix
+
       # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
       # environment of its own and checked here: it must serve its manifest with every scope.
       - name: Build the reference app
         run: |
-          git clone --quiet https://github.com/open-webui/oix "$RUNNER_TEMP/oix"
-          git -C "$RUNNER_TEMP/oix" checkout --quiet "${{ inputs.oix-ref }}"
           uv venv "$RUNNER_TEMP/oix-env"
-          uv pip install --python "$RUNNER_TEMP/oix-env" "$RUNNER_TEMP/oix[fastapi,redis]" uvicorn
+          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
           echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
           openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
           export API_KEY=$(openssl rand -hex 32)
@@ -254,12 +305,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            open-webui/backend/requirements.txt
-            tests/pyproject.toml
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
 
       # The instances run offline, so the default embedding model is fetched up front.
       - name: Cache the embedding model
@@ -270,8 +318,6 @@ jobs:
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
       # The suite starts a redis-server of its own per instance and Postgres through pgserver.
-      # The Playwright web loader's spaCy model is installed here; an instance behind the
-      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -279,10 +325,37 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e "./tests[postgres]"
-          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Download the embedding model
         if: steps.embedding-model.outputs.cache-hit != 'true'
@@ -302,14 +375,19 @@ jobs:
       - name: Install the browser
         run: python -m playwright install --with-deps chromium
 
+      - name: Check out oix
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/oix
+          ref: ${{ inputs.oix-ref }}
+          path: oix
+
       # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
       # environment of its own and checked here: it must serve its manifest with every scope.
       - name: Build the reference app
         run: |
-          git clone --quiet https://github.com/open-webui/oix "$RUNNER_TEMP/oix"
-          git -C "$RUNNER_TEMP/oix" checkout --quiet "${{ inputs.oix-ref }}"
           uv venv "$RUNNER_TEMP/oix-env"
-          uv pip install --python "$RUNNER_TEMP/oix-env" "$RUNNER_TEMP/oix[fastapi,redis]" uvicorn
+          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
           echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
           openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
           export API_KEY=$(openssl rand -hex 32)
@@ -415,11 +493,14 @@ jobs:
           cache: npm
           cache-dependency-path: open-webui/package-lock.json
 
+      # The build needs neither onnxruntime's CUDA binaries, fetched from GitHub releases, nor Cypress.
       - name: Build the frontend
         if: steps.build-cache.outputs.cache-hit != 'true'
         working-directory: open-webui
         env:
           NODE_OPTIONS: --max-old-space-size=8192
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+          CYPRESS_INSTALL_BINARY: '0'
         run: |
           npm ci --force
           npm run build
@@ -466,16 +547,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            open-webui/backend/requirements.txt
-            tests/pyproject.toml
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
 
       # The instances that share a Redis start a redis-server of their own.
-      # The Playwright web loader's spaCy model is installed here; an instance behind the
-      # suite's proxy cannot download it.
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -483,10 +559,37 @@ jobs:
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
           uv pip install --system -e ./tests
-          uv pip install --system "$(python -m spacy info en_core_web_sm --url)"
           uv venv "$RUNNER_TEMP/open-terminal"
           uv pip install --python "$RUNNER_TEMP/open-terminal" open-terminal
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Name the Playwright build
         id: playwright
@@ -502,14 +605,19 @@ jobs:
       - name: Install the browser
         run: python -m playwright install --with-deps chromium
 
+      - name: Check out oix
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/oix
+          ref: ${{ inputs.oix-ref }}
+          path: oix
+
       # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
       # environment of its own and checked here: it must serve its manifest with every scope.
       - name: Build the reference app
         run: |
-          git clone --quiet https://github.com/open-webui/oix "$RUNNER_TEMP/oix"
-          git -C "$RUNNER_TEMP/oix" checkout --quiet "${{ inputs.oix-ref }}"
           uv venv "$RUNNER_TEMP/oix-env"
-          uv pip install --python "$RUNNER_TEMP/oix-env" "$RUNNER_TEMP/oix[fastapi,redis]" uvicorn
+          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
           echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
           openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
           export API_KEY=$(openssl rand -hex 32)
@@ -572,9 +680,13 @@ jobs:
             open-webui/package-lock.json
             tests/frontend/package-lock.json
 
-      # The checkout's tsconfig extends the one svelte-kit sync generates.
+      # The checkout's tsconfig extends the one svelte-kit sync generates. The suite needs neither
+      # onnxruntime's CUDA binaries, fetched from GitHub releases, nor Cypress.
       - name: Install Open WebUI dependencies
         working-directory: open-webui
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+          CYPRESS_INSTALL_BINARY: '0'
         run: |
           npm ci --force
           npx svelte-kit sync
