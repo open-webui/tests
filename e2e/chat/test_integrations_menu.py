@@ -19,7 +19,8 @@ Search the offered test fails; on one whose tool and skill search boxes filter n
 tests fail; on one where a picked tool stays off the picked tool test fails.
 The count and Show Input Selections tests pass on dev f659c0d12; in a build of it whose
 chips beside + show whatever the setting says the Show Input Selections test fails, and in one
-whose Tools and Skills rows show no count the count test fails.
+whose Tools and Skills rows show no count the count test fails. The count test also checks that
+no Integrations button sits beside +; in an e8c0ad85e build with such a button put back it fails.
 """
 
 from __future__ import annotations
@@ -254,6 +255,9 @@ def test_the_skill_search_narrows_the_list(page_for, builder):
 def test_the_tools_and_skills_rows_count_what_is_picked(page_for, builder):
     account, suffix = builder
     page = page_for(account)
+    ready(page)
+    # the integrations live in the + menu, with no button of their own beside it
+    expect(page.get_by_role("button", name="Integrations", exact=True)).to_have_count(0)
     menu = open_list(page, "Tools")
     menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}").click()
     menu.get_by_role("menuitemcheckbox", name=f"Tide table {suffix}").click()

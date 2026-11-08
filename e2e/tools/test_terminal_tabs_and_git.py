@@ -56,6 +56,8 @@ the divider unclamped the divider test fails, with Ctrl+Backslash unbound the sp
 and with Ctrl+W unbound the shortcut test fails; with the wedge fixed (no save started when
 nothing is pending) the reconnect test passes. The reorder test fails on v0.13.0 builds whose
 dropped tab keeps its old place.
+The reorder test also checks that no full-width or side tabs switch is offered; in an e8c0ad85e
+build with a Use side tabs button put back it fails.
 """
 
 from __future__ import annotations
@@ -159,6 +161,10 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     assert _tab_names(page) == ["New Chat", FILES, "Terminal 1", "Untitled-1"], (
         f"the New tab menu added the tabs as {_tab_names(page)}"
     )
+    # the chat is a tab of the full-width workspace, with no switch back to side tabs
+    expect(
+        page.get_by_role("button", name=re.compile(r"^Use (full-width|side) tabs$"))
+    ).to_have_count(0)
 
     _drag(
         page,
