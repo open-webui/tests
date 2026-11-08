@@ -309,7 +309,10 @@ def test_side_does_nothing_without_allow_side_chat(page_for, admin, make_user, u
 
 
 def test_allow_side_chat_stays_on_offer_with_temporary_chat_off(page_for, admin, preserve):
-    """Red on e8c0ad85e: the editor still hides Allow Side Chat while Temporary Chat is off."""
+    """Red on e8c0ad85e: the editor still hides Allow Side Chat while Temporary Chat is off.
+
+    open-webui/open-webui#33918
+    """
     preserve("permissions")
     save_default_permission(page_for(admin), "Allow Temporary Chat", turn_on=False)
     page = page_for(admin, path="/admin/users/groups")
