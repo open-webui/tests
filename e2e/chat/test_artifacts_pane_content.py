@@ -14,7 +14,8 @@ page and Preview no longer selecting the block's version) the SVG, page and Prev
 the Copy and Download test stays green there as a control. The closed pane test goes red on the
 0.12.4 pre-fix build (9862a5bd6 reverted among other fixes): the reopened pane shows the newest
 version. Retargeted for 2d7cf5ec9, which shows the pane as the Artifacts tab of the side panel:
-the test closes that tab.
+the test closes that tab. Since 0b6d43405 the pane opens beside the conversation, so the Preview
+test checks the split instead of turning it on.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import expect_reply, last_reply, send, split_screen
+from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -108,7 +109,7 @@ def test_preview_moves_the_pane_to_that_blocks_version(page_for, make_user, upst
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
     expect(artifact_page(page).locator("h1")).to_have_text("second draft")
-    split_screen(page)
+    expect_split_screen(page)
     box.get_by_role("button", name="Preview", exact=True).first.click()
     expect(pane).to_contain_text("Version 1 of 2")
     expect(artifact_page(page).locator("h1")).to_have_text("first draft")

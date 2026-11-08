@@ -78,6 +78,14 @@ def split_screen(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
 
 
+def expect_split_screen(page: Page) -> None:
+    """Wait until the conversation shows beside the other tabs, as it does once the chat opens
+    the artifacts pane (since 0b6d43405, open-webui/open-webui#33878)."""
+    button = page.get_by_role("button", name="Split screen", exact=True)
+    expect(button).to_have_attribute("aria-pressed", "true")
+    expect(chat_input(page)).to_be_visible()
+
+
 def stop_button(page: Page) -> Locator:
     return page.get_by_role("button", name="Stop")
 
