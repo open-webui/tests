@@ -21,6 +21,10 @@ by 4b088a4a9).
 Discriminates: passes on dev ebc6add67 for every other engine; in a backend copy whose `search_web`
 tool hands the model the engine's hits without their snippets, every engine case fails, and with
 the domain filter skipped in `get_filtered_results` every filter case fails.
+
+No engine writes the query into the default server log (fix 8d7b71f6c, PR
+open-webui/open-webui#33701); on a backend copy with 8d7b71f6c reverted the Exa and Ollama cases
+fail.
 """
 
 from __future__ import annotations
@@ -88,10 +92,14 @@ def search(searching, query: str) -> list[dict] | dict:
 def test_the_model_gets_the_hits_the_engine_found(engine, searching, searching_admin, apis):
     engine.serve(apis, [HARBOUR, ELSEWHERE])
     save_web_settings(searching_admin, **engine_settings(engine, apis, result_count=2))
+    log_offset = searching.log_size()
 
     found = search(searching, "ferry harbour")
 
     assert found == engine.found([HARBOUR, ELSEWHERE])
+    assert "ferry harbour" not in searching.log_since(log_offset), (
+        f"searching with {engine.name} wrote the query into the default server log (#33701)"
+    )
     [sent] = engine.searches(apis)[-1:]
     assert carries(sent, "ferry harbour"), f"{engine.name} was not asked the query: {sent}"
     if engine.name not in {"yacy", "openserp"}:  # neither takes a key

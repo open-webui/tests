@@ -27,6 +27,10 @@ test red; the character splitter built without `chunk_overlap` turned the overla
 f659c0d12: the file threshold ignored turned the at-the-threshold case red, counted in bytes or
 compared with `<` turned it red as well, and every knowledge base sent whole turned the knowledge
 base test red.
+
+The failing reranker test pins fix 8d7b71f6c (PR open-webui/open-webui#33701): the default server
+log held every question sent to an external reranker and, when it failed, its address. It passes
+on dev e8c0ad85e and fails on a backend copy with 8d7b71f6c reverted.
 """
 
 from __future__ import annotations
@@ -300,6 +304,34 @@ def test_an_external_reranker_picks_the_chunks(ranked, settings, reader, reranke
     body = asked[-1].json()
     assert (body["model"], body["query"]) == ("test-reranker", "Where does the heron hunt?")
     assert paragraphs_in(sent) == {PARAGRAPHS[3]}, f"the reranker's pick was not sent: {sent}"
+
+
+def test_a_failing_external_reranker_keeps_the_question_and_its_address_out_of_the_log(
+    ranked, settings, reader
+):
+    with listening() as failing:
+        failing.route("POST", "/rerank", json_answer({"error": "overloaded"}, status=500))
+        settings(
+            TOP_K=6,
+            TOP_K_RERANKER=1,
+            ENABLE_RAG_HYBRID_SEARCH=True,
+            HYBRID_BM25_WEIGHT=0.5,
+            RELEVANCE_THRESHOLD=0.0,
+            RAG_FULL_CONTEXT=False,
+            RAG_RERANKING_ENGINE="external",
+            RAG_RERANKING_MODEL="test-reranker",
+            RAG_EXTERNAL_RERANKER_URL=f"{failing.base_url}/rerank",
+            RAG_EXTERNAL_RERANKER_API_KEY="rerank-key",
+        )
+        notes = attached_file(reader)
+        log_offset = ranked.log_size()
+        ask_about(ranked, reader, "Which bird dances on the water?", [notes])
+        logged = ranked.log_since(log_offset)
+
+    assert failing.requests_to("/rerank"), "the external reranker was never asked"
+    assert "Error in external reranking" in logged, "the reranker's failure was not logged at all"
+    for secret in ("Which bird dances on the water?", failing.base_url):
+        assert secret not in logged, f"the default server log holds {secret!r} (#33701)"
 
 
 # --- citations and the template -----------------------------------------------------------------
