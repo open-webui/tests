@@ -28,6 +28,11 @@ Nine 0.11.1 fixes land on the request body that reaches the provider:
 * PR #27661 (`fcc130c9b`): the usage capability is read before the custom-model fallback
   (`ENABLE_CUSTOM_MODEL_FALLBACK`, an instance of its own) swaps in the default model, so a
   custom model on the fallback still gets token counts by its own capability.
+* #33940: since 0.13.1 the skill list and recalled memories reach the model as tool rounds Open
+  WebUI adds itself, with no reasoning stored. On a llama.cpp connection those tool call turns
+  went out without `reasoning_content`, which DeepSeek's thinking mode rejects whenever tools are
+  sent, so the first message of a chat failed. They now carry an empty `reasoning_content`; a
+  strict OpenAI-style provider still gets no reasoning field on them.
 
 Stored history is created through the chats API and continued the way the web client
 continues a chat, so the server rebuilds the payload from what it stored.
@@ -46,6 +51,9 @@ capability read moved below the fallback swap fails the fallback usage test. Ret
 WebUI preloads after the user's message; passes on dev da9bca0fc. The memory order test also
 pins that round's place (0.13.1): right after the question and out of the system prompt; it passes
 on dev e8c0ad85e and fails in a backend copy that puts the preloaded rounds before the question.
+The DeepSeek test fails on dev b13d02e09 (the first message gets DeepSeek's 400) and passes on the
+fix branch fix-hidden-tool-turns-reasoning-content; with the fix but the stored history replayed
+without the llama.cpp reasoning format, the second message fails.
 """
 
 from __future__ import annotations
@@ -57,7 +65,9 @@ import pytest
 
 from harness import second_provider
 from harness.chat import send_message, wait_for_reply
-from harness.upstream import MOCK_MODEL_ID, context_results, conversation
+from harness.listener import Answer, ReceivedRequest, json_answer
+from harness.python_tools import EVERYONE_READS
+from harness.upstream import CONTEXT_TOOLS, MOCK_MODEL_ID, context_results, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -509,6 +519,145 @@ def test_a_strict_provider_gets_no_reasoning_field(make_user, upstream):
     replayed = _replayed_assistant(upstream)
     assert not {"thinking", "reasoning_content"} & set(replayed), replayed
     assert replayed["content"] == "answer", "the reasoning was pasted into the content"
+
+
+# --- #33940: the tool rounds Open WebUI adds pass DeepSeek's thinking mode --------------------
+
+DEEPSEEK_MODEL = "deepseek-thinker"
+DEEPSEEK_ERROR = "The `reasoning_content` in the thinking mode must be passed back to the API."
+
+
+def _deepseek_thinking_mode(request: ReceivedRequest) -> Answer:
+    """Answers like DeepSeek: with tools sent, every tool call turn must carry reasoning_content."""
+    body = request.json()
+    unreasoned = [
+        entry
+        for entry in body["messages"]
+        if entry["role"] == "assistant"
+        and entry.get("tool_calls")
+        and "reasoning_content" not in entry
+    ]
+    if body.get("tools") and unreasoned:
+        return json_answer({"error": {"message": DEEPSEEK_ERROR}}, status=400)
+    return second_provider.sse({"reasoning_content": "thinking"}, {"content": "ok"})
+
+
+def _context_tool_turns(body: dict) -> list[dict]:
+    """The assistant turns of `body` that call the context tools Open WebUI adds itself."""
+    return [
+        entry
+        for entry in body["messages"]
+        if any(call["function"]["name"] in CONTEXT_TOOLS for call in entry.get("tool_calls") or [])
+    ]
+
+
+@pytest.fixture
+def skilled_chat(admin, make_user):
+    """`skilled_chat(base_model)`: a user with a memory and a native model with a skill."""
+    tag = uuid.uuid4().hex[:8]
+    created_models = []
+    skill_id = f"release-notes-{tag}"
+    with admin.client() as client:
+        skill = client.post(
+            "/api/v1/skills/create",
+            json={
+                "id": skill_id,
+                "name": f"Release notes {tag}",
+                "description": "Writes release notes.",
+                "content": "Write release notes in a flat voice.",
+                "meta": {},
+                "access_grants": [EVERYONE_READS],
+            },
+        )
+        assert skill.status_code == 200, skill.text
+    account = make_user()
+    with account.client() as client:
+        remembered = client.post(
+            "/api/v1/memories/add",
+            json={"content": "Prefers short answers", "type": "user", "path": "style"},
+        )
+        assert remembered.status_code == 200, remembered.text
+
+    def chat_model(base_model: str) -> tuple:
+        model_id = f"skilled-{base_model}-{tag}"
+        with admin.client() as client:
+            if base_model != MOCK_MODEL_ID:
+                # a user reaches a custom model only through a base model they can read
+                published = client.post(
+                    "/api/v1/models/model/access/update",
+                    json={"id": base_model, "name": base_model, "access_grants": [EVERYONE_READS]},
+                )
+                assert published.status_code == 200, published.text
+                created_models.append(base_model)
+            made = client.post(
+                "/api/v1/models/create",
+                json={
+                    "id": model_id,
+                    "base_model_id": base_model,
+                    "name": model_id,
+                    "meta": {"skillIds": [skill_id]},
+                    "params": {"function_calling": "native"},
+                    "access_grants": [EVERYONE_READS],
+                },
+            )
+            assert made.status_code == 200, made.text
+            client.get("/api/models", params={"refresh": "true"}).raise_for_status()
+        created_models.append(model_id)
+        return account, model_id
+
+    yield chat_model
+    with admin.client() as client:
+        for model_id in created_models:
+            client.post("/api/v1/models/model/delete", json={"id": model_id})
+        client.delete(f"/api/v1/skills/id/{skill_id}/delete")
+
+
+def test_a_deepseek_thinking_chat_with_a_skill_and_memories_answers(
+    admin, listener, preserve, skilled_chat
+):
+    preserve(second_provider.OPENAI_CONFIG)
+    with admin.client() as client:
+        second_provider.attach(client, listener, DEEPSEEK_MODEL, provider="llama.cpp")
+    listener.route("POST", "/v1/chat/completions", _deepseek_thinking_mode)
+    account, model_id = skilled_chat(DEEPSEEK_MODEL)
+
+    with account.client() as client:
+        first_turn = send_message(client, "hi there", model=model_id, features={"memory": True})
+        first = wait_for_reply(client, first_turn)
+        assert not first.get("error"), f"the first message failed on DeepSeek (#33940): {first}"
+        second_turn = send_message(
+            client,
+            "and again",
+            model=model_id,
+            chat_id=first_turn.chat_id,
+            parent_id=first_turn.assistant_message_id,
+            features={"memory": True},
+        )
+        second = wait_for_reply(client, second_turn)
+
+    assert not second.get("error"), f"the second message failed on DeepSeek (#33940): {second}"
+    sent = listener.requests_to("/v1/chat/completions")[-1].json()
+    names = {
+        call["function"]["name"]
+        for turn in _context_tool_turns(sent)
+        for call in turn["tool_calls"]
+    }
+    assert {"list_available_skills", "recall_memories"} <= names, (
+        f"the skill list and the memories never reached the model as tool rounds: {sorted(names)}"
+    )
+
+
+def test_a_strict_provider_gets_no_reasoning_field_on_added_tool_rounds(upstream, skilled_chat):
+    account, model_id = skilled_chat(MOCK_MODEL_ID)
+    with account.client() as client:
+        wait_for_reply(
+            client, send_message(client, "hi there", model=model_id, features={"memory": True})
+        )
+
+    turns = _context_tool_turns(upstream.chat_requests()[-1])
+    assert turns, "the skill list and the memories never reached the model as tool rounds"
+    leaked = [sorted({"thinking", "reasoning_content"} & set(turn)) for turn in turns]
+    assert leaked == [[]] * len(turns), f"a strict provider got a reasoning field: {leaked}"
 
 
 # --- #28292: memories sharing a timestamp come out in one order ------------------------------
