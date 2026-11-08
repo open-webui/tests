@@ -4,9 +4,13 @@ Admin Panel > Users > Groups > Default permissions holds Allow Temporary Chat an
 on, Enforce Temporary Chat. With the first off an account's header has no Temporary Chat button
 and its chats are saved. With the second on the button is gone as well and every new chat is
 temporary, so nothing it sends is stored. An admin keeps the button whatever the defaults say.
+Enforce Temporary Chat switched on and then hidden by switching Allow Temporary Chat off has no
+effect on the main chat: its chats are saved (the side chat is covered for open-webui#33928 in
+test_default_chat_permissions.py).
 
 Discriminates: passes on dev 176d31d1d, fails with `is_saved_chat_id` treating a `temporary:` id
-as saved (an enforced temporary chat is stored).
+as saved (an enforced temporary chat is stored). The hidden Enforce test passes on dev b6534c58f
+and fails in a build of it whose new chat applies Enforce without Allow Temporary Chat.
 """
 
 from __future__ import annotations
@@ -64,6 +68,27 @@ def test_switching_allow_off_removes_the_button_and_chats_are_saved(
     expect_reply(page, ANSWER)
     expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
     assert len(stored_chats(account)) == 1
+
+
+@pytest.mark.regression
+def test_enforce_left_on_under_a_switched_off_allow_does_not_make_chats_temporary(
+    page_for, admin, make_user, upstream, preserve
+):
+    preserve("permissions")
+    admin_page = page_for(admin)
+    save_default_permission(admin_page, "Enforce Temporary Chat", turn_on=True)
+    save_default_permission(admin_page, "Allow Temporary Chat", turn_on=False)
+    account = make_user()
+    page = page_for(account)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
+    expect(chat_input(page)).to_be_visible()
+    expect(toggle(page)).to_have_count(0)
+
+    send(page, PROMPT)
+
+    expect_reply(page, ANSWER)
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    assert len(stored_chats(account)) == 1, "the chat was not saved, it ran as a temporary chat"
 
 
 def test_enforcing_temporary_chat_makes_every_new_chat_temporary(

@@ -27,6 +27,9 @@ Chat opens a side chat with `/side`, and it is saved to its chat list. The edito
 Allow Side Chat with Temporary Chat off as well; that test is red on 0.13.1, a real bug, as the
 switch is hidden there. Discriminates: the side chat without Temporary Chat test passes on the
 e8c0ad85e build and fails in a build of it whose side chat still requires Temporary Chat.
+Enforce Temporary Chat switched on in the editor and then hidden by switching Allow Temporary Chat
+off must not reach the side chat either; that test is red on dev b6534c58f, a real bug, as the side
+chat starts temporary, which the account may not use, and so never sends.
 """
 
 from __future__ import annotations
@@ -355,6 +358,27 @@ def test_side_opens_a_saved_side_chat_without_the_temporary_chat_permission(
         assert wait_until(lambda: question in titles(), timeout=10), (
             f"the side chat was not saved to the chat list: {titles()}"
         )
+
+
+def test_a_hidden_enforce_temporary_chat_does_not_stop_the_side_chat(
+    page_for, admin, make_user, upstream, preserve
+):
+    """Red on b6534c58f: Enforce kept under a switched off Temporary Chat blocks the side chat.
+
+    open-webui/open-webui#33928
+    """
+    preserve("permissions")
+    admin_page = page_for(admin)
+    save_default_permission(admin_page, "Allow Side Chat", turn_on=True)
+    save_default_permission(admin_page, "Enforce Temporary Chat", turn_on=True)
+    save_default_permission(admin_page, "Allow Temporary Chat", turn_on=False)
+    question = SIDE_QUESTION.format(tag=uuid.uuid4().hex[:8])
+    page = open_answered_chat(page_for, make_user(), upstream)
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+
+    send(page, f"/side {question}")
+
+    expect(side_chat_panel(page, question)).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
 
 
 def test_with_file_upload_off_upload_files_opens_no_file_picker(
