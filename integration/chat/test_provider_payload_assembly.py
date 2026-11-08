@@ -43,7 +43,9 @@ the two same-model replay cases. `think_tags` as the default reasoning format fa
 and strict-provider tests, `memory.id` dropped from the sort keys fails both tie tests, and the
 capability read moved below the fallback swap fails the fallback usage test. Retargeted for
 3aacd9ffa and e6ae368f5, where recalled memories reach the model as a recall_memories result Open
-WebUI preloads after the user's message; passes on dev da9bca0fc.
+WebUI preloads after the user's message; passes on dev da9bca0fc. The memory order test also
+pins that round's place (0.13.1): right after the question and out of the system prompt; it passes
+on dev e8c0ad85e and fails in a backend copy that puts the preloaded rounds before the question.
 """
 
 from __future__ import annotations
@@ -128,6 +130,17 @@ def test_memory_context_lists_memories_in_a_stable_order(make_user, upstream):
         "work/project: Beta note",
         "work/project: Zeta note",
     ], "memory context follows row order, so the cached prompt prefix changes (#28292)"
+
+    # 0.13.1: the recall is a hidden tool round after the question, out of the system prompt
+    messages = upstream.chat_requests()[-1]["messages"]
+    last_user = max(index for index, entry in enumerate(messages) if entry["role"] == "user")
+    after = messages[last_user + 1 :]
+    assert [entry["role"] for entry in after] == ["assistant", "tool"], (
+        f"the memories do not follow the question as a tool round: {after}"
+    )
+    assert [call["function"]["name"] for call in after[0]["tool_calls"]] == ["recall_memories"]
+    system = " ".join(str(entry["content"]) for entry in messages if entry["role"] == "system")
+    assert "alpha note" not in system, "the memories are still in the system prompt"
 
 
 def test_no_memories_adds_no_memory_context(make_user, upstream):

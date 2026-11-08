@@ -11,7 +11,9 @@ tool loop also stops on its own: a call that failed twice in a row with the same
 run a third time, and a reply the token limit ended does not run its unfinished tool calls; in
 both cases the model is asked once more without tools for a final answer, and a reply that still
 calls a tool then ends with an error. A failing call with changed arguments and a succeeding call
-repeated unchanged keep running.
+repeated unchanged keep running. The request after the last round the tool call limit allows
+also goes without tools, so a model that complies ends the reply with a normal answer and no
+error.
 
 Discriminates: in a backend copy, dropping the attribute parsing fails the attributes case,
 ignoring the chat's own tag pair fails the custom-tags case, looking for the end tag only past
@@ -20,7 +22,7 @@ stop test and removing the iteration limit message fails the limit test. On dev 
 repetition check answering None fails the failed-twice test, the check counting succeeded calls
 too fails the repeat-success test, the token limit not marking the calls incomplete fails the
 token limit and still-calls tests, and no final answer request without tools fails the
-failed-twice, token limit and still-calls tests.
+failed-twice, token limit and still-calls tests, and the tool call limit test as well.
 """
 
 from __future__ import annotations
@@ -293,3 +295,30 @@ def test_a_model_that_still_calls_a_tool_after_tool_use_stopped_ends_with_an_err
     assert len(requests) == 2 and _asks_for_a_final_answer(requests[1])
     assert all(not result.startswith("{") for result in results), f"a call ran: {results}"
     assert message.get("error"), f"the reply ended without an error: {message}"
+
+
+@pytest.mark.slow
+def test_at_the_tool_call_limit_the_model_is_asked_for_a_final_answer_without_tools(
+    instance_with,
+):
+    limited = instance_with({"CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS": "2"})
+    question = "what time is it, check twice?"
+    asking = reply.answering(question)
+    limited.upstream.queue(
+        *(
+            reply.tool_call("get_current_timestamp", {}, call_id=f"call_{n}", match=asking)
+            for n in range(2)
+        ),
+        reply.text("It is noon, checked twice.", match=asking),
+    )
+    with admin_of(limited).client() as client:
+        _, message = ask(client, question)
+
+    requests = [body for body in limited.upstream.chat_requests() if asking(body)]
+    assert [_asks_for_a_final_answer(body) for body in requests] == [False, False, True], (
+        "only the request after the last allowed round should ask for a final answer"
+    )
+    assert message["content"].endswith("It is noon, checked twice."), message["content"]
+    assert not message.get("error"), f"the reply ended with an error: {message.get('error')}"
+    results = [item["output"][0]["text"] for item in _items(message, "function_call_output")]
+    assert len(results) == 2 and all("current_timestamp" in result for result in results), results
