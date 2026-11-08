@@ -1,16 +1,17 @@
 """Journey: the token usage a provider reports is shown under its reply, live and after a reload.
 
 When the provider ends a reply with its token counts, the reply's info button shows them in its
-tooltip, and they are still there when the chat is opened again. A reply the provider reported
-no usage for has no info button.
+tooltip, with the digits grouped for the page's language since e84dba2d3 (#33896), and they are
+still there when the chat is opened again. A reply the provider reported no usage for has no info
+button.
 
 `test_the_reported_usage_shows_in_the_reply_info_and_after_a_reload` failed on dev 9bbb95048 in CI
 with the reply left blank and passed 3 of 3 locally: since de73bb830 the reply in a new chat
 sometimes stays blank until a reload although the server saved it whole
 (open-webui/open-webui#32091).
 
-Discriminates: passes on dev 30f3f6a8f; in a backend copy that stores and sends no usage the
-first test fails.
+Discriminates: passes on dev 30f3f6a8f and, grouped, on a072aaf31; in a backend copy that stores
+and sends no usage the first test fails.
 """
 
 from __future__ import annotations
@@ -41,19 +42,19 @@ def _usage_tooltip(page: Page) -> Locator:
 def test_the_reported_usage_shows_in_the_reply_info_and_after_a_reload(
     page_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    page = page_for(make_user(), locale="en-US")
     upstream.queue(reply.text("Counted.", usage=USAGE, match=reply.answering("count my tokens")))
     send(page, "count my tokens")
     expect_reply(page, "Counted.")
 
     tooltip = _usage_tooltip(page)
-    expect(tooltip).to_contain_text("prompt_tokens: 1234")
+    expect(tooltip).to_contain_text("prompt_tokens: 1,234")
     expect(tooltip).to_contain_text("completion_tokens: 56")
 
     page.reload()
     expect_reply(page, "Counted.")
     tooltip = _usage_tooltip(page)
-    expect(tooltip).to_contain_text("total_tokens: 1290")
+    expect(tooltip).to_contain_text("total_tokens: 1,290")
 
 
 def test_a_reply_without_usage_has_no_info_button(page_for, make_user, upstream):

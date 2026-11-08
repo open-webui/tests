@@ -232,8 +232,11 @@ def test_a_file_attached_in_a_side_chat_reaches_its_model(
     panel = open_side_chat(page, upstream, question, reply.text(SIDE_ANSWER))
     secret = f"toll-{uuid.uuid4().hex[:8]}"
 
-    side_upload(panel, "tolls.txt", f"The toll code is {secret}.".encode(), "text/plain")
+    with page.expect_response(lambda response: "/process/status" in response.url) as processing:
+        side_upload(panel, "tolls.txt", f"The toll code is {secret}.".encode(), "text/plain")
     expect(panel.get_by_role("button", name="Remove File", exact=True)).to_be_visible()
+    # the side chat refuses to send while the file is still being processed
+    processing.value.finished()
     asked = tagged("What does the toll note say?")
     side_ask(panel, upstream, asked, reply.text("The note names the toll code."))
 
