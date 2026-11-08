@@ -7,8 +7,9 @@ spinner with "crypto.randomUUID is not a function" and no chat can be started or
 browser here reaches the instance by a host name that is neither `localhost` nor a loopback
 address, as a phone or another computer on the network does.
 
-Red on 0.13.1, dev e8c0ad85e (the chat input never shows). Discriminates: passes on a build of
-e8c0ad85e whose saved tab layout makes its id with the app's uuid helper.
+Issue open-webui/open-webui#33919. Red on 0.13.1, dev e8c0ad85e (the chat input never shows).
+Discriminates: passes with the fix for #33919 on dev d67c70702 (the ids made with the app's uuid
+helper), fails on e8c0ad85e.
 """
 
 from __future__ import annotations
