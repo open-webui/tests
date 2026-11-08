@@ -103,6 +103,10 @@ paused call saved the reply with empty fields that broke adding a file to it lat
 so the image was drawn but never shown and the model was told the drawing failed. On dev
 f36490bf2 with 93ba628f3 reverted in a backend copy every case of the paused-turn image test
 fails (no image on the reply, the model told the operand error of the issue).
+
+The stored output a test reads leaves out the context rounds Open WebUI preloads before a reply
+(003c9e085): a skill another test shared with everyone added a hidden skills round to the mixed
+round test's stored output on CI (dev 97ca2144b) and failed it there.
 """
 
 from __future__ import annotations
@@ -134,7 +138,7 @@ from harness.second_provider import OPENAI_CONFIG
 from harness.socket_client import connected
 from harness.terminal_server import read_grant
 from harness.tool_calls import without_hidden_calls
-from harness.upstream import MOCK_MODEL_ID, Reply
+from harness.upstream import CONTEXT_TOOLS, MOCK_MODEL_ID, Reply
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
     RETRIEVAL_CONFIG,
@@ -227,8 +231,22 @@ def items(message: dict, kind: str) -> dict[str, dict]:
 
 
 def stored_items(message: dict, kind: str) -> dict[str, dict]:
-    """Every stored output item of `kind` by call id, the ones kept out of view included."""
-    return {item["call_id"]: item for item in message.get("output") or [] if item["type"] == kind}
+    """Every stored output item of `kind` by call id, the ones kept out of view included.
+
+    The context rounds Open WebUI preloads (skills, memories, knowledge) are left out: whether one
+    runs depends on what else the instance holds.
+    """
+    output = message.get("output") or []
+    context_ids = {
+        item["call_id"]
+        for item in output
+        if item["type"] == "function_call" and item.get("name") in CONTEXT_TOOLS
+    }
+    return {
+        item["call_id"]: item
+        for item in output
+        if item["type"] == kind and item["call_id"] not in context_ids
+    }
 
 
 def refused_dispatches(message: dict) -> list[dict]:
