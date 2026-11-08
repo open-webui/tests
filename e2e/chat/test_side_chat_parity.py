@@ -23,6 +23,10 @@ build was held back while release fix builds had the machine, so they are not ye
 The Ask User test is red on the f659c0d12 build, a real bug: the server pauses the side chat's
 reply for the question, but the side chat never shows it (open-webui/open-webui#33890, side
 chats saved since 3b1a95383).
+
+A question still waiting in a side chat shows again after a reload and can be dismissed, and
+the reply then carries on (5cbd9bc5c, PR open-webui/open-webui#33901). Passes on dev e8c0ad85e
+and fails on that build with 5cbd9bc5c reverted (the question never shows).
 """
 
 from __future__ import annotations
@@ -332,6 +336,43 @@ def test_a_question_the_model_asks_in_a_side_chat_shows_there_and_its_answer_fin
     ]
     assert results, "the side chat's model never got the answer"
     assert json.loads(results[-1])["answers"]["plan"]["label"] == "Pro", results
+
+
+def test_a_question_in_a_side_chat_still_shows_after_a_reload_and_can_be_dismissed(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    page = open_chat(page_for, make_user())
+    question = tagged("By the way, which plan suits a family?")
+    panel = open_side_chat(
+        page,
+        upstream,
+        question,
+        reply.tool_call("ask_user", {"questions": [PLAN_QUESTION]}),
+        reply.text("Then I will pick one for you."),
+        shows="",
+    )
+    expect(panel.get_by_text("Which plan fits you best?")).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+
+    page.reload()
+    panel = side_chat_panel(page, question)
+    asked = panel.get_by_text("Which plan fits you best?")
+    expect(asked, "the waiting question was gone after a reload (#33890)").to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
+    panel.locator("section", has_text="Which plan fits you best?").get_by_role(
+        "button", name="Cancel", exact=True
+    ).click()
+
+    expect(side_reply(panel)).to_contain_text(
+        "Then I will pick one for you.", timeout=REPLY_TIMEOUT_MS
+    )
+    expect(asked).to_have_count(0)
+    results = [
+        str(entry["content"])
+        for entry in sent_for(upstream, question)["messages"]
+        if entry.get("role") == "tool"
+    ]
+    assert results, "the side chat's model was never told the question was dismissed"
 
 
 @pytest.fixture
