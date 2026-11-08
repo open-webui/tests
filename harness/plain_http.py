@@ -20,10 +20,13 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 from playwright.sync_api import Browser, BrowserContext, BrowserType, Page
 
+from harness.instance import LaunchedInstance
+
 # a host name that is neither localhost nor a loopback address
 LAN_HOST = "owui-lan.test"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
 RESOLVE_LAN_HOST = f"--host-resolver-rules=MAP {LAN_HOST} 127.0.0.1"
+ADMIN_CONFIG = "/api/v1/auths/admin/config"
 
 _secure_context_test = False
 _navigate = Page.goto
@@ -46,6 +49,21 @@ def lan_url(url: str) -> str:
         return url
     netloc = f"{LAN_HOST}:{parts.port}" if parts.port else LAN_HOST
     return urlunsplit(parts._replace(netloc=netloc))
+
+
+def serve_at_lan_host(instance: LaunchedInstance) -> None:
+    """Set the instance's WebUI URL to its `LAN_HOST` address, as an admin of a LAN install does.
+
+    Open WebUI sends the browser back to that URL after an SSO sign-in, and the sign-in cookies
+    belong to the address the browser came from.
+    """
+    with instance.client() as admin:
+        config = admin.get(ADMIN_CONFIG)
+        config.raise_for_status()
+        saved = admin.post(
+            ADMIN_CONFIG, json={**config.json(), "WEBUI_URL": lan_url(instance.base_url)}
+        )
+    assert saved.status_code == 200, f"setting the WebUI URL failed: {saved.text}"
 
 
 def loopback_url(page_url: str, path: str) -> str:

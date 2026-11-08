@@ -19,6 +19,7 @@ from playwright.sync_api import expect
 
 from harness import backends
 from harness.oidc_provider import oauth_settings, shared_provider, sso_env
+from harness.plain_http import serve_at_lan_host
 from utils.chat_ui import chat_input
 
 pytestmark = [
@@ -47,6 +48,7 @@ def sessions(instance_with, idp, redis_url):
     )
     if not launched.serves_frontend:
         pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
+    serve_at_lan_host(launched)
     return launched
 
 
