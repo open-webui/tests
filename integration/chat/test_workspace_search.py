@@ -19,16 +19,25 @@ of 25 turns the paging test red; links without the message turn both link tests 
 link always naming the first page turns the note link test red; with
 ec83763f1 undone (no filter words), or with filter words no longer limited to the caller's own
 chats, the six filter-word tests go red.
+
+Since 07029af63 a chat whose messages are kept in their own rows is searched there, and its
+result shows the matching excerpt and links to that message; before, only the copy in the chat
+record was searched. The test empties the record's copy to reach that state. It passes on dev
+e8c0ad85e and fails on a backend copy with 07029af63 reverted (the chat is not found).
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
 
+from harness import upstream as reply
 from harness.access import grant
+from harness.backends import on_postgres, read_rows, write_rows
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from harness.chat import ask
 from harness.workspace_search import (
     PAGE_SIZE,
     create_folder,
@@ -228,6 +237,42 @@ def test_a_chat_result_links_to_the_matching_message(make_user):
     assert item(answer, f"chat:{in_answer}")["url"] == f"/c/{in_answer}?message=a"
     assert word in item(answer, f"chat:{in_answer}")["snippet"]
     assert item(answer, f"chat:{in_title}")["url"] == f"/c/{in_title}"
+
+
+def keep_messages_in_rows_only(instance, chat_id: str) -> None:
+    """Empty the message text in the chat record, leaving it in the chat's message rows."""
+    [row] = read_rows(instance, "SELECT chat FROM chat WHERE id = :id", {"id": chat_id})
+    chat = row["chat"] if isinstance(row["chat"], dict) else json.loads(row["chat"])
+    for message in chat["history"]["messages"].values():
+        message.update(content="", output=[])
+    statement = (
+        "UPDATE chat SET chat = CAST(:chat AS JSON) WHERE id = :id"
+        if on_postgres(instance)
+        else "UPDATE chat SET chat = :chat WHERE id = :id"
+    )
+    write_rows(instance, statement, [{"chat": json.dumps(chat), "id": chat_id}])
+
+
+def test_a_chat_whose_messages_live_in_their_own_rows_is_found_with_an_excerpt(
+    instance, make_user, upstream
+):
+    account = make_user()
+    word = unique_word()
+    question = f"what grows in the shade? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text(f"ferns and the {word} do well", match=reply.answering(question)))
+    with account.client() as client:
+        turn, stored = ask(client, question)
+    assert word in stored["content"], stored
+    keep_messages_in_rows_only(instance, turn.chat_id)
+
+    answer = search(account, word)
+
+    assert f"chat:{turn.chat_id}" in {entry["id"] for entry in answer["items"]}, (
+        "a chat whose messages are stored apart from the chat record is not found by its text"
+    )
+    found_chat = item(answer, f"chat:{turn.chat_id}")
+    assert word in found_chat["snippet"], f"the result shows no excerpt of the reply: {found_chat}"
+    assert found_chat["url"] == f"/c/{turn.chat_id}?message={turn.assistant_message_id}"
 
 
 def test_a_note_result_links_to_the_page_holding_the_match(make_user):
