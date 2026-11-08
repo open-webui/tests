@@ -16,9 +16,9 @@
   showed the model only the 0-based page index, so the model cited and opened the page before the
   one it meant. Since `fe2219d6f` the model is given an uploaded file's page 1-based, for every
   loader. The chunks keep the 0-based index, which the citation view turns into the page a person
-  sees by itself. A file under the Full Text Threshold is sent whole and went out as one passage
-  with no page (issue open-webui/open-webui#33810); it now keeps a passage per page. File Context
-  is on for the model, since native mode otherwise only gives it the file tools.
+  sees by itself. A file under the Full Text Threshold is sent whole as one passage with no page,
+  by design, so the threshold is off here and the file is searched by its chunks. File Context is
+  on for the model, since native mode otherwise only gives it the file tools.
 
 Tika and Docling are local services; each upload is processed before the response returns.
 
@@ -28,10 +28,8 @@ Discriminates: passes on dev bbfa876af; removing `ino` from `known_source_ext` f
 cases (the extraction server is called), dropping the conversion status check fails the refused
 and skipped cases, reading `md_content` with a `''` default fails the null case and decoding
 entities again fails the entity case. The page number case passes on dev fe2219d6f and fails on
-fe2219d6f^ (the model is given pages 0 and 2); since dev 98f7a6146 it fails until the fix for
-#33810 (the model is given no page and the citations carry none). The mojibake case passes on dev
-015dbc861 and fails on dev a5bc78300, before PR #31655 (the repaired quote comes back
-straightened).
+fe2219d6f^ (the model is given pages 0 and 2). The mojibake case passes on dev 015dbc861 and
+fails on dev a5bc78300, before PR #31655 (the repaired quote comes back straightened).
 """
 
 from __future__ import annotations
@@ -215,8 +213,8 @@ def test_docling_pages_reach_the_model_as_the_page_a_person_sees(pages_shown, pr
             json={
                 "CONTENT_EXTRACTION_ENGINE": "docling",
                 "DOCLING_SERVER_URL": listener.base_url,
-                # well above the file, so it is sent whole (#33810)
-                "RAG_FULL_TEXT_CHAR_THRESHOLD": 50000,
+                # a file under the threshold is sent whole, without its pages
+                "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
             },
         )
         assert saved.status_code == 200, saved.text
@@ -263,7 +261,7 @@ def test_docling_pages_reach_the_model_as_the_page_a_person_sees(pages_shown, pr
     shown = sorted(int(page) for page in re.findall(r'<source [^>]*page=\\"(\d+)\\"', sent[-1]))
     assert shown == [1, 3], (
         f"the model was given pages {shown} for a PDF whose text is on pages 1 and 3, so it cites "
-        "and opens the wrong page or none (#33603, #33810)"
+        "and opens the page before the right one (#33603)"
     )
 
     # the citation view adds one to the stored page itself, so the chunks must stay 0-based
@@ -275,5 +273,5 @@ def test_docling_pages_reach_the_model_as_the_page_a_person_sees(pages_shown, pr
     )
     assert stored == [0, 2], (
         f"the reply's citations carry pages {stored}; the citation view, which adds one itself, "
-        "would show the wrong page or none (#33810)"
+        "would show a page after the right one"
     )
