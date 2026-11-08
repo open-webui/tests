@@ -55,6 +55,7 @@ import pytest
 from harness import upstream as reply
 from harness.backends import wait_until
 from harness.chat import ask, send_message, wait_for_reply
+from harness.chat_history import seed_chat
 from harness.tool_calls import offered_tools, run_tool
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -503,23 +504,11 @@ def chat_read_limit(admin, preserve):
 
 def stored_chat(actor, *contents) -> str:
     """A chat holding `contents` as alternating user and assistant messages, as an import does."""
-    ids = [str(uuid.uuid4()) for _ in contents]
-    messages = {
-        message_id: {
-            "id": message_id,
-            "parentId": ids[index - 1] if index else None,
-            "childrenIds": ids[index + 1 : index + 2],
-            "role": "assistant" if index % 2 else "user",
-            "content": content,
-            "timestamp": int(time.time()),
-        }
-        for index, (message_id, content) in enumerate(zip(ids, contents))
-    }
-    chat = {"title": "harbour log", "history": {"messages": messages, "currentId": ids[-1]}}
+    roles = ("user", "assistant")
+    messages = [{"role": roles[index % 2], "content": text} for index, text in enumerate(contents)]
     with actor.client() as client:
-        created = client.post("/api/v1/chats/new", json={"chat": chat})
-    assert created.status_code == 200, created.text
-    return created.json()["id"]
+        chat_id, _ = seed_chat(client, messages)
+    return chat_id
 
 
 HERON_CHAT = ("where do herons nest?", "in the reeds", "and where do they fish?", "in the shallows")

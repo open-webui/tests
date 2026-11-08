@@ -6,8 +6,12 @@ rejected it, and the reply still finishes; Allow runs it. Ctrl+Alt+Enter and Ctr
 allow and deny the call on screen. With Full access, the default, the tool runs without asking.
 The mode an account picks is kept for its next chats and for no other account. A call waiting for
 approval marks its chat in the sidebar and still waits, with Allow on screen, after the page is
-opened again. With the admin's Auto permissions on (0.13.1), Auto is the default: a reviewer
-model rates each call, and only a call it rates risky stops for Allow or Deny. A side chat asks
+opened again. With the admin's Auto permissions on (0.13.1), Auto is the default and only a call
+the review finds risky stops for Allow or Deny: with the default engine (since e8c0ad85e) the chat
+model marks each call itself, with the Decisions engine a reviewer model rates it. In Admin
+Settings > Interface, Auto permissions shows an Engine choice set to Default, and picking Decisions
+API shows its address, model and threshold, saved with the approval policy and shown again after
+a reload. A side chat asks
 before a tool call the same way its chat does. Expected but missing on f659c0d12 (strict xfail):
 an Always allow choice on the approval card that lets the same tool run without asking next time.
 
@@ -16,10 +20,14 @@ the deny, allow and shortcut tests fail, in one that asks whatever the composer 
 access test fails, and in a frontend build that ignores the allow and deny shortcuts the shortcut
 test fails. On f659c0d12, in a backend copy that never marks a chat as waiting the sidebar test
 fails, in one whose Auto never stops a call the Auto test fails, and in one that drops the picked
-mode from the saved account settings the kept-mode test fails. The side chat test is red on
-f659c0d12, a real bug: the server pauses the side chat's call, but the side chat shows no Allow or
-Deny, so it stays on "Preparing" for good (open-webui/open-webui#33873, side chats saved since
-3b1a95383).
+mode from the saved account settings the kept-mode test fails. The Decisions Auto test was
+retargeted for e8c0ad85e and picks that engine; the chat model review test passes on e8c0ad85e
+and fails in a backend copy of it that never offers the mark (the safe call asks too). The
+engine test fails in backend copies whose default engine is `decisions` or that never save the
+engine. The side
+chat test is red on f659c0d12, a real bug: the server pauses the side chat's call, but the side
+chat shows no Allow or Deny, so it stays on "Preparing" for good (open-webui/open-webui#33873,
+side chats saved since 3b1a95383).
 """
 
 from __future__ import annotations
@@ -82,9 +90,10 @@ def auto_permissions_on(admin, preserve, listener):
                 **current,
                 "ENABLE_TOOL_PERMISSIONS": True,
                 "ENABLE_TOOL_PERMISSIONS_AUTO": True,
-                "TOOL_PERMISSIONS_DECISIONS_API_BASE_URL": f"{listener.base_url}/v1",
-                "TOOL_PERMISSIONS_DECISIONS_MODEL": "reviewer-model",
-                "TOOL_PERMISSIONS_DECISIONS_THRESHOLD": 0.5,
+                "TOOL_PERMISSIONS_AUTO_ENGINE": "decisions",
+                "TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL": f"{listener.base_url}/v1",
+                "TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL": "reviewer-model",
+                "TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD": 0.5,
             },
         )
         assert saved.status_code == 200, saved.text
@@ -274,6 +283,100 @@ def test_auto_runs_a_safe_call_and_stops_a_risky_one_for_approval(
     assert len(reviewed) == 2, f"the reviewer was not asked once per call: {reviewed}"
     assert safe in reviewed[0] and risky in reviewed[1], reviewed
     expect(_picked_mode(page)).to_contain_text("Auto")
+
+
+@pytest.fixture
+def model_review_on(admin, preserve) -> None:
+    """Tool permissions with Auto on and the default engine, where the chat model marks calls."""
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(
+            CHAT_CONFIG[1],
+            json={
+                **current,
+                "ENABLE_TOOL_PERMISSIONS": True,
+                "ENABLE_TOOL_PERMISSIONS_AUTO": True,
+                "TOOL_PERMISSIONS_AUTO_ENGINE": "",
+            },
+        )
+    assert saved.status_code == 200, saved.text
+
+
+def _ask_for_the_time_marked(page: Page, upstream, required: bool, answer: str) -> str:
+    question = f"what time is it? {uuid.uuid4().hex[:6]}"
+    marked = {"__approval__": {"required": required}}
+    upstream.queue(
+        reply.tool_call("get_current_timestamp", marked, match=reply.answering(question)),
+        reply.text(answer, match=reply.answering(question)),
+    )
+    send(page, question)
+    return question
+
+
+def test_auto_with_the_chat_models_review_runs_a_call_it_marks_safe_and_asks_for_one_it_marks_risky(
+    model_review_on, page_for, make_user, upstream
+):
+    page = page_for(make_user())
+
+    _ask_for_the_time_marked(page, upstream, required=False, answer="Checked without asking.")
+    expect_reply(page, "Checked without asking.")
+    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
+
+    risky = _ask_for_the_time_marked(page, upstream, required=True, answer="Checked once allowed.")
+    _approval_button(page, "Allow").click()
+    expect_reply(page, "Checked once allowed.")
+    assert _tool_results(upstream, risky)[-1] != REJECTED
+    expect(_picked_mode(page)).to_contain_text("Auto")
+
+
+def test_an_admin_picks_the_auto_review_engine_and_its_settings_are_kept(
+    tool_approval_on, page_for, admin, listener
+):
+    page = page_for(admin, path="/admin/settings/interface")
+    settings = page.get_by_role("dialog")
+    auto = settings.get_by_role("switch", name="Auto permissions")
+    expect(auto).not_to_be_checked()
+    auto.click()
+    engine = settings.get_by_label("Engine", exact=True)
+    expect(engine).to_have_value("")
+    expect(settings.get_by_label("Approval threshold")).to_have_count(0)
+    engine.select_option(label="Decisions API")
+    settings.get_by_label("API Base URL", exact=True).last.fill(f"{listener.base_url}/v1")
+    settings.get_by_label("Model", exact=True).last.fill("reviewer-model")
+    settings.get_by_label("Approval threshold").fill("0.4")
+    with admin.client() as client:
+        default_policy = client.get(CHAT_CONFIG[0]).json()["DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT"]
+    # the policy field shows the default policy until the admin types one
+    settings.get_by_placeholder(default_policy, exact=True).fill(
+        "Ask before anything that leaves the harbour."
+    )
+    settings.get_by_role("button", name="Save", exact=True).click()
+    expect(page.get_by_text("Settings saved successfully!")).to_be_visible()
+
+    with admin.client() as client:
+        stored = client.get(CHAT_CONFIG[0]).json()
+    assert {key: stored[key] for key in AUTO_FIELDS} == {
+        "ENABLE_TOOL_PERMISSIONS_AUTO": True,
+        "TOOL_PERMISSIONS_AUTO_ENGINE": "decisions",
+        "TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL": f"{listener.base_url}/v1",
+        "TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL": "reviewer-model",
+        "TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD": 0.4,
+        "TOOL_PERMISSIONS_AUTO_PROMPT": "Ask before anything that leaves the harbour.",
+    }
+    reopened = page_for(admin, path="/admin/settings/interface").get_by_role("dialog")
+    expect(reopened.get_by_label("Engine", exact=True)).to_have_value("decisions")
+    expect(reopened.get_by_label("Approval threshold")).to_have_value("0.4")
+
+
+AUTO_FIELDS = [
+    "ENABLE_TOOL_PERMISSIONS_AUTO",
+    "TOOL_PERMISSIONS_AUTO_ENGINE",
+    "TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL",
+    "TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL",
+    "TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD",
+    "TOOL_PERMISSIONS_AUTO_PROMPT",
+]
 
 
 @pytest.fixture
