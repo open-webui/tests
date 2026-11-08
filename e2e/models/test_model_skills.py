@@ -13,7 +13,8 @@ the skill viewer, and when the model calls it the chat shows the call and the sk
 reach the provider in the tool result. Unticking Skills under the editor's Builtin Tools and
 saving withdraws the list and the viewer from the next chat, while the attached skill arrives in
 full. Since 5cf7c0333 a chat sends its model's attached skills as selected, and selected skills
-arrive in full unless `ENABLE_SKILL_LAZY_LOADING` (079fb19e7) is on.
+arrive in full unless `ENABLE_SKILL_LAZY_LOADING` (079fb19e7) is on. The Skills search list shows
+each skill's description under its name (#33723, e6beee356), as the Tools list does.
 
 `test_a_skill_attached_in_the_editor_reaches_a_chat_on_that_model` is red now and then on dev
 896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload although the
@@ -30,6 +31,8 @@ Retargeted for 8d0ff76f2, whose editor picks skills from a search list and keeps
 in its Builtin Tools section: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor
 saves the model's settings as they were loaded the attach, detach, switched-off, unreadable-skill
 and toggle tests fail.
+The description test passes on dev e8c0ad85e and fails on a copy of the dev e8c0ad85e build whose
+search lists show names only.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, last_reply, send
-from utils.model_editor import offered_tool_names, pick, set_checkbox
+from utils.model_editor import offered_tool_names, pick, selector_row, set_checkbox
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -321,3 +324,16 @@ def test_unticking_skills_in_the_editor_withdraws_the_list_and_the_viewer(
     assert "view_skill" not in offered_tool_names(unticked)
     assert "get_current_timestamp" in offered_tool_names(unticked)
     assert f'<skill id="{skill["id"]}"' in prompt and instructions in prompt, prompt
+
+
+def test_the_skills_list_shows_each_skills_description(page_for, builder, make_model, make_skill):
+    model, skill = make_model(), make_skill(unique("Coil the ropes."))
+    editor = open_editor(page_for(builder), model)
+
+    selector_row(editor, "Skills").click()
+    editor.page.get_by_placeholder("Search skills").fill(skill["name"])
+
+    item = editor.page.get_by_role("menuitem").filter(
+        has=editor.page.get_by_text(skill["name"], exact=True)
+    )
+    expect(item).to_contain_text(f"How to behave at the dock {skill['id']}")

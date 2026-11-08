@@ -8,7 +8,8 @@ The saved side chat shares and exports with its exchange from its sidebar menu, 
 Side Chat permission neither `/side` nor the shortcut opens one. The basic side chat flows
 (context, closing, reopening, deleting, dropping a chat beside another) are in test_side_chat.py.
 A question the model asks with Ask User shows in the side chat, and answering it finishes the
-reply.
+reply. Since 3b1a95383 the shortcut opens a side chat on an empty new chat too; with no chat so
+far the model gets only the side question.
 
 What a side chat does not offer yet is pinned as strict xfails, which turn red the day it lands:
 Regenerate, Edit, Continue Response and rating under its messages, follow-up suggestions, an HTML
@@ -23,6 +24,8 @@ build was held back while release fix builds had the machine, so they are not ye
 The Ask User test is red on the f659c0d12 build, a real bug: the server pauses the side chat's
 reply for the question, but the side chat never shows it (open-webui/open-webui#33890, side
 chats saved since 3b1a95383).
+The empty new chat test passes on dev e8c0ad85e and fails on a copy of the dev e8c0ad85e build that
+offers a New Chat tab only on a saved chat, as before 3b1a95383.
 
 A question still waiting in a side chat shows again after a reload and can be dismissed, and
 the reply then carries on (5cbd9bc5c, PR open-webui/open-webui#33901). Passes on dev e8c0ad85e
@@ -750,6 +753,34 @@ def test_the_new_chat_tab_shortcut_opens_a_side_chat_that_answers(
     )
     sent = [entry["content"] for entry in reply.conversation(sent_for(upstream, question))]
     assert PARENT_CHAT[1]["content"] in sent, f"the side chat lacked the chat so far: {sent}"
+
+
+def test_a_side_chat_opens_from_an_empty_new_chat_and_answers_alone(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+
+    page.keyboard.press("Control+Alt+O")
+
+    panel = page.get_by_role("tabpanel", name="New Chat 1", exact=True)
+    expect(side_input(panel)).to_be_visible()
+    question = tagged("Which pass links Lienz and Matrei?")
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+    side_send(panel, question)
+    expect(side_reply(side_chat_panel(page, question))).to_contain_text(
+        SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS
+    )
+    sent = reply.conversation(sent_for(upstream, question))
+    exchanged = [entry["content"] for entry in sent if entry["role"] in ("user", "assistant")]
+    assert exchanged == [question], f"the side chat of an empty chat was sent {exchanged}"
+    with account.client() as client:
+        listed = client.get("/api/v1/chats/").json()
+    assert [chat["title"] for chat in listed] == [question], (
+        f"expected only the side chat to be saved, the account has {listed}"
+    )
+    assert "/c/" not in page.url, f"the empty chat became a chat of its own: {page.url}"
 
 
 @pytest.fixture

@@ -3,14 +3,16 @@
 New on dev for 0.13.1 (7d4dda270, 36d049490, 8a8e42d17, d49756cf1, titled `refac`). Each terminal
 in the Terminal menu has a System info button that opens a window reading the terminal's
 `system/info` through the instance: host name, CPU, memory and disk use, cores and the busiest
-processes. When the terminal cannot answer, the window says System info unavailable with the
-reason. A terminal that gives every chat its own environment offers no System info in a chat
-that is not saved yet, as it has nothing to report there. A local fake terminal answers with
-fixed numbers.
+processes, its uptime and, folded under Network, each interface with its addresses. When the
+terminal cannot answer, the window says System info unavailable with the reason. A terminal
+that gives every chat its own environment offers no System info in a chat that is not saved yet,
+as it has nothing to report there. A local fake terminal answers with fixed numbers.
 
 Discriminates: passes on dev f659c0d12; with the System info button removed from the menu in a
 frontend build every test fails; on the integration side, test_terminal_system_info.py pins the
 proxy's refusal for an unsaved per-chat terminal.
+The uptime and Network checks pass on dev e8c0ad85e and fail on a copy of the dev e8c0ad85e build
+whose window labels the uptime otherwise and lists no interface addresses.
 """
 
 from __future__ import annotations
@@ -108,6 +110,11 @@ def test_system_info_shows_what_the_terminal_reports(
     )
     expect(dialog).to_contain_text("6 cores")
     expect(dialog.get_by_role("table")).to_contain_text("busy-worker")
+    expect(dialog).to_contain_text("Uptime: 2h 0m")
+    dialog.get_by_text("Network", exact=True).click()
+    network = dialog.get_by_role("definition").filter(has_text="10.1.2.3")
+    expect(network).to_be_visible()
+    expect(dialog.get_by_role("term").filter(has_text="eth0")).to_be_visible()
     assert fake_terminal.requests_to("/system/info"), "the window never asked the terminal"
 
 

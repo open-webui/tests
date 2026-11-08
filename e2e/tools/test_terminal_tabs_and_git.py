@@ -29,7 +29,8 @@ are ticked, Stage all reading mixed while only some files are staged; Discard ch
 a file the last commit does not have, after a warning saying so; the list beside a diff can be
 resized from the keyboard. The branch menu makes a branch that takes the next commit while main
 stays as it was, and the sync button pushes a commit to the remote and publishes a new branch.
-Undo last commit in History takes the last commit back and keeps its change staged.
+Undo last commit in History takes the last commit back and keeps its change staged. Since
+3797ce419 the panel says what it is doing while it stages or pushes (Staging…, Pushing…).
 
 Discriminates: on dev f659c0d12, in a frontend copy whose Stage all never reads mixed the stage
 test fails, one that offers Discard only for tracked files (as v0.13.0) fails the discard test,
@@ -56,6 +57,8 @@ the divider unclamped the divider test fails, with Ctrl+Backslash unbound the sp
 and with Ctrl+W unbound the shortcut test fails; with the wedge fixed (no save started when
 nothing is pending) the reconnect test passes. The reorder test fails on v0.13.0 builds whose
 dropped tab keeps its old place.
+The activity test passes on dev e8c0ad85e and fails on a copy of the dev e8c0ad85e build that labels
+staging and pushing otherwise.
 The reorder test also checks that no full-width or side tabs switch is offered; in an e8c0ad85e
 build with a Use side tabs button put back it fails.
 
@@ -751,6 +754,46 @@ def test_a_commit_is_pushed_and_a_new_branch_published_from_the_sync_button(
     git.get_by_role("button", name="Publish", exact=True).click()
     expect(git.get_by_role("button", name="Fetch", exact=True)).to_be_visible()
     assert "spring-tides" in _git(remote, "branch", "--format=%(refname:short)").split()
+
+
+def _hold(page: Page, operation: str) -> list:
+    """Hold the page's requests for the Git `operation` until the test lets them go."""
+    held = []
+    page.route(re.compile(rf"/git/{operation}(\?|$)"), lambda route: held.append(route))
+    return held
+
+
+def _let_go(held: list) -> None:
+    assert held, "the page sent no request to let go"
+    for route in held:
+        route.continue_()
+
+
+def test_the_git_panel_says_what_it_is_doing_while_staging_and_pushing(
+    terminal_page, repository, remote
+):
+    page, terminal = terminal_page
+    git = _open_git_panel(page, terminal, repository)
+    activity = git.get_by_role("status")
+
+    held = _hold(page, "stage")
+    git.get_by_role("checkbox", name="Stage tides.txt").click()
+    expect(activity).to_have_text("Staging…")
+    _let_go(held)
+    expect(git.get_by_role("checkbox", name="Unstage tides.txt")).to_be_visible()
+    expect(activity).not_to_have_text("Staging…")
+
+    git.get_by_label("Commit summary").fill("Push it slowly")
+    git.get_by_role("button", name="Commit 1 file to main").click()
+    expect(git.get_by_text("No changes")).to_be_visible()
+    held = _hold(page, "push")
+    git.get_by_role("button", name="Push", exact=True).click()
+    expect(activity).to_have_text("Pushing…")
+    assert _git(remote, "log", "-1", "--format=%s", "main").strip() != "Push it slowly"
+    _let_go(held)
+    expect(git.get_by_role("button", name="Fetch", exact=True)).to_be_visible()
+    expect(activity).not_to_have_text("Pushing…")
+    assert _git(remote, "log", "-1", "--format=%s", "main").strip() == "Push it slowly"
 
 
 def test_the_list_beside_a_diff_is_resized_from_the_keyboard(terminal_page, repository):
