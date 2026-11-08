@@ -21,6 +21,13 @@ backend copy of dev 5032e834e with 99a9f60b9 reverted (the reload shows one repl
 In a chat comparing two models, Regenerate on a column asks the model now picked for that column
 (dev 3aaecdd0e). Discriminates: passes on dev c5981aaea, fails in a build that regenerates with
 the model that wrote the reply (the request names the replaced model).
+
+Keyboard focus stays on the version switch after switching versions and comes back to Edit
+after cancelling a reply edit (ba9274530, PR open-webui/open-webui#33678). Both pass on dev
+e8c0ad85e and fail on that build with ba9274530 reverted. Continue Response on a Responses API
+connection grows the same paragraph of the reply (Tim's 8366e2872); it passes on dev e8c0ad85e
+and on a backend copy with 8366e2872 reverted, and fails on a copy that keeps the continued text
+as an output item of its own.
 """
 
 from __future__ import annotations
@@ -30,11 +37,13 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import responses_provider as responses_api
 from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
+from harness.second_provider import OPENAI_CONFIG
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import conversation, expect_reply, last_reply, replies, send
-from utils.model_selector import model_search
+from utils.model_selector import model_search, select_model
 from utils.search_dialog import open_search, results, search
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -120,6 +129,90 @@ def test_continue_response_appends_to_the_same_reply(chat_page, upstream):
     chat_page.reload()
     expect_reply(chat_page, "and then it ends.")
     expect(last_reply(chat_page)).to_contain_text("The story begins")
+
+
+@pytest.fixture
+def responses_model(admin, preserve, listener):
+    preserve(OPENAI_CONFIG)
+    with admin.client() as client:
+        yield responses_api.connect_responses(client, listener)
+
+
+def test_continue_response_on_a_responses_connection_appends_to_the_same_reply(
+    page_for, make_user, responses_model
+):
+    continued = responses_api.completed()
+    # the real API repeats the round's whole output when it completes
+    continued["response"]["output"] = [
+        {
+            "type": "message",
+            "id": "msg_2",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": " and then it ends."}],
+        }
+    ]
+    responses_model.answer(
+        responses_api.events_stream(
+            *responses_api.message("The story begins"), responses_api.completed()
+        ),
+        responses_api.events_stream(
+            *responses_api.message(" and then ", "it ends.", item_id="msg_2"), continued
+        ),
+    )
+    # an admin account, so the Responses connection's model needs no access grant
+    page = page_for(make_user(role="admin"))
+    select_model(page, responses_api.RESPONSES_MODEL)
+    send(page, "tell a story")
+    expect_reply(page, "The story begins")
+
+    _reply_buttons(page).get_by_role("button", name="Continue Response").click()
+
+    # the continued text runs on in the same paragraph, never as a block of its own
+    joined = last_reply(page).locator("p", has_text="The story begins and then it ends.")
+    expect(joined).to_have_count(1)
+    expect(conversation(page).locator(".chat-assistant")).to_have_count(1)
+    page.reload()
+    expect(joined).to_have_count(1)
+
+
+def test_switching_versions_from_the_keyboard_keeps_focus_on_the_switch(chat_page, upstream):
+    # the switch was drawn anew for the other version and focus fell to the page (#33678)
+    upstream.queue(
+        reply.text("first take", match=reply.answering("name a river")),
+        reply.text("second take", match=reply.answering("name a river")),
+    )
+    send(chat_page, "name a river")
+    expect_reply(chat_page, "first take")
+    _regenerate(chat_page)
+    expect_reply(chat_page, "second take")
+
+    previous = conversation(chat_page).get_by_role("button", name="Previous message")
+    previous.focus()
+    chat_page.keyboard.press("Enter")
+    expect_reply(chat_page, "first take")
+    expect(previous, "focus left the version switch after going back").to_be_focused()
+
+    following = conversation(chat_page).get_by_role("button", name="Next message")
+    following.focus()
+    chat_page.keyboard.press("Enter")
+    expect_reply(chat_page, "second take")
+    expect(following, "focus left the version switch after going forward").to_be_focused()
+
+
+def test_cancelling_a_reply_edit_returns_focus_to_its_edit_button(chat_page, upstream):
+    upstream.queue(reply.text("a reply to keep", match=reply.answering("say a thing")))
+    send(chat_page, "say a thing")
+    expect_reply(chat_page, "a reply to keep")
+    edit_button = _reply_buttons(chat_page).get_by_role("button", name="Edit").last
+    edit_button.focus()
+    chat_page.keyboard.press("Enter")
+    expect(last_reply(chat_page).locator("textarea")).to_be_visible()
+
+    last_reply(chat_page).get_by_role("button", name="Cancel", exact=True).focus()
+    chat_page.keyboard.press("Enter")
+
+    expect(last_reply(chat_page).locator("textarea")).to_have_count(0)
+    expect(edit_button, "focus did not come back to Edit after cancelling (#33678)").to_be_focused()
 
 
 def test_sending_an_edited_question_starts_a_branch_with_its_own_reply(chat_page, upstream):
