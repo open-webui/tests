@@ -185,13 +185,14 @@ def test_keep_in_sidebar_pins_the_model(page, owner, provider_model):
     assert provider_model in stored["ui"]["pinnedModels"]
 
 
-def test_copy_link_puts_the_model_link_on_the_clipboard(page, owner, provider_model):
+def test_copy_link_puts_the_model_link_on_the_clipboard(page, provider_model):
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     click_menu_item(page, provider_model, "Copy Link")
 
     expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
     copied = read_text(page)
-    assert copied == f"{owner.base_url}/?model={provider_model}"
+    origin = page.evaluate("location.origin")
+    assert copied == f"{origin}/?model={provider_model}"
 
 
 def test_community_reviews_opens_the_model_on_the_community_site(page, provider_model):
