@@ -10,6 +10,13 @@ test, emitting a streamed chunk without its thinking fails the streamed-reply te
 tool call's arguments back as a string fails the tool test, leaving `max_tokens` unrenamed in
 the options fails the preset and chat-settings tests, and a non-streamed reply without Ollama's
 counters fails the API client test.
+
+The broken arguments test pins fix b6d861645 (PR open-webui/open-webui#33697, issue #33671): a
+history holding a tool call whose arguments were cut off, empty or not JSON could not be turned
+into an Ollama request, so every later message failed. Such a call now goes to Ollama with empty
+arguments. It passes on dev e8c0ad85e and fails on a backend copy with b6d861645 reverted (the
+request is refused with the JSON parse error). A saved chat no longer reaches that state, since
+its replay already repairs a broken call, so the history comes from an API client.
 """
 
 from __future__ import annotations
@@ -160,6 +167,49 @@ def test_a_tool_call_runs_and_its_result_goes_back_in_ollamas_shape(ollama):
     assert tool["role"] == "tool"
     assert tool["tool_call_id"] == assistant["tool_calls"][0]["id"] == stored_call["call_id"]
     assert "current_timestamp" in tool["content"]
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ['{"timezone": "Europe/Vie', "", "timezone=Europe/Vienna"],
+    ids=["cut-off", "empty", "not-json"],
+)
+def test_a_chat_goes_on_after_a_tool_call_with_broken_arguments(ollama, arguments):
+    # every later message failed until the broken call was edited out (issue #33671)
+    server, client = ollama
+    call = {
+        "id": "call_broken",
+        "type": "function",
+        "function": {"name": "get_current_timestamp", "arguments": arguments},
+    }
+    server.queue_chat(
+        json_answer(chat_line(OLLAMA_MODEL, {"content": "Back on track."}, **COUNTERS))
+    )
+
+    answered = client.post(
+        "/api/chat/completions",
+        json={
+            "model": OLLAMA_MODEL,
+            "stream": False,
+            "messages": [
+                {"role": "user", "content": "what time is it?"},
+                {"role": "assistant", "content": "", "tool_calls": [call]},
+                {"role": "tool", "tool_call_id": "call_broken", "content": "Error: bad arguments"},
+                {"role": "user", "content": "try again"},
+            ],
+        },
+    )
+
+    assert answered.status_code == 200, (
+        f"the chat is stuck after a tool call with {arguments!r} as arguments: {answered.text}"
+    )
+    assert answered.json()["choices"][0]["message"]["content"] == "Back on track."
+    replayed = [
+        call["function"]
+        for entry in server.chat_requests()[-1]["messages"]
+        for call in entry.get("tool_calls") or []
+    ]
+    assert replayed == [{"name": "get_current_timestamp", "arguments": {}}], replayed
 
 
 @pytest.fixture
