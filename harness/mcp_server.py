@@ -17,7 +17,9 @@ branches (a page `id`, or a `path` with its `locale`), answering with the argume
 as JSON; with `apps=True`, the MCP Apps tools: `dashboard`, `ledger` and `chart` each declare an
 app page (`DASHBOARD_URI`, `LEDGER_URI`, `CHART_URI`), the dashboard's page `DASHBOARD_PAGE`
 allowing the sites in `DASHBOARD_SITES`, the ledger's declaring no sites and the chart's trying to
-smuggle a directive in as `SMUGGLED_SITE`; `refresh_berths`, offered to the app alone and answering
+smuggle a directive in as `SMUGGLED_SITE`; `signals` shows `SIGNAL_PAGE`, whose Ask button asks
+the chat to send `SIGNAL_MESSAGE` (`ui/message`) and then reads "sent" or "cancelled";
+`refresh_berths`, offered to the app alone and answering
 `BERTHS_REFRESHED`, and `close_harbour`, offered to the model alone and answering
 `HARBOUR_CLOSED`. `tls=True` serves it over
 HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
@@ -99,6 +101,31 @@ CHART_URI = "ui://harbour/chart"
 DASHBOARD_PAGE = "<!doctype html><title>Harbour dashboard</title><p>Three berths free.</p>"
 LEDGER_PAGE = "<!doctype html><title>Harbour ledger</title><p>No dues outstanding.</p>"
 CHART_PAGE = "<!doctype html><title>Harbour chart</title><p>Depths in metres.</p>"
+SIGNAL_URI = "ui://harbour/signals"
+SIGNAL_MESSAGE = "Which berths are free tonight?"
+# the MCP Apps handshake written by hand: initialize, then ask the host to send a message
+SIGNAL_PAGE = """<!doctype html><title>Harbour signals</title>
+<button id="ask">Ask the harbour master</button><p id="status">idle</p>
+<script>
+const post = (message) => window.parent.postMessage({jsonrpc: "2.0", ...message}, "*");
+const status = (text) => (document.getElementById("status").textContent = text);
+window.addEventListener("message", (event) => {
+  const message = event.data;
+  if (message.id === 1 && message.result) {
+    post({method: "ui/notifications/initialized", params: {}});
+    status("ready");
+  }
+  if (message.id === 2) status(message.error ? "cancelled" : "sent");
+});
+document.getElementById("ask").addEventListener("click", () => {
+  status("asking");
+  const content = [{type: "text", text: %s}];
+  post({id: 2, method: "ui/message", params: {role: "user", content}});
+});
+post({id: 1, method: "ui/initialize", params: {
+  protocolVersion: "2026-01-26", appInfo: {name: "signals", version: "1"}, appCapabilities: {}
+}});
+</script>""" % json.dumps(SIGNAL_MESSAGE)
 DASHBOARD_SITES = {
     "resourceDomains": ["https://cdn.harbour.example"],
     "connectDomains": ["wss://live.harbour.example"],
@@ -256,6 +283,7 @@ def _add_apps(server: MCPServer) -> None:
         ("dashboard", DASHBOARD_URI, DASHBOARD_PAGE, {"ui": {"csp": DASHBOARD_SITES}}),
         ("ledger", LEDGER_URI, LEDGER_PAGE, None),
         ("chart", CHART_URI, CHART_PAGE, {"ui": {"csp": {"connectDomains": [SMUGGLED_SITE]}}}),
+        ("signals", SIGNAL_URI, SIGNAL_PAGE, None),
     ]
     for name, uri, page, page_meta in pages:
         server.add_tool(
