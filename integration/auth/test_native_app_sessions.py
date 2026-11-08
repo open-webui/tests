@@ -13,6 +13,13 @@ role reaches each route is in integration/security/test_route_role_sweep.py.
 Every request carries an address of its own (`X-Forwarded-For`), since the sessions routes allow
 30 requests a minute per address.
 
+A session lasts `SESSION_EXPIRES_IN` (90 days by default) from its last refresh, while each access
+token lasts 15 minutes. With a session's access token, Tether connects to `/api/v1/tether/connect`
+and says hello; the server answers ready and the device shows in that person's terminal list as
+`tether:<connection id>` under its name, to nobody else, and only while it offers its terminal. A
+plain sign-in token, which belongs to no renewable session, is turned away, and revoking the
+session takes the device off the list.
+
 Discriminates: on dev f659c0d12, each of these edits in a backend copy turns its test red: an
 exchange that skips the consumed check and keeps the request open (code reuse), dropping the
 challenge check (wrong verifier), the callback check (wrong callback), the 127.0.0.1 host check
@@ -21,19 +28,30 @@ match on refresh (old refresh token), the request-id check on a retried refresh,
 lookup in token validation (revoke), the revoke on sign-out, the account filter in the list or in
 revoke, the role check in the proof (pending and deactivated account), the human-session
 dependency (API key), refresh tokens among the accepted token types and a limit of 3000.
+On dev e8c0ad85e, in a backend copy: a session length that ignores `SESSION_EXPIRES_IN` fails
+the env test, listing devices without their session check fails the revoke test, listing every
+account's devices to everyone fails the device test (either of the account filter or the grant
+alone still hides it) and accepting a token of no session fails the plain-token test.
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
+import json
 import secrets
+import time
 import uuid
+from typing import Iterator
 
 import httpx
 import pytest
+from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect
 
-from harness.actors import sign_in
+from harness.actors import create_user, sign_in
+from harness.backends import wait_until
 from harness.mfa import new_address
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -389,3 +407,101 @@ def test_too_many_requests_from_one_address_are_cut_off(instance):
     limited = app.open_request()
     assert limited.status_code == 429, f"the 31st request in a minute went through: {limited.text}"
     assert App(instance).open_request().status_code == 200
+
+
+# --- session length and the Tether connection ----------------------------------------------------
+
+NINETY_DAYS = 90 * 24 * 3600
+TERMINALS = "/api/v1/terminals/"
+
+
+def test_a_session_lasts_ninety_days_from_its_last_use_by_default(instance, make_user):
+    before = time.time()
+    _, tokens = signed_in_app(instance, make_user())
+
+    assert abs(tokens["refresh_expires_at"] - (before + NINETY_DAYS)) < 120, tokens
+    assert tokens["expires_at"] <= time.time() + 15 * 60, "an access token lasts over 15 minutes"
+
+
+@pytest.mark.slow
+def test_session_expires_in_sets_how_long_an_unused_session_lasts(instance_with):
+    launched = instance_with({"SESSION_EXPIRES_IN": "2h"})
+    before = time.time()
+    _, tokens = signed_in_app(launched, create_user(launched))
+
+    assert abs(tokens["refresh_expires_at"] - (before + 7200)) < 120, tokens
+
+
+@contextlib.contextmanager
+def connected_device(instance, token: str, name: str) -> Iterator[tuple[str, dict]]:
+    """Connect as Tether with `token` and keep the socket open for the block.
+
+    Yields the connection id and the server's first answer, `{"closed": code}` when it hung up.
+    """
+    url = instance.base_url.replace("http://", "ws://") + "/api/v1/tether/connect"
+    connection_id = str(uuid.uuid4())
+    hello = {
+        "type": "hello",
+        "version": 2,
+        "token": token,
+        "connection_id": connection_id,
+        "name": name,
+        "services": ["open_terminal"],
+    }
+    with connect(url) as socket:
+        socket.send(json.dumps(hello))
+        try:
+            answer = json.loads(socket.recv(timeout=10))
+        except ConnectionClosed as closed:
+            answer = {"closed": closed.rcvd.code if closed.rcvd else None}
+        yield connection_id, answer
+
+
+def terminals(instance, token: str) -> dict[str, str]:
+    with instance.client(token) as client:
+        listed_terminals = client.get(TERMINALS)
+    assert listed_terminals.status_code == 200, listed_terminals.text
+    return {entry["id"]: entry["name"] for entry in listed_terminals.json()}
+
+
+def test_a_connected_device_shows_in_its_owners_terminal_list_only(instance, make_user):
+    owner, other = make_user(), make_user()
+    _, tokens = signed_in_app(instance, owner)
+    name = f"Workstation {uuid.uuid4().hex[:6]}"
+
+    with connected_device(instance, tokens["token"], name) as (connection_id, answer):
+        assert answer.get("type") == "ready", f"the hello was not answered: {answer}"
+        device_id = f"tether:{connection_id}"
+        assert terminals(instance, tokens["token"]).get(device_id) == name
+        assert device_id not in terminals(instance, human_token(instance, other)), (
+            "another account sees the device"
+        )
+
+    assert wait_until(lambda: device_id not in terminals(instance, tokens["token"]), 10), (
+        "the device stayed listed after it disconnected"
+    )
+
+
+def test_a_plain_sign_in_token_cannot_connect_a_device(instance, make_user):
+    account = make_user()
+    token = human_token(instance, account)
+
+    with connected_device(instance, token, "Laptop") as (_, answer):
+        assert answer.get("type") != "ready", "a token without a session connected"
+    assert not any(entry.startswith("tether:") for entry in terminals(instance, token))
+
+
+def test_revoking_the_session_takes_its_device_off_the_list(instance, make_user):
+    account = make_user()
+    _, tokens = signed_in_app(instance, account)
+    person = human_token(instance, account)
+
+    with connected_device(instance, tokens["token"], "Studio") as (connection_id, answer):
+        assert answer.get("type") == "ready", answer
+        device_id = f"tether:{connection_id}"
+        assert device_id in terminals(instance, person)
+        with instance.client(person) as client:
+            revoked = client.delete(f"{SESSIONS}/{tokens['session_id']}")
+        assert revoked.status_code == 200, revoked.text
+
+        assert device_id not in terminals(instance, person), "a revoked session's device is listed"
