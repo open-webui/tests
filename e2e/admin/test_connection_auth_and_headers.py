@@ -117,7 +117,7 @@ def test_session_auth_signs_with_the_users_session_and_cookies_follow_the_switch
     publish(admin, f"{prefix}.keeper")
     asker = make_user()
     page = page_for(asker)
-    page.context.add_cookies([{"name": "harbor_pref", "value": "blue", "url": asker.base_url}])
+    page.context.add_cookies([{"name": "harbor_pref", "value": "blue", "url": page.url}])
 
     chat_once(page, f"{prefix}.keeper")
     signed = provider.requests_to("/v1/chat/completions")[-1]

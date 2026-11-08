@@ -34,6 +34,7 @@ from playwright.sync_api import expect
 from harness import upstream as reply
 from harness.mcp_oauth import register_oauth_mcp, serving_protected_mcp
 from harness.mcp_server import TOOL_SERVERS
+from harness.plain_http import serve_at_lan_host
 from utils.chat_ui import expect_reply, integration_row, send
 from utils.menus import late_menu_entry
 from utils.tool_servers import (
@@ -54,8 +55,9 @@ EVERYONE = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
 @pytest.fixture
-def mcp(preserve):
-    preserve(TOOL_SERVERS)
+def mcp(preserve, instance):
+    preserve(TOOL_SERVERS, "admin_config")
+    serve_at_lan_host(instance)
     with serving_protected_mcp() as protected:
         yield protected
 

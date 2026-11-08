@@ -18,7 +18,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, BrowserType, Page
+from playwright.sync_api import APIResponse, Browser, BrowserContext, BrowserType, Page, Route
 
 from harness.instance import LaunchedInstance
 
@@ -88,6 +88,7 @@ def install() -> None:
     """Send every browser context and page navigation of the suite to `LAN_HOST`."""
     launch = BrowserType.launch
     open_context = Browser.new_context
+    send_from_playwright = Route.fetch
 
     def launch_resolving_lan_host(self: BrowserType, *args, **kwargs) -> Browser:
         kwargs["args"] = [*(kwargs.get("args") or []), RESOLVE_LAN_HOST]
@@ -101,6 +102,15 @@ def install() -> None:
     def goto(self: Page, url: str, **kwargs):
         return _navigate(self, url if _secure_context_test else lan_url(url), **kwargs)
 
+    def fetch(self: Route, **kwargs) -> APIResponse:
+        # Playwright sends it from its own process, which cannot resolve LAN_HOST
+        url = kwargs.get("url") or self.request.url
+        server = urlsplit(url)
+        if server.hostname == LAN_HOST:
+            kwargs["url"] = urlunsplit(server._replace(netloc=f"{LOOPBACK_HOST}:{server.port}"))
+        return send_from_playwright(self, **kwargs)
+
     BrowserType.launch = launch_resolving_lan_host
     Browser.new_context = new_context
     Page.goto = goto
+    Route.fetch = fetch

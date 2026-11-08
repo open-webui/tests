@@ -29,6 +29,7 @@ from playwright.sync_api import expect
 from harness import upstream as reply
 from harness.mcp_oauth import GOOGLE_WORKSPACE_SCOPES, register_oauth_mcp, serving_protected_mcp
 from harness.mcp_server import TOOL_SERVERS
+from harness.plain_http import serve_at_lan_host
 from harness.terminal_server import read_grant
 from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
 from utils.tool_servers import press_to_sign_in
@@ -43,9 +44,10 @@ PHRASE = "the kettle sings at dawn"
 
 
 def test_pressing_a_server_that_asks_for_many_scopes_connects_it(
-    page_for, make_user, admin, preserve, upstream
+    page_for, make_user, admin, preserve, upstream, instance
 ):
-    preserve(TOOL_SERVERS)
+    preserve(TOOL_SERVERS, "admin_config")
+    serve_at_lan_host(instance)
     person = make_user()
     server_id = f"wide_mcp_{secrets.token_hex(4)}"
     with serving_protected_mcp(scopes=GOOGLE_WORKSPACE_SCOPES) as mcp:
