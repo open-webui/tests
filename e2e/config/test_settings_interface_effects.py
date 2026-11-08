@@ -13,10 +13,11 @@ the input instead of sending it; Keep Follow-Up Prompts in Chat leaves an earlie
 under it; Auto-Copy Response puts a finished reply on the clipboard on a secure page, and over plain
 HTTP, where the browser lets a page copy only right after a click, switching it on says the
 clipboard is not allowed and leaves it off (open-webui/open-webui #33935: the switch threw there,
-flipped on and was never saved); Temporary Chat by Default starts a new chat temporary and unstored;
-Insert Suggestion Prompt to Input fills the input from a suggestion instead of sending it; Show
-Formatting Toolbar shows the toolbar over selected input text; Landing Page Mode Chat shows the
-conversation pane on a new chat; Render Markdown in User Messages off shows a message as typed.
+flipped on and was never saved), while an account that has it on can still switch it off there;
+Temporary Chat by Default starts a new chat temporary and unstored; Insert Suggestion Prompt to
+Input fills the input from a suggestion instead of sending it; Show Formatting Toolbar shows the
+toolbar over selected input text; Landing Page Mode Chat shows the conversation pane on a new chat;
+Render Markdown in User Messages off shows a message as typed.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, reading `chatBubble` as always on turns
 the bubble tests red, passing `richText` as always on turns the rich text test red, copying a reply
@@ -25,10 +26,11 @@ always on turns the title test red. Also in a frontend copy, each setting read a
 its own test red: `collapseCodeBlocks`, `expandDetails`, `showChatTitleInTab` (always shown),
 `insertFollowUpPrompt`, `keepFollowUpPrompts`, `responseAutoCopy`, `temporaryChatByDefault`,
 `insertSuggestionPrompt`, `showFormattingToolbar`, `landingPageMode` and
-`renderMarkdownInUserMessages` (always rendered). The plain-HTTP Auto-Copy test fails on dev
-241c8c0e4 (no message, the switch shows on) and passes with the fix for #33935. The Copy Formatted
-Text test fails on dev 241c8c0e4 (the HTML holds the raw Markdown) and passes with the fix for
-#33934.
+`renderMarkdownInUserMessages` (always rendered). The switch-off test fails on dev 241c8c0e4 (the
+off click saves nothing) and passes with the fix for #33935. The plain-HTTP Auto-Copy test fails on
+dev 241c8c0e4 (no message, the switch shows on) and passes with the fix for #33935. The Copy
+Formatted Text test fails on dev 241c8c0e4 (the HTML holds the raw Markdown) and passes with the fix
+for #33934.
 """
 
 from __future__ import annotations
@@ -417,6 +419,31 @@ def test_auto_copy_response_over_plain_http_stays_off_and_says_why(page_for, mak
         stored = client.get("/api/v1/users/user/settings").json() or {}
     assert not stored.get("ui", {}).get("responseAutoCopy"), (
         f"Auto-Copy Response was saved on over plain HTTP: {stored.get('ui')!r}"
+    )
+
+
+def test_auto_copy_response_switched_on_elsewhere_can_be_switched_off_over_plain_http(
+    page_for, make_user
+):
+    account = make_user()
+    with account.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"responseAutoCopy": True}}
+        )
+    assert saved.status_code == 200, saved.text
+    page = page_for(account)
+    switch = interface_switch(page, "Auto-Copy Response to Clipboard")
+    expect(switch).to_have_attribute("aria-checked", "true")
+
+    with page.expect_response(lambda response: "/user/settings/update" in response.url):
+        switch.click()
+
+    expect(switch).to_have_attribute("aria-checked", "false")
+    expect(page.get_by_text("Clipboard write permission denied.")).to_have_count(0)
+    with account.client() as client:
+        stored = client.get("/api/v1/users/user/settings").json() or {}
+    assert stored.get("ui", {}).get("responseAutoCopy") is False, (
+        f"switching Auto-Copy Response off over plain HTTP was not saved: {stored.get('ui')!r}"
     )
 
 
