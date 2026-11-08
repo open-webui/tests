@@ -206,7 +206,8 @@ def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_rel
     expect(page).to_have_url(re.compile("/c/"))
     reopened = page_for(person, path=urlparse(page.url).path)
     expect(directory_button(reopened)).to_contain_text(folder.name)
-    expect(directory_button(reopened)).to_be_disabled()
+    # a518ff163: the folder can be changed again once the chat has messages
+    expect(directory_button(reopened)).to_be_enabled()
 
 
 def test_a_recently_used_folder_and_no_folder_can_be_picked_from_the_menu(
