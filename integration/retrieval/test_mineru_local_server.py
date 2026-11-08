@@ -22,16 +22,26 @@ file (the page range test), reading the job's first answer without polling (the 
 taking a failed job for a completed one (the failed job test), storing the text as MinerU sent it
 (the picture test) and taking every server for 4.x (the 3.x test). The 3.x test passes on
 7cd0f1411 and fae12c8a9 and fails when a 3.x server is sent any V1 call besides the health check.
+
+MinerU 4.1 (7cd0f1411, PR open-webui/open-webui#33719, issue #33718) replaced the upload and parse
+job routes with a Tasks API, so every document sent to a 4.1 server failed. A server whose health
+check lists `task_output_formats` now gets a task, the file goes to the upload URL the task hands
+out, the task is polled and the result archive read. The API key goes to the MinerU server only,
+never to those storage URLs. The 4.1 tests pass on dev e8c0ad85e and fail on a backend copy with
+7cd0f1411 reverted (the server is sent the 4.0 upload route and answers 404); the storage URL test
+also fails on a copy that sends the key with every request.
 """
 
 from __future__ import annotations
 
+import io
 import uuid
+import zipfile
 from typing import Iterator
 
 import pytest
 
-from harness.listener import ReceivedRequest, json_answer, text_answer
+from harness.listener import ReceivedRequest, json_answer, listening, text_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
 
 pytestmark = [pytest.mark.api, pytest.mark.requires_source]
@@ -283,3 +293,124 @@ def test_a_3x_server_gets_the_parameters_as_a_file_parse_form(use_mineru, listen
     assert "/v1/health" in v1_paths, "the server's version was not checked"
     v1_job_calls = [path for path in v1_paths if path != "/v1/health"]
     assert not v1_job_calls, f"a 3.x server was sent V1 calls: {v1_job_calls}"
+
+
+TASK_ID = "task-1"
+
+
+def zipped_markdown(markdown: str) -> bytes:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("report/report.md", markdown)
+    return archive.getvalue()
+
+
+def mineru_tasks_server(
+    listener, storage, api_key: str, statuses: tuple[str, ...], error: str = ""
+):
+    """Route `listener` like a MinerU 4.1 server whose uploads and results live on `storage`.
+
+    Every call to the server needs `api_key`; the storage URLs it hands out carry their own
+    signature, as presigned object storage URLs do. The task answers `statuses` in turn.
+    """
+    task_states: Iterator[str] = iter(statuses)
+    upload_path, result_path = "/bucket/upload-1?signature=abc", "/bucket/result-1.zip"
+
+    def task(_request: ReceivedRequest):
+        status = next(task_states, statuses[-1])
+        file_result = {
+            "upload": {
+                "url": f"{storage.base_url}{upload_path}",
+                "headers": {"x-amz-acl": "private"},
+            },
+            "parse": {"tier": "flash", "parser_version": "4.1.6"},
+        }
+        if status == "completed":
+            file_result["result_url"] = f"{storage.base_url}{result_path}"
+        if error:
+            file_result["error"] = {"message": error}
+        return json_answer({"task_id": TASK_ID, "status": status, "files": [file_result]})
+
+    def keyed(answer):
+        def handler(request: ReceivedRequest):
+            if request.headers.get("Authorization") != f"Bearer {api_key}":
+                return json_answer({"error": {"code": "invalid_api_key"}}, status=401)
+            return answer(request)
+
+        return handler
+
+    features = {"status": "ok", "features": ["task_output_formats"]}
+    listener.route("GET", "/v1/health", json_answer(features))
+    listener.route("POST", "/v1/tasks", keyed(task))
+    listener.route("GET", f"/v1/tasks/{TASK_ID}", keyed(task))
+    storage.route("PUT", "/bucket/upload-1", json_answer({}))
+    storage.route(
+        "GET", result_path, (200, {"Content-Type": "application/zip"}, zipped_markdown(PARSED))
+    )
+
+
+@pytest.fixture
+def storage():
+    with listening() as service:
+        yield service
+
+
+@pytest.mark.regression
+def test_a_mineru_41_server_parses_the_document_through_its_tasks_api(
+    use_mineru, listener, storage
+):
+    # MinerU 4.1 dropped the upload and parse job routes, so every document failed (#33718)
+    api_key = f"mineru-{uuid.uuid4().hex[:8]}"
+    mineru_tasks_server(listener, storage, api_key, statuses=("completed",))
+
+    stored = upload(use_mineru(api_key, params={"tier": "flash", "page_ranges": "2-3"}))
+
+    assert stored["data"].get("content") == PARSED, (
+        f"a MinerU 4.1 server parsed nothing: {[request.path for request in listener.received]}"
+    )
+    [task] = listener.requests_to("/v1/tasks")
+    [entry] = task.json()["files"]
+    assert {key: entry[key] for key in ("bytes", "page_range")} == {
+        "bytes": len(PDF[1]),
+        "page_range": "2-3",
+    }, entry
+    assert (task.json()["tier"], task.json()["ocr_mode"]) == ("flash", "auto")
+    [put] = storage.requests_to("/bucket/upload-1")
+    assert put.body == PDF[1], "the document never reached the upload URL MinerU handed out"
+    assert put.headers.get("x-amz-acl") == "private", (
+        "the upload dropped the headers MinerU asked for"
+    )
+
+
+@pytest.mark.regression
+def test_the_mineru_key_never_goes_to_the_storage_urls_it_hands_out(use_mineru, listener, storage):
+    api_key = f"mineru-{uuid.uuid4().hex[:8]}"
+    mineru_tasks_server(listener, storage, api_key, statuses=("completed",))
+
+    stored = upload(use_mineru(api_key))
+
+    assert stored["data"].get("content") == PARSED, stored["data"]
+    assert storage.received, "the upload and result URLs were never used"
+    leaked = [request.path for request in storage.received if "Authorization" in request.headers]
+    assert leaked == [], f"the MinerU API key was sent to object storage: {leaked}"
+    server_calls = [request for request in listener.received if request.path != "/v1/health"]
+    assert server_calls and all(
+        request.headers.get("Authorization") == f"Bearer {api_key}" for request in server_calls
+    ), [request.path for request in server_calls]
+
+
+@pytest.mark.journey
+def test_a_running_mineru_41_task_is_polled_and_its_failure_is_kept(use_mineru, listener, storage):
+    reason = f"page 3 cannot be read {uuid.uuid4().hex[:6]}"
+    mineru_tasks_server(
+        listener, storage, "key", statuses=("pending", "running", "failed"), error=reason
+    )
+
+    stored = upload(use_mineru("key"))
+
+    assert len(listener.requests_to(f"/v1/tasks/{TASK_ID}")) == 2, (
+        "the task was not polled to its end"
+    )
+    assert stored["data"].get("status") == "failed", stored["data"]
+    assert reason in (stored["data"].get("error") or ""), stored["data"]
+    assert not storage.requests_to("/bucket/result-1.zip")
