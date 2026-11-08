@@ -12,6 +12,10 @@ file on disk alone, Confirm writes the edit to the file and then sends.
 Discriminates: passes on dev 3b8205505; on a build where the file browser's ask box drops the
 quote, where asking during a reply sends at once instead of queueing, and where the unsaved-edit
 prompt is skipped, the matching tests here fail.
+
+Since 555125b36 scrolling the file closes the ask box, which otherwise stayed where the selection
+had been. The scroll test passes on dev e8c0ad85e and fails in a frontend copy with 555125b36
+reverted.
 """
 
 from __future__ import annotations
@@ -185,3 +189,19 @@ def test_unsaved_edits_are_kept_unsent_on_cancel_and_saved_on_confirm(browser, p
     assert plan.read_text() == PLAN.replace("12", "13"), "Confirm should save the edit"
     asked = requests_asking(upstream, instruction)
     assert len(asked) == 1, f"Confirm should send the request once: {len(asked)}"
+
+
+def test_scrolling_the_file_dismisses_the_ask_box(browser, open_terminal):
+    path = open_terminal.home / f"long-plan-{uuid.uuid4().hex[:8]}.py"
+    path.write_text(PLAN + "".join(f"step_{number}()\n" for number in range(300)))
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(path.name, exact=True).click()
+    expect(browser.get_by_text(SELECTED, exact=True)).to_be_visible()
+    select_line(browser, SELECTED)
+    expect(ask_box(browser.page)).to_be_visible()
+
+    browser.get_by_text(SELECTED, exact=True).hover()
+    browser.page.mouse.wheel(0, 600)
+
+    expect(browser.get_by_text(SELECTED, exact=True)).not_to_be_in_viewport()
+    expect(ask_box(browser.page)).to_be_hidden()

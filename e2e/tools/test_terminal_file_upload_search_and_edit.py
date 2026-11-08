@@ -18,6 +18,10 @@ early, every test here fails. The unsaved-changes tests pass on dev 3b8205505 an
 where the file browser leaves an edited file without asking. The text, Ctrl+S and Confirm tests
 fail on one frontend build of dev f659c0d12 whose Save button does nothing, whose code editor
 ignores Ctrl+S and whose prompt's Confirm keeps the tab.
+
+Since 10f1226f0 selecting a file no longer pushes the rows down to make room for the bulk action
+bar, and a click on an empty part of the file list, such as the grid's edge, clears the selection.
+The selection test passes on dev e8c0ad85e and fails in a frontend copy with 10f1226f0 reverted.
 """
 
 from __future__ import annotations
@@ -103,6 +107,36 @@ def test_select_all_then_delete_removes_the_selected_files(browser, open_termina
     assert not (home / "bulk-a.txt").exists()
     assert not (home / "bulk-c.txt").exists()
     assert (home / "bulk-b.txt").exists()
+
+
+def _top(row) -> float:
+    return row.evaluate("row => row.getBoundingClientRect().top")
+
+
+def test_selecting_keeps_the_rows_in_place_and_a_click_beside_them_clears_it(
+    browser, open_terminal
+):
+    for name in ("pick-a.txt", "pick-b.txt"):
+        (open_terminal.home / name).write_text(name)
+    browser.get_by_label("Refresh", exact=True).first.click()
+    first = browser.get_by_text("pick-a.txt", exact=True)
+    expect(browser.get_by_text("pick-b.txt", exact=True)).to_be_visible()
+    before = _top(first)
+
+    first.click(modifiers=["Control"])
+
+    expect(browser.get_by_role("button", name="Select All")).to_be_visible()
+    assert _top(first) == before, f"the rows moved from {before} to {_top(first)} on selecting"
+
+    browser.get_by_label("Actions", exact=True).click()
+    browser.page.get_by_role("menu").get_by_role("menuitem", name="Grid view").click()
+    # the grid has no name or role of its own
+    tiles = browser.locator("ul").filter(has=browser.page.get_by_text("pick-b.txt", exact=True))
+    browser.get_by_text("pick-b.txt", exact=True).click(modifiers=["Control"])
+    expect(browser.get_by_role("checkbox", name="Select pick-b.txt")).to_be_checked()
+    # the grid's padding, beside every tile
+    tiles.last.click(position={"x": 2, "y": 2})
+    expect(browser.get_by_role("button", name="Select All")).to_have_count(0)
 
 
 def test_an_edited_text_file_is_saved_to_the_terminal(browser, open_terminal):

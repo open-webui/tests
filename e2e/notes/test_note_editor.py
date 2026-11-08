@@ -20,6 +20,10 @@ is cut: each toolbar button toggling another mark or block, the Formatting switc
 generated title dropped, the word count stuck at zero, the created label losing its "Today at"
 and the undo button doing nothing. The note has no saved indicator and no edited-time label in
 this build, so neither is tested.
+
+Since 2416b1fc0 scrolling the note hides the toolbar, which otherwise floated where the selection
+had been, until the selection changes. The scroll test passes on dev e8c0ad85e and fails in a
+frontend copy with 2416b1fc0's editor change reverted.
 """
 
 from __future__ import annotations
@@ -131,6 +135,29 @@ def test_the_toolbar_turns_a_line_into_a_block(page_for, make_user, tooltip, blo
     _wait_until_stored(author, note_id, "md", stored_md)
     page.reload()
     expect(_editor(page).locator(block)).to_have_text("a line")
+
+
+def test_scrolling_the_note_hides_the_toolbar_until_the_selection_changes(page_for, make_user):
+    page = page_for(make_user())
+    _new_note(page)
+    _editor(page).click()
+    for number in range(60):
+        page.keyboard.type(f"line {number}")
+        page.keyboard.press("Enter")
+    page.keyboard.type("the last line")
+    page.keyboard.press("Shift+Home")
+    toolbar = page.locator("#bubble-menu")
+    expect(toolbar).to_be_visible()
+
+    _editor(page).get_by_text("the last line", exact=True).hover()
+    page.mouse.wheel(0, -1500)
+
+    expect(_editor(page).get_by_text("the last line", exact=True)).not_to_be_in_viewport()
+    expect(toolbar).to_be_hidden()
+    _editor(page).get_by_text("line 2", exact=True).click()
+    page.keyboard.press("End")
+    page.keyboard.press("Shift+Home")
+    expect(toolbar).to_be_visible()
 
 
 # ---------------------------------------------------------------- the Formatting switch

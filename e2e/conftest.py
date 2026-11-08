@@ -14,10 +14,11 @@ import contextlib
 import json
 import re
 from pathlib import Path
-from typing import Callable, Generator
+from typing import Callable, Generator, Iterator
+from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 
 from conftest import AppConfig
 from harness.actors import Actor
@@ -33,6 +34,8 @@ from harness.prepared_data import serving
 from harness.reply_gate import hold_new_chat_events
 
 ARTIFACTS_DIR = Path("test-results")
+# a host name that is neither localhost nor a loopback address, as a phone on the LAN uses
+LAN_HOST = "owui-lan.test"
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -177,6 +180,34 @@ def page_for(
     with contextlib.ExitStack() as closing:
         for index, browser_context in enumerate(opened):
             closing.callback(_close_context, browser_context, request.node, f"browser-{index}")
+
+
+@pytest.fixture
+def lan_page_for(playwright_instance: Playwright, config) -> Iterator[Callable[[Actor], Page]]:
+    """`lan_page_for(actor)` opens a signed-in page on the instance through `LAN_HOST`, over plain
+    HTTP, where the page is not a secure context and the browser offers no `crypto.randomUUID`."""
+    browser = playwright_instance.chromium.launch(
+        headless=config.headless, args=[f"--host-resolver-rules=MAP {LAN_HOST} 127.0.0.1"]
+    )
+
+    def open_page(actor: Actor) -> Page:
+        _dismiss_first_run_modals(actor)
+        port = urlsplit(actor.base_url).port
+        context = browser.new_context(
+            base_url=f"http://{LAN_HOST}:{port}", viewport={"width": 1920, "height": 1080}
+        )
+        context.set_default_timeout(config.default_timeout)
+        page = context.new_page()
+        page.add_init_script(
+            f"try {{ localStorage.setItem('token', {json.dumps(actor.token)}); }} catch (e) {{}}"
+        )
+        page.goto("/")
+        page.wait_for_function(APP_LOADED, timeout=config.navigation_timeout)
+        assert page.evaluate("isSecureContext") is False
+        return page
+
+    yield open_page
+    browser.close()
 
 
 @pytest.fixture

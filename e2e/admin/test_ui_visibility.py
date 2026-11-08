@@ -11,6 +11,13 @@ user's message "You", and the switch is gone from their Interface settings.
 Discriminates: passes on the dev 948432b43 build; in a frontend copy with every control read as
 visible, every test fails (the user keeps Attach Webpage, Unarchive and the Chat Bubble UI
 switch) while the header archive journey on the same build stays green.
+
+Every control in the list shows its name, the six Selected switches included (PR
+open-webui/open-webui#33734, fix 032042055, showed their translation keys). A group whose every
+control is hidden is left out as well (PR #33867, fix ab416b0e3): with every Add Context entry
+hidden a user's + menu has no Add Context, and with every artifact setting hidden their
+Interface settings have no Artifacts heading. These pass on dev e8c0ad85e and fail in a frontend
+copy with 032042055 and ab416b0e3 reverted.
 """
 
 from __future__ import annotations
@@ -21,7 +28,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.chat_history import seed_chat
-from utils.chat_ui import chat_input, conversation, open_add_context
+from utils.chat_ui import chat_input, conversation, open_add_context, open_input_menu
 from utils.setting_rows import setting_button
 from utils.sidebar_chats import chat_menu, chat_row
 from utils.user_menu import open_settings
@@ -30,6 +37,28 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 VISIBILITY = "/api/v1/configs/interface/visibility"
 CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
+SELECTED_CONTROLS = (
+    "Selected Tools",
+    "Selected Skills",
+    "Selected Filters",
+    "Selected Web Search",
+    "Selected Image Generation",
+    "Selected Code Interpreter",
+)
+ADD_CONTEXT_CONTROLS = (
+    "chat.attach_webpage",
+    "chat.attach_files",
+    "chat.attach_notes",
+    "chat.attach_knowledge",
+    "chat.reference_chats",
+)
+ARTIFACT_SETTINGS = (
+    "settings.detect_artifacts",
+    "settings.iframe_sandbox_allow_scripts",
+    "settings.iframe_sandbox_allow_same_origin",
+    "settings.iframe_sandbox_allow_forms",
+    "settings.iframe_sandbox_allow_downloads",
+)
 
 
 @pytest.fixture
@@ -100,6 +129,57 @@ def test_attach_webpage_switched_off_leaves_the_users_menu_but_not_the_admins(
     expect(chat_input(admin_page)).to_be_visible()
     admin_menu = open_add_context(admin_page)
     expect(admin_menu.get_by_role("menuitem", name="Attach Webpage")).to_be_visible()
+
+
+def test_every_visible_control_shows_its_name(page_for, admin):
+    page = page_for(admin, path="/admin/settings/interface")
+    settings = page.get_by_role("dialog")
+    setting_button(settings, "Visible controls").click()
+    controls = settings.locator("#interface-visible-controls")
+    groups = controls.locator("details")
+    expect(groups.first).to_be_visible()
+    for index in range(groups.count()):
+        group = groups.nth(index)
+        group.locator("summary").click()
+        expect(group).to_have_attribute("open", "")
+
+    names = controls.get_by_role("switch").evaluate_all(
+        "switches => switches.map(s => s.getAttribute('aria-label') || s.textContent.trim())"
+    )
+    assert len(names) > 20, f"the groups opened with too few switches: {names}"
+    raw = [name for name in names if name.startswith("settings.")]
+    assert not raw, f"Visible controls shows translation keys in place of names: {raw}"
+    for name in SELECTED_CONTROLS:
+        expect(controls.get_by_role("switch", name=name, exact=True)).to_be_visible()
+
+
+def test_hiding_every_add_context_entry_takes_the_entry_from_users(
+    page_for, admin, make_user, hide
+):
+    hide(*ADD_CONTEXT_CONTROLS)
+
+    user_menu = open_input_menu(page_for(make_user()))
+    expect(user_menu.get_by_role("menuitem", name="Upload Files")).to_be_visible()
+    expect(user_menu.get_by_role("menuitem", name="Add Context")).to_have_count(0)
+
+    admin_menu = open_add_context(page_for(admin))
+    expect(admin_menu.get_by_role("menuitem", name="Attach Webpage")).to_be_visible()
+
+
+def test_hiding_every_artifact_setting_takes_the_heading_from_users(page_for, make_user, hide):
+    page = page_for(make_user(), path="/?settings=interface")
+    interface = page.locator("#tab-interface")
+    heading = interface.get_by_text("Artifacts", exact=True)
+    expect(heading).to_be_visible()
+
+    hide(*ARTIFACT_SETTINGS)
+    page.goto("/?settings=interface")
+
+    expect(interface.get_by_role("switch", name="Widescreen Mode", exact=True)).to_be_visible()
+    expect(
+        interface.get_by_role("switch", name="Detect Artifacts Automatically", exact=True)
+    ).to_have_count(0)
+    expect(heading).to_have_count(0)
 
 
 def test_hidden_archive_takes_archive_and_unarchive_from_users_only(

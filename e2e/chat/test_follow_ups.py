@@ -10,17 +10,25 @@ Discriminates: passes on dev 30f3f6a8f; in a backend copy that stores and sends 
 follow-ups the generated, click, keep and insert tests fail; in a frontend build that always asks
 for follow-ups the switched-off test fails, and with Insert Follow-Up Prompt to Input ignored the
 insert test fails.
+
+A follow-up clicked while no model is selected shows "Model not selected" and sends nothing (PR
+open-webui/open-webui#33838, fix b7abeb4e2, issue #33837); it was sent with no model to answer
+it. The chat's model is gone and the only other one hidden, so the chat opens on no model. The
+test passes on dev e8c0ad85e and fails in a frontend copy with b7abeb4e2 reverted.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.backends import wait_until
+from harness.chat_history import seed_chat
+from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -153,3 +161,50 @@ def test_an_account_with_follow_ups_off_is_offered_none(
         body for body in upstream.chat_requests() if reply.answering(FOLLOW_UP_TASK)(body)
     ]
     assert follow_up_requests == []
+
+
+@pytest.fixture
+def every_model_hidden(admin):
+    """The provider's only model hidden, so a chat whose model is gone falls back to none."""
+    with admin.client() as client:
+        stored = client.get("/api/v1/models/model", params={"id": MOCK_MODEL_ID}).json()
+        hidden = {**stored, "meta": {**(stored.get("meta") or {}), "hidden": True}}
+        updated = client.post(
+            "/api/v1/models/model/update", params={"id": MOCK_MODEL_ID}, json=hidden
+        )
+        assert updated.status_code == 200, updated.text
+        yield
+        restored = client.post(
+            "/api/v1/models/model/update", params={"id": MOCK_MODEL_ID}, json=stored
+        )
+        assert restored.status_code == 200, restored.text
+
+
+def test_a_follow_up_with_no_model_selected_says_so_and_sends_nothing(
+    page_for, make_user, upstream, every_model_hidden
+):
+    """#33838: a clicked follow-up was sent with no model selected, and nothing answered it."""
+    account = make_user()
+    with account.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": QUESTION},
+                {"role": "assistant", "content": ANSWER, "followUps": FOLLOW_UPS},
+            ],
+            model=f"retired-model-{uuid.uuid4().hex[:6]}",
+        )
+    page = page_for(account, path=f"/c/{chat_id}")
+    expect_reply(page, ANSWER)
+    expect(page.get_by_role("button", name="Select a model")).to_be_visible()
+    requests_before = len(upstream.chat_requests())
+
+    _follow_up(page, FOLLOW_UPS[0]).click()
+
+    expect(page.get_by_text("Model not selected")).to_be_visible()
+    expect(conversation(page).locator(".chat-user")).to_have_count(1)
+    with account.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+    assert stored.status_code == 200, stored.text
+    assert len(stored.json()["chat"]["history"]["messages"]) == 2, "the follow-up was stored"
+    assert len(upstream.chat_requests()) == requests_before, "the follow-up reached the provider"

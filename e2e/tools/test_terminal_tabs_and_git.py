@@ -58,6 +58,12 @@ nothing is pending) the reconnect test passes. The reorder test fails on v0.13.0
 dropped tab keeps its old place.
 The reorder test also checks that no full-width or side tabs switch is offered; in an e8c0ad85e
 build with a Use side tabs button put back it fails.
+
+Over plain HTTP by address the New tab menu opens a New File and a New Terminal tab (PR
+open-webui/open-webui#33847, fix b31ae40d2, issue #33845; the browser has no `crypto.randomUUID`
+there and no tab opened). The test is red on dev e8c0ad85e because the chat page itself no longer
+loads over plain HTTP since d4e8493cc (see e2e/chat/test_chat_plain_http.py); it passes on a build
+of e8c0ad85e with that fixed and fails on the same build with b31ae40d2 reverted.
 """
 
 from __future__ import annotations
@@ -175,6 +181,19 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     assert _tab_names(page) == ["New Chat", FILES, "Untitled-1", "Terminal 1"], (
         f"dragging the new file's tab before the shell left the tabs as {_tab_names(page)}"
     )
+
+
+def test_the_new_tab_menu_opens_tabs_over_plain_http(lan_page_for, terminal_account):
+    """#33845: over plain HTTP by address the browser has no crypto.randomUUID, so no tab opened."""
+    person, terminal = terminal_account
+    page = lan_page_for(person)
+    choose_terminal(page, terminal)
+    strip = _tab_strip(page)
+
+    _add_tab(page, re.compile(r"^New File\b"))
+    expect(strip.get_by_role("tab", name="Untitled-1")).to_be_visible()
+    _add_tab(page, re.compile(r"^New Terminal\b"))
+    expect(strip.get_by_role("tab", name="Terminal 1")).to_be_visible()
 
 
 def _panes(page: Page) -> list[list[str]]:

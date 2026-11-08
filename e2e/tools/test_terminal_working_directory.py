@@ -32,6 +32,10 @@ fails on a build of it that sends the message although the terminal refused the 
 
 Gap (strict xfail, not a bug in what exists): a folder's Default terminal lists only admin
 terminals, so a person cannot make their own terminal a folder's default.
+
+Switching a new chat to a model without a default terminal keeps the terminal picked in it
+(b433aab65, a01b2ed55; the switch turned it off). The test passes on dev e8c0ad85e and fails on a
+build of it whose model switch takes the model's default terminal, none when it has none.
 """
 
 from __future__ import annotations
@@ -52,6 +56,7 @@ from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
 from utils.model_editor import save
+from utils.model_selector import SELECTOR_BUTTON, select_model
 from utils.sidebar_folders import click_folder_menu_button, folder_row, open_advanced
 from utils.tooltips import tooltip_button
 
@@ -336,6 +341,23 @@ def test_a_models_default_terminal_is_picked_for_its_new_chats(
     page = page_for(admin, path=f"/?model={workbench_model['id']}")
     expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     expect(directory_button(page)).to_be_visible()
+
+
+def test_switching_to_a_model_without_a_default_terminal_keeps_the_picked_one(
+    page_for, make_user, terminal, open_terminal, workbench_model, upstream
+):
+    page = page_for(make_user())
+    pick_terminal(page, TERMINAL)
+
+    select_model(page, workbench_model["name"])
+
+    expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(
+        workbench_model["name"]
+    )
+    expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
+    assert where_pwd_ran(page, upstream) == str(open_terminal.home), (
+        "the command did not run on the terminal picked before the model switch"
+    )
 
 
 def save_personal_terminal(person, open_terminal) -> None:

@@ -20,6 +20,9 @@ sides leaves the files where they were. The move, grid and Git tests pass on the
 build (three runs) and each fails on one frontend build of it with these mutations: dropping on a
 folder moving nothing, the view switch doing nothing, folders above a change left unmarked, and
 file change events no longer refreshing the Git status.
+The rename test also pins PR open-webui/open-webui#33786 (fix 17579c522): the field losing focus
+right after Enter renamed the old path again and showed an error. It passes on dev e8c0ad85e and
+fails in a frontend copy with 17579c522 reverted (two moves are sent).
 """
 
 from __future__ import annotations
@@ -101,12 +104,20 @@ def test_new_file_makes_the_file_in_the_terminal(browser, home):
 
 
 def test_rename_renames_the_file_in_the_terminal(browser, home):
+    moves: list[str] = []
+    _page(browser).on(
+        "request",
+        lambda request: moves.append(request.url) if "/files/move" in request.url else None,
+    )
     _row_menu(browser, "draft-letter.txt").get_by_role("menuitem", name="Rename").click()
     field = browser.locator("input:focus")
     expect(field).to_have_value("draft-letter.txt")
     field.fill("sent-letter.txt")
     field.press("Enter")
 
+    expect(_page(browser).get_by_text("Renamed to sent-letter.txt")).to_be_visible()
+    # the field losing focus after Enter renamed the old path a second time (#33786)
+    assert len(moves) == 1, f"one rename sent {len(moves)} moves"
     expect(browser.get_by_text("sent-letter.txt", exact=True)).to_be_visible()
     expect(browser.get_by_text("draft-letter.txt", exact=True)).to_have_count(0)
     assert (home / "sent-letter.txt").read_text() == "Dear harbour master,\n"

@@ -16,6 +16,10 @@ Discriminates: passes on dev ebc6add67. On a build whose Controls ignore the thr
 each "withdrawn" case fails; on one whose Files section keeps a removed file both removal tests
 fail; on one whose Controls never save the reload test fails; on one whose Controls show no
 section the offered, admin and listed tests fail.
+
+A file opened from Files stays open when clicked inside (PR open-webui/open-webui#33831, fix
+d8dcb82cd, issue #33828): every click in its window counted as a click outside the menu and closed
+both. The test passes on dev e8c0ad85e and fails in a frontend copy with d8dcb82cd reverted.
 """
 
 from __future__ import annotations
@@ -117,6 +121,25 @@ def test_a_file_attached_earlier_is_sent_again_and_listed_under_files(chat_with_
 
     expect(section(panel, "Files")).to_be_visible()
     expect(listed_file(panel, "harbour.txt")).to_be_visible()
+
+
+def test_a_file_opened_under_files_stays_open_when_clicked_inside(page_for, make_user, upstream):
+    """#33828: any click inside the file's window closed it together with the menu."""
+    page = page_for(make_user())
+    attach(page, "harbour.md", "# Harbour notes\n\nThe **cormorants** are back.")
+    expect(page.locator("form").get_by_text("harbour.md")).to_be_visible()
+    upstream.queue(reply.text("Read it.", match=reply.answering("read my notes")))
+    send(page, "read my notes")
+    expect_reply(page, "Read it.")
+    panel = open_chat_controls(page)
+    listed_file(panel, "harbour.md").get_by_text("harbour.md").click()
+    preview = page.get_by_role("dialog").filter(has=page.get_by_role("button", name="Preview"))
+    expect(preview).to_be_visible()
+
+    preview.get_by_role("button", name="Preview").click()
+
+    expect(preview.locator("strong", has_text="cormorants")).to_be_visible()
+    expect(listed_file(panel, "harbour.md")).to_be_visible()
 
 
 def test_a_file_removed_under_files_is_no_longer_sent(chat_with_a_file, upstream):

@@ -13,51 +13,18 @@ instructions), and pass where the skill editor makes its ids without `crypto.ran
 
 from __future__ import annotations
 
-import json
 import re
 import uuid
-from typing import Callable, Iterator
-from urllib.parse import urlsplit
+from typing import Iterator
 
 import pytest
-from playwright.sync_api import Page, Playwright, expect
+from playwright.sync_api import expect
 
 from harness.actors import Actor
 from harness.backends import wait_until
 from utils.skill_editor import code_editor, replace_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
-
-LAN_HOST = "owui-lan.test"
-
-
-@pytest.fixture
-def lan_page_for(playwright_instance: Playwright, config) -> Iterator[Callable[[Actor], Page]]:
-    """`lan_page_for(actor)` opens a signed-in page on the instance through `LAN_HOST`."""
-    browser = playwright_instance.chromium.launch(
-        headless=config.headless, args=[f"--host-resolver-rules=MAP {LAN_HOST} 127.0.0.1"]
-    )
-
-    def open_page(actor: Actor) -> Page:
-        with actor.client() as client:
-            client.post(
-                "/api/v1/users/user/settings/update", json={"ui": {"showChangelog": False}}
-            ).raise_for_status()
-        port = urlsplit(actor.base_url).port
-        context = browser.new_context(
-            base_url=f"http://{LAN_HOST}:{port}", viewport={"width": 1920, "height": 1080}
-        )
-        context.set_default_timeout(config.default_timeout)
-        page = context.new_page()
-        page.add_init_script(
-            f"try {{ localStorage.setItem('token', {json.dumps(actor.token)}); }} catch (e) {{}}"
-        )
-        page.goto("/")
-        assert page.evaluate("isSecureContext") is False
-        return page
-
-    yield open_page
-    browser.close()
 
 
 @pytest.fixture
