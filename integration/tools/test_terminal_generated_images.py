@@ -13,18 +13,29 @@ for the personal terminal, and the image engine is a listener answering as OpenA
 endpoints. The legacy handler that generates before the model answers runs only in Legacy
 function calling mode and is out of scope here.
 
+New for 0.13.1 (2a0e0100b, titled `refac`, issue open-webui/open-webui#33824): `edit_image` also
+takes an absolute file path on the selected terminal as a source picture. Open WebUI reads the
+file through the terminal and sends the image engine the picture as it is on disk, for PNG,
+JPEG, WebP and GIF up to 25 megapixels. Any other file, a larger picture, a file the terminal
+cannot read and a path in a chat without a terminal are refused with the reason, before the
+engine is called.
+
 Discriminates: passes on dev 05e115366; each mutation below, made in a backend copy, turns
 exactly the named tests red. The `upload_files_to_terminal` calls removed from both image tools
 fail the copy, failure and personal-terminal tests; the uploaded name built from the image's own
 name in place of its file id, and the `directory` query left out of the upload path, each fail
 the copy and personal-terminal tests; the file left out of the tab's `request:terminal` fails
 the personal-terminal test; `upload_files_to_terminal` running without a selected terminal
-fails the no-terminal test.
+fails the no-terminal test. The terminal path tests pass on dev e8c0ad85e and all fail with
+2a0e0100b's `edit_image` change undone (the path is looked up as a stored file: 404); BMP added
+to the accepted formats fails the BMP test, the pixel limit raised to 26 million the
+over-25-megapixels test.
 """
 
 from __future__ import annotations
 
 import base64
+import io
 import json
 import uuid
 from contextlib import contextmanager
@@ -34,6 +45,7 @@ from typing import Iterator
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from PIL import Image
 
 from harness import upstream as reply
 from harness.channel_chat import serve_openai_images
@@ -86,15 +98,21 @@ DRAWINGS = {
 }
 
 
-def _uploaded_file(request: TerminalRequest) -> tuple[str, bytes]:
-    """The file name and bytes of a multipart upload the terminal received."""
-    head = f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode()
-    form = BytesParser(policy=HTTP).parsebytes(head + request.body)
-    [part] = [
+def _form_parts(headers: dict[str, str], body: bytes, name: str) -> list:
+    """The parts of a multipart form sent under the field `name`."""
+    content_type = {key.lower(): value for key, value in headers.items()}["content-type"]
+    head = f"Content-Type: {content_type}\r\n\r\n".encode()
+    form = BytesParser(policy=HTTP).parsebytes(head + body)
+    return [
         part
         for part in form.iter_parts()
-        if part.get_param("name", header="content-disposition") == "file"
+        if part.get_param("name", header="content-disposition") == name
     ]
+
+
+def _uploaded_file(request: TerminalRequest) -> tuple[str, bytes]:
+    """The file name and bytes of a multipart upload the terminal received."""
+    [part] = _form_parts(request.headers, request.body, "file")
     return part.get_filename(), part.get_payload(decode=True)
 
 
@@ -269,3 +287,130 @@ def test_without_a_terminal_nothing_is_copied(painter, upstream, image_engine, t
     assert server.received == [], f"a chat without a terminal reached it: {server.received}"
     for image in (told, stored):
         assert "terminal_path" not in image and "terminal_error" not in image, image
+
+
+# edit_image reading its source picture from the selected terminal
+
+SOURCE_FOLDER = "/home/user/my pictures"
+FORMATS = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
+NOT_AN_IMAGE_FORMAT = "Image must be PNG, JPEG, WebP, or GIF."
+TOO_LARGE = "Image must be at most 25 megapixels."
+NO_REACHABLE_TERMINAL = "Reading files requires a terminal connection reachable by Open WebUI."
+
+
+def _picture(file_format: str, size: tuple[int, int] = (3, 2), mode: str = "RGB") -> bytes:
+    buffer = io.BytesIO()
+    color = 1 if mode == "1" else (200, 40, 90)
+    Image.new(mode, size, color).save(buffer, format=file_format.upper())
+    return buffer.getvalue()
+
+
+def _serve_file(server, path: str, content: bytes) -> None:
+    def view(request: TerminalRequest):
+        if parse_qs(urlsplit(request.path).query).get("path") != [path]:
+            return 404, {"Content-Type": "application/json"}, b'{"detail": "not found"}'
+        return 200, {"Content-Type": "application/octet-stream"}, content
+
+    server.route("GET", "/files/view", view)
+
+
+def _edit_from(actor, upstream, image_engine, image_url: str, **options) -> tuple[dict, list]:
+    """Have the model edit `image_url`; returns what the tool told it and the engine's new edits."""
+    prompt = f"edit it ({uuid.uuid4().hex[:8]})"
+    mentioned = reply.mentioning(prompt)
+    arguments = {"prompt": "make it blue", "image_urls": [image_url]}
+    upstream.queue(
+        reply.tool_call("edit_image", arguments, match=mentioned),
+        reply.text("Edited.", match=mentioned),
+    )
+    edits_before = len(image_engine.requests_to("/images/edits"))
+    with actor.client() as client:
+        ask(client, prompt, features={"image_generation": True}, **options)
+    follow_ups = [request for request in upstream.chat_requests() if mentioned(request)]
+    told = [entry["content"] for entry in follow_ups[-1]["messages"] if entry["role"] == "tool"]
+    assert told, f"edit_image never ran; the provider was sent {follow_ups[-1]['messages']}"
+    return json.loads(told[-1]), image_engine.requests_to("/images/edits")[edits_before:]
+
+
+def _sent_pictures(edit) -> list[tuple[str, bytes]]:
+    return [
+        (part.get_content_type(), part.get_payload(decode=True))
+        for part in _form_parts(edit.headers, edit.body, "image[]")
+    ]
+
+
+@pytest.mark.parametrize("file_format", FORMATS)
+def test_a_picture_on_the_terminal_is_edited_from_its_path(
+    painter, upstream, image_engine, terminal, file_format
+):
+    server, terminal_id = terminal
+    path = f"{SOURCE_FOLDER}/photo.{file_format}"
+    source = _picture(file_format)
+    _serve_file(server, path, source)
+
+    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+
+    assert told.get("status") == "success", f"editing {path} failed; the model was told {told}"
+    reads = server.requests_to("/files/view")
+    assert [parse_qs(urlsplit(read.path).query).get("path") for read in reads] == [[path]], (
+        f"the terminal was not asked once for {path}: {[read.path for read in reads]}"
+    )
+    assert len(edits) == 1, f"the image engine got {len(edits)} edits"
+    assert _sent_pictures(edits[0]) == [(FORMATS[file_format], source)], (
+        "the engine was not sent the terminal's picture as it is on disk"
+    )
+
+
+@pytest.mark.parametrize(
+    "content, expected_error",
+    [
+        pytest.param(_picture("bmp"), NOT_AN_IMAGE_FORMAT, id="bmp"),
+        pytest.param(_picture("png", (5001, 5000), "1"), TOO_LARGE, id="over-25-megapixels"),
+        pytest.param(b"just some notes\n", "cannot identify image file", id="text"),
+    ],
+)
+def test_a_terminal_file_that_is_no_supported_picture_is_refused_before_the_engine(
+    painter, upstream, image_engine, terminal, content, expected_error
+):
+    server, terminal_id = terminal
+    path = f"{SOURCE_FOLDER}/source"
+    _serve_file(server, path, content)
+
+    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+
+    assert server.requests_to("/files/view"), "the terminal was never asked for the file"
+    assert expected_error in (told.get("error") or ""), f"the model was told {told}"
+    assert edits == [], "a picture edit_image refuses still reached the image engine"
+
+
+def test_a_picture_of_exactly_25_megapixels_is_edited(painter, upstream, image_engine, terminal):
+    server, terminal_id = terminal
+    path = f"{SOURCE_FOLDER}/poster.png"
+    source = _picture("png", (5000, 5000), "1")
+    _serve_file(server, path, source)
+
+    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+
+    assert told.get("status") == "success", f"a 25 megapixel picture was refused: {told}"
+    assert [picture for _, picture in _sent_pictures(edits[0])] == [source]
+
+
+def test_a_path_the_terminal_cannot_read_is_reported(painter, upstream, image_engine, terminal):
+    server, terminal_id = terminal
+    _serve_file(server, f"{SOURCE_FOLDER}/other.png", _picture("png"))
+    missing = f"{SOURCE_FOLDER}/missing.png"
+
+    told, edits = _edit_from(painter, upstream, image_engine, missing, terminal_id=terminal_id)
+
+    assert told.get("error") == f"Could not read {missing} from the terminal.", told
+    assert edits == []
+
+
+def test_a_path_without_a_terminal_reads_nothing(painter, upstream, image_engine, terminal):
+    server, _ = terminal
+
+    told, edits = _edit_from(painter, upstream, image_engine, f"{SOURCE_FOLDER}/photo.png")
+
+    assert told.get("error") == NO_REACHABLE_TERMINAL, f"the model was told {told}"
+    assert server.requests_to("/files/view") == [], "a chat without a terminal read from one"
+    assert edits == []
