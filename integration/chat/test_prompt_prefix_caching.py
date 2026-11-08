@@ -38,6 +38,9 @@ with labels off and on for that reason. Arguments written as compact JSON, the w
 write them, still went back re-spaced after PR #33953 (open-webui/open-webui#33958); arguments
 that needed repair (a code fence, a second layer of encoding, a Python literal) go back as the
 repaired JSON object.
+A question the model asked with `ask_user` went back with the header, `allow_other` and
+`timeout_ms` Open WebUI filled in, after the answer and in every later turn, whenever its
+arguments were spaced the way Python writes JSON (open-webui/open-webui#33957).
 
 `test_a_sub_agent_only_appends`, `test_a_timer_only_appends` and
 `test_a_background_sub_agent_report_only_appends` are red on dev 1c010b438: since de73bb830 a chat
@@ -56,6 +59,8 @@ and parallel tool round tests with labels on pass on dev a7b364296 and fail on i
 reverted in a backend copy (the replayed call lost its marks); with labels off they pass on both.
 The compact case fails on dev a7b364296 (its call went back re-spaced) and passes with the fix
 for open-webui/open-webui#33958; the repaired-arguments test passes on both.
+The own-question test fails on dev a7b364296 (the replayed question carries "header": "Question
+1") and passes with the fix for #33957 applied.
 """
 
 from __future__ import annotations
@@ -69,7 +74,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
-from harness.chat import ask
+from harness.chat import ChatTurn, ask, send_message, wait_for_reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.listener import text_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
@@ -178,13 +183,19 @@ class Conversation:
         self.generated: dict[str, dict] = {}  # the tool calls the model wrote, by call id
 
     def say(self, text: str, *replies: Reply, **options) -> dict:
+        message = wait_for_reply(self.client, self.send(text, *replies, **options))
+        assert message.get("done") and not message.get("error"), message
+        return message
+
+    def send(self, text: str, *replies: Reply, **options) -> ChatTurn:
+        """Send the next message without waiting for the reply."""
         prompt = f"{text} [{uuid.uuid4().hex[:6]}]"
         self.opening = self.opening or prompt
         for scripted in replies or (reply.text(f"reply to {text}"),):
             scripted.match = reply.answering(prompt)
             self.upstream.queue(scripted)
             self.generated.update({call["id"]: call for call in scripted.tool_calls})
-        turn, message = ask(
+        turn = send_message(
             self.client,
             prompt,
             model=self.model_id,
@@ -192,9 +203,8 @@ class Conversation:
             parent_id=self.parent_id,
             **{**self.options, **options},
         )
-        assert message.get("done") and not message.get("error"), message
         self.chat_id, self.parent_id = turn.chat_id, turn.assistant_message_id
-        return message
+        return turn
 
     def requests(self) -> list[dict]:
         """The chat's own requests to the provider, without a sub-agent's."""
@@ -418,6 +428,49 @@ def test_repaired_tool_call_arguments_go_back_as_a_json_object(
             f"the model's call {written!r} was sent back as {arguments!r}, not as a JSON object"
         )
     assert_append_only(requests)
+
+
+def test_the_model_gets_its_own_question_back_as_it_wrote_it(cached_setup, make_user, upstream):
+    """open-webui/open-webui#33957: fields Open WebUI filled into a question were replayed."""
+    options = [{"label": "7", "description": "ferry"}, {"label": "9", "description": "pilots"}]
+    question = {"id": "pier", "question": "Which pier?", "options": options}
+    with make_user().client() as client:
+        chat = Conversation(client, upstream, cached_setup.id)
+        chat.say("hello")
+        turn = chat.send(
+            "where should I wait?",
+            calling("ask_user", {"questions": [question]}),
+            reply.text("Wait at pier 7."),
+        )
+        call = pending_question(client, turn)
+        answered = client.post(
+            f"/api/v1/chats/{turn.chat_id}/messages/{turn.assistant_message_id}/resolve",
+            json={"call_id": call["call_id"], "action": "answer", "answers": {"pier": "7"}},
+        )
+        assert answered.status_code == 200, f"answering the question failed: {answered.text}"
+        message = wait_for_reply(client, turn)
+        assert message.get("done") and not message.get("error"), message
+        chat.say("thanks")
+
+    requests = chat.requests()
+    assert len(requests) == 4, f"expected four provider requests, got {len(requests)}"
+    assert "error" not in tool_results(requests[2]).lower(), tool_results(requests[2])
+    broken = first_break(requests, chat.generated)
+    assert broken is None, (
+        f"the model was sent its question back changed from what it wrote: {broken}"
+    )
+
+
+def pending_question(client, turn: ChatTurn, timeout: float = 30.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        chat = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
+        output = chat["history"]["messages"][turn.assistant_message_id].get("output") or []
+        pending = [item for item in output if item.get("status") == "pending"]
+        if pending:
+            return pending[0]
+        time.sleep(0.1)
+    raise AssertionError("the question never reached the pending state")
 
 
 def test_reasoning_replies_only_append(cached_setup, make_user, upstream):
