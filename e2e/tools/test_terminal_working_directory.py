@@ -10,7 +10,11 @@ Working directory on it (typed or picked with Browse directories); a new chat in
 starts on that terminal and in that directory, and a directory that does not exist refuses the
 first message with a "Working directory is unavailable" toast before the model is asked (since
 21da7627b the page opens the directory itself; the reply carried the error before). A model's
-editor also offers a Default terminal, which a new chat on the model starts with. A personal
+editor also offers a Default terminal, which a new chat on the model starts with. The recently
+used folders are kept per person on the terminal, so another person on it sees none of them,
+and the menu's search narrows them by name. Since a9478213a the picker clones a Git repository
+from an HTTP(S) or SSH address into the folder it shows and uses the clone as the directory; an
+address of another kind and a repository that cannot be cloned show the reason. A personal
 terminal, one the person added in their own settings, is reached by the browser only, so the
 browser has to move it to the chosen folder.
 
@@ -29,6 +33,10 @@ leaves the chat's folder unset when one is picked, whose folder dialog saves no 
 and whose model editor does not take a default terminal, the picked-folder, recent-folder, folder
 dialog and model tests fail. The missing directory test passes on the dev a072aaf31 build and
 fails on a build of it that sends the message although the terminal refused the directory.
+On a copy of the dev e8c0ad85e build: recent folders kept for all people alike, a clone run with a
+bad option and the clone error replaced by a fixed text turn the per-person, clone and both clone
+error tests red; on a second copy, the menu search matching every folder and file:// addresses let
+through turn the per-person and not-HTTP tests red.
 
 Gap (strict xfail, not a bug in what exists): a folder's Default terminal lists only admin
 terminals, so a person cannot make their own terminal a folder's default.
@@ -42,7 +50,13 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
+import threading
 import uuid
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -51,6 +65,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.access import grant
+from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling
@@ -415,3 +430,126 @@ def test_a_folder_can_default_to_the_users_personal_terminal(
 
     expect(dialog.get_by_text("No terminal servers available")).to_have_count(0)
     choose_default_terminal(page, dialog, PERSONAL)
+
+
+def test_recent_folders_are_kept_for_each_person_and_the_menu_search_narrows_them(
+    page_for, make_user, terminal, open_terminal
+):
+    person = make_user()
+    north = _directory(open_terminal, "north-quay")
+    south = _directory(open_terminal, "south-quay")
+    for folder in (north, south):
+        # the picker opens on the folder picked last, so each pick starts on a page of its own
+        picking = page_for(person)
+        pick_terminal(picking, TERMINAL)
+        choose_directory(picking, folder)
+    records = open_terminal.home / ".open-webui" / "users" / person.id / "folders"
+    assert wait_until(lambda: len(list(records.glob("*.json"))) == 2, 10), (
+        f"the two picked folders were not kept for the person on the terminal: {records}"
+    )
+
+    page = page_for(person)
+    pick_terminal(page, TERMINAL)
+    directory_button(page).click()
+    expect(page.get_by_role("menuitemradio", name=north.name)).to_be_visible()
+    expect(page.get_by_role("menuitemradio", name=south.name)).to_be_visible()
+    page.get_by_placeholder("Search folders").fill(south.name)
+    expect(page.get_by_role("menuitemradio", name=north.name)).to_have_count(0)
+    expect(page.get_by_role("menuitemradio", name=south.name)).to_be_visible()
+
+    other = page_for(make_user())
+    pick_terminal(other, TERMINAL)
+    directory_button(other).click()
+    expect(other.get_by_role("menuitemradio", name="No folder")).to_be_visible()
+    expect(other.get_by_role("menuitemradio", name=re.compile("quay"))).to_have_count(0)
+
+
+@pytest.fixture(scope="module")
+def git_server():
+    """A local HTTP server holding one Git repository with a README; yields its address."""
+    served = Path(tempfile.mkdtemp(prefix="git-served-"))
+    work = served / "work"
+    work.mkdir()
+    (work / "README.md").write_text("# Lighthouse log\n")
+    for command in (
+        ["init", "-q", "-b", "main"],
+        ["add", "README.md"],
+        ["-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "Start"],
+        ["clone", "-q", "--bare", ".", str(served / "lighthouse.git")],
+    ):
+        subprocess.run(["git", *command], cwd=work, check=True, capture_output=True, timeout=30)
+    # served the dumb way, as plain files
+    subprocess.run(
+        ["git", "update-server-info"],
+        cwd=served / "lighthouse.git",
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    handler = partial(SimpleHTTPRequestHandler, directory=str(served))
+    handler.log_message = lambda *args: None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        shutil.rmtree(served, ignore_errors=True)
+
+
+def open_picker_in(page: Page, folder: Path) -> Locator:
+    directory_button(page).click()
+    page.get_by_role("menuitem", name="Open folder").click()
+    dialog = page.get_by_role("dialog", name="Choose working directory")
+    dialog.get_by_text(folder.name, exact=True).click()
+    expect(dialog.get_by_text("charts", exact=True)).to_be_visible()
+    return dialog
+
+
+def clone_in(dialog: Locator, address: str) -> None:
+    dialog.get_by_role("button", name="Clone repository").click()
+    dialog.get_by_label("Repository URL").fill(address)
+    dialog.get_by_role("button", name="Clone repository").click()
+
+
+def test_a_repository_cloned_in_the_picker_becomes_the_working_directory(
+    page_for, make_user, terminal, open_terminal, upstream, git_server
+):
+    page = page_for(make_user())
+    pick_terminal(page, TERMINAL)
+    folder = _directory(open_terminal, "clones")
+    dialog = open_picker_in(page, folder)
+
+    clone_in(dialog, f"{git_server}/lighthouse.git")
+
+    expect(dialog).to_have_count(0, timeout=REPLY_TIMEOUT_MS)
+    expect(directory_button(page)).to_contain_text("lighthouse")
+    clone = folder / "lighthouse"
+    assert (clone / "README.md").read_text() == "# Lighthouse log\n", "the clone holds no README"
+    assert where_pwd_ran(page, upstream) == str(clone), "the command ran outside the clone"
+
+
+@pytest.mark.parametrize(
+    "address, reason",
+    [
+        ("file:///srv/lighthouse.git", "Enter an HTTP(S) or SSH repository URL"),
+        ("{git_server}/missing.git", "not found"),
+    ],
+    ids=["not-http-or-ssh", "missing-repository"],
+)
+def test_a_repository_that_cannot_be_cloned_says_why(
+    page_for, make_user, terminal, open_terminal, git_server, address, reason
+):
+    page = page_for(make_user())
+    pick_terminal(page, TERMINAL)
+    folder = _directory(open_terminal, "clones")
+    dialog = open_picker_in(page, folder)
+
+    clone_in(dialog, address.format(git_server=git_server))
+
+    expect(dialog.get_by_role("alert")).to_contain_text(reason, timeout=REPLY_TIMEOUT_MS)
+    expect(directory_button(page)).not_to_contain_text("lighthouse")
+    assert sorted(entry.name for entry in folder.iterdir()) == ["charts"], (
+        f"a failed clone left something in the folder: {list(folder.iterdir())}"
+    )
