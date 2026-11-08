@@ -13,6 +13,9 @@ and a channel view that ignores the parent's reply event turn the live reply tes
 panel that ignores updates turns the edit test red, a thread panel and a channel view that both keep
 the thread open when its parent is deleted turn the parent test red, and a toast that drops the
 thread from its link turns the toast test red.
+
+Closing a thread gives the focus back to the Reply in Thread button that opened it (Tim's
+75f8ae558). Passes on dev e8c0ad85e and fails on that build without the focus return.
 """
 
 from __future__ import annotations
@@ -162,3 +165,24 @@ def test_a_thread_reply_toast_opens_the_channel_on_that_thread(people, page_for)
     expect(member_page).to_have_url(re.compile(f"/channels/{channel_id}"))
     expect(_thread_input(member_page)).to_be_visible()
     expect(_in_thread(member_page, parent_id, "count me in for sunday")).to_be_visible()
+
+
+def test_closing_a_thread_gives_the_focus_back_to_the_button_that_opened_it(people, page_for):
+    # the thread panel went away with the focus inside it, so the focus fell to the page
+    author, _, _, channel_id = people
+    parent_id = post_message(author, channel_id, "who has a spare lantern?")
+    page = _open_channel(page_for, author, channel_id)
+    opener = message_action(_in_channel(page, parent_id), "Reply in Thread")
+    opener.focus()
+    page.keyboard.press("Enter")
+    expect(_thread_input(page)).to_be_visible()
+
+    close = page.get_by_role("button", name="Close", exact=True)
+    close.focus()
+    page.keyboard.press("Enter")
+
+    expect(_thread_input(page)).to_have_count(0)
+    focused_label = page.evaluate("() => document.activeElement?.getAttribute('aria-label')")
+    assert focused_label == "Reply in Thread", (
+        f"closing the thread left the focus on {focused_label!r}, not on Reply in Thread"
+    )

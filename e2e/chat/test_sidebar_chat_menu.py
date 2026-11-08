@@ -13,6 +13,9 @@ storing an empty conversation and the unread route leaving the read time alone. 
 build of 0.12.4 (9cbd27011 reverted) the rename to spaces shows no error and saves the blank title.
 Retargeted for dc45e3960, whose rows add how long ago the chat was updated to their name: passes on
 dev a915df8ce, 5 of 5.
+
+Leaving a rename with Escape gives the focus back to the chat's menu button (Tim's
+75f8ae558). Passes on dev e8c0ad85e and fails on that build without the focus return.
 """
 
 from __future__ import annotations
@@ -100,6 +103,23 @@ def test_a_chat_renamed_to_only_spaces_keeps_its_title(sidebar, owner):
         listed = client.get("/api/v1/chats/")
     assert listed.status_code == 200, listed.text
     assert [chat["title"] for chat in listed.json()] == [TITLE]
+
+
+def test_leaving_a_rename_with_escape_gives_the_focus_back_to_the_chat_menu(sidebar):
+    # the title field went away with the focus in it, so the focus fell to the page
+    chat_menu(sidebar, TITLE).get_by_role("menuitem", name="Rename").click()
+    title_field = sidebar.get_by_role("textbox")
+    expect(title_field).to_be_focused()
+
+    sidebar.page.keyboard.press("Escape")
+
+    expect(title_field).to_have_count(0)
+    row = sidebar.locator("#sidebar-chat-group").filter(has=chat_row(sidebar.page, TITLE))
+    expect(
+        row.get_by_role("button", name="Chat Menu").first,
+        "after leaving the rename the focus is not on the chat's menu button",
+    ).to_be_focused()
+    expect(chat_row(sidebar, TITLE)).to_be_visible()
 
 
 def test_a_pinned_chat_stays_pinned(sidebar):

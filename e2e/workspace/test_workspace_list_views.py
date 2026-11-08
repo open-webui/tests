@@ -14,6 +14,10 @@ Discriminates: passes on dev 1711059db; the late answer tests fail on dev 77febc
 4b9d31b39. In a backend copy whose lists ignore the view asked for every view menu test but the
 tools one fails, and the tools one, whose list filters in the page, fails in a frontend build that
 ignores the view.
+
+Paging the prompt list from the keyboard keeps the focus in the page buttons, at the last and
+the first page too (bc14c3767, PR open-webui/open-webui#33743, and a53089365, PR #33748).
+Passes on dev e8c0ad85e and fails on that build with both reverted.
 """
 
 from __future__ import annotations
@@ -193,4 +197,44 @@ def test_a_late_search_answer_leaves_the_chosen_view_alone(page_for, make_user, 
     finally:
         for account, cleanup in cleanups:
             with account.client() as client:
+                cleanup(client)
+
+
+def test_paging_the_prompt_list_from_the_keyboard_keeps_the_focus_in_the_page_buttons(
+    page_for, make_user
+):
+    # the list was swapped for a spinner while the page loaded (#33743), and the disabled Next
+    # or Previous button at the last or first page dropped the focus to the page (#33748)
+    owner = make_user(role="admin")
+    tag = uuid.uuid4().hex[:6]
+    cleanups = [_prompt(owner, f"Pager {tag} {number:02d}") for number in range(31)]
+    try:
+        page = page_for(owner, path="/workspace/prompts")
+        _search(page, "prompts", f"Pager {tag}")
+        main = page.get_by_role("main")
+        expect(main.get_by_text(f"Pager {tag}", exact=False).first).to_be_visible()
+        next_page = main.get_by_role("button", name="Next page")
+        previous_page = main.get_by_role("button", name="Previous page")
+
+        next_page.focus()
+        page.keyboard.press("Enter")
+        last = main.get_by_role("button", name="Page 2", exact=True)
+        expect(last).to_have_attribute("aria-current", "page")
+        expect(next_page).to_be_disabled()
+        expect(
+            last,
+            "reaching the last page dropped the keyboard focus",
+        ).to_be_focused()
+
+        previous_page.focus()
+        page.keyboard.press("Enter")
+        first = main.get_by_role("button", name="Page 1", exact=True)
+        expect(first).to_have_attribute("aria-current", "page")
+        expect(
+            first,
+            "going back to the first page dropped the keyboard focus",
+        ).to_be_focused()
+    finally:
+        with owner.client() as client:
+            for cleanup in cleanups:
                 cleanup(client)

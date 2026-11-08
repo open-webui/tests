@@ -17,6 +17,10 @@ answering without storing the row both tests fail (the account has no row on the
 The thumbs down test passes on the dev 5032e834e build and fails on that build with 2d5651410
 reverted (the stored rating has its tags but no reason, comment or score). It also fails on the
 dev 623257af7 build, where Save stores no reason or comment while the tags are pending (#33715).
+
+A thumb pressed from the keyboard keeps the focus while its rating saves (f36807a55, PR
+open-webui/open-webui#33673: the thumb was disabled while saving, which threw the focus to the
+page). Passes on dev e8c0ad85e, fails on that build with the thumbs disabled again.
 """
 
 from __future__ import annotations
@@ -138,3 +142,22 @@ def test_a_thumbs_up_is_listed_as_a_win(rater, page_for, admin, admin_token):
     account, page = rater
     _rate(page, "Good Response")
     expect(_feedback_rows(page_for, admin, account, "Won")).to_have_count(1)
+
+
+def test_a_thumb_pressed_from_the_keyboard_keeps_focus_while_the_rating_saves(rater):
+    # the thumb was disabled while it saved, which threw keyboard focus to the page (#33673)
+    _, page = rater
+    held: list = []
+    page.route("**/api/v1/evaluations/feedback", lambda route: held.append(route))
+    thumb = conversation(page).get_by_role("button", name="Good Response").last
+    last_reply(page).hover()
+    thumb.focus()
+    expect(thumb).to_be_focused()
+
+    with page.expect_request(lambda request: request.url.endswith("/evaluations/feedback")):
+        page.keyboard.press("Enter")
+
+    expect(thumb, "keyboard focus left the thumb while its rating was saving").to_be_focused()
+    page.unroute("**/api/v1/evaluations/feedback")
+    for route in held:
+        route.continue_()

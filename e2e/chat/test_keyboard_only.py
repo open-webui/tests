@@ -26,6 +26,11 @@ by c7e7dbf98).
 The skip link test was red from b29f7781a: the skip link reset the new chat, which wiped the typed
 text and put the focus back in the message box (open-webui/open-webui#33396, fixed on dev by
 3814b7b2f; the page needs open-webui/open-webui#33459 to set itself up on a fresh load).
+
+On the sign-in page, Skip to main content moves the focus off the link (421b6947b, PR
+open-webui/open-webui#33684) and the show password button is at least 24 pixels wide
+(0fd01ff24, PR #33685). Both pass on dev e8c0ad85e and fail on that build with their fix
+reverted (the link keeps the focus; the button is 22 pixels wide).
 """
 
 from __future__ import annotations
@@ -200,6 +205,33 @@ def test_skip_to_main_content_leads_to_the_main_content(page_for, make_user):
 
     expect(page).to_have_url(re.compile(r"#main-content$"))
     expect(page.get_by_role("main").locator("#main-content")).to_be_focused()
+
+
+def test_skip_to_main_content_on_the_sign_in_page_leads_to_the_sign_in_form(page):
+    # the sign-in page had no main content to skip to, so the focus stayed on the link (#33684)
+    page.goto("/auth")
+    email = page.get_by_label("Email")
+    expect(email).to_be_visible()
+    skip = page.get_by_role("link", name="Skip to main content")
+    press_until_focused(page, "Tab", skip, limit=10)
+    expect(skip).to_be_visible()
+
+    page.keyboard.press("Enter")
+
+    expect(skip, "the skip link kept the focus").not_to_be_focused()
+    page.keyboard.press("Tab")
+    expect(email, "the next Tab after the skip link missed the sign-in form").to_be_focused()
+
+
+def test_the_show_password_button_on_the_sign_in_page_is_wide_enough_to_hit(page):
+    page.goto("/auth")
+    show = page.get_by_role("button", name=re.compile(r"^(Show|Make) password", re.IGNORECASE))
+    expect(show).to_be_visible()
+
+    box = show.bounding_box()
+
+    # WCAG 2.2 asks for a target of at least 24 by 24 pixels (#33685)
+    assert box and box["width"] >= 24, f"the show password button is {box} wide"
 
 
 # --------------------------------------------------------------------------- settings

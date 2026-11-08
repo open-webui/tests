@@ -24,6 +24,10 @@ this build, so neither is tested.
 Since 2416b1fc0 scrolling the note hides the toolbar, which otherwise floated where the selection
 had been, until the selection changes. The scroll test passes on dev e8c0ad85e and fails in a
 frontend copy with 2416b1fc0's editor change reverted.
+
+A title generated from the keyboard leaves the focus in the title field, and closing the note
+chat gives it back to the Chat button (Tim's 75f8ae558). Both pass on dev e8c0ad85e and fail
+on that build without the focus returns.
 """
 
 from __future__ import annotations
@@ -230,6 +234,46 @@ def test_the_generate_button_asks_the_model_for_a_title(page_for, make_user, ups
     assert "buy oat milk and rye bread" in str(request["messages"][-1]["content"])
     page.reload()
     expect(title).to_have_value("Weekly Shopping")
+
+
+def test_a_title_generated_from_the_keyboard_leaves_the_focus_in_the_title_field(
+    page_for, make_user, upstream
+):
+    # the field was disabled while the title was generated, so the focus fell to the page
+    author = make_user()
+    page = page_for(author)
+    note_id = _new_note(page)
+    _editor(page).click()
+    page.keyboard.type("plan the garden beds")
+    _wait_until_stored(author, note_id, "md", "plan the garden beds")
+    upstream.queue(reply.text('{"title": "Garden Beds"}', match=reply.answering(TITLE_PROMPT)))
+    title = page.get_by_role("main").get_by_role("textbox", name="Title")
+    title.focus()
+    generate = page.get_by_role("main").get_by_role("button", name="Generate", exact=True)
+    expect(generate).to_be_visible()
+    page.keyboard.press("Tab")
+    expect(generate).to_be_focused()
+
+    page.keyboard.press("Enter")
+
+    expect(title).to_have_value("Garden Beds")
+    expect(title, "the focus left the title field while the title was generated").to_be_focused()
+
+
+def test_closing_the_note_chat_gives_the_focus_back_to_its_button(page_for, make_user):
+    page = page_for(make_user())
+    _new_note(page)
+    chat_button = page.get_by_role("main").get_by_role("button", name="Chat", exact=True)
+    chat_button.focus()
+    page.keyboard.press("Enter")
+    panel_close = page.get_by_role("button", name="Close", exact=True)
+    expect(panel_close).to_be_visible()
+
+    panel_close.focus()
+    page.keyboard.press("Enter")
+
+    expect(panel_close).to_have_count(0)
+    expect(chat_button, "closing the note chat left the focus on the page").to_be_focused()
 
 
 def test_the_word_and_character_count_follows_the_typing(page_for, make_user):
