@@ -2,13 +2,15 @@
 
 Export Chats is driven in e2e/chat/test_bulk_chat_actions.py. Shared Chats lists the chats the
 account shared by link: unsharing one there closes its link at once, so the account it was shared
-with is sent home from it, and Unshare All Shared Chats closes every link. Manage Files lists the
-files the account uploaded and no one else's, with their number, narrows them by a search on part of
-the name and opens one to show its text; a file deleted there is gone, at once and without asking
-when Shift is held. An admin sees only their own files there too. Several files, picked one by one
-or every file matching the search, are deleted together with a count of what was deleted, what
-failed and what was left, or downloaded as one zip of exactly those files; a single file downloads
-under its own name, and Stop ends either operation before the rest is done.
+with is sent home from it, and Unshare All Shared Chats closes every link. Copy Share Link copies a
+chat's link, also over plain HTTP by address, where the page is not a secure context (it copied
+nothing there before the fix for open-webui/open-webui#33927, which covers it). Manage Files lists
+the files the account uploaded and no one else's, with their number, narrows them by a search on
+part of the name and opens one to show its text; a file deleted there is gone, at once and without
+asking when Shift is held. An admin sees only their own files there too. Several files, picked one
+by one or every file matching the search, are deleted together with a count of what was deleted,
+what failed and what was left, or downloaded as one zip of exactly those files; a single file
+downloads under its own name, and Stop ends either operation before the rest is done.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose unshare and Unshare All handlers
 skip their requests and whose file delete skips its request, every test up to the deleted file
@@ -18,6 +20,8 @@ open nothing and whose Shift delete still asks, the search, open and Shift tests
 deleted, whose Select all matching ignores the search, whose zip takes every listed file, whose
 single download is named files.zip and whose Stop is ignored, each of the seven tests after the
 Shift test fails.
+The plain-HTTP Copy Share Link test fails on dev b6534c58f (nothing is copied) and passes with the
+fix for #33927.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from playwright.sync_api import Locator, Page, Route, expect
 
 from harness.access import grant
 from utils.chat_ui import conversation
+from utils.clipboard import copied, loopback_clipboard
 from utils.setting_rows import setting_button
 from utils.tooltips import tooltip_button
 
@@ -100,6 +105,27 @@ def test_unsharing_a_chat_in_shared_chats_closes_its_link(page_for, make_user):
     reader_page.reload()
     expect(reader_page).to_have_url(re.compile(r"/$"))
     expect(conversation(reader_page).get_by_text(title)).to_have_count(0)
+
+
+def test_copy_share_link_copies_the_link_over_plain_http(lan_page_for, make_user):
+    account = make_user()
+    title = f"Ferry times {uuid.uuid4().hex[:6]}"
+    with account.client() as client:
+        share_id = share(client, new_chat(client, title))
+    page = lan_page_for(account)
+    reader = loopback_clipboard(page, account)
+    shared = open_shared_chats(page)
+    row = shared.locator("div").filter(has=page.get_by_role("link", name=title)).last
+
+    row.hover()
+    tooltip_button(row, "Copy Share Link").click()
+
+    expect(page.get_by_text("Share link copied to clipboard.")).to_be_visible()
+    origin = page.evaluate("location.origin")
+    clipboard = copied(reader)
+    assert clipboard == f"{origin}/s/{share_id}", (
+        f"Copy Share Link over plain HTTP left {clipboard!r} on the clipboard, not the chat's link"
+    )
 
 
 def test_unshare_all_closes_every_link(page_for, make_user):

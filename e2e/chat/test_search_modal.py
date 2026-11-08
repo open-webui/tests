@@ -16,9 +16,11 @@ titled `refac`) each channel's header has a Search button that opens the dialog 
 channel's messages: it finds a match there and not one in another channel, and removing the
 location filter widens it to every channel the account is in.
 
-Two tests pin fixed bugs: Enter on a highlighted chat closed the dialog without opening the chat
-(#31003, fixed by PR #31004), and a new conversation started from the dialog dropped the text after
-an `&` because the query went into the page address unencoded (#31469, fixed by PR #31592).
+Three tests pin bugs: Enter on a highlighted chat closed the dialog without opening the chat
+(#31003, fixed by PR #31004), a new conversation started from the dialog dropped the text after
+an `&` because the query went into the page address unencoded (#31469, fixed by PR #31592), and
+over plain HTTP by address, where the page is not a secure context, "Copy link" copied nothing and
+said "Unable to copy link" (the same cause as #33927, whose fix covers it).
 
 Twins: integration/chat/test_workspace_search.py and
 integration/security/test_workspace_search_scope.py.
@@ -35,7 +37,9 @@ ignores `sharing` the View tests, and one whose links carry no message turns the
 channel thread tests red; a build whose Ctrl+Enter does nothing turns the preview shortcut test
 red and one whose thread ignores the linked message turns the channel thread test red. The
 channel Search button test passes on dev e8c0ad85e and fails on a build of 6113e15af (a branch
-off dev of Nov 5, before the button), where no search opens on the channel's messages.
+off dev of Nov 5, before the button), where no search opens on the channel's messages. The
+plain-HTTP Copy link test fails on dev b6534c58f (nothing is copied) and passes with the fix for
+#33927.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, expect_reply
+from utils.clipboard import copied, loopback_clipboard
 from utils.search_dialog import (
     answers_query,
     choose_content_type,
@@ -476,6 +481,27 @@ def test_copy_link_copies_the_results_address(page_for, make_user):
     expect(page.get_by_text("Link copied to clipboard")).to_be_visible()
     origin = page.evaluate("location.origin")
     assert page.evaluate("navigator.clipboard.readText()") == f"{origin}/c/{chat_id}?message=a"
+
+
+def test_copy_link_copies_the_results_address_over_plain_http(lan_page_for, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = import_chat(client, "Weather", answer=f"rain over the {word}")
+    page = lan_page_for(account)
+    reader = loopback_clipboard(page, account)
+    dialog = open_search_from_sidebar(page)
+    search(dialog, word)
+    expect(results(dialog)).to_have_count(1)
+
+    open_actions(dialog).get_by_role("button", name="Copy link").click()
+
+    expect(page.get_by_text("Link copied to clipboard")).to_be_visible()
+    origin = page.evaluate("location.origin")
+    clipboard = copied(reader)
+    assert clipboard == f"{origin}/c/{chat_id}?message=a", (
+        f"Copy link over plain HTTP left {clipboard!r} on the clipboard, not the result's address"
+    )
 
 
 THREAD_REPLIES = 60
