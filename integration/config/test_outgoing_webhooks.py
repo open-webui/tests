@@ -8,7 +8,10 @@ booted with local fetching allowed, as the web loader tests do.
 
 The admin's event webhooks are admin-only on every route. One subscribed to `user.created`
 receives the event when the admin adds an account, with the event's envelope: its name, the
-actor, the new account as subject and its role.
+actor, the new account as subject and its role. Since 0.13.1 (3a4e4fdb4, titled `refac`) one
+subscribed to `model.available` and `model.unavailable` receives each once when a model appears
+in or drops out of the fetched model list, naming the model; a fetch that finds the same list
+announces nothing.
 
 A target subscribed to `chat.finished` is called when a reply finishes: an `away` one only once
 the user has not been active for three minutes (every request with the user's token counts as
@@ -28,7 +31,8 @@ Discriminates: in a backend copy, `_check_notifications_access` skipping the swi
 switched-off test red (HTTP 200) and skipping the permission turns the permission test red,
 `_normalize_target` skipping `validate_url` turns the loopback test red (the target is saved),
 `test_target` sending an empty payload turns the delivery test red, `add_user` publishing
-`user.updated` in place of `user.created` turns the event delivery test red,
+`user.updated` in place of `user.created` turns the event delivery test red, `get_all_models` no
+longer publishing the availability events turns the model test red,
 `dispatch_notification_event` skipping every `away` target turns the idle-user test red (nothing
 is called) and ignoring a target's events turns the unsubscribed test red (the other target is
 called); publishing `chat.failed` where a chat ends in an error turns the failed-reply test green.
@@ -52,6 +56,7 @@ from harness.channel_quotes import enable_channels, post_message
 from harness.chat import send_message, wait_for_reply
 from harness.inflight import start_slow_reply
 from harness.listener import json_answer
+from harness.second_provider import OPENAI_CONFIG, attach
 from harness.web_retrieval import LOCAL_WEB_FETCH
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -225,6 +230,52 @@ def test_a_new_account_is_delivered_to_an_event_webhook(fetching_instance, liste
     assert event["actor"]["id"] == admin.id and event["actor"]["role"] == "admin"
     assert event["source"] == "admin"
     assert event["data"] == {"role": "user"}
+
+
+def _model_events(listener, model_id: str) -> list[dict]:
+    events = [request.json() for request in listener.requests_to("/events")]
+    return [event for event in events if event["subject"].get("id") == model_id]
+
+
+def test_a_model_appearing_and_disappearing_is_delivered_to_an_event_webhook(
+    fetching_instance, listener, preserve
+):
+    preserve(OPENAI_CONFIG, on=fetching_instance)
+    listener.route("POST", "/events", json_answer({}))
+    model_id = f"arrival-{uuid.uuid4().hex[:8]}"
+    with admin_of(fetching_instance).client() as client:
+        created = client.post(
+            EVENT_WEBHOOKS,
+            json={
+                "url": f"{listener.base_url}/events",
+                "events": ["model.available", "model.unavailable"],
+            },
+        )
+        assert created.status_code == 200, created.text
+        try:
+            # the first fetch after boot only records the list, so it announces nothing
+            client.get("/api/models", params={"refresh": True}).raise_for_status()
+            attach(client, listener, model_id)
+            assert _wait_for(lambda: _model_events(listener, model_id)), (
+                f"no event announced the new model {model_id}"
+            )
+            client.get("/api/models", params={"refresh": True}).raise_for_status()
+            listener.route("GET", "/v1/models", json_answer({"object": "list", "data": []}))
+            client.get("/api/models", params={"refresh": True}).raise_for_status()
+            assert _wait_for(lambda: len(_model_events(listener, model_id)) >= 2), (
+                f"no event announced that {model_id} is gone"
+            )
+        finally:
+            client.delete(f"{EVENT_WEBHOOKS}/{created.json()['id']}")
+
+    events = _model_events(listener, model_id)
+    assert [event["event"] for event in events] == ["model.available", "model.unavailable"], (
+        f"expected the model to be announced once as available, then once as gone: {events}"
+    )
+    for event in events:
+        assert event["subject"] == {"type": "model", "id": model_id}, event
+        assert event["source"] == "system", event
+        assert event["data"] == {"name": model_id}, event
 
 
 # a finished reply and the user's targets
