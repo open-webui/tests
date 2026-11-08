@@ -17,6 +17,12 @@ neither store imports the ORM API again.
 Discriminates: passes on dev ef67cc3fa; without the INVERTED retry (a15e44a5f reverted) the
 refused-index case fails (the file is marked failed and nothing is stored); the other cases pass
 on both.
+
+Fix ac8bc4552 (PR open-webui/open-webui#33745, issue #33744): adding a file to a knowledge base
+looks up the file's stored chunks, and on Milvus that lookup failed with no limit given, so the
+file was processed again and its chunks stored a second time. The knowledge base test passes on
+dev e8c0ad85e and fails on a backend copy with ac8bc4552 reverted (the file's own collection holds
+its chunk twice).
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import uuid
 import pytest
 
 from harness.actors import admin_of
+from harness.knowledge_bases import add_text_file, knowledge_base
 
 pytest.importorskip("pymilvus", reason="pymilvus not installed in this env")
 
@@ -109,3 +116,23 @@ def test_a_refused_scalar_index_falls_back_to_inverted(multitenant, fresh_milvus
 def test_a_file_is_stored_in_a_collection_of_its_own(per_collection, fresh_milvus):
     assert store_and_read_back(per_collection, "kingfishers perch low") == ["kingfishers perch low"]
     assert any(name.startswith("open_webui_file_") for name in fresh_milvus.collections)
+
+
+def rows_of(milvus, name: str) -> list[dict]:
+    collection = milvus.collections.get(name)
+    return list(collection.rows.values()) if collection else []
+
+
+def test_a_file_added_to_a_knowledge_base_is_stored_once(per_collection, fresh_milvus):
+    # the add re-processed the file and stored its chunks a second time (issue #33744)
+    with per_collection.client() as client, knowledge_base(client, "Birds") as knowledge_id:
+        file_id = add_text_file(client, knowledge_id, "waders.txt", "avocets sweep the mud")
+        file_rows = rows_of(fresh_milvus, f"open_webui_file_{file_id.replace('-', '_')}")
+        knowledge_rows = rows_of(fresh_milvus, f"open_webui_{knowledge_id.replace('-', '_')}")
+
+    assert [row["text"] for row in file_rows] == ["avocets sweep the mud"], (
+        f"the file's own collection holds its chunks {len(file_rows)} times"
+    )
+    assert [row["text"] for row in knowledge_rows] == ["avocets sweep the mud"], (
+        f"the knowledge base holds the file's chunks {len(knowledge_rows)} times"
+    )
