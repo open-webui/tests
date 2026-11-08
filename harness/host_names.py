@@ -43,7 +43,7 @@ from harness.listener import Listener, listening
 ASYNC_DNS = "AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER"
 RESOLVERS = {"threaded": {ASYNC_DNS: "false"}, "c-ares": {ASYNC_DNS: "true"}}
 UNRESOLVABLE = "owui-unresolvable.invalid"
-FAILS_WITHIN = 5.0  # seconds; the OS resolver refuses an unknown name in milliseconds
+FAILS_WITHIN = 10.0  # seconds; one lost DNS reply costs a retry of about 5s, a hang is far longer
 
 # pycares' messages for a name it cannot answer, which the OS resolver never uses
 C_ARES_REASONS = (
@@ -148,12 +148,46 @@ def by_name(url: str, host: str) -> str:
     return urlunsplit(parts._replace(netloc=netloc))
 
 
+# c-ares answers `localhost` and `ip6-localhost` with both loopback addresses
+OTHER_LOOPBACK = {"127.0.0.1": "::1", "::1": "127.0.0.1"}
+PORT_ATTEMPTS = 20
+
+
+def _hold_port(address: str, port: int) -> socket.socket | None:
+    """A socket bound to the port and never listening, so a connection there is refused at once."""
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    holder = socket.socket(family)
+    try:
+        holder.bind((address, port))
+    except OSError:
+        holder.close()
+        return None
+    return holder
+
+
 @contextmanager
 def serving_by_name(label: str) -> Iterator[Listener]:
-    """A `listener` on the name form's address whose `base_url` names it by the form's host."""
+    """A `listener` on the name form's address whose `base_url` names it by the form's host.
+
+    Its port is held on the other loopback address too, so a resolver that also answers that one
+    reaches no other local server on the same port.
+    """
     form = name_form(label)
-    with listening(form.address) as service:
-        yield dataclasses.replace(service, base_url=f"http://{form.host}:{service.port}")
+    other_loopback = OTHER_LOOPBACK.get(form.address)
+    if other_loopback and not _bindable(other_loopback):
+        other_loopback = None
+    for _ in range(PORT_ATTEMPTS):
+        with listening(form.address) as service:
+            holder = _hold_port(other_loopback, service.port) if other_loopback else None
+            if other_loopback and holder is None:
+                continue
+            try:
+                yield dataclasses.replace(service, base_url=f"http://{form.host}:{service.port}")
+            finally:
+                if holder:
+                    holder.close()
+            return
+    raise RuntimeError(f"no port free on both {form.address} and {other_loopback}")
 
 
 def timed(call: Callable[..., T], *args, **kwargs) -> tuple[T, float]:
