@@ -39,7 +39,8 @@ the diff and undo tests stay green on that build as its controls.
 
 Retargeted for 617618c9e: `test_the_full_width_layout_is_kept_after_a_reload` saved the removed
 full-width switch and is now the split layout test; the reorder test now counts the conversation
-tab.
+tab. Since 0b7e7b3f7 the Files tab is named after the folder it shows, so the
+tests name it by the terminal's home.
 
 `test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
 started with nothing pending wedges the chat's layout saving until the next reload
@@ -71,11 +72,15 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
+from harness.open_terminal import HOME_FOLDER
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
+
+# since 0b7e7b3f7 the Files tab is named after the folder it shows, here the terminal's home
+FILES = HOME_FOLDER
 
 
 @pytest.fixture
@@ -151,7 +156,7 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     _add_tab(page, "New File")
     strip = _tab_strip(page)
     expect(strip.get_by_role("tab", name="Untitled-1")).to_be_visible()
-    assert _tab_names(page) == ["New Chat", "Files", "Terminal 1", "Untitled-1"], (
+    assert _tab_names(page) == ["New Chat", FILES, "Terminal 1", "Untitled-1"], (
         f"the New tab menu added the tabs as {_tab_names(page)}"
     )
 
@@ -161,7 +166,7 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
         strip.get_by_role("tab", name="Terminal 1"),
     )
     expect(strip.get_by_role("tab").nth(2)).to_have_text("Untitled-1")
-    assert _tab_names(page) == ["New Chat", "Files", "Untitled-1", "Terminal 1"], (
+    assert _tab_names(page) == ["New Chat", FILES, "Untitled-1", "Terminal 1"], (
         f"dragging the new file's tab before the shell left the tabs as {_tab_names(page)}"
     )
 
@@ -239,31 +244,31 @@ def _saved_view(person, chat_id: str) -> dict | None:
 def test_ctrl_backslash_and_the_split_button_put_the_conversation_beside_its_tabs(terminal_page):
     page, terminal = terminal_page
     pick_terminal(page, terminal)
-    _expect_panes(page, [["New Chat", "Files"]])
+    _expect_panes(page, [["New Chat", FILES]])
     split = page.get_by_role("button", name="Split screen")
     expect(split).to_have_attribute("aria-pressed", "false")
 
     page.keyboard.press("Control+Backslash")
-    _expect_panes(page, [["New Chat"], ["Files"]])
+    _expect_panes(page, [["New Chat"], [FILES]])
     expect(split).to_have_attribute("aria-pressed", "true")
     # side by side: the message box and the file browser both show
     expect(chat_input(page)).to_be_visible()
     expect(page.get_by_role("region", name="File browser")).to_be_visible()
     page.keyboard.press("Control+Backslash")
-    _expect_panes(page, [["New Chat", "Files"]], any_order=True)
+    _expect_panes(page, [["New Chat", FILES]], any_order=True)
     expect(split).to_have_attribute("aria-pressed", "false")
 
     split.click()
-    _expect_panes(page, [["New Chat"], ["Files"]])
+    _expect_panes(page, [["New Chat"], [FILES]])
     split.click()
-    _expect_panes(page, [["New Chat", "Files"]], any_order=True)
+    _expect_panes(page, [["New Chat", FILES]], any_order=True)
 
 
 def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_it(terminal_page):
     page, terminal = terminal_page
     pick_terminal(page, terminal)
     open_new_terminal(page)
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
     shell = page.get_by_role("tabpanel", name="Terminal 1")
 
     area = shell.bounding_box()
@@ -273,29 +278,29 @@ def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_
         area["x"] + area["width"] - 20,
         area["y"] + area["height"] / 2,
     )
-    _expect_panes(page, [["New Chat", "Files"], ["Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES], ["Terminal 1"]])
     expect(_divider(page)).to_have_attribute("aria-orientation", "vertical")
     _selected(page, "Terminal 1")
 
     _drag_to(
         page,
         _tab_strip(page).get_by_role("tab", name="Terminal 1"),
-        *_empty_part_of_tab_bar(page.get_by_role("tablist", name="Tabs").filter(has_text="Files")),
+        *_empty_part_of_tab_bar(page.get_by_role("tablist", name="Tabs").filter(has_text=FILES)),
     )
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
     expect(_divider(page)).to_have_count(0)
 
-    _tab_strip(page).get_by_role("tab", name="Files").click()
+    _tab_strip(page).get_by_role("tab", name=FILES).click()
     area = page.get_by_role("region", name="File browser").bounding_box()
     _drag_to(
         page,
-        _tab_strip(page).get_by_role("tab", name="Files"),
+        _tab_strip(page).get_by_role("tab", name=FILES),
         area["x"] + area["width"] / 2,
         area["y"] + area["height"] - 20,
     )
     # a drop on the bottom edge stacks the panes, one tab bar above the other
     expect(_divider(page)).to_have_attribute("aria-orientation", "horizontal")
-    _expect_panes(page, [["New Chat", "Terminal 1"], ["Files"]])
+    _expect_panes(page, [["New Chat", "Terminal 1"], [FILES]])
     upper, lower = (
         strip.bounding_box() for strip in page.get_by_role("tablist", name="Tabs").all()
     )
@@ -304,7 +309,7 @@ def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_
     )
 
     # closing a pane's only tab closes the pane
-    _selected(page, "Files")
+    _selected(page, FILES)
     page.keyboard.press("Control+W")
     _expect_panes(page, [["New Chat", "Terminal 1"]])
     expect(_divider(page)).to_have_count(0)
@@ -321,7 +326,7 @@ def test_the_divider_resizes_the_panes_between_a_fifth_and_four_fifths(terminal_
     page, terminal = terminal_page
     pick_terminal(page, terminal)
     page.get_by_role("button", name="Split screen").click()
-    _expect_panes(page, [["New Chat"], ["Files"]])
+    _expect_panes(page, [["New Chat"], [FILES]])
     divider = _divider(page)
     expect(divider).to_have_attribute("aria-valuenow", "50")
     half = page.get_by_role("tabpanel", name="New Chat").bounding_box()["width"]
@@ -365,9 +370,9 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     chat_id = _answered_chat(page, upstream, terminal)
     title = _tab_strip(page).get_by_role("tab").first.inner_text().strip()
     page.keyboard.press("Control+Backslash")
-    _tab_strip(page).get_by_role("tab", name="Files").click()
+    _tab_strip(page).get_by_role("tab", name=FILES).click()
     page.keyboard.press("Control+Backquote")
-    layout = [[title], ["Files", "Terminal 1"]]
+    layout = [[title], [FILES, "Terminal 1"]]
     _expect_panes(page, layout)
     _selected(page, "Terminal 1")
     _drag_divider_to(page, 0.3)
@@ -416,7 +421,7 @@ def test_a_layout_arranged_before_the_first_message_is_kept_with_the_chat(
     page = page_for(person)
     pick_terminal(page, terminal)
     page.keyboard.press("Control+Backslash")
-    _expect_panes(page, [["New Chat"], ["Files"]])
+    _expect_panes(page, [["New Chat"], [FILES]])
     question = f"where do the ferries leave {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("From the east pier.", match=reply.answering(question)))
     send(page, question)
@@ -431,7 +436,7 @@ def test_a_layout_arranged_before_the_first_message_is_kept_with_the_chat(
     page.reload()
     expect(page.get_by_text("From the east pier.")).to_be_visible(timeout=config.navigation_timeout)
     title = _panes(page)[0][0]
-    _expect_panes(page, [[title], ["Files"]])
+    _expect_panes(page, [[title], [FILES]])
 
 
 def test_layout_changes_after_a_network_reconnect_are_still_saved(
@@ -469,21 +474,21 @@ def _layout_of(view: dict | None) -> tuple[int, str] | None:
 def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page):
     page, terminal = terminal_page
     pick_terminal(page, terminal)
-    _expect_panes(page, [["New Chat", "Files"]])
+    _expect_panes(page, [["New Chat", FILES]])
 
     page.keyboard.press("Control+W")
     _expect_panes(page, [["New Chat"]])
     page.keyboard.press("Control+Shift+E")
-    _expect_panes(page, [["New Chat", "Files"]])
-    _selected(page, "Files")
+    _expect_panes(page, [["New Chat", FILES]])
+    _selected(page, FILES)
     page.keyboard.press("Control+Backquote")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
     _selected(page, "Terminal 1")
     page.keyboard.press("Control+Alt+N")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
     _selected(page, "Untitled-1")
     page.keyboard.press("Control+Shift+B")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1", "Browser"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1", "Browser"]])
     _selected(page, "Browser")
 
     page.keyboard.press("Control+Shift+BracketLeft")
@@ -497,9 +502,9 @@ def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page)
     page.keyboard.press("Control+Alt+D")
     page.keyboard.press("Control+Shift+BracketLeft")
     _selected(page, "Browser")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1", "Browser"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1", "Browser"]])
     page.keyboard.press("Control+W")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
 
 
 def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(terminal_page):
@@ -515,7 +520,7 @@ def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(termina
     expect(menu).to_have_count(0)
     # live again: a shell the menu had let through would make this one Terminal 2
     page.keyboard.press("Control+Backquote")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
 
     page.keyboard.press("Control+Period")
     settings = page.get_by_role("dialog")
@@ -525,7 +530,7 @@ def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(termina
     page.keyboard.press("Escape")
     expect(settings).to_have_count(0)
     page.keyboard.press("Control+Alt+N")
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
 
 
 def test_workspace_shortcuts_do_nothing_with_keyboard_shortcuts_switched_off(
@@ -545,7 +550,7 @@ def test_workspace_shortcuts_do_nothing_with_keyboard_shortcuts_switched_off(
     page.keyboard.press("Control+W")
     # the menu's shell comes after the shortcuts, so it is Terminal 2 if one of them answered
     open_new_terminal(page)
-    _expect_panes(page, [["New Chat", "Files", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
 
 
 def _open_git_panel(page: Page, terminal: str, folder) -> Locator:

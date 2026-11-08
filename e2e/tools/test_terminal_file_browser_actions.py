@@ -225,7 +225,8 @@ def test_a_file_saved_in_the_browser_gets_its_git_marker(browser, repository):
     _page(browser).keyboard.press("Control+s")
     crew = repository / "crew.txt"
     assert wait_until(lambda: crew.read_text() == "Ada and Ben\n", 10), crew.read_text()
-    _page(browser).get_by_role("tab", name="Files", exact=True).click()
+    # the Files tab is named after the folder it shows
+    _page(browser).get_by_role("tab", name=repository.name, exact=True).click()
 
     expect(_git_marker(browser, "crew.txt")).to_have_accessible_name("Modified · Unstaged changes")
 
