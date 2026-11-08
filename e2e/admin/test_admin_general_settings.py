@@ -7,7 +7,9 @@ choice still wins. Memory System Context switched off keeps a person's saved mem
 the model is sent. A Response Watermark is appended to every reply a user copies. The Model
 Response Mode picked for channels decides whether a model mentioned there answers in a thread or in
 the channel itself. A Folder Max File Count refuses, in a folder's edit dialog, a folder given more
-files than it allows, with the limit named, while a folder within it saves its files.
+files than it allows, with the limit named, while a folder within it saves its files. A Chat Read
+Limit (0.13.1, #33695) typed there is saved and shown again after a reload, and clearing it saves
+no limit.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose General form sends the stored
 settings back in place of the edited ones, every test but the "own setting" one fails; in a backend
@@ -15,7 +17,8 @@ copy whose settings read lets the defaults win over the account's own, the "own 
 fails; in a frontend build of dev ebc6add67 whose folder dialog skips its file count check, the
 folder refusal test fails. The folder tests were retargeted for 8d0ff76f2, whose folder
 dialog uploads files from its Knowledge picker: they pass on dev 76ad6f97c (3 of 3), and the
-refusal test fails in a build of it whose folder dialog skips the file count check.
+refusal test fails in a build of it whose folder dialog skips the file count check. The Chat
+Read Limit test passes on dev e8c0ad85e and fails in a backend copy that never saves the limit.
 """
 
 from __future__ import annotations
@@ -338,3 +341,25 @@ def test_a_folder_within_the_max_file_count_saves_its_files(page_for, admin, mak
 
     expect(page.get_by_text("Folder updated successfully")).to_be_visible()
     assert folder_files(account, folder_id) == ["berths.txt", "tides.txt"]
+
+
+def test_a_chat_read_limit_is_saved_kept_after_a_reload_and_cleared(page_for, admin, preserve):
+    preserve("admin_config")
+    set_features(admin, VIEW_CHAT_MAX_CHARS=None)
+    settings = open_general_settings(page_for(admin))
+    limit = settings.get_by_label("Chat Read Limit")
+    expect(limit).to_have_value("")
+    limit.fill("4000")
+    save(settings)
+    with admin.client() as client:
+        assert client.get(ADMIN_CONFIG).json()["VIEW_CHAT_MAX_CHARS"] == 4000
+
+    reopened = open_general_settings(page_for(admin))
+    limit = reopened.get_by_label("Chat Read Limit")
+    expect(limit).to_have_value("4000")
+    limit.fill("")
+    save(reopened)
+
+    with admin.client() as client:
+        cleared = client.get(ADMIN_CONFIG).json()["VIEW_CHAT_MAX_CHARS"]
+    assert cleared is None, f"clearing the field saved {cleared!r} in place of no limit"

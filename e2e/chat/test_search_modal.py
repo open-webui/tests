@@ -11,7 +11,10 @@ the result's full address. Archived chats and another account's matching chat ne
 chat in a folder shared with the account, its note and a message in its channel do. The content
 type menu keeps one type, the View filter the account's own or others' results and the Location
 filter one folder, and more matches than one page of 24 load as the result list is scrolled to its
-end. A channel message opens its thread scrolled to the matching reply.
+end. A channel message opens its thread scrolled to the matching reply. Since 0.13.1 (53b1b1928,
+titled `refac`) each channel's header has a Search button that opens the dialog on that
+channel's messages: it finds a match there and not one in another channel, and removing the
+location filter widens it to every channel the account is in.
 
 Two tests pin fixed bugs: Enter on a highlighted chat closed the dialog without opening the chat
 (#31003, fixed by PR #31004), and a new conversation started from the dialog dropped the text after
@@ -30,7 +33,9 @@ reaches every account's chats or includes archived ones the other-account test g
 On dev 948432b43, a backend copy that ignores `kind` turns the content type tests red, one that
 ignores `sharing` the View tests, and one whose links carry no message turns the Copy link and
 channel thread tests red; a build whose Ctrl+Enter does nothing turns the preview shortcut test
-red and one whose thread ignores the linked message turns the channel thread test red.
+red and one whose thread ignores the linked message turns the channel thread test red. The
+channel Search button test passes on dev e8c0ad85e and fails on a build of 6113e15af (a branch
+off dev of Nov 5, before the button), where no search opens on the channel's messages.
 """
 
 from __future__ import annotations
@@ -60,6 +65,7 @@ from utils.search_dialog import (
     results,
     search,
     search_box,
+    search_dialog,
 )
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -501,3 +507,35 @@ def test_a_channel_result_opens_its_thread_at_the_matching_reply(
         re.compile(rf"/channels/{channel_id}\?thread={parent_id}&message={reply_id}$")
     )
     expect(page.get_by_text(match, exact=True)).to_be_in_viewport()
+
+
+def test_a_channels_search_button_searches_that_channels_messages(
+    page_for, admin, preserve, make_user
+):
+    preserve("admin_config")
+    enable_channels(admin)
+    owner, member = make_user(), make_user()
+    word = unique_word()
+    harbour, marina = group_channel(owner, member), group_channel(owner, member)
+    post_message(owner, harbour, f"the {word} buoy is lit")
+    post_message(owner, marina, f"the {word} buoy is dark")
+
+    page = page_for(member, path=f"/channels/{harbour}")
+    expect(page.get_by_text(f"the {word} buoy is lit", exact=True)).to_be_visible()
+    # the header's actions sit together; the sidebar has a Search button of its own
+    header = page.get_by_role("button", name="Pinned Messages").locator(
+        "xpath=ancestor::*[.//button[@aria-label='Search']][1]"
+    )
+    header.get_by_role("button", name="Search", exact=True).click()
+    dialog = search_dialog(page)
+    expect(search_box(dialog)).to_be_visible()
+    location = dialog.get_by_role("button", name="Remove location filter")
+    expect(location).to_be_visible()
+    search(dialog, word)
+
+    expect(results(dialog)).to_have_count(1)
+    expect(results(dialog)).to_contain_text("lit")
+
+    with page.expect_response(answers_query(word)):
+        location.click()
+    expect(results(dialog)).to_have_count(2)
