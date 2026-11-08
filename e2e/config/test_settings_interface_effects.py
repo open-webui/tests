@@ -1,29 +1,34 @@
 """Journey: Interface switches in Settings change what the chat shows and does.
 
 Each switch is flipped in the Settings dialog by a fresh account, which then sees its effect in a
-chat, still sees it after a reload where that is checked, and a second account in a browser of
-its own does not.
-Chat Bubble UI off labels the user's own message "You" and Display the Username puts the
-account's name there instead; Rich Text Input off leaves typed markdown as plain characters; Copy
-Formatted Text puts HTML on the clipboard next to the plain text; Title Auto-Generation off names
-a new chat after its first message where the model would otherwise title it. Always Collapse Code
-Blocks folds a reply's code block; Always Expand Details opens a reply's reasoning; Display Chat
-Title in Tab off keeps the app name as the tab title; Insert Follow-Up Prompt to Input puts a
-pressed follow-up in the input instead of sending it; Keep Follow-Up Prompts in Chat leaves an
-earlier reply's follow-ups under it; Auto-Copy Response puts a finished reply on the clipboard;
-Temporary Chat by Default starts a new chat temporary and unstored; Insert Suggestion Prompt to
-Input fills the input from a suggestion instead of sending it; Show Formatting Toolbar shows the
-toolbar over selected input text; Landing Page Mode Chat shows the conversation pane on a new
-chat; Render Markdown in User Messages off shows a message as typed.
+chat, still sees it after a reload where that is checked, and a second account in a browser of its
+own does not. Chat Bubble UI off labels the user's own message "You" and Display the Username puts
+the account's name there instead; Rich Text Input off leaves typed markdown as plain characters;
+Copy Formatted Text puts HTML on the clipboard next to the plain text (over plain HTTP it put the
+raw Markdown there, open-webui/open-webui#33934); Title Auto-Generation off names a new chat after
+its first message where the model would otherwise title it. Always Collapse Code Blocks folds a
+reply's code block; Always Expand Details opens a reply's reasoning; Display Chat Title in Tab off
+keeps the app name as the tab title; Insert Follow-Up Prompt to Input puts a pressed follow-up in
+the input instead of sending it; Keep Follow-Up Prompts in Chat leaves an earlier reply's follow-ups
+under it; Auto-Copy Response puts a finished reply on the clipboard on a secure page, and over plain
+HTTP, where the browser lets a page copy only right after a click, switching it on says the
+clipboard is not allowed and leaves it off (open-webui/open-webui #33935: the switch threw there,
+flipped on and was never saved); Temporary Chat by Default starts a new chat temporary and unstored;
+Insert Suggestion Prompt to Input fills the input from a suggestion instead of sending it; Show
+Formatting Toolbar shows the toolbar over selected input text; Landing Page Mode Chat shows the
+conversation pane on a new chat; Render Markdown in User Messages off shows a message as typed.
 
-Discriminates: passes on dev 176d31d1d; in a frontend copy, reading `chatBubble` as always on
-turns the bubble tests red, passing `richText` as always on turns the rich text test red, copying
-a reply without the `copyFormatted` setting turns the copy test red, and sending
-`title_generation` as always on turns the title test red. Also in a frontend copy, each setting
-read as never set turns its own test red: `collapseCodeBlocks`, `expandDetails`,
-`showChatTitleInTab` (always shown), `insertFollowUpPrompt`, `keepFollowUpPrompts`,
-`responseAutoCopy`, `temporaryChatByDefault`, `insertSuggestionPrompt`, `showFormattingToolbar`,
-`landingPageMode` and `renderMarkdownInUserMessages` (always rendered).
+Discriminates: passes on dev 176d31d1d; in a frontend copy, reading `chatBubble` as always on turns
+the bubble tests red, passing `richText` as always on turns the rich text test red, copying a reply
+without the `copyFormatted` setting turns the copy test red, and sending `title_generation` as
+always on turns the title test red. Also in a frontend copy, each setting read as never set turns
+its own test red: `collapseCodeBlocks`, `expandDetails`, `showChatTitleInTab` (always shown),
+`insertFollowUpPrompt`, `keepFollowUpPrompts`, `responseAutoCopy`, `temporaryChatByDefault`,
+`insertSuggestionPrompt`, `showFormattingToolbar`, `landingPageMode` and
+`renderMarkdownInUserMessages` (always rendered). The plain-HTTP Auto-Copy test fails on dev
+241c8c0e4 (no message, the switch shows on) and passes with the fix for #33935. The Copy Formatted
+Text test fails on dev 241c8c0e4 (the HTML holds the raw Markdown) and passes with the fix for
+#33934.
 """
 
 from __future__ import annotations
@@ -379,6 +384,7 @@ def clipboard_becomes(page: Page, expected: str) -> bool:
     )
 
 
+@pytest.mark.secure_context
 def test_auto_copy_response_puts_a_finished_reply_on_the_clipboard(page_for, make_user, upstream):
     page = page_for(make_user(), permissions=CLIPBOARD)
     flip(page, "Auto-Copy Response to Clipboard")
@@ -395,6 +401,23 @@ def test_auto_copy_response_puts_a_finished_reply_on_the_clipboard(page_for, mak
     chat_once(other, upstream, "Is the lamp lit this night?")
     other.wait_for_timeout(1000)
     assert read_text(other) == "nothing copied"
+
+
+def test_auto_copy_response_over_plain_http_stays_off_and_says_why(page_for, make_user):
+    account = make_user()
+    page = page_for(account)
+    switch = interface_switch(page, "Auto-Copy Response to Clipboard")
+    expect(switch).to_have_attribute("aria-checked", "false")
+
+    switch.click()
+
+    expect(page.get_by_text("Clipboard write permission denied.")).to_be_visible()
+    expect(switch).to_have_attribute("aria-checked", "false")
+    with account.client() as client:
+        stored = client.get("/api/v1/users/user/settings").json() or {}
+    assert not stored.get("ui", {}).get("responseAutoCopy"), (
+        f"Auto-Copy Response was saved on over plain HTTP: {stored.get('ui')!r}"
+    )
 
 
 def stored_chats(account, text: str) -> list[dict]:
