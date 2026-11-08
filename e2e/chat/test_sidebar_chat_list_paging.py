@@ -4,9 +4,13 @@ The list asks for sixty chats at a time, newest first. An account with more chat
 the first sixty, and the older ones appear once the list is scrolled to its end; opening one of
 them shows its conversation.
 
+Since 0.13.1 (#33686) the chat list loads beside the channel list instead of after it, so it shows
+while the channel list has not answered.
+
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose chat list answers the first page
 whatever page is asked, and in a frontend build that loads nothing more at the end of the list, it
-fails.
+fails. The channel list test passes on dev e8c0ad85e and fails on a frontend build of it with
+#33686 undone, where the chat list waits for the held channel list.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import expect
 
+from harness.channel_quotes import enable_channels
 from utils.chat_ui import conversation
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -69,3 +74,29 @@ def test_the_oldest_chat_appears_when_the_list_is_scrolled_to_its_end(page_for, 
     # the chat that was open stays mounted for a moment while the picked one loads
     expect(conversation(page)).to_have_count(1)
     expect(conversation(page)).to_contain_text(ANSWER)
+
+
+def test_the_chat_list_shows_while_the_channel_list_has_not_answered(
+    page_for, admin, preserve, make_user
+):
+    preserve("admin_config")
+    enable_channels(admin)
+    owner = make_user()
+    with owner.client() as client:
+        created = client.post(
+            "/api/v1/chats/new", json={"chat": {"title": "Tide tables", "history": HISTORY}}
+        )
+    assert created.status_code == 200, created.text
+    page = page_for(owner)
+    held = []
+    # the channel list never answers while this test runs
+    page.route("**/api/v1/channels/**", lambda route: held.append(route))
+    try:
+        page.reload()
+        page.get_by_role("button", name="Open Sidebar", exact=True).click()
+        sidebar = page.get_by_role("navigation", name="Chat history")
+
+        expect(sidebar.get_by_role("button", name="Tide tables")).to_be_visible()
+        assert held, "the page never asked for the channel list, so nothing was held"
+    finally:
+        page.unroute_all(behavior="ignoreErrors")
