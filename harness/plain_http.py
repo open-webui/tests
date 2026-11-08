@@ -24,8 +24,9 @@ from harness.instance import LaunchedInstance
 
 # a host name that is neither localhost nor a loopback address
 LAN_HOST = "owui-lan.test"
-LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
-RESOLVE_LAN_HOST = f"--host-resolver-rules=MAP {LAN_HOST} 127.0.0.1"
+# the instances listen here; a test that names `localhost` means it
+LOOPBACK_HOST = "127.0.0.1"
+RESOLVE_LAN_HOST = f"--host-resolver-rules=MAP {LAN_HOST} {LOOPBACK_HOST}"
 ADMIN_CONFIG = "/api/v1/auths/admin/config"
 
 _secure_context_test = False
@@ -43,9 +44,9 @@ def is_secure_context_test() -> bool:
 
 
 def lan_url(url: str) -> str:
-    """`url` with a loopback host replaced by `LAN_HOST`; any other URL as it is."""
+    """`url` with the loopback host replaced by `LAN_HOST`; any other URL as it is."""
     parts = urlsplit(url)
-    if parts.hostname not in LOOPBACK_HOSTS:
+    if parts.hostname != LOOPBACK_HOST:
         return url
     netloc = f"{LAN_HOST}:{parts.port}" if parts.port else LAN_HOST
     return urlunsplit(parts._replace(netloc=netloc))
@@ -69,7 +70,7 @@ def serve_at_lan_host(instance: LaunchedInstance) -> None:
 def loopback_url(page_url: str, path: str) -> str:
     """`path` on the loopback address of the server `page_url` is on, for a request from Python."""
     server = urlsplit(page_url)
-    return f"{server.scheme}://127.0.0.1:{server.port}{path}"
+    return f"{server.scheme}://{LOOPBACK_HOST}:{server.port}{path}"
 
 
 def loopback_page(page: Page) -> Page:

@@ -128,7 +128,8 @@ def test_copy_link_in_the_editor_copies_an_address_that_opens_the_note(page_for,
 
     expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
     link = _clipboard_text(page)
-    assert link == f"{author.base_url}/notes/{note_id}"
+    origin = page.evaluate("location.origin")
+    assert link == f"{origin}/notes/{note_id}"
     page.goto("/notes")
     page.goto(link)
     expect(_note_editor(page)).to_have_text("reachable by link")
@@ -147,7 +148,8 @@ def test_copy_link_on_the_notes_page_copies_the_notes_address(page_for, make_use
     page.get_by_role("menuitem", name="Copy link").click()
 
     expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
-    assert _clipboard_text(page) == f"{author.base_url}/notes/{note_id}"
+    origin = page.evaluate("location.origin")
+    assert _clipboard_text(page) == f"{origin}/notes/{note_id}"
 
 
 def test_copy_to_clipboard_copies_the_markdown_and_the_formatting(page_for, make_user):

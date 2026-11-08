@@ -66,7 +66,7 @@ def owner(make_user, upstream):
 
 
 @pytest.fixture
-def open_stats_window(community_sharing, page_for, instance):
+def open_stats_window(community_sharing, page_for):
     def open_from(origin: str, account) -> tuple[Page, Page]:
         app_page = page_for(account)  # stores the account's session for the app origin
         context = app_page.context
@@ -78,7 +78,7 @@ def open_stats_window(community_sharing, page_for, instance):
         with opener.expect_popup() as popup_info:
             opener.evaluate(
                 "url => { window.statsWindow = window.open(url); }",
-                f"{instance.base_url}/?sync=true",
+                f"{app_page.evaluate('location.origin')}/?sync=true",
             )
         stats_window = popup_info.value
         expect(stats_window.get_by_text("Sync Usage Stats")).to_be_visible()
