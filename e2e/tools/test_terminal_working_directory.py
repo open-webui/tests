@@ -7,25 +7,28 @@ button then shows the folder's name. Every command the model runs in the chat ru
 the chat exists the button keeps showing its folder, also when the chat is opened again, and can
 no longer be changed. A folder's Edit dialog holds, under Advanced, a Default terminal and a
 Working directory on it (typed or picked with Browse directories); a new chat in the folder
-starts on that terminal and in that directory, and a directory that does not exist ends the
-first reply with "Working directory is unavailable". A model's editor also offers a Default
-terminal, which a new chat on the model starts with. A personal terminal, one the person added
-in their own settings, is reached by the browser only, so the browser has to move it to the
-chosen folder.
+starts on that terminal and in that directory, and a directory that does not exist refuses the
+first message with a "Working directory is unavailable" toast before the model is asked (since
+21da7627b the page opens the directory itself; the reply carried the error before). A model's
+editor also offers a Default terminal, which a new chat on the model starts with. A personal
+terminal, one the person added in their own settings, is reached by the browser only, so the
+browser has to move it to the chosen folder.
 
-The personal terminal test is red on dev f659c0d12: the picked folder is set on the terminal
+The personal terminal test was red on dev f659c0d12: the picked folder was set on the terminal
 without the chat's session and the server leaves personal terminals alone since 5fae57b03, so the
-commands run in the terminal's home (open-webui/open-webui#33876).
+commands ran in the terminal's home (open-webui/open-webui#33876). Since 21da7627b the page sets
+the folder for the new chat's session itself.
 
 A real Open Terminal serves the files and runs the commands; its `run_command` answer names the
 folder the command ran in, which the test reads from what the model was sent.
 
 Discriminates: passes on the dev f659c0d12 build, except the personal terminal test. With the
 backend's directory call skipped in a backend copy, the picked-folder, recent-folder, folder
-default, missing directory and personal terminal tests fail. On a build of f659c0d12 whose working
-directory menu leaves the chat's folder unset when one is picked, whose folder dialog saves no
-working directory and whose model editor does not take a default terminal, the picked-folder,
-recent-folder, folder dialog and model tests fail.
+default and personal terminal tests fail. On a build of f659c0d12 whose working directory menu
+leaves the chat's folder unset when one is picked, whose folder dialog saves no working directory
+and whose model editor does not take a default terminal, the picked-folder, recent-folder, folder
+dialog and model tests fail. The missing directory test passes on the dev a072aaf31 build and
+fails on a build of it that sends the message although the terminal refused the directory.
 
 Gap (strict xfail, not a bug in what exists): a folder's Default terminal lists only admin
 terminals, so a person cannot make their own terminal a folder's default.
@@ -75,6 +78,10 @@ def _directory(open_terminal, name: str = "harbour") -> Path:
     folder = open_terminal.home / f"{name}-{uuid.uuid4().hex[:8]}"
     (folder / "charts").mkdir(parents=True)
     return folder
+
+
+def notifications(page: Page) -> Locator:
+    return page.get_by_role("region", name=re.compile(r"^Notifications"))
 
 
 def directory_button(page: Page) -> Locator:
@@ -224,7 +231,7 @@ def test_a_new_chat_in_a_folder_starts_on_its_terminal_and_directory(
     assert where_pwd_ran(page, upstream) == str(folder), "the folder's directory was not used"
 
 
-def test_a_folders_missing_directory_is_reported_in_the_chat(
+def test_a_folders_missing_directory_refuses_the_first_message(
     page_for, make_user, terminal, open_terminal, upstream
 ):
     person = make_user()
@@ -240,7 +247,8 @@ def test_a_folders_missing_directory_is_reported_in_the_chat(
     page.keyboard.type("anything there?")
     page.keyboard.press("Enter")
 
-    expect(page.get_by_role("main").get_by_text(UNAVAILABLE)).to_be_visible()
+    expect(notifications(page).get_by_text(UNAVAILABLE)).to_be_visible()
+    expect(chat_input(page)).to_contain_text("anything there?")
     assert len(upstream.chat_requests()) == before, "the model was asked anyway"
 
 

@@ -96,10 +96,13 @@ def open_files_tab(page: Page) -> Locator:
 def open_new_terminal(page: Page) -> Locator:
     """Open a shell of the picked terminal from the New tab menu of the Files tab's pane; returns
     its panel."""
-    # a new tab opens in the pane whose New tab was pressed, beside the conversation once split
-    files_pane = page.locator("[data-panel-tab-bar]").filter(
-        has=page.get_by_role("tab", name="Files", exact=True)
+    # a new tab opens in the pane whose New tab was pressed, beside the conversation once split;
+    # since 0b7e7b3f7 the Files tab is named after the folder it shows
+    files_view = page.get_by_role("tabpanel").filter(
+        has=page.get_by_role("region", name="File browser")
     )
+    files_tab = page.locator(f'[id="{files_view.get_attribute("aria-labelledby")}"]')
+    files_pane = page.locator("[data-panel-tab-bar]").filter(has=files_tab)
     files_pane.get_by_role("button", name="New tab", exact=True).click()
     page.get_by_role("menu").get_by_role("menuitem", name="New Terminal").click()
     shell = page.get_by_role("tabpanel", name=re.compile(r"^Terminal \d+$"))
