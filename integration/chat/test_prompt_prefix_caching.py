@@ -34,7 +34,10 @@ one before it plus the tool calls the model wrote, arguments byte for byte. With
 on, the `__labels__` the model wrote (and in Auto approval its `__approval__` mark) were taken off
 its calls when they were sent back, in the same turn and every later one; PR #33953 sends the
 arguments back as the model wrote them (open-webui/open-webui#33952). The tool round tests run
-with labels off and on for that reason.
+with labels off and on for that reason. Arguments written as compact JSON, the way most models
+write them, still went back re-spaced after PR #33953 (open-webui/open-webui#33958); arguments
+that needed repair (a code fence, a second layer of encoding, a Python literal) go back as the
+repaired JSON object.
 
 `test_a_sub_agent_only_appends`, `test_a_timer_only_appends` and
 `test_a_background_sub_agent_report_only_appends` are red on dev 1c010b438: since de73bb830 a chat
@@ -51,6 +54,8 @@ promise tests red; with no stored system prompt handed to a timer or report, all
 The controls pass on all four. The own-tool-call test, all three cases, and the single, multi-step
 and parallel tool round tests with labels on pass on dev a7b364296 and fail on it with PR #33953
 reverted in a backend copy (the replayed call lost its marks); with labels off they pass on both.
+The compact case fails on dev a7b364296 (its call went back re-spaced) and passes with the fix
+for open-webui/open-webui#33958; the repaired-arguments test passes on both.
 """
 
 from __future__ import annotations
@@ -329,11 +334,14 @@ def test_parallel_tool_calls_only_append(labels, cached_setup, make_user, upstre
     assert_append_only(chat.requests(), chat.generated)
 
 
-@pytest.mark.parametrize("written", ["labels", "approval", "labels_and_approval"])
+@pytest.mark.parametrize("written", ["labels", "approval", "labels_and_approval", "compact"])
 def test_the_model_gets_its_own_tool_call_back_as_it_wrote_it(
     written, cached_setup, chat_settings, make_user, upstream
 ):
-    """open-webui/open-webui#33952: marks Open WebUI read off a call were cut from its replay."""
+    """open-webui/open-webui#33952: marks Open WebUI read off a call were cut from its replay.
+
+    open-webui/open-webui#33958: compact arguments went back re-spaced.
+    """
     arguments, options = {"weeks_ago": 1}, {}
     chat_settings(ENABLE_TOOL_CALL_LABELS="labels" in written)
     if "approval" in written:
@@ -346,7 +354,7 @@ def test_the_model_gets_its_own_tool_call_back_as_it_wrote_it(
         arguments = {"__approval__": {"required": False}, **arguments}
     if "labels" in written:
         arguments = {"__labels__": LABELS, **arguments}
-    encoded = json.dumps(arguments)
+    encoded = json.dumps(arguments, separators=(",", ":") if written == "compact" else None)
     with make_user().client() as client:
         chat = Conversation(client, upstream, cached_setup.id, **options)
         chat.say("hello")
@@ -369,6 +377,47 @@ def test_the_model_gets_its_own_tool_call_back_as_it_wrote_it(
     assert broken is None, (
         f"the model was sent its own call back changed from what it wrote ({encoded}): {broken}"
     )
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        '```json\n{"weeks_ago": 1}\n```',
+        json.dumps(json.dumps({"weeks_ago": 1})),
+        "{'weeks_ago': 1}",
+    ],
+    ids=["fenced", "double_encoded", "python_literal"],
+)
+def test_repaired_tool_call_arguments_go_back_as_a_json_object(
+    written, cached_setup, make_user, upstream
+):
+    """Arguments the model wrote in a shape Open WebUI repairs go back as the repaired JSON."""
+    with make_user().client() as client:
+        chat = Conversation(client, upstream, cached_setup.id)
+        chat.say(
+            "and a week ago?",
+            calling("calculate_timestamp", written),
+            reply.text("Last week."),
+        )
+        chat.say("thanks")
+
+    requests = chat.requests()
+    assert "error" not in tool_results(requests[1]).lower(), tool_results(requests[1])
+    replayed = [
+        call["function"]["arguments"]
+        for request in requests[1:]
+        for message in request["messages"]
+        for call in message.get("tool_calls") or []
+        if call["id"] in chat.generated
+    ]
+    assert len(replayed) == len(requests) - 1, (
+        f"the call was not sent back on every request: {replayed}"
+    )
+    for arguments in replayed:
+        assert json.loads(arguments) == {"weeks_ago": 1}, (
+            f"the model's call {written!r} was sent back as {arguments!r}, not as a JSON object"
+        )
+    assert_append_only(requests)
 
 
 def test_reasoning_replies_only_append(cached_setup, make_user, upstream):
