@@ -7,10 +7,17 @@ say "View Result from <tool>", also after the chat is opened again, and the tool
 label as its hover text. Two labelled calls in a row show their labels, joined by a comma, in the
 group summary. A call whose label is unusable shows as before.
 
+Regression (open-webui/open-webui#33925): a group of three calls where the model left one call
+unlabelled dropped every label from its summary, which read "Exploring 3 read_tide_gauge" while
+the calls ran and "Explored 3 read_tide_gauge" after. The summary keeps the labels that exist,
+running and completed, and names the unlabelled call by its tool. Red on dev until the fix merges.
+
 Discriminates: passes on dev e8c0ad85e. In a backend copy that never keeps the labels on the
 stored call the two label tests fail (the reply names the tool), and in one that never asks the
 model for labels the admin test fails at the tools the model is offered, the label tests with it;
-the unusable label control passes on both.
+the unusable label control passes on both. The unlabelled call test fails on the dev 3c400952c
+build (the running summary reads "Exploring 3 read_tide_gauge") and passes with the group summary
+falling back to the tool name per unlabelled call.
 """
 
 from __future__ import annotations
@@ -23,6 +30,8 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.python_tools import python_tool
+from utils.cached_chat import turn_on_tool
 from utils.chat_ui import conversation, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -30,6 +39,26 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
 CHECKED = {"running": "Checking the harbour clock", "completed": "Checked the harbour clock"}
 LOOKED = {"running": "Looking up the tide", "completed": "Looked up the tide"}
+NORTH = {"running": "Reading the north gauge", "completed": "Read the north gauge"}
+SOUTH = {"running": "Reading the south gauge", "completed": "Read the south gauge"}
+
+GAUGE_TOOL = '''
+import asyncio
+import os
+
+
+class Tools:
+    async def read_tide_gauge(self, gauge: str) -> str:
+        """Read the water level at a tide gauge.
+
+        :param gauge: The gauge to read
+        """
+        for _ in range(600):
+            if os.path.exists(RELEASE_FILE):
+                break
+            await asyncio.sleep(0.1)
+        return f"gauge {gauge}: rising"
+'''
 
 
 @pytest.fixture
@@ -129,6 +158,57 @@ def test_two_labelled_calls_in_a_row_show_both_labels_in_the_summary(
 
     summary = f"{CHECKED['completed']}, {LOOKED['completed']}"
     expect(conversation(page).get_by_text(summary, exact=True)).to_be_visible()
+
+
+@pytest.fixture
+def held_gauges(admin, tmp_path):
+    """A tide gauge tool whose reads all wait until the yielded release file exists."""
+    release = tmp_path / "release"
+    name = f"Tide gauges {uuid.uuid4().hex[:6]}"
+    source = GAUGE_TOOL.replace("RELEASE_FILE", repr(str(release)))
+    with python_tool(admin, source, name=name):
+        yield name, release
+
+
+def gauge_call(gauge: str, labels: dict | None) -> dict:
+    arguments = {"gauge": gauge} if labels is None else {"__labels__": labels, "gauge": gauge}
+    return {
+        "id": f"call_{gauge}",
+        "type": "function",
+        "function": {"name": "read_tide_gauge", "arguments": json.dumps(arguments)},
+    }
+
+
+@pytest.mark.regression
+def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
+    labels_switch, page_for, make_user, upstream, held_gauges
+):
+    tool_name, release = held_gauges
+    labels_switch(True)
+    page = page_for(make_user())
+    turn_on_tool(page, tool_name)
+    question = f"read the tide gauges {uuid.uuid4().hex[:6]}"
+    answering = reply.answering(question)
+    calls = [gauge_call("north", NORTH), gauge_call("harbour", None), gauge_call("south", SOUTH)]
+    upstream.queue(
+        reply.Reply(tool_calls=calls, match=answering),
+        reply.text("The tide is rising.", match=answering),
+    )
+    send(page, question)
+
+    summary = conversation(page).get_by_role("button", name="Toggle details")
+    try:
+        expect(summary).to_contain_text(NORTH["running"])
+        expect(summary).to_contain_text(SOUTH["running"])
+        expect(summary).to_contain_text("read_tide_gauge")
+    finally:
+        release.touch()
+
+    expect_reply(page, "The tide is rising.")
+    expect(summary).to_have_count(1)
+    expect(summary).to_contain_text(NORTH["completed"])
+    expect(summary).to_contain_text(SOUTH["completed"])
+    expect(summary).to_contain_text("read_tide_gauge")
 
 
 def test_a_call_with_an_unusable_label_shows_as_before(
