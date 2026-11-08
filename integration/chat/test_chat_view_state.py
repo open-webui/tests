@@ -12,7 +12,9 @@ missing from the layout, another schema version) is refused with 422, and one ov
 413, also when it is sent chunked; a refused save leaves the saved view as it was. Deleting an
 account removes its views, deleting a chat (alone, with its folder or with all of the owner's
 chats) removes every person's view of it, and deleting the owner's account removes the views
-others saved of the owner's chats.
+others saved of the owner's chats. A save the browser drops halfway (the tab closed or reloaded
+while the layout was being saved) leaves no error traceback in the server log and the next save
+works (open-webui/open-webui#33924).
 
 Discriminates: passes on dev f659c0d12; on d4e8493cc^ and v0.13.0 there is no such route. In
 backend copies of f659c0d12: `ChatViewStates.get` reading any viewer's row fails the privacy
@@ -20,19 +22,22 @@ test, both routes skipping the access check fail the 404 test, `valid_references
 once fails the nine bad layout cases about references (the other six fail on the field schema),
 the size cap raised to 8 MB fails the 413 test, the user and chat deletions keeping the rows fail
 the account and chat deletion test, and the folder and all-chats deletions keeping them fail the
-folder test.
+folder test. The dropped save test fails on dev b6534c58f, which logs "Exception in ASGI
+application" with the client's disconnect as its cause.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import socket
 import uuid
+from urllib.parse import urlsplit
 
 import pytest
 
 from harness.access import grant
-from harness.backends import read_rows
+from harness.backends import read_rows, wait_until
 from harness.chat_history import seed_chat
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -318,3 +323,33 @@ def test_deleting_a_folder_with_its_chats_or_all_chats_removes_their_views(insta
     assert _rows(instance, owner.id) == [] and _rows(instance, reader.id) == [], (
         "deleting all chats left their views behind"
     )
+
+
+def _drop_save_halfway(actor, chat_id: str) -> None:
+    """Send the headers and half the body of a save, then close, as a tab closed mid-save does."""
+    body = json.dumps({"state": _view("dropped")}).encode()
+    address = urlsplit(actor.base_url)
+    head = (
+        f"POST /api/v1/chats/{chat_id}/view HTTP/1.1\r\n"
+        f"Host: {address.netloc}\r\n"
+        f"Authorization: Bearer {actor.token}\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    ).encode()
+    with socket.create_connection((address.hostname, address.port), timeout=10) as connection:
+        connection.sendall(head + body[: len(body) // 2])
+
+
+def test_a_save_dropped_halfway_logs_no_error_and_the_next_save_works(instance, make_user):
+    owner = make_user()
+    chat_id = _chat(owner)
+    offset = instance.log_size()
+
+    _drop_save_halfway(owner, chat_id)
+    _saved(owner, chat_id, _view("after the drop"))
+
+    # bounded: the dropped request is handled long before this, nothing more should appear
+    wait_until(lambda: "Traceback" in instance.log_since(offset), timeout=2)
+    logged = instance.log_since(offset)
+    assert "Traceback" not in logged, f"a dropped view save logged an error:\n{logged[-2000:]}"
+    assert _read_state(owner, chat_id) == _view("after the drop"), "the next save was lost"
