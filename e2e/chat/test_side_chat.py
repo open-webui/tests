@@ -30,6 +30,12 @@ to save a side chat as "New Chat" every test that asks aside fails, as neither a
 carries the question; with saved side chat tabs left out of the saved view, the first test and the
 drop test fail after the reload; with the Side Chat check dropped from the drop target, the test
 without the permission fails as the drop hint shows.
+
+A side chat stays temporary, answered but kept out of the chat list, when the account turns on
+Temporary Chat in it with `/temporary` before its first message, or when the admin enforces
+temporary chats. Discriminates: both pass on the e8c0ad85e build; in a build of it whose side
+chat starts saved whatever is enforced the enforced test fails, and in one that ignores the
+toggle the toggle test fails.
 """
 
 from __future__ import annotations
@@ -421,3 +427,69 @@ def test_without_side_chat_a_chat_dropped_from_the_sidebar_opens_nothing(
     expect(page.get_by_role("tab", name=OTHER_TITLE, exact=True)).to_have_count(0)
     expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
     expect_reply(page, ANSWER)
+
+
+def enforce_temporary_chats(admin) -> None:
+    """Side Chat allowed and temporary chats enforced in the default permissions."""
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"].update(side_chat=True, temporary=True, temporary_enforced=True)
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+
+
+def side_panel_showing(page: Page, text: str) -> Locator:
+    """The side chat's panel once it shows `text`; a temporary one keeps its numbered label."""
+    panel = page.get_by_role("tabpanel").filter(has_text=text)
+    expect(panel).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
+    return panel
+
+
+def test_with_temporary_chats_enforced_a_side_chat_stays_out_of_the_chat_list(
+    page_for, admin, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    question = tagged(SIDE_QUESTION)
+    _, chat_id = open_answered_chat(page_for, account, upstream)
+    # an account under enforced temporary chats cannot save the chat the side chat starts from
+    enforce_temporary_chats(admin)
+    page = page_for(account, path=f"/c/{chat_id}")
+    expect_reply(page, ANSWER)
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+
+    send(page, f"/side {question}")
+
+    side_panel_showing(page, SIDE_ANSWER)
+    expect(main_chat(page)).not_to_contain_text(SIDE_ANSWER)
+    assert list(listed_chats(account)) == [chat_id], (
+        f"a side chat under enforced temporary chats was saved: {listed_chats(account)}"
+    )
+
+
+def test_temporary_chat_turned_on_in_a_side_chat_keeps_it_out_of_the_chat_list(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    question = tagged(SIDE_QUESTION)
+    page, chat_id = open_answered_chat(page_for, account, upstream)
+    send(page, "/side")
+    # the panel's text changes with the toggle, so hold on to it by its id
+    panel_id = side_panel_showing(page, "Messages are saved to your chats.").get_attribute("id")
+    assert panel_id, "the side chat's panel has no id to find it by"
+    panel = page.locator(f"[id='{panel_id}']")
+    side_input = panel.locator("[contenteditable='true']")
+    side_input.click()
+    page.keyboard.type("/temporary")
+    page.get_by_role("button", name=re.compile(r"^Temporary")).click()
+    expect(panel).to_contain_text("Messages disappear when you close this tab.")
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+
+    side_input.click()
+    page.keyboard.press("Control+a")
+    page.keyboard.type(question)
+    page.keyboard.press("Enter")
+
+    expect(panel).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
+    assert list(listed_chats(account)) == [chat_id], (
+        f"a side chat switched to temporary was saved: {listed_chats(account)}"
+    )

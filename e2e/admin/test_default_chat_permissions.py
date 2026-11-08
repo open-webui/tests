@@ -21,6 +21,12 @@ message still offers Edit. The side chat tests pass on v0.13.0 and dev 5f1c6384e
 backend's side chat default switched on the default test fails, and in a v0.13.0 frontend build
 that skips the Allow Side Chat check the withheld test fails as the / menu offers Side chat.
 Retargeted for 3b1a95383, the side chat tests pass on dev c165ee14f.
+
+Since 3b1a95383 Allow Side Chat no longer needs Allow Temporary Chat: an account with only Side
+Chat opens a side chat with `/side`, and it is saved to its chat list. The editor should offer
+Allow Side Chat with Temporary Chat off as well; that test is red on 0.13.1, a real bug, as the
+switch is hidden there. Discriminates: the side chat without Temporary Chat test passes on the
+e8c0ad85e build and fails in a build of it whose side chat still requires Temporary Chat.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.backends import wait_until
 from harness.chat import ask
 from utils.chat_controls import controls_entry
 from utils.chat_ui import (
@@ -299,6 +306,52 @@ def test_side_does_nothing_without_allow_side_chat(page_for, admin, make_user, u
     expect(replies(page)).to_have_count(2)
     asked = [body for body in upstream.chat_requests() if reply.mentioning(question)(body)]
     assert asked == [], f"the side question reached the model without the permission: {asked}"
+
+
+def test_allow_side_chat_stays_on_offer_with_temporary_chat_off(page_for, admin, preserve):
+    """Red on e8c0ad85e: the editor still hides Allow Side Chat while Temporary Chat is off."""
+    preserve("permissions")
+    save_default_permission(page_for(admin), "Allow Temporary Chat", turn_on=False)
+    page = page_for(admin, path="/admin/users/groups")
+    page.get_by_role("button", name="Default permissions").click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_role("switch", name="Allow Temporary Chat", exact=True)).to_have_attribute(
+        "aria-checked", "false"
+    )
+
+    expect(
+        dialog.get_by_role("switch", name="Allow Side Chat", exact=True),
+        "Allow Side Chat with Temporary Chat off",
+    ).to_be_visible()
+
+
+def test_side_opens_a_saved_side_chat_without_the_temporary_chat_permission(
+    page_for, admin, make_user, upstream, preserve
+):
+    preserve("permissions")
+    with admin.client() as client:
+        permissions = client.get("/api/v1/users/default/permissions").json()
+        permissions["chat"].update(side_chat=True, temporary=False)
+        saved = client.post("/api/v1/users/default/permissions", json=permissions)
+    assert saved.status_code == 200, saved.text
+    account = make_user()
+    question = SIDE_QUESTION.format(tag=uuid.uuid4().hex[:8])
+    page = open_answered_chat(page_for, account, upstream)
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+
+    send(page, f"/side {question}")
+
+    expect(side_chat_panel(page, question)).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
+    with account.client() as client:
+
+        def titles() -> list[str]:
+            listed = client.get("/api/v1/chats/", params={"page": 1})
+            assert listed.status_code == 200, listed.text
+            return [chat["title"] for chat in listed.json()]
+
+        assert wait_until(lambda: question in titles(), timeout=10), (
+            f"the side chat was not saved to the chat list: {titles()}"
+        )
 
 
 def test_with_file_upload_off_upload_files_opens_no_file_picker(
