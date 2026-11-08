@@ -76,6 +76,13 @@ shows as its target tool, and a refused one is stored as a failed `call_tool` ca
 its error still reaching the model. On 2416b1fc0, before it, every refused-dispatch case and the
 batch, mixed round and Ollama tests fail (the refused call is shown).
 
+With Tool Call Labels on (0.13.1), the definition `search_tools` returns asks for the required
+`__labels__` argument like a directly offered tool, and labels the model puts inside `params` reach
+the dispatched call as `display_labels`, for a single call and for each member of a batch, while
+`call_tool` itself gets no labels argument. Discriminates (dev b6534c58f backend copies): dropping
+the labels from a dispatched call fails both labels cases at the stored call, and `search_tools`
+returning definitions without `__labels__` fails both at the found definition.
+
 Since dev 0f3bd0a7e the admin picks how `search_tools` matches: BM25 by words, the Documents
 embedding model by meaning (every held-back tool ranked, best first) or a decisions model asked
 about every held-back tool, which keeps the tools at or over its relevance threshold, best first,
@@ -555,6 +562,50 @@ def test_one_call_tool_batch_runs_each_tool_and_is_sent_back_as_one_call(
         assert results[0][2] == "lit at Pula" and results[1][2] == UNAVAILABLE_ROCKETS
         assert "current_timestamp" in results[2][2]
     assert tool_messages(next_turn) == tool_messages(after_batch)
+
+
+LIGHTS_LABELS = {"running": "Checking the Pula lights", "completed": "Checked the Pula lights"}
+CLOCK_LABELS = {"running": "Reading the clock", "completed": "Read the clock"}
+
+
+def labelled(params: dict, labels: dict) -> str:
+    """`params` as the found definition asks for them with Tool Call Labels on."""
+    return json.dumps({**params, "__labels__": labels})
+
+
+@pytest.mark.parametrize("form", ["single", "batch"])
+def test_labels_inside_params_reach_the_dispatched_call_as_on_a_direct_call(
+    tool_search, admin, make_user, upstream, form
+):
+    tool_search(ENABLE_TOOL_CALL_LABELS=True)
+    prompt = f"lights and time, labelled ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(prompt)
+    lights = {"tool_name": "harbour_lights", "params": labelled({"harbour": "Pula"}, LIGHTS_LABELS)}
+    clock = {"tool_name": TIME_TOOL, "params": labelled({}, CLOCK_LABELS)}
+    arguments = lights if form == "single" else {"calls": [lights, clock]}
+    upstream.queue(
+        reply.tool_call("search_tools", {"query": "harbour_lights"}, match=answering),
+        Reply(tool_calls=[dispatch_call("call_2", arguments)], match=answering),
+        reply.text("Labelled.", match=answering),
+    )
+    with python_tool(admin, HARBOUR_TOOLS) as tool_id, make_user().client() as client:
+        _, message = ask(client, prompt, tool_ids=[tool_id])
+
+    after_search = [body for body in upstream.chat_requests() if answering(body)][1]
+    [found] = json.loads(tool_messages(after_search)["call_1"])["tools"]
+    assert "__labels__" in found["parameters"]["required"], (
+        f"the found definition does not ask for labels: {found['parameters']}"
+    )
+    expected = [("harbour_lights", LIGHTS_LABELS)]
+    if form == "batch":
+        expected.append((TIME_TOOL, CLOCK_LABELS))
+    shown = list(items(message, "function_call").values())
+    assert [(call["name"], call.get("display_labels")) for call in shown] == expected, (
+        f"the dispatched calls lost their labels: {shown}"
+    )
+    assert all("__labels__" not in call["arguments"] for call in shown), shown
+    assert items(message, "function_call_output")["call_2"]["output"][0]["text"] == "lit at Pula"
+    assert refused_dispatches(message) == []
 
 
 def test_the_responses_api_gets_a_batch_back_as_one_call_with_one_combined_result(

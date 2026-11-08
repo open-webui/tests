@@ -22,6 +22,11 @@ result (also on a fresh load of the chat), the reply goes on, and the provider g
 combined result. With Ask for approval each call of a batch asks in turn, and only the allowed
 one runs.
 
+With Tool Call Labels on (0.13.1), labels the model puts inside each batch member's `params` show
+in the group summary, joined by a comma, as for direct calls, also on a fresh load of the chat.
+Discriminates: passes on dev b6534c58f; a backend copy that drops the labels from a dispatched call
+fails it (the summary names the tools).
+
 Since dev 0f3bd0a7e Admin Settings > Interface offers a search engine for Tool Search: picking
 the Decisions API shows its address, key, model, relevance threshold and prompt fields (the
 prompt showing the default until one is typed); they are saved, shown again on a fresh load and
@@ -763,6 +768,46 @@ def test_a_batch_of_calls_shows_each_tool_and_the_reply_goes_on(
     expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
     chat_path = page.url[page.url.index("/c/") :]
     expect_batch_shown(page_for(account, path=chat_path))
+
+
+@pytest.fixture
+def tool_call_labels_on(admin, tool_search_on) -> None:
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        client.post(
+            CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_CALL_LABELS": True}
+        ).raise_for_status()
+
+
+def test_labels_of_a_batch_show_in_the_group_summary_also_after_the_chat_is_opened_again(
+    tool_call_labels_on, page_for, make_user, upstream, shouter
+):
+    shouted = {"running": "Shouting the greeting", "completed": "Shouted the greeting"}
+    mumbled = {"running": "Mumbling the reply", "completed": "Mumbled the reply"}
+    prompt = f"shout and mumble, labelled {uuid.uuid4().hex[:6]}"
+    calls = [
+        {"tool_name": "shout", "params": json.dumps({"text": "ahoy", "__labels__": shouted})},
+        {"tool_name": "mumble", "params": json.dumps({"text": "HUSH", "__labels__": mumbled})},
+    ]
+    upstream.queue(
+        reply.tool_call(
+            "call_tool", {"calls": calls}, call_id="call_b", match=reply.answering(prompt)
+        ),
+        reply.text("Shouted and mumbled.", match=reply.answering(prompt)),
+    )
+    account = make_user()
+    page = page_for(account)
+    select_model(page, shouter)
+    send(page, prompt)
+    expect_reply(page, "Shouted and mumbled.")
+
+    summary = f"{shouted['completed']}, {mumbled['completed']}"
+    expect(last_reply(page).get_by_text(summary, exact=True)).to_be_visible()
+    expect(last_reply(page)).not_to_contain_text("call_tool")
+
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    reopened = page_for(account, path=page.url[page.url.index("/c/") :])
+    expect(last_reply(reopened).get_by_text(summary, exact=True)).to_be_visible()
 
 
 # --- the search engine in Admin Settings > Interface -------------------------------------------
