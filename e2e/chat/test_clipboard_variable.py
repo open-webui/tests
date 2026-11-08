@@ -6,8 +6,13 @@ like in `text` as replacement patterns: a copied `echo $$` arrived as `echo $`, 
 commands and math formulas. The clipboard now goes in through a replacer function,
 exactly as copied.
 
+Over plain HTTP by address a page cannot read the clipboard at all, so the paste tests run on a
+secure page. Over plain HTTP the prompt must still go in with the variable left as typed and a
+message, open-webui/open-webui#33937: picking it did nothing at all.
+
 Discriminates: passes on the efe63bd34 build, fails on it with `b233d0d94` reverted (the pasted
-text loses a dollar sign and `$&` turns back into the variable).
+text loses a dollar sign and `$&` turns back into the variable). The plain HTTP test fails on
+0.13.1 and dev b6534c58f (the prompt list stays open and nothing is inserted).
 """
 
 from __future__ import annotations
@@ -51,6 +56,8 @@ def use_prompt(page: Page, command: str) -> None:
     expect(picker).to_be_hidden()
 
 
+# the browser lets a page read the clipboard only in a secure context
+@pytest.mark.secure_context
 def test_the_chat_input_pastes_the_clipboard_exactly(writer, page_for, upstream):
     account, command = writer
     page = page_for(account)
@@ -67,6 +74,8 @@ def test_the_chat_input_pastes_the_clipboard_exactly(writer, page_for, upstream)
     assert sent == f"Run: {COPIED}"
 
 
+# the browser lets a page read the clipboard only in a secure context
+@pytest.mark.secure_context
 def test_plain_clipboard_text_is_pasted_unchanged(writer, page_for):
     account, command = writer
     page = page_for(account)
@@ -76,3 +85,14 @@ def test_plain_clipboard_text_is_pasted_unchanged(writer, page_for):
     use_prompt(page, command)
 
     expect(chat_input(page)).to_have_text("Run: no dollars here")
+
+
+def test_a_clipboard_prompt_is_still_inserted_over_plain_http(writer, page_for):
+    account, command = writer
+    page = page_for(account)
+    expect(chat_input(page)).to_be_visible()
+
+    use_prompt(page, command)
+
+    expect(chat_input(page)).to_have_text("Run: {{CLIPBOARD}}")
+    expect(page.get_by_text("Failed to read clipboard contents")).to_be_visible()
