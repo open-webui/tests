@@ -15,6 +15,11 @@ Discriminates: the other tests pass on dev f659c0d12. In a backend copy whose ag
 returns no models every test fails at the model selector. The no-branching test fails on a build
 with 1ef75436f's branch guards undone (Regenerate shows). The name test fails on dev 1fc5b8f6d
 and passes on fix/agent-reply-keeps-name (the reloaded reply shows the raw id without the fix).
+
+Once the agent's terminal is gone, its chat and a new chat take the default model, also when the
+person had the agent as their default model, and the next message goes to it (#33843, #33860).
+That test passes on dev e8c0ad85e and fails on a frontend build of it with both fixes undone,
+where no model is selected.
 """
 
 from __future__ import annotations
@@ -25,9 +30,11 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import upstream as reply
 from harness.coding_agent import FAST, connect_agent_terminal
 from harness.fake_acp_agent import REFUSAL
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
+from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -148,6 +155,46 @@ def test_an_agent_reply_keeps_the_agents_name_once_its_terminal_is_gone(agent_ch
     expect(last_reply(page)).to_contain_text("Agent heard: who are you?", timeout=REPLY_TIMEOUT_MS)
     answer = _whole_message(page, page.locator(".chat-assistant"))
     expect(answer.get_by_role("heading", name=AGENT_NAME, exact=True)).to_be_visible()
+
+
+def _selected_model(page: Page) -> Locator:
+    return page.get_by_role("button", name=re.compile("Selected model"))
+
+
+def test_once_the_agents_terminal_is_gone_its_chat_and_a_new_chat_take_the_default_model(
+    agent_chat, admin, upstream
+):
+    page = agent_chat()
+    send(page, "remember me")
+    expect_reply(page, "Agent heard: remember me")
+    _wait_until_saved(page)
+    token = page.evaluate("localStorage.token")
+    stored = page.request.get(
+        f"/api/v1/chats/{page.url.rsplit('/c/', 1)[1]}",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()["chat"]
+    [agent_model] = stored["models"]
+    saved = page.request.post(
+        "/api/v1/users/user/settings/update",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"ui": {"models": [agent_model]}},
+    )
+    assert saved.ok, saved.text()
+    with admin.client() as client:
+        configure_terminals(client)
+
+    page.reload()
+    expect(last_reply(page)).to_contain_text("Agent heard: remember me", timeout=REPLY_TIMEOUT_MS)
+    expect(_selected_model(page)).to_contain_text(MOCK_MODEL_ID)
+    expect(_selected_model(page)).not_to_contain_text(AGENT_NAME)
+
+    page.goto("/")
+    expect(chat_input(page)).to_be_visible()
+    expect(_selected_model(page)).to_contain_text(MOCK_MODEL_ID)
+    question = f"hello again {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Back on the default model.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "Back on the default model.")
 
 
 def test_an_agent_permission_request_is_allowed_from_the_chat(agent_chat, tool_approval_on):
