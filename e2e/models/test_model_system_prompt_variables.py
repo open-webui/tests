@@ -163,6 +163,8 @@ def test_a_user_variable_saved_in_the_account_settings_reaches_only_that_persons
     )
 
 
+# the browser offers the location only in a secure context; over plain HTTP it reads Unknown
+@pytest.mark.secure_context
 def test_the_persons_location_fills_the_prompt_without_waiting_for_it_to_be_saved(
     page_for, builder, make_user, upstream
 ):
