@@ -2,10 +2,11 @@
 
 python scripts/refresh_durations.py durations/e2e.json reports/e2e-report-*/junit.xml
 
-Every test a report measured gets the mean of that time and its previous one (setup, call and
-teardown, so a module's instance boot counts against its first test); a skipped test counts the
-little time its skip took, and tests no report ran keep their old entry. Shards split on these
-times, so times measured on the CI runners balance the shards the CI runners run.
+Every passing test a report measured gets the mean of that time and its previous one (setup, call
+and teardown, so a module's instance boot counts against its first test). A failed, errored or
+skipped test is left out, since a red run times the failure, not the test, so it keeps its old
+entry; tests no report ran keep theirs too. Shards split on these times, so times measured on the
+CI runners balance the shards the CI runners run.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ def measured(reports: list[Path]) -> dict[str, float]:
     times: dict[str, float] = {}
     for report in reports:
         for case in ElementTree.parse(report).getroot().iter("testcase"):
+            if any(case.find(outcome) is not None for outcome in ("failure", "error", "skipped")):
+                continue
             test = node_id(case.get("classname", ""), case.get("name", ""))
             if test:
                 times[test] = round(float(case.get("time", 0)), 3)
