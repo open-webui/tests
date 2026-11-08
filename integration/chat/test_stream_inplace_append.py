@@ -786,6 +786,7 @@ def batching_model(streaming, owner):
         client.post("/api/v1/models/model/delete", json={"id": form["id"]})
         created = client.post("/api/v1/models/create", json=form)
         assert created.status_code == 200, created.text
+        client.get("/api/models").raise_for_status()  # registers the model for chats
         yield form["id"]
         client.post("/api/v1/models/model/delete", json={"id": form["id"]})
 
