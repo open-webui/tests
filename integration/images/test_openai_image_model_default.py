@@ -17,6 +17,11 @@ Discriminates: on dev f659c0d12 the default and model list tests pass and fail o
 with d780d386e reverted (the request asks for `dall-e-2`, the list offers both DALL·E models); the
 explicit model test passes on both. The default request test fails on dev 1fc5b8f6d (the default
 request carries `response_format`) and passes with the #33874 fix.
+
+Image editing had the same check (fix d2a8374f3, PR open-webui/open-webui#33875): the format was
+picked from the saved edit model, so a request naming a GPT image model was still asked for
+base64 and one naming DALL·E 2 over a saved GPT image model was not. The edit test passes on dev
+e8c0ad85e and fails in both cases on a backend copy with d2a8374f3 reverted.
 """
 
 from __future__ import annotations
@@ -109,4 +114,55 @@ def test_the_default_request_matches_the_default_model_chosen_by_name(
     assert {**defaulted, "prompt": None} == {**chosen, "prompt": None}, (
         "with no model set, the request for the default GPT image model differs from the same "
         f"model picked by name: {defaulted} against {chosen}"
+    )
+
+
+@pytest.fixture
+def openai_edits(admin, preserve, listener):
+    """`openai_edits(model)` points the admin's image edit settings at a stand-in OpenAI."""
+    preserve(IMAGES_CONFIG)
+    listener.route("POST", "/images/edits", json_answer({"data": [{"b64_json": PNG_BASE64}]}))
+
+    def configure(model: str) -> None:
+        with admin.client() as client:
+            save_image_settings(
+                client,
+                ENABLE_IMAGE_EDIT=True,
+                IMAGE_EDIT_ENGINE="openai",
+                IMAGE_EDIT_MODEL=model,
+                IMAGES_EDIT_OPENAI_API_BASE_URL=listener.base_url,
+                IMAGES_EDIT_OPENAI_API_KEY="sk-edits",
+            )
+
+    return configure
+
+
+def edit_sent(actor, listener, prompt: str, model: str) -> bytes:
+    """Edit an image as `actor`, naming `model`; returns the form the stand-in OpenAI got."""
+    form = {"image": f"data:image/png;base64,{PNG_BASE64}", "prompt": prompt, "model": model}
+    with actor.client() as client:
+        edited = client.post("/api/v1/images/edit", json=form)
+    assert edited.status_code == 200, edited.text
+    sent = [call.body for call in listener.requests_to("/images/edits")]
+    [request] = [body for body in sent if prompt.encode() in body]
+    return request
+
+
+@pytest.mark.parametrize(
+    ("saved", "requested", "asks_for_base64"),
+    [("", "gpt-image-1", False), ("gpt-image-1", "dall-e-2", True)],
+    ids=["gpt-image-named-in-the-request", "dall-e-named-in-the-request"],
+)
+def test_an_edit_asks_for_base64_only_from_the_model_it_sends(
+    openai_edits, listener, make_user, saved, requested, asks_for_base64
+):
+    openai_edits(saved)
+
+    sent = edit_sent(make_user(), listener, f"paint it red for {requested}", requested)
+
+    assert f'name="model"\r\n\r\n{requested}'.encode() in sent, sent[:600]
+    assert (b'name="response_format"' in sent) == asks_for_base64, (
+        f"an edit with {requested} named in the request and {saved!r} saved "
+        f"{'did not ask' if asks_for_base64 else 'asked'} for base64 output; the format must "
+        "follow the model the request sends, GPT image models refuse it (#33874)"
     )
