@@ -221,6 +221,7 @@ def test_the_model_is_sent_its_own_call_back_as_it_made_it(
             if reply.answering(asking)(body)
             for message in body["messages"]
             for call in message.get("tool_calls") or []
+            if call["function"]["name"] == "check_buoy"
         ]
         assert replayed == [arguments], (
             f"after {asking!r} the model got its call back as {replayed}"
