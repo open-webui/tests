@@ -59,6 +59,11 @@ cases pass on dev f844f6e89 and fail on c9415a688^ (the model list carries no th
 the turn still compacts at the model's). The temporary-chat cases pass on dev 226dca18c and fail
 with the temporary id dropped from the compaction check (no summary is made) or with the summary
 and its message dropped from the compaction event (the page has nothing to send back).
+
+Dev e8c0ad85e copied every message before compaction dropped the summarized ones, so the
+compacting turn sent the whole chat plus the summary (open-webui/open-webui#33915): the
+user-boundary, one-exchange, retention and temporary-chat cases fail on dev 97ca2144b and pass
+with the fix.
 """
 
 from __future__ import annotations

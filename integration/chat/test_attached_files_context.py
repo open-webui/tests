@@ -12,7 +12,9 @@ files, on the first request and on the one after an approval.
 Discriminates: passes on dev ef67cc3fa; with af6b82a18 reverted in a backend copy the compacting
 turn, the turn after the checkpoint, both approval tests and the compaction-then-approval test
 fail (a message lists another message's file, or none). The uncompacted, several-files and
-own-tools cases pass on both.
+own-tools cases pass on both. The compacting-turn test also fails on dev 97ca2144b, where the
+compacting turn sent the whole chat plus the summary (open-webui/open-webui#33915), and passes
+with the fix.
 """
 
 from __future__ import annotations
