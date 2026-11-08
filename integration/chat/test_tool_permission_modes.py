@@ -2,12 +2,18 @@
 
 With the admin's Tool Permissions on, each chat runs its tool calls in one of three modes: Full
 access runs them, Ask for approval pauses before every call until the account allows or denies
-it, and Auto (0.13.1, switched on with Auto permissions) has a reviewer model rate each call and
-pauses only those rated at or above the admin's threshold. The reviewer is reached at
-`<base URL>/decisions` with the admin's key and model. Auto never fails open: a reviewer error,
-or Auto picked while the admin has it off, asks instead. A paused call runs only once its own
-account allows it; a denied call never runs, and the model is told. The sidebar list marks a chat
-whose reply waits for approval.
+it, and Auto (0.13.1, switched on with Auto permissions) runs a call only when a review finds it
+needs no approval. Since e8c0ad85e the review engine is a setting. The default engine is the chat
+model itself: in Auto each offered tool gains a required `__approval__` mark and the admin's
+policy goes to the model as a system message; a call marked `{"required": false}` runs with the
+mark taken off its arguments, and one marked risky, unmarked or marked in any other shape asks.
+Outside Auto no mark and no policy is sent, and the default engine needs no Decisions setup. The
+Decisions API engine has a reviewer model rate each call at `<base URL>/decisions` with the
+admin's key and model, and pauses those rated at or above the admin's threshold. Auto never fails
+open: a reviewer error, or Auto picked while the admin has it off, asks instead. A paused call
+runs only once its own account allows it; a denied call never runs, and the model is told. The
+sidebar list marks a chat whose reply waits for approval. The Decisions settings were renamed
+`TOOL_PERMISSIONS_AUTO_*` in e8c0ad85e; a settings client sending the older names still saves.
 
 Discriminates: passes on dev f659c0d12. Each mutation in a backend copy turns exactly one test
 red: the threshold compared with `>` (threshold test), a reviewer error that lets the call run
@@ -15,7 +21,14 @@ red: the threshold compared with `>` (threshold test), a reviewer error that let
 default (default test), the admin's prompt ignored (default test), no Auto review after a denial
 (deny-then-review test), the resolve owner check removed (stranger test), the already-resolved
 check removed (late-allow test), Auto announced while Tool Permissions is off or unset settings
-not kept on save (settings test), and a chat never marked as waiting (risky-call test).
+not kept on save (settings test), and a chat never marked as waiting (risky-call test). The
+Decisions tests were retargeted for e8c0ad85e, whose default engine is the chat model: they pick
+the Decisions engine, and on that commit the safe-call, deny-then-review and settings tests fail
+without it. On e8c0ad85e in a backend copy: never adding the marks fails the mark and safe-call
+tests, no policy message fails the mark test, an unmarked call treated as safe fails the
+unmarked case, a malformed mark treated as safe fails the not-a-boolean and extra-field cases,
+accepting extra fields fails the extra-field case, a default engine of `decisions` fails the
+default engine test and dropping the older name of the model setting fails the older-names test.
 """
 
 from __future__ import annotations
@@ -103,11 +116,12 @@ def auto_permissions(chat_settings, listener):
     chat_settings(
         ENABLE_TOOL_PERMISSIONS=True,
         ENABLE_TOOL_PERMISSIONS_AUTO=True,
-        TOOL_PERMISSIONS_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
-        TOOL_PERMISSIONS_DECISIONS_API_KEY=REVIEWER_KEY,
-        TOOL_PERMISSIONS_DECISIONS_MODEL=REVIEWER_MODEL,
-        TOOL_PERMISSIONS_DECISIONS_THRESHOLD=0.5,
-        TOOL_PERMISSIONS_DECISIONS_PROMPT=REVIEW_PROMPT,
+        TOOL_PERMISSIONS_AUTO_ENGINE="decisions",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_KEY=REVIEWER_KEY,
+        TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL=REVIEWER_MODEL,
+        TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD=0.5,
+        TOOL_PERMISSIONS_AUTO_PROMPT=REVIEW_PROMPT,
     )
     return listener
 
@@ -198,7 +212,7 @@ def test_auto_is_the_default_and_runs_a_call_the_reviewer_finds_safe(
     body = review.json()
     assert body["model"] == REVIEWER_MODEL
     [rating] = body["questions"]
-    assert rating["instructions"] == REVIEW_PROMPT, "the admin's review prompt was not used"
+    assert REVIEW_PROMPT in rating["instructions"], "the admin's review prompt was not used"
     evidence = json.loads(body["input"])
     assert evidence["tool"]["name"] == "post_notice"
     assert evidence["arguments"] == {"text": "ferry on time"}
@@ -305,7 +319,8 @@ def test_auto_picked_while_the_admin_has_it_off_still_asks(
     chat_settings(
         ENABLE_TOOL_PERMISSIONS=True,
         ENABLE_TOOL_PERMISSIONS_AUTO=False,
-        TOOL_PERMISSIONS_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
+        TOOL_PERMISSIONS_AUTO_ENGINE="decisions",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
     )
     question = unique("post the timetable")
     queue_notices(upstream, question, "timetable")
@@ -402,20 +417,22 @@ def test_the_auto_settings_are_kept_checked_and_announced(
     chat_settings(
         ENABLE_TOOL_PERMISSIONS=True,
         ENABLE_TOOL_PERMISSIONS_AUTO=True,
-        TOOL_PERMISSIONS_DECISIONS_API_BASE_URL=base_url + "/",
-        TOOL_PERMISSIONS_DECISIONS_API_KEY=REVIEWER_KEY,
-        TOOL_PERMISSIONS_DECISIONS_MODEL=REVIEWER_MODEL,
-        TOOL_PERMISSIONS_DECISIONS_THRESHOLD=0.25,
-        TOOL_PERMISSIONS_DECISIONS_PROMPT=REVIEW_PROMPT,
+        TOOL_PERMISSIONS_AUTO_ENGINE="decisions",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL=base_url + "/",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_KEY=REVIEWER_KEY,
+        TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL=REVIEWER_MODEL,
+        TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD=0.25,
+        TOOL_PERMISSIONS_AUTO_PROMPT=REVIEW_PROMPT,
     )
     with admin.client() as client:
         stored = client.get(CHAT_CONFIG[0]).json()
         assert stored["ENABLE_TOOL_PERMISSIONS_AUTO"] is True
-        assert stored["TOOL_PERMISSIONS_DECISIONS_API_BASE_URL"] == base_url
-        assert stored["TOOL_PERMISSIONS_DECISIONS_MODEL"] == REVIEWER_MODEL
-        assert stored["TOOL_PERMISSIONS_DECISIONS_THRESHOLD"] == 0.25
-        assert stored["TOOL_PERMISSIONS_DECISIONS_PROMPT"] == REVIEW_PROMPT
-        assert stored["DEFAULT_TOOL_PERMISSIONS_DECISIONS_PROMPT"].strip()
+        assert stored["TOOL_PERMISSIONS_AUTO_ENGINE"] == "decisions"
+        assert stored["TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL"] == base_url
+        assert stored["TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL"] == REVIEWER_MODEL
+        assert stored["TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD"] == 0.25
+        assert stored["TOOL_PERMISSIONS_AUTO_PROMPT"] == REVIEW_PROMPT
+        assert stored["DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT"].strip()
 
         # A form from before Auto existed leaves the Auto settings as they were.
         older_form = {
@@ -426,13 +443,15 @@ def test_the_auto_settings_are_kept_checked_and_announced(
         assert client.post(CHAT_CONFIG[1], json=older_form).status_code == 200
         kept = client.get(CHAT_CONFIG[0]).json()
         assert kept["ENABLE_TOOL_PERMISSIONS_AUTO"] is True
-        assert kept["TOOL_PERMISSIONS_DECISIONS_MODEL"] == REVIEWER_MODEL
-        assert kept["TOOL_PERMISSIONS_DECISIONS_THRESHOLD"] == 0.25
+        assert kept["TOOL_PERMISSIONS_AUTO_ENGINE"] == "decisions"
+        assert kept["TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL"] == REVIEWER_MODEL
+        assert kept["TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD"] == 0.25
 
         for bad in (
-            {"TOOL_PERMISSIONS_DECISIONS_THRESHOLD": 1.5},
-            {"TOOL_PERMISSIONS_DECISIONS_API_BASE_URL": "ftp://reviewer.local/v1"},
-            {"TOOL_PERMISSIONS_DECISIONS_MODEL": "  "},
+            {"TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD": 1.5},
+            {"TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL": "ftp://reviewer.local/v1"},
+            {"TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL": "  "},
+            {"TOOL_PERMISSIONS_AUTO_ENGINE": "coin-toss"},
         ):
             refused = client.post(CHAT_CONFIG[1], json={**kept, **bad})
             assert refused.status_code in (400, 422), f"{bad} was saved: HTTP {refused.status_code}"
@@ -450,3 +469,175 @@ def test_the_auto_settings_are_kept_checked_and_announced(
     assert features["enable_tool_permissions_auto"] is False, (
         "Auto is offered while Tool Permissions is off"
     )
+
+
+def test_a_settings_client_using_the_older_decisions_names_still_saves(chat_settings, admin):
+    older_names = {
+        "TOOL_PERMISSIONS_DECISIONS_MODEL": "older-reviewer",
+        "TOOL_PERMISSIONS_DECISIONS_THRESHOLD": 0.75,
+        "TOOL_PERMISSIONS_DECISIONS_PROMPT": REVIEW_PROMPT,
+    }
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        form = {key: value for key, value in current.items() if "TOOL_PERMISSIONS_AUTO_" not in key}
+        saved = client.post(CHAT_CONFIG[1], json={**form, **older_names})
+        assert saved.status_code == 200, saved.text
+        stored = client.get(CHAT_CONFIG[0]).json()
+
+    assert (
+        stored["TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL"],
+        stored["TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD"],
+        stored["TOOL_PERMISSIONS_AUTO_PROMPT"],
+    ) == ("older-reviewer", 0.75, REVIEW_PROMPT), "the older setting names were not saved"
+    assert stored["TOOL_PERMISSIONS_DECISIONS_MODEL"] == "older-reviewer", (
+        "an older settings client no longer reads the saved model under its own name"
+    )
+
+
+# --- Auto reviewed by the chat model itself (e8c0ad85e) -----------------------------------------
+
+
+@pytest.fixture
+def model_review(chat_settings, listener):
+    """Auto with the default engine, where the chat model marks each call; yields the listener."""
+    chat_settings(
+        ENABLE_TOOL_PERMISSIONS=True,
+        ENABLE_TOOL_PERMISSIONS_AUTO=True,
+        TOOL_PERMISSIONS_AUTO_ENGINE="",
+        TOOL_PERMISSIONS_AUTO_PROMPT=REVIEW_PROMPT,
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
+    )
+    return listener
+
+
+def marked_notice(text: str, approval, call_id: str = "call_1") -> dict:
+    """A notice call carrying the model's own `__approval__` mark, or none for `approval=None`."""
+    arguments = {"text": text} if approval is None else {"__approval__": approval, "text": text}
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": "post_notice", "arguments": json.dumps(arguments)},
+    }
+
+
+def queue_marked(upstream, question: str, *calls: dict, answer: str = "Done.") -> None:
+    upstream.queue(
+        reply.Reply(tool_calls=list(calls), match=reply.answering(question)),
+        reply.text(answer, match=reply.answering(question)),
+    )
+
+
+def first_request(upstream, question: str) -> dict:
+    return next(body for body in upstream.chat_requests() if reply.answering(question)(body))
+
+
+def approval_policy(request: dict) -> str:
+    return "\n".join(
+        str(entry["content"])
+        for entry in request["messages"]
+        if entry["role"] == "system" and "<tool_approval_policy>" in str(entry["content"])
+    )
+
+
+def offered_schema(request: dict, name: str) -> dict:
+    [tool] = [tool for tool in request.get("tools") or [] if tool["function"]["name"] == name]
+    return tool["function"]["parameters"]
+
+
+def test_auto_is_reviewed_by_the_chat_model_by_default(chat_settings, admin):
+    chat_settings(ENABLE_TOOL_PERMISSIONS=True, ENABLE_TOOL_PERMISSIONS_AUTO=True)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        form = {
+            key: value for key, value in current.items() if key != "TOOL_PERMISSIONS_AUTO_ENGINE"
+        }
+        form["TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL"] = "  "
+        saved = client.post(CHAT_CONFIG[1], json=form)
+
+    assert saved.status_code == 200, (
+        f"the default engine still needed a decisions setup: HTTP {saved.status_code} {saved.text}"
+    )
+    assert current["TOOL_PERMISSIONS_AUTO_ENGINE"] == "", current["TOOL_PERMISSIONS_AUTO_ENGINE"]
+
+
+def test_the_model_is_asked_to_mark_each_call_under_the_admins_policy(
+    model_review, notice_tool, make_user, upstream
+):
+    question = unique("post that the ferry is on time")
+    queue_marked(upstream, question, marked_notice("ferry on time", {"required": False}))
+    with make_user().client() as client:
+        turn = send_message(
+            client, question, tool_ids=[notice_tool], params={"tool_approval_mode": "auto"}
+        )
+        wait_for_reply(client, turn)
+
+    request = first_request(upstream, question)
+    schema = offered_schema(request, "post_notice")
+    assert schema["properties"]["__approval__"]["properties"]["required"]["type"] == "boolean"
+    assert "__approval__" in schema["required"], schema
+    assert "text" in schema["properties"], f"the tool's own parameters were lost: {schema}"
+    policy = approval_policy(request)
+    assert REVIEW_PROMPT in policy, f"the admin's policy did not reach the model: {request}"
+    assert model_review.received == [], "the Decisions API was asked with the default engine"
+
+
+def test_a_call_the_model_marks_as_safe_runs_without_its_mark(
+    model_review, notice_tool, ledger, make_user, upstream
+):
+    question = unique("post that the pier is open")
+    queue_marked(
+        upstream, question, marked_notice("pier open", {"required": False}), answer="Posted."
+    )
+    with make_user().client() as client:
+        turn = send_message(
+            client, question, tool_ids=[notice_tool], params={"tool_approval_mode": "auto"}
+        )
+        message = wait_for_reply(client, turn)
+
+    assert message["content"].endswith("Posted."), message["content"]
+    assert posted(ledger) == ["pier open"], "a call the model marked safe did not run"
+    assert tool_results(upstream, question) == {"call_1": "posted pier open"}
+
+
+@pytest.mark.parametrize(
+    "approval",
+    [{"required": True}, None, {"required": "no"}, {"required": False, "why": "trust me"}],
+    ids=["marked_risky", "unmarked", "not_a_boolean", "extra_field"],
+)
+def test_a_call_marked_risky_or_not_marked_clearly_waits_for_approval(
+    approval, model_review, notice_tool, ledger, make_user, upstream
+):
+    question = unique("post that the harbour is closed")
+    queue_marked(upstream, question, marked_notice("harbour closed", approval))
+    with make_user().client() as client:
+        turn = send_message(
+            client, question, tool_ids=[notice_tool], params={"tool_approval_mode": "auto"}
+        )
+        wait_until_pending(client, turn)
+        assert posted(ledger) == [], f"a call marked {approval!r} ran without asking"
+
+        allowed = resolve(client, turn, "approve")
+        assert allowed.status_code == 200, allowed.text
+        wait_for_reply(client, turn)
+
+    assert posted(ledger) == ["harbour closed"], "the allowed call did not run with its own text"
+
+
+@pytest.mark.parametrize("mode", ["ask", "full"])
+def test_outside_auto_the_model_is_not_asked_to_mark_its_calls(
+    mode, model_review, notice_tool, make_user, upstream
+):
+    question = unique("post the timetable")
+    queue_notices(upstream, question, "timetable")
+    with make_user().client() as client:
+        turn = send_message(
+            client, question, tool_ids=[notice_tool], params={"tool_approval_mode": mode}
+        )
+        if mode == "ask":
+            wait_until_pending(client, turn)
+            resolve(client, turn, "approve")
+        wait_for_reply(client, turn)
+
+    request = first_request(upstream, question)
+    assert "__approval__" not in offered_schema(request, "post_notice")["properties"]
+    assert approval_policy(request) == "", f"the approval policy was sent in {mode} mode"
