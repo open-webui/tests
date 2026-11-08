@@ -9,6 +9,12 @@ turn is covered in test_context_compaction.py, which never calls this endpoint.
 Discriminates: in a backend copy, storing the summary on the first message of the branch in
 place of the current one fails the checkpoint, next-turn and previous-summary tests, and
 walking every message of the chat in place of the current branch fails the branch test.
+
+The cap test pins fix 275e0f40e (PR open-webui/open-webui#33726): with no task model settings
+the summary request was capped at 1000 tokens, which a reasoning model could spend thinking and
+leave the summary empty or cut off. It passes on dev e8c0ad85e and fails on a backend copy with
+275e0f40e reverted (the request carries `max_tokens: 1000`); the task model settings test passes
+on both.
 """
 
 from __future__ import annotations
@@ -180,6 +186,42 @@ def test_the_model_can_be_chosen_and_must_exist(make_user, upstream, compaction_
     assert result["compacted"] is True
     assert [body["model"] for body in upstream.chat_requests()] == [MOCK_MODEL_ID]
     assert refused.status_code == 400, refused.text
+
+
+def summary_requests(upstream) -> list[dict]:
+    return [body for body in upstream.chat_requests() if is_summary_request(body)]
+
+
+def test_the_summary_is_not_capped_at_1000_tokens(make_user, upstream, compaction_on):
+    # a reasoning model spent the 1000 tokens thinking and left the summary empty (#33726)
+    upstream.queue(reply.text(SUMMARY, match=is_summary_request))
+    with make_user().client() as client:
+        chat_id, _ = seed_chat(client, turns(3))
+        compact(client, chat_id)
+
+    [sent] = summary_requests(upstream)
+    caps = {key: sent[key] for key in ("max_tokens", "max_completion_tokens") if key in sent}
+    assert caps == {}, f"the summary request is capped with no cap set anywhere: {caps}"
+
+
+def test_the_task_model_settings_still_reach_the_summary(
+    make_user, upstream, compaction_on, preserve
+):
+    preserve("tasks")
+    with make_user(role="admin").client() as admin_client:
+        current = admin_client.get("/api/v1/tasks/config").json()
+        saved = admin_client.post(
+            "/api/v1/tasks/config/update",
+            json={**current, "TASK_MODEL_PARAMS": {"max_tokens": 4321}},
+        )
+        assert saved.status_code == 200, saved.text
+    upstream.queue(reply.text(SUMMARY, match=is_summary_request))
+    with make_user().client() as client:
+        chat_id, _ = seed_chat(client, turns(3))
+        compact(client, chat_id)
+
+    [sent] = summary_requests(upstream)
+    assert sent.get("max_tokens") == 4321, f"the admin's task model settings were dropped: {sent}"
 
 
 def test_nothing_is_compacted_while_compaction_is_off(make_user, upstream):
