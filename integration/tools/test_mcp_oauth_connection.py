@@ -40,6 +40,10 @@ was the only copy. Such an answer now keeps the session and the next call refres
 refresh token, while a refused refresh (the revoked-token test) still drops it. Passes on dev
 f659c0d12, fails on a backend copy with 14c2cad84 reverted (the session is gone after the 503 and
 after the 429).
+
+The quiet listing test pins PR open-webui/open-webui#33663 (fix 8957ac139): every time a user
+loaded Open WebUI, each OAuth MCP server they had not connected yet logged a warning. Passes on
+dev e8c0ad85e, fails on a backend copy with 8957ac139 reverted (the warning is in the log).
 """
 
 from __future__ import annotations
@@ -248,6 +252,30 @@ def preflights(auth_server) -> list:
     """The authorize requests Open WebUI sent itself before sending the browser there."""
     requests = auth_server.requests_to("/authorize")
     return [entry for entry in requests if "aiohttp" in entry.headers.get("User-Agent", "")]
+
+
+def listed_server(actor, server_id: str) -> dict:
+    with actor.client() as client:
+        listed = client.get("/api/v1/tools/")
+    assert listed.status_code == 200, listed.text
+    [entry] = [tool for tool in listed.json() if tool["id"] == f"server:mcp:{server_id}"]
+    return entry
+
+
+@pytest.mark.regression
+def test_listing_a_server_the_user_has_not_connected_logs_no_warning(
+    instance, mcp, person, server_id
+):
+    log_offset = instance.log_size()
+
+    assert listed_server(person, server_id)["authenticated"] is False
+
+    assert "No OAuth session found" not in instance.log_since(log_offset), (
+        "loading the tools of a user who has not connected the MCP server yet logged a warning, "
+        "so every page load fills the log (#33663)"
+    )
+    connect(instance, person, server_id)
+    assert listed_server(person, server_id)["authenticated"] is True
 
 
 @pytest.mark.regression

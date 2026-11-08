@@ -17,6 +17,10 @@ notifying nobody in `channel_notifications` turns the channel test red, dropping
 the update in `read_inbox_item` turns the unread count test red, and dropping the
 `notifications.enable` check from `consume_event` and `insert_notifications` turns both
 switched-off tests red.
+
+Since 7efb494a2, opening a channel (the page tells the server it read up to now) also marks that
+channel's entries in the inbox read. The channel opening test passes on dev e8c0ad85e and fails
+on a backend copy with 7efb494a2 reverted (the mention stays unread).
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ import pytest
 from harness.actors import Actor, admin_of, create_user
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.comments import COMMENTABLE, comment, mention, reply, shared_item, switch_comments
+from harness.socket_client import connected
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -162,6 +167,24 @@ def test_a_channel_reply_or_mention_reaches_only_the_person_meant(admin, make_us
         assert entries_about(bystander, called) == [], (
             f"a channel mention reached the inbox of {bystander.name}, who was not meant"
         )
+
+
+def test_opening_the_channel_marks_its_entries_read(admin, make_user, inbox_on):
+    enable_channels(admin)
+    owner, author = make_user(), make_user()
+    channel_id = group_channel(owner, author)
+    called = post_message(author, channel_id, f"{mention(owner)}, the ferry is late")
+    assert unread(owner) == 1
+    with connected(owner) as tab:
+        tab.join_channels(owner)
+        tab.call(
+            "events:channel",
+            {"channel_id": channel_id, "message_id": None, "data": {"type": "last_read_at"}},
+        )
+
+    [entry] = [entry for entry in inbox(owner) if entry["object_id"] == called]
+    assert entry["read_at"], f"opening the channel left its mention unread: {entry}"
+    assert unread(owner) == 0, "opening the channel left its mention in the unread count"
 
 
 def test_marking_read_and_opening_the_inbox_bring_the_unread_count_down(admin, make_user, inbox_on):

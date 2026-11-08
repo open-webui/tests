@@ -19,14 +19,21 @@ request and the shell; the list filtered before the fix), with the `enabled` che
 `get_terminal_tools` the chat on the disabled terminal is offered its tools, and with 867006acc
 reverted the admin tests on the no-bypass instance fail on every entry point (403, a 4003 close,
 not listed).
+
+The closed-before-sign-in test pins PR open-webui/open-webui#33863 (fix ac45fc0fc, issue #33850):
+a terminal WebSocket the browser closed before sending its sign-in made the server try to close
+it again and log an error traceback. Passes on dev e8c0ad85e, fails on a backend copy with
+ac45fc0fc reverted (the traceback is in the log).
 """
 
 from __future__ import annotations
 
+import uuid
 from typing import Callable, Iterator
 
 import pytest
 from websockets.exceptions import ConnectionClosed
+from websockets.sync.client import connect
 
 from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
@@ -127,6 +134,25 @@ def test_a_disabled_terminal_closes_the_session_saying_so(save, member, terminal
     with terminal_session(member.base_url, member.token, disabled["id"]) as session:
         code, reason = close_of(session, timeout=10) or (None, "")
     assert code == 4003 and "disabled" in reason.lower(), (code, reason)
+
+
+def test_a_session_closed_before_it_signs_in_logs_no_error(instance, save, member, terminal):
+    """#33850: a panel closed right after it opened left a traceback in the server log."""
+    connection = terminal.connection(config=_granted_to(member))
+    save(connection)
+    log_offset = instance.log_size()
+    url = member.base_url.replace("http://", "ws://", 1) + (
+        f"/api/v1/terminals/{connection['id']}/api/terminals/{uuid.uuid4().hex}"
+    )
+    with connect(url, proxy=None, open_timeout=10, close_timeout=2):
+        pass
+
+    # a real sign-in failure still closes the way it did
+    with terminal_session(member.base_url, "not-a-token", connection["id"]) as session:
+        assert close_of(session, timeout=10) == (4001, "Invalid token")
+    log = instance.log_since(log_offset)
+    assert "Traceback" not in log, f"a session gone before its sign-in logged an error:\n{log}"
+    assert not terminal.sessions, "a session that never signed in reached the terminal"
 
 
 @pytest.mark.parametrize("entry_point", sorted(ENTRY_POINTS))
