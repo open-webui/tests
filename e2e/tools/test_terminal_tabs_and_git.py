@@ -67,6 +67,16 @@ open-webui/open-webui#33847, fix b31ae40d2, issue #33845; the browser has no `cr
 there and no tab opened). The test is red on dev e8c0ad85e because the chat page itself no longer
 loads over plain HTTP since d4e8493cc (see e2e/chat/test_chat_plain_http.py); it passes on a build
 of e8c0ad85e with that fixed and fails on the same build with b31ae40d2 reverted.
+
+With two terminals connected, picking the other one with the screen split, in a new chat or in
+a chat that has messages (allowed again since a518ff163), moves the open Files tab to it: its
+files show and the tab reads Home again. A per-chat terminal picked in a new chat has no files
+until the chat exists; after the first message the tab shows that chat's own empty home. All
+three are red on dev 560f2b4c6 (the new chat ones also on b13d02e09), where the tab kept the first
+terminal's folder and files since the workspace of tabs came in 0.13.0
+(open-webui/open-webui#33951), and pass on a build of 560f2b4c6 with the fix. The per-chat test
+also fails on a build of the fix whose file browser skips loading when the chat and the terminal
+arrive together (the tab stays on "/" and reads Files).
 """
 
 from __future__ import annotations
@@ -83,7 +93,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
-from harness.open_terminal import HOME_TAB
+from harness.open_terminal import HOME_TAB, serving_open_terminal
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, expect_reply, send
@@ -125,6 +135,14 @@ def repository(open_terminal):
     (folder / "tides.txt").write_text("high water at seven\nlow water at noon\n")
     yield folder
     shutil.rmtree(folder, ignore_errors=True)
+
+
+@pytest.fixture
+def second_terminal():
+    """Another real Open Terminal, with a file of its own in its home."""
+    with serving_open_terminal() as terminal:
+        (terminal.home / "tide-chart.csv").write_text("high,low\n")
+        yield terminal
 
 
 def _git(folder, *arguments: str) -> str:
@@ -884,3 +902,99 @@ def test_side_chat_and_comments_shortcuts_answer_only_where_allowed(
     page.keyboard.press("Control+Shift+Y")
     _expect_panes(page, [[title, "New Chat 1", "Comments"]])
     _selected(page, "Comments")
+
+
+def _files_in_a_folder_of_harbour(
+    page_for, make_user, admin, open_terminal, other: dict
+) -> tuple[Page, Locator, str]:
+    """A fresh account's new chat on Harbour, with `other` open to it too, its Files tab in a
+    folder of Harbour and split beside the conversation; returns the page, the file browser and
+    the folder's name."""
+    person = make_user()
+    grants = [read_grant(person.id)]
+    harbour = open_terminal.connection(name="Harbour", config={"access_grants": grants})
+    other = {**other, "config": {**other["config"], "access_grants": grants}}
+    with admin.client() as client:
+        configure_terminals(client, harbour, other)
+    dock = open_terminal.home / f"dock-{uuid.uuid4().hex[:6]}"
+    dock.mkdir()
+    (dock / "manifest.txt").write_text("two ropes\n")
+    page = page_for(person)
+    pick_terminal(page, "Harbour")
+    files = page.get_by_role("region", name="File browser")
+    files.get_by_text(dock.name, exact=True).click()
+    expect(files.get_by_text("manifest.txt", exact=True)).to_be_visible()
+    expect(_tab_strip(page).get_by_role("tab", name=dock.name, exact=True)).to_be_visible()
+    page.keyboard.press("Control+Backslash")
+    expect(chat_input(page)).to_be_visible()
+    return page, files, dock.name
+
+
+def _pick_another_terminal(page: Page, current: str, new: str) -> None:
+    # once picked, the composer's terminal button is named after the terminal
+    composer = page.get_by_role("main")
+    composer.get_by_role("button", name=current, exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=new).click()
+    expect(composer.get_by_role("button", name=new, exact=True)).to_be_visible()
+
+
+def test_picking_another_terminal_before_the_first_message_shows_its_files(
+    page_for, make_user, admin, preserve, open_terminal, second_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    lighthouse = second_terminal.connection(name="Lighthouse")
+    page, files, folder = _files_in_a_folder_of_harbour(
+        page_for, make_user, admin, open_terminal, lighthouse
+    )
+
+    _pick_another_terminal(page, "Harbour", "Lighthouse")
+
+    expect(files.get_by_text("tide-chart.csv", exact=True)).to_be_visible()
+    expect(files.get_by_text("manifest.txt", exact=True)).to_have_count(0)
+    expect(_tab_strip(page).get_by_role("tab", name=FILES, exact=True)).to_be_visible()
+    expect(_tab_strip(page).get_by_role("tab", name=folder, exact=True)).to_have_count(0)
+
+
+def test_picking_another_terminal_in_a_chat_with_messages_shows_its_files(
+    page_for, make_user, admin, preserve, upstream, open_terminal, second_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    lighthouse = second_terminal.connection(name="Lighthouse")
+    page, files, folder = _files_in_a_folder_of_harbour(
+        page_for, make_user, admin, open_terminal, lighthouse
+    )
+    prompt = f"read the manifest {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Two ropes.", match=reply.answering(prompt)))
+    send(page, prompt)
+    expect_reply(page, "Two ropes.")
+
+    _pick_another_terminal(page, "Harbour", "Lighthouse")
+
+    expect(files.get_by_text("tide-chart.csv", exact=True)).to_be_visible()
+    expect(files.get_by_text("manifest.txt", exact=True)).to_have_count(0)
+    expect(_tab_strip(page).get_by_role("tab", name=FILES, exact=True)).to_be_visible()
+    expect(_tab_strip(page).get_by_role("tab", name=folder, exact=True)).to_have_count(0)
+
+
+def test_a_per_chat_terminal_picked_before_the_first_message_shows_its_files_once_the_chat_starts(
+    page_for, make_user, admin, preserve, upstream, open_terminal, terminal_orchestrator
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    per_chat = terminal_orchestrator.connection(name="Lighthouse")
+    page, files, folder = _files_in_a_folder_of_harbour(
+        page_for, make_user, admin, open_terminal, per_chat
+    )
+
+    _pick_another_terminal(page, "Harbour", "Lighthouse")
+    # a per-chat terminal has no files until its chat exists
+    expect(page.get_by_text("Terminal connection unavailable")).to_be_visible()
+    prompt = f"chart the coast {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Charted.", match=reply.answering(prompt)))
+    send(page, prompt)
+    expect_reply(page, "Charted.")
+
+    # the chat's own terminal starts with an empty home
+    expect(_tab_strip(page).get_by_role("tab", name=FILES, exact=True)).to_be_visible()
+    expect(files.get_by_text("This folder is empty")).to_be_visible()
+    expect(files.get_by_text("manifest.txt", exact=True)).to_have_count(0)
+    expect(_tab_strip(page).get_by_role("tab", name=folder, exact=True)).to_have_count(0)
