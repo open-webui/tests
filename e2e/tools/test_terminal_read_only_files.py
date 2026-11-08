@@ -15,6 +15,7 @@ import stat
 import pytest
 from playwright.sync_api import Locator, expect
 
+from harness.open_terminal import HOME_TAB
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
 
@@ -62,8 +63,8 @@ def test_a_read_only_file_opens_in_an_editor_that_takes_no_typing(browser, home)
     browser.page.keyboard.type("# changed")
     expect(editor).not_to_contain_text("# changed")
 
-    # each opened file has a tab of its own beside the Files tab, named after its folder
-    browser.page.get_by_role("tab", name=home.name, exact=True).click()
+    # each opened file has a tab of its own beside the Files tab
+    browser.page.get_by_role("tab", name=HOME_TAB, exact=True).click()
     browser.get_by_text("log-book.py", exact=True).click()
     expect(editor).to_contain_text("ENTRIES = []")
     editor.click()

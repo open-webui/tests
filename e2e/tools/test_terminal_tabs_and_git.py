@@ -40,8 +40,8 @@ the diff and undo tests stay green on that build as its controls.
 
 Retargeted for 617618c9e: `test_the_full_width_layout_is_kept_after_a_reload` saved the removed
 full-width switch and is now the split layout test; the reorder test now counts the conversation
-tab. Since 0b7e7b3f7 the Files tab is named after the folder it shows, so the
-tests name it by the terminal's home.
+tab. Since 0b7e7b3f7 the Files tab is named after the folder it shows, and since 241c8c0e4
+it reads Home in the terminal's home, where these tests open it.
 
 `test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
 started with nothing pending wedges the chat's layout saving until the next reload
@@ -83,15 +83,14 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
-from harness.open_terminal import HOME_FOLDER
+from harness.open_terminal import HOME_TAB
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-# since 0b7e7b3f7 the Files tab is named after the folder it shows, here the terminal's home
-FILES = HOME_FOLDER
+FILES = HOME_TAB
 
 
 @pytest.fixture

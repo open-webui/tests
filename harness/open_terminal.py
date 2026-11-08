@@ -27,8 +27,8 @@ import pytest
 from harness.instance import free_port
 
 API_KEY = "sk-open-terminal"
-# the Files tab is named after the folder it shows, so it opens as this one
-HOME_FOLDER = "home"
+# the Files tab is named after the folder it shows, but Home in the terminal's home (241c8c0e4)
+HOME_TAB = "Home"
 BOOT_SECONDS = 60
 
 
@@ -64,7 +64,7 @@ def serving_open_terminal(env: dict[str, str] | None = None) -> Iterator[OpenTer
     if binary is None:
         pytest.skip("needs open-terminal (set OPEN_TERMINAL_BIN or put it on PATH)")
     scratch = Path(tempfile.mkdtemp(prefix="open-terminal-"))
-    home = scratch / HOME_FOLDER
+    home = scratch / "home"
     home.mkdir()
     port = free_port()
     env = {

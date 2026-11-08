@@ -45,7 +45,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.backends import wait_until
-from harness.open_terminal import HOME_FOLDER
+from harness.open_terminal import HOME_TAB
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import open_files_tab, pick_terminal
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, send
@@ -366,7 +366,7 @@ def test_two_files_tabs_keep_their_own_folder_and_a_move_shows_in_both(browser, 
     second = open_files_tab(page)
     second.get_by_role("button", name="Home", exact=True).click()
 
-    expect(_tab(page, HOME_FOLDER)).to_have_attribute("aria-selected", "true")
+    expect(_tab(page, HOME_TAB)).to_have_attribute("aria-selected", "true")
     expect(second.get_by_text("draft-letter.txt", exact=True)).to_be_visible()
     second.get_by_text("draft-letter.txt", exact=True).drag_to(
         second.get_by_text(dock.name, exact=True)
@@ -379,7 +379,7 @@ def test_two_files_tabs_keep_their_own_folder_and_a_move_shows_in_both(browser, 
     expect(first.get_by_text("manifest.txt", exact=True)).to_be_visible()
     # no Refresh: the move in the other Files tab of this terminal reloads this one
     expect(first.get_by_text("draft-letter.txt", exact=True)).to_be_visible()
-    expect(_tab(page, HOME_FOLDER)).to_be_visible()
+    expect(_tab(page, HOME_TAB)).to_be_visible()
 
 
 def test_a_box_dragged_over_files_selects_them(browser, home):
@@ -412,7 +412,7 @@ def test_a_file_held_over_another_files_tab_moves_into_that_tabs_folder(browser,
     page = _page(browser)
     _enter(browser, dock, "manifest.txt")
     open_files_tab(page).get_by_role("button", name="Home", exact=True).click()
-    expect(_tab(page, HOME_FOLDER)).to_have_attribute("aria-selected", "true")
+    expect(_tab(page, HOME_TAB)).to_have_attribute("aria-selected", "true")
     home_browser = _visible_browser(page)
     source = home_browser.get_by_text("old-receipt.txt", exact=True)
     expect(source).to_be_visible()
