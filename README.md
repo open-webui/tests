@@ -120,7 +120,7 @@ On Linux every scratch instance after the first is forked from a process that ha
 
 `.github/workflows/regression.yml` is called by Open WebUI's release pull requests with the ref under test. It runs the unit, integration, browser and vitest suites in parallel jobs; each writes a summary of failures to the job page and uploads its report, server logs and traces. A further job runs the integration suite with both switches on. It and the browser job report without gating a release for now.
 
-The integration and browser suites run in parallel shards, split by `pytest-split` along the timings CI measured for each mode: `durations/integration.json`, `durations/integration-postgres-redis.json` and `durations/e2e.json`. After a green run of `main` dispatched in this repository, the run's timings are folded into these files and committed back to `main`. A test missing from a file still runs and counts at the average. To split a local run the same way, pass the mode's file: `pytest integration --splits 8 --group 1 --splitting-algorithm duration_based_chunks --durations-path durations/integration.json`.
+The integration and browser suites run in parallel shards, split by `pytest-split` along the timings CI measured for each mode: `durations/integration.json`, `durations/integration-postgres-redis.json` and `durations/e2e.json`. After a green run of `main` dispatched in this repository, the run's timings are folded into these files and committed back to `main`. A test missing from a file still runs and counts at the average. To split a local run the same way, pass the mode's file: `pytest integration --splits 10 --group 1 --splitting-algorithm duration_based_chunks --durations-path durations/integration.json`.
 
 ---
 
