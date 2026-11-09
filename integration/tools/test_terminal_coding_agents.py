@@ -8,9 +8,11 @@ and starts it, Open WebUI speaks the Agent Client Protocol with it over the term
 socket, and the agent's thinking, tool calls and answer are stored as the reply. A permission
 request asks the person (unless the chat has full access), a question goes through the question
 card, and the next message resumes the agent's own session. A new agent chat takes its first
-message as its title (18f7633af). As in any chat, an attached file reaches the agent (copied
-into its terminal, with the path in the prompt), the chat's system prompt reaches it as
-instructions, and Stop cancels the agent's turn while the chat goes on. The agent here is
+message as its title (18f7633af), and the task model titles it as for any model, also when the
+page created the chat before sending, as it does with a terminal picked
+(open-webui/open-webui#33970). As in any chat, an attached file reaches the agent (copied into
+its terminal, with the path in the prompt), the chat's system prompt reaches it as instructions,
+and Stop cancels the agent's turn while the chat goes on. The agent here is
 `harness/fake_acp_agent.py`, run by a real Open Terminal as its OpenCode agent.
 
 Discriminates: passes on dev 241c8c0e4. Mutations in a backend copy, each turning only the named
@@ -21,7 +23,9 @@ asking even with full access (the full access test); `resume` dropped from the s
 (the continue test); the branch check removed (the branching test); the first-message title for
 agent chats removed (the title test); the attached-files note dropped from the prompt (the
 attachment test); empty instructions (the system prompt test); no cancel sent to the agent on
-Stop (the stop test).
+Stop (the stop test). The page-created chat title test passes with the fix for #33970 on dev
+553b18a34 and fails on dev 553b18a34 (the chat keeps "New Chat": the agent run skips the
+post-reply title task).
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ import uuid
 import httpx
 import pytest
 
+from harness import upstream as reply
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import (
     DEEP,
@@ -567,3 +572,52 @@ def test_stopping_an_agent_reply_cancels_the_turn_and_the_chat_goes_on(
         f"the chat could not go on after the stop: {follow_reply.get('error')}"
     )
     assert follow_reply["content"].startswith("Agent heard: "), follow_reply
+
+
+def test_an_agent_chat_the_page_created_is_titled_by_the_task_model(
+    admin, preserve, make_user, connect, upstream
+):
+    preserve("tasks")
+    with admin.client() as client:
+        current = client.get("/api/v1/tasks/config").json()
+        client.post(
+            "/api/v1/tasks/config/update",
+            json={**current, "ENABLE_TITLE_GENERATION": True, "TASK_MODEL_EXTERNAL": MOCK_MODEL_ID},
+        ).raise_for_status()
+    person = make_user()
+    terminal = connect(person)
+    upstream.queue(reply.text('{"title": "Parser cleanup"}'))
+
+    with person.client() as client:
+        created = client.post(
+            "/api/v1/chats/new",
+            json={
+                "chat": {
+                    "title": "New Chat",
+                    "models": [model_id(terminal["id"])],
+                    "history": {"messages": {}, "currentId": None},
+                }
+            },
+        )
+        assert created.status_code == 200, created.text
+        turn = ask_agent(
+            client,
+            terminal["id"],
+            "Refactor the parser module",
+            chat_id=created.json()["id"],
+            background_tasks={
+                "title_generation": True,
+                "tags_generation": False,
+                "follow_up_generation": False,
+            },
+        )
+        wait_for_reply(client, turn, REPLY_TIMEOUT)
+        deadline = time.monotonic() + 30
+        title = ""
+        while time.monotonic() < deadline:
+            title = client.get(f"/api/v1/chats/{turn.chat_id}").json()["title"]
+            if title == "Parser cleanup":
+                break
+            time.sleep(0.1)
+
+    assert title == "Parser cleanup", f"the agent chat was not titled by the task model: {title!r}"
