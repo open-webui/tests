@@ -13,6 +13,9 @@ the note was saved a few characters short (open-webui/open-webui#31585, fix PR #
 `test_both_edits_survive_a_reload_and_are_stored` fails now and then: when both pages reopen the
 note at nearly the same moment, both can load the saved text, so the text shows up and is stored
 twice (open-webui/open-webui#32824).
+`test_typing_in_both_pages_at_once_ends_with_the_same_text` failed in CI on dev d61224179: the
+merge interleaved the two pages' keystrokes inside a token, so it now types a distinct letter per
+keystroke and checks each writer's letters in order.
 
 Discriminates: passes on dev 176d31d1d. In a frontend copy, the editor not applying remote Yjs
 updates turns the three writer tests red and the editor staying editable for a reader turns the
@@ -91,6 +94,23 @@ def _document_text(editor: Locator) -> str:
     )
 
 
+def _keys_of(text: str, alphabet: str) -> str:
+    """The characters of `text` that one writer typed, in the order they appear."""
+    return "".join(character for character in text if character in alphabet)
+
+
+def _wait_until_holds_all_keys(editor: Locator, owner_typed: str, writer_typed: str) -> None:
+    deadline = time.monotonic() + 15
+    text = _document_text(editor)
+    while time.monotonic() < deadline and not (
+        _keys_of(text, owner_typed) == owner_typed and _keys_of(text, writer_typed) == writer_typed
+    ):
+        time.sleep(0.2)
+        text = _document_text(editor)
+    assert _keys_of(text, owner_typed) == owner_typed, f"the editor holds {text!r}"
+    assert _keys_of(text, writer_typed) == writer_typed, f"the editor holds {text!r}"
+
+
 def _type_line(page: Page, editor: Locator, text: str) -> None:
     editor.click()
     page.keyboard.press("ControlOrMeta+End")
@@ -137,22 +157,30 @@ def test_typing_in_both_pages_at_once_ends_with_the_same_text(page_for, make_use
     owner_editor, writer_editor = _note_editor(owner_page), _note_editor(writer_page)
     owner_editor.click()
     writer_editor.click()
-    typed = [f"{who}{index}" for index in range(6) for who in "ow"]
+    # Each page types its own alphabet, since the merge may interleave the two at character level.
+    owner_typed, writer_typed = "ABCDEFGHIJKL", "mnopqrstuvwx"
 
-    for index in range(6):
-        owner_page.keyboard.type(f"o{index} ")
-        writer_page.keyboard.type(f"w{index} ")
+    for owner_key, writer_key in zip(owner_typed, writer_typed):
+        owner_page.keyboard.type(owner_key)
+        writer_page.keyboard.type(writer_key)
 
-    for text in typed:
-        expect(owner_editor).to_contain_text(text)
-        expect(writer_editor).to_contain_text(text)
-    _wait_until_stored(owner, note_id, typed)
+    for editor in (owner_editor, writer_editor):
+        expect(editor).to_contain_text(owner_typed[-1])
+        expect(editor).to_contain_text(writer_typed[-1])
+        _wait_until_holds_all_keys(editor, owner_typed, writer_typed)
+    owner_text = _document_text(owner_editor)
+    _wait_until_stored(owner, note_id, [owner_text])
     owner_page.reload()
     writer_page.reload()
-    expect(owner_editor).to_contain_text(typed[-1])
-    expect(writer_editor).to_contain_text(typed[-1])
-    assert _document_text(owner_editor) == _document_text(writer_editor)
-    assert all(text in _document_text(owner_editor) for text in typed)
+    expect(owner_editor).to_contain_text(owner_typed[-1])
+    expect(writer_editor).to_contain_text(owner_typed[-1])
+    _wait_until_holds_all_keys(owner_editor, owner_typed, writer_typed)
+    _wait_until_holds_all_keys(writer_editor, owner_typed, writer_typed)
+    final_owner, final_writer = _document_text(owner_editor), _document_text(writer_editor)
+    assert final_owner == final_writer, f"the pages differ: {final_owner!r} and {final_writer!r}"
+    assert _keys_of(final_owner, owner_typed) == owner_typed, final_owner
+    assert _keys_of(final_owner, writer_typed) == writer_typed, final_owner
+    assert len(final_owner) == len(owner_typed) + len(writer_typed), final_owner
 
 
 def test_a_reader_cannot_type_into_the_note(page_for, make_user):
