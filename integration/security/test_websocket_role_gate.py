@@ -10,7 +10,9 @@ WebSocket token through `get_verified_user_by_token`, which applies the HTTP rol
 Each case runs twice, for a `pending` account and, as the positive control, a verified one. The
 socket is opened without a token wherever a handler checks the token itself, so a failure names
 that handler and not the handshake. Since 24e30d1cb a handler may drop a refused socket, or fail
-on a deleted account's token, where it used to answer nothing; either counts as refused.
+on a deleted account's token, where it used to answer nothing; either counts as refused. Since
+553b18a34 a note's edit reaches its followers inside the shared `events` message as `note:updated`,
+before that as an `events:note` message of its own; the note case reads both.
 
 Twin of unit/security/test_websocket_role_gate.py.
 
@@ -101,6 +103,24 @@ def _answer(client: socketio.Client, event: str, data: dict, expected: bool):
         return None
 
 
+def _note_edits(client: socketio.Client, note_id: str, title: str) -> threading.Event:
+    """Set once the socket is told the note now carries `title`, in either shape of that message."""
+    arrived = threading.Event()
+
+    def record(note) -> None:
+        if isinstance(note, dict) and note.get("id") == note_id and note.get("title") == title:
+            arrived.set()
+
+    def record_shared(message) -> None:
+        event = message.get("data") if isinstance(message, dict) else None
+        if isinstance(event, dict) and event.get("type") == "note:updated":
+            record(event.get("data"))
+
+    client.on("events:note", record)
+    client.on("events", record_shared)
+    return arrived
+
+
 def _arrives(flag: threading.Event, expected: bool) -> bool:
     # A refused account is given a bounded quiet period, an admitted one the full timeout.
     return flag.wait(ARRIVAL_TIMEOUT if expected else QUIET_PERIOD)
@@ -170,14 +190,15 @@ def test_join_note_joins_only_a_verified_account(instance, admin, make_user, rol
     _set_role(admin, owner, role)
     verified = role in VERIFIED_ROLES
 
-    with _socket(instance, listen=("events:note",)) as (client, arrived):
+    title = f"edited by the admin {uuid.uuid4().hex[:8]}"
+
+    with _socket(instance) as (client, _):
+        edit_arrived = _note_edits(client, note_id, title)
         client.call("note:join", {"auth": {"token": owner.token}, "note_id": note_id}, timeout=30)
         with admin.client() as admin_client:
-            edited = admin_client.post(
-                f"/api/v1/notes/{note_id}/update", json={"title": "edited by the admin"}
-            )
+            edited = admin_client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})
         assert edited.status_code == 200, edited.text
-        received = _arrives(arrived["events:note"], verified)
+        received = _arrives(edit_arrived, verified)
 
     assert received == verified, (
         f"after note:join with a {role} account's token the live edits of its note "
