@@ -8,7 +8,9 @@ use. A per-chat terminal has no machine for an unsaved chat and a per-model term
 without a model. Headers a client adds pick no other machine, and a chat of someone else opens
 none. In a chat shared for replies a collaborator uses the terminal its owner picked, a per-chat
 terminal runs in that chat's one machine as long as the owner may use the terminal, and the
-collaborator may change the chat's models, terminal and working directory and nothing else.
+collaborator may change the chat's models, terminal and working directory and nothing else. A
+collaborator's message in such a chat works on the files the owner's message left, for a terminal
+with one machine for all, per chat and per model.
 
 The real Terminals service (open-webui/terminals) runs on Docker and starts a real Open Terminal
 container per machine (`harness.terminals`); without its images or Docker the tests skip.
@@ -28,12 +30,15 @@ fails the collaborator test, the changed-selection check removed fails the selec
 per-chat terminal checked against the caller in place of the chat's owner fails the owner's-access
 test (the collaborator is refused in the owner's chat). `title` added to what a collaborator may
 change fails the chat-fields test. The orchestrator's reason replaced by a fixed text fails the
-unknown-scope test.
+unknown-scope test. A collaborator refused the terminal the owner picked fails the three
+collaborator's-message tests, and the collaborator, owner's-access and chat-fields tests with
+them.
 """
 
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import uuid
 from typing import Iterator
@@ -41,7 +46,9 @@ from typing import Iterator
 import httpx
 import pytest
 
+from harness import upstream as reply
 from harness.access import grant
+from harness.chat import send_message, wait_for_reply
 from harness.python_tools import EVERYONE_READS
 from harness.terminal_server import read_grant
 from harness.terminals import (
@@ -118,6 +125,21 @@ def _workspace_model(admin, name: str, *grants: dict) -> Iterator[str]:
             yield model_id
         finally:
             client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+def _message_running(person, upstream, chat_id: str, terminal_id: str, command: str) -> dict:
+    """`person` sends the chat a message and the model runs `command`; the stored reply."""
+    prompt = f"harbour watch {uuid.uuid4().hex[:8]}"
+    steps = (reply.tool_call("run_command", {"command": command, "wait": 10}), reply.text("Done."))
+    upstream.queue(*(dataclasses.replace(step, match=reply.answering(prompt)) for step in steps))
+    with person.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}")
+        assert stored.status_code == 200, f"reading the chat failed: {stored.text}"
+        last_message = (stored.json()["chat"].get("history") or {}).get("currentId")
+        turn = send_message(
+            client, prompt, chat_id=chat_id, parent_id=last_message, terminal_id=terminal_id
+        )
+        return wait_for_reply(client, turn)
 
 
 def test_a_terminal_with_one_machine_for_all_gives_two_people_the_same_machine(
@@ -473,6 +495,44 @@ def test_a_per_chat_terminal_in_a_shared_chat_follows_the_owners_access(
     )
     assert in_own_chat_now.strip() == "ran", (
         f"the terminal now shared with the collaborator printed {in_own_chat_now!r}"
+    )
+
+
+@pytest.mark.parametrize("scope", [None, "chat", "model"])
+def test_a_collaborators_message_works_on_the_files_the_owners_message_left(
+    scope, admin, make_user, connect_terminals, terminals, upstream
+):
+    owner, guest = make_user(), make_user()
+    (terminal_id,) = _terminals_for(admin, connect_terminals, [owner, guest], scope)
+    tag = uuid.uuid4().hex[:8]
+    owners, guests = f"owner-{tag}.txt", f"guest-{tag}.txt"
+
+    with owner.client() as client:
+        chat_id = _new_chat(client, terminal_id=terminal_id)
+    first = _message_running(owner, upstream, chat_id, terminal_id, f"echo owner > ~/{owners}")
+    _share_chat(owner, chat_id, guest)
+    second = _message_running(
+        guest,
+        upstream,
+        chat_id,
+        terminal_id,
+        f"cat ~/{owners} > ~/{guests}; echo guest >> ~/{guests}",
+    )
+
+    context = {None: "default", "chat": f"chat:{chat_id}", "model": f"model:{MOCK_MODEL_ID}"}[scope]
+    for label, message in (("the owner's", first), ("the collaborator's", second)):
+        assert (message.get("content"), message.get("error")) == ("Done.", None), (
+            f"{label} message did not finish: {message}"
+        )
+    assert terminals.holding(owners) == {context: "owner\n"}, (
+        f"the owner's file is in these machines: {terminals.holding(owners)}"
+    )
+    assert terminals.holding(guests) == {context: "owner\nguest\n"}, (
+        "the collaborator's command did not find the owner's file in the same machine: "
+        f"{terminals.holding(guests)}"
+    )
+    assert [machine["context_id"] for machine in terminals.instances()] == [context], (
+        f"the shared chat started other machines than {context}: {terminals.instances()}"
     )
 
 
