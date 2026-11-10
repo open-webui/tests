@@ -5,7 +5,11 @@ same provider (tool calls of its own, then an answer) and the parent carries on 
 returned. The chat shows one row per sub-agent, named after its task, that opens to the task and
 the answer; the sub-agent's own tool calls stay out of the parent's reply. The limits an admin
 sets (iterations, output length) hold, a failing sub-agent shows its error, several sub-agents
-in one reply each get their row and result, and a reload keeps all of it.
+in one reply each get their row and result, and a reload keeps all of it. A call keeps to one
+row from the moment it is made until its result is in, also after thinking (one group naming the
+task once until it is opened) and across a reload while the sub-agent still works; a failing
+sub-agent next to a slow one ends with both results; under a limit of one, two sub-agents run
+one after the other and a stopped one frees its place.
 
 Each request is tied to its own prompt: the sub-agent's latest user message is its task, the
 parent's is what the person typed.
@@ -30,23 +34,33 @@ iteration limit is dropped, the truncation is removed (or cut at `>=`), the fail
 swallowed, only the first call of a turn runs or the answer is replaced; on a build with the
 task cut at 600 characters, the executing label renamed and the tool output not drawn, the
 matching row tests turn red while the two that read only the provider's requests stay green.
+In a backend copy where a sub-agent's result never comes back the one-row, after-thinking,
+reload-while-working and failing-next-to-slow tests turn red; where a delegation is listed twice
+the one-row and after-thinking tests; where the limit is ignored the one-after-the-other test;
+where a finished or stopped sub-agent keeps its place the stop test.
 """
 
 from __future__ import annotations
 
+import json
 import re
+import threading
+import time
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply, last_reply, send
+from harness.actors import admin_of
+from harness.backends import wait_until
+from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply, last_reply, send, stop_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 CLOCK = "get_current_timestamp"
+ONE_AT_A_TIME = {"ENABLE_SUBAGENTS": "true", "SUBAGENTS_MAX_CONCURRENT": "1"}
 
 
 @pytest.fixture
@@ -321,3 +335,243 @@ def test_a_reload_after_the_run_keeps_the_rows_and_the_reply(
     expect(sub_row(page, task)).to_be_visible()
     sub_row(page, task).click()
     expect(last_reply(page)).to_contain_text(answer)
+
+
+def task_rows(page: Page, task: str) -> Locator:
+    """Every row of the last reply that names the task, whatever state it reads."""
+    return last_reply(page).get_by_role("button").filter(has_text=task)
+
+
+def working_row(page: Page, task: str) -> Locator:
+    name = re.escape(f'Executing Sub-agent: "{task}"...')
+    return last_reply(page).get_by_role("button", name=re.compile(name))
+
+
+def unfinished_rows(page: Page) -> Locator:
+    return last_reply(page).get_by_role("button", name=re.compile("^(Executing|Preparing) "))
+
+
+def two_delegations(tasks: list[str], prompt: str) -> reply.Reply:
+    calls = [
+        {
+            "id": f"call_{n}",
+            "type": "function",
+            "function": {"name": "delegate_task", "arguments": json.dumps({"task": task})},
+        }
+        for n, task in enumerate(tasks)
+    ]
+    return reply.Reply(tool_calls=calls, match=reply.answering(prompt))
+
+
+def test_one_delegation_shows_one_row_from_the_call_to_its_result(
+    subagents_on, page_for, make_user, upstream
+):
+    subagents_on()
+    prompt, task = unique("hand this over"), unique("look it up")
+    answered = threading.Event()
+    upstream.queue(
+        delegation(task, prompt),
+        reply.text("Found it.", hold=answered, match=reply.answering(task)),
+        reply.text("The helper found it.", match=reply.answering(prompt)),
+    )
+    page = page_for(make_user())
+
+    try:
+        send(page, prompt)
+
+        expect(working_row(page, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        expect(task_rows(page, task)).to_have_count(1)
+    finally:
+        answered.set()
+
+    expect_reply(page, "The helper found it.")
+    expect(sub_row(page, task)).to_be_visible()
+    expect(task_rows(page, task)).to_have_count(1)
+    expect(unfinished_rows(page)).to_have_count(0)
+    assert len(sub_requests(upstream, task)) == 1
+
+
+def test_a_delegation_after_thinking_folds_into_one_group_that_names_the_task_once(
+    subagents_on, page_for, make_user, upstream
+):
+    subagents_on()
+    prompt, task = unique("think then hand over"), unique("check the shelf")
+    answered = threading.Event()
+    upstream.queue(
+        reply.Reply(
+            reasoning="A helper should check this.",
+            tool_calls=delegation(task, prompt).tool_calls,
+            match=reply.answering(prompt),
+        ),
+        reply.text("Shelf checked.", hold=answered, match=reply.answering(task)),
+        reply.text("The shelf is fine.", match=reply.answering(prompt)),
+    )
+    page = page_for(make_user())
+
+    try:
+        send(page, prompt)
+
+        group = last_reply(page).get_by_role("button", name="Toggle details")
+        expect(group).to_contain_text(f'Exploring Sub-agent: "{task}"', timeout=REPLY_TIMEOUT_MS)
+        expect(task_rows(page, task)).to_have_count(1)
+    finally:
+        answered.set()
+
+    expect_reply(page, "The shelf is fine.")
+    expect(group).to_contain_text(f'Explored Sub-agent: "{task}"')
+    expect(task_rows(page, task)).to_have_count(1)
+    group.click()
+    # opened, the group lists its steps under the header: the call's own row joins it
+    expect(sub_row(page, task)).to_be_visible()
+    expect(task_rows(page, task)).to_have_count(2)
+    expect(unfinished_rows(page)).to_have_count(0)
+
+
+def test_a_reload_while_the_subagent_works_shows_it_working_and_then_its_result(
+    subagents_on, page_for, make_user, upstream
+):
+    subagents_on()
+    prompt, task = unique("hand over then reload"), unique("dig through the archive")
+    answer = unique("box nine")
+    answered = threading.Event()
+    upstream.queue(
+        delegation(task, prompt),
+        reply.text(answer, hold=answered, match=reply.answering(task)),
+        reply.text("The archive had it.", match=reply.answering(prompt)),
+    )
+    page = page_for(make_user())
+
+    try:
+        send(page, prompt)
+        expect(working_row(page, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+
+        page.reload()
+
+        # reloaded mid-run the row reads Preparing, not Executing: either way it is still working
+        expect(unfinished_rows(page).filter(has_text=task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        expect(task_rows(page, task)).to_have_count(1)
+    finally:
+        answered.set()
+
+    expect_reply(page, "The archive had it.")
+    expect(task_rows(page, task)).to_have_count(1)
+    expect(unfinished_rows(page)).to_have_count(0)
+    sub_row(page, task).click()
+    expect(last_reply(page)).to_contain_text(answer)
+    assert len(sub_requests(upstream, task)) == 1
+
+
+def test_a_subagent_failing_next_to_one_still_working_ends_with_both_results(
+    subagents_on, page_for, make_user, upstream
+):
+    subagents_on()
+    prompt = unique("split this in two")
+    doomed, slow = unique("ask the broken model"), unique("count the stairs")
+    answer = unique("ninety steps")
+    answered = threading.Event()
+    upstream.queue(
+        two_delegations([doomed, slow], prompt),
+        reply.error(500, "the helper model is down", match=reply.answering(doomed)),
+        reply.text(answer, hold=answered, match=reply.answering(slow)),
+        reply.text("One failed and one counted.", match=reply.answering(prompt)),
+    )
+    page = page_for(make_user())
+
+    try:
+        send(page, prompt)
+        group = last_reply(page).get_by_role("button", name="Toggle details")
+        expect(group).to_contain_text("Exploring", timeout=REPLY_TIMEOUT_MS)
+        group.click()
+
+        # the results of one turn arrive together, so the failed one waits for the slow one
+        expect(working_row(page, slow)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        assert wait_until(lambda: len(sub_requests(upstream, doomed)) == 1, timeout=10.0)
+    finally:
+        answered.set()
+
+    expect_reply(page, "One failed and one counted.")
+    expect(sub_row(page, doomed)).to_be_visible()
+    expect(sub_row(page, slow)).to_be_visible()
+    expect(unfinished_rows(page)).to_have_count(0)
+    handed_over = {
+        entry["tool_call_id"]: entry["content"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
+        if entry["role"] == "tool"
+    }
+    assert set(handed_over) == {"call_0", "call_1"}, handed_over
+    assert "the helper model is down" in handed_over["call_0"]
+    assert handed_over["call_1"] == answer
+
+
+@pytest.mark.slow
+def test_a_limit_of_one_runs_two_subagents_one_after_the_other_and_both_come_back(
+    instance_with, page_for
+):
+    # an instance of its own: the limit is read once, when the first sub-agent of a server runs
+    booted = instance_with(ONE_AT_A_TIME)
+    upstream = booted.upstream
+    prompt = unique("split this in a queue")
+    tasks = [unique("weigh the flour"), unique("weigh the sugar")]
+    answers = [unique("one kilo"), unique("two kilos")]
+    answered = threading.Event()
+
+    def asked() -> list[dict]:
+        return [r for task in tasks for r in sub_requests(upstream, task)]
+
+    upstream.queue(
+        two_delegations(tasks, prompt),
+        *[reply.text(a, hold=answered, match=reply.answering(t)) for t, a in zip(tasks, answers)],
+        reply.text("Both are weighed.", match=reply.answering(prompt)),
+    )
+    page = page_for(admin_of(booted))
+
+    try:
+        send(page, prompt)
+        assert wait_until(lambda: len(asked()) >= 1, timeout=30.0), "no sub-agent ever started"
+        time.sleep(2.0)  # shows the second sub-agent does not start while the first one works
+        assert len(asked()) == 1, f"{len(asked())} sub-agents ran at once under a limit of one"
+    finally:
+        answered.set()
+
+    expect_reply(page, "Both are weighed.")
+    expect(unfinished_rows(page)).to_have_count(0)
+    handed_over = {
+        entry["tool_call_id"]: entry["content"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
+        if entry["role"] == "tool"
+    }
+    assert handed_over == {"call_0": answers[0], "call_1": answers[1]}
+
+
+@pytest.mark.slow
+def test_stopping_a_subagent_under_a_limit_of_one_frees_the_place_for_the_next(
+    instance_with, page_for
+):
+    booted = instance_with(ONE_AT_A_TIME)
+    upstream = booted.upstream
+    prompt, task = unique("hand over then stop"), unique("wait at the door")
+    second, next_task = unique("hand over once more"), unique("ring the bell")
+    never_answered = threading.Event()
+    upstream.queue(
+        delegation(task, prompt),
+        reply.text("too late", hold=never_answered, match=reply.answering(task)),
+        delegation(next_task, second),
+        reply.text("It rang.", match=reply.answering(next_task)),
+        reply.text("The bell rang.", match=reply.answering(second)),
+    )
+    page = page_for(admin_of(booted))
+
+    try:
+        send(page, prompt)
+        expect(working_row(page, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        assert wait_until(lambda: len(sub_requests(upstream, task)) == 1, timeout=10.0)
+
+        stop_button(page).click()
+        expect(stop_button(page)).to_have_count(0)
+        send(page, second)
+
+        expect_reply(page, "The bell rang.")
+        expect(sub_row(page, next_task)).to_be_visible()
+        expect(unfinished_rows(page)).to_have_count(0)
+    finally:
+        never_answered.set()
