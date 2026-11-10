@@ -20,12 +20,17 @@ tests red: discovery returning no models (the listing, chat and stranger tests);
 check in `resolve_terminal_connection` skipped (the stranger listing test); the ACP client
 allowing every permission request (the reject and someone-else tests); every agent request
 asking even with full access (the full access test); `resume` dropped from the session options
-(the continue test); the branch check removed (the branching test); the first-message title for
-agent chats removed (the title test); the attached-files note dropped from the prompt (the
-attachment test); empty instructions (the system prompt test); no cancel sent to the agent on
-Stop (the stop test). The page-created chat title test passes with the fix for #33970 on dev
-553b18a34 and fails on dev 553b18a34 (the chat keeps "New Chat": the agent run skips the
-post-reply title task).
+(the continue test); the first-message title for agent chats removed (the title test); the
+attached-files note dropped from the prompt (the attachment test); empty instructions (the
+system prompt test); no cancel sent to the agent on Stop (the stop test). The page-created chat
+title test passes with the fix for #33970 on dev 553b18a34 and fails on dev 553b18a34 (the chat
+keeps "New Chat": the agent run skips the post-reply title task).
+
+Until dev 1782e9bc5 the server refused a message sent from an earlier point of an agent
+conversation ("Agent history cannot be branched in place"). That commit reads the agent's
+session from the chain of stored messages and dropped the refusal, so its test went with it. The
+page still offers no way to branch an agent conversation, which
+e2e/tools/test_terminal_coding_agents.py pins.
 """
 
 from __future__ import annotations
@@ -268,23 +273,6 @@ def test_the_next_message_continues_the_agents_own_session(make_user, connect, a
     assert second_reply["content"].startswith("Agent heard: what was the word? ["), (
         f"a resumed session was sent the whole conversation again: {second_reply['content']}"
     )
-
-
-def test_branching_an_agent_conversation_is_refused(make_user, connect):
-    person = make_user()
-    terminal = connect(person)
-
-    with person.client() as client:
-        first = ask_agent(client, terminal["id"], "start here")
-        wait_for_reply(client, first, REPLY_TIMEOUT)
-        follow = {"chat_id": first.chat_id, "parent_id": first.assistant_message_id}
-        wait_for_reply(client, ask_agent(client, terminal["id"], "go on", **follow), REPLY_TIMEOUT)
-        branch = ask_agent(client, terminal["id"], "a different go on", **follow)
-        branched = wait_for_reply(client, branch, REPLY_TIMEOUT)
-
-    assert (branched.get("error") or {}).get("content") == (
-        "Agent history cannot be branched in place. Start a new chat instead."
-    ), f"a branch of an agent conversation was not refused: {branched}"
 
 
 def test_an_agent_tool_call_is_stored_as_a_tool_call_with_its_result(make_user, connect):
