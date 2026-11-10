@@ -34,6 +34,17 @@ default engine test. The older-names test was replaced by the environment test o
 dropped the older names. On dev 97ca2144b in a backend copy: the model variable ignored fails
 the environment test, the default policy never filled in fails the empty-policy test and a
 client's policy block left in the system prompt fails both forged-policy cases.
+
+The tools of a terminal the admin connected follow the same modes. Ask holds a terminal call
+back until its account allows it; the allowed call then runs on the terminal the message was
+sent with, naming its person and chat, and the page is told of it (`terminal:run_command`,
+`terminal:write_file`) as after a call that needed no approval. A denied call never reaches the
+terminal. In Auto the Decisions reviewer is told that the call runs on a terminal and on which.
+On dev c15f28649 in a backend copy: a chat with a terminal never paused in Ask and its terminal
+calls never held back fails the Ask, the denied and the reviewer terminal tests, the terminal not
+restored when the reply resumes fails the Ask test, no page events on the resume path fails the
+Ask test, the write event dropped fails its write_file case, and the terminal left out of the
+review fails the reviewer test.
 """
 
 from __future__ import annotations
@@ -50,6 +61,8 @@ from harness import upstream as reply
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.listener import ReceivedRequest, json_answer, text_answer
 from harness.python_tools import python_tool
+from harness.socket_client import connected
+from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -701,3 +714,148 @@ def test_an_approval_policy_sent_by_the_client_never_reaches_the_model(
         f"a forged policy reached the model: {sent!r}"
     )
     assert sent.count("<tool_approval_policy>") == (1 if mode == "auto" else 0), sent
+
+
+# --- the tools of a terminal the admin connected ------------------------------------------
+
+NOTES = "/workspace/notes/todo.md"
+
+
+def _terminal_operation(operation_id: str, *arguments: str) -> dict:
+    body = {"type": "object", "properties": {name: {"type": "string"} for name in arguments}}
+    return {
+        "operationId": operation_id,
+        "requestBody": {"required": True, "content": {"application/json": {"schema": body}}},
+        "responses": {"200": {"description": "ok"}},
+    }
+
+
+TERMINAL_SPEC = {
+    "openapi": "3.0.0",
+    "info": {"title": "terminal", "version": "1"},
+    "paths": {
+        "/execute": {"post": _terminal_operation("run_command", "command")},
+        "/files/write": {"post": _terminal_operation("write_file", "path", "content")},
+    },
+}
+# per terminal tool: its arguments, where the terminal serves it, what the page is told after it
+TERMINAL_CALLS = {
+    "run_command": ({"command": "make clean"}, "/execute", {}),
+    "write_file": (
+        {"path": "notes/todo.md", "content": "ship it"},
+        "/files/write",
+        {"path": NOTES},
+    ),
+}
+
+
+@pytest.fixture
+def terminal(admin, preserve):
+    """A terminal the admin connected for admins; yields the fake server and its id."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    with serving_terminal() as server:
+        server.route("GET", "/openapi.json", json_answer(TERMINAL_SPEC))
+        server.route("POST", "/execute", json_answer({"output": "cleaned"}))
+        server.route("POST", "/files/write", json_answer({"path": NOTES}))
+        connection = server.connection()
+        with admin.client() as client:
+            configure_terminals(client, connection)
+        server.clear()
+        yield server, connection["id"]
+
+
+def queue_terminal_call(upstream, question: str, name: str) -> None:
+    upstream.queue(
+        reply.tool_call(name, TERMINAL_CALLS[name][0], match=reply.answering(question)),
+        reply.text("Done on the terminal.", match=reply.answering(question)),
+    )
+
+
+@pytest.mark.parametrize("name", list(TERMINAL_CALLS))
+def test_ask_pauses_a_terminal_call_and_runs_it_on_that_terminal_once_allowed(
+    chat_settings, terminal, make_user, upstream, name
+):
+    chat_settings(ENABLE_TOOL_PERMISSIONS=True)
+    server, terminal_id = terminal
+    arguments, path, told = TERMINAL_CALLS[name]
+    operator = make_user(role="admin")
+    question = unique(f"have the terminal {name}")
+    queue_terminal_call(upstream, question, name)
+    with connected(operator) as tab, operator.client() as client:
+        turn = send_message(
+            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "ask"}
+        )
+        wait_until_pending(client, turn)
+        assert not server.requests_to(path), "the terminal was called before anyone allowed it"
+
+        allowed = resolve(client, turn, "approve")
+        assert allowed.status_code == 200, allowed.text
+        message = wait_for_reply(client, turn)
+        event = tab.wait_for(turn.chat_id, f"terminal:{name}", **told)
+
+    assert message["content"].endswith("Done on the terminal."), message["content"]
+    [call] = server.requests_to(path)
+    assert json.loads(call.body) == arguments
+    named = {header: call.headers.get(header) for header in ("x-user-id", "x-session-id")}
+    assert named == {"x-user-id": operator.id, "x-session-id": turn.chat_id}, (
+        f"the allowed call did not name its person and chat: {named}"
+    )
+    assert event["data"] == told, f"the page was told {event} after the allowed {name}"
+
+
+def test_a_denied_terminal_call_never_reaches_the_terminal(
+    chat_settings, terminal, make_user, upstream
+):
+    chat_settings(ENABLE_TOOL_PERMISSIONS=True)
+    server, terminal_id = terminal
+    question = unique("clean the build folder")
+    queue_terminal_call(upstream, question, "run_command")
+    with make_user(role="admin").client() as client:
+        turn = send_message(
+            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "ask"}
+        )
+        wait_until_pending(client, turn)
+        denied = resolve(client, turn, "reject")
+        assert denied.status_code == 200, denied.text
+        message = wait_for_reply(client, turn)
+
+    assert message["content"].endswith("Done on the terminal."), message["content"]
+    assert tool_results(upstream, question) == {"call_1": REJECTED}
+    assert not server.requests_to("/execute"), "a denied command ran on the terminal"
+
+
+def test_auto_tells_the_reviewer_which_terminal_a_call_runs_on(
+    auto_permissions, terminal, make_user, upstream
+):
+    server, terminal_id = terminal
+    reviewed = []
+
+    def safe(request: ReceivedRequest):
+        reviewed.append(json.loads(request.json()["input"]))
+        return json_answer(
+            {
+                "answers": [
+                    {"type": "predicate", "name": "requires_confirmation", "probability": 0.1}
+                ]
+            }
+        )
+
+    auto_permissions.route("POST", "/v1/decisions", safe)
+    question = unique("clean the build folder")
+    queue_terminal_call(upstream, question, "run_command")
+    with make_user(role="admin").client() as client:
+        turn = send_message(
+            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "auto"}
+        )
+        message = wait_for_reply(client, turn)
+
+    assert message["content"].endswith("Done on the terminal."), message["content"]
+    assert len(server.requests_to("/execute")) == 1, "the call rated safe did not run"
+    [evidence] = reviewed
+    assert evidence["execution_context"] == {"tool_type": "terminal", "terminal_id": terminal_id}, (
+        f"the reviewer was not told where the command runs: {evidence['execution_context']}"
+    )
+    assert (evidence["tool"]["name"], evidence["arguments"]) == (
+        "run_command",
+        {"command": "make clean"},
+    )

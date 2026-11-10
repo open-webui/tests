@@ -21,6 +21,11 @@ refresh routes; on dev c15f28649, with the ENABLE_TOOL_SERVERS check dropped fro
 `get_connection`, the three terminal template route tests fail (404 in place of the refusal).
 With `/api/config` reporting terminal servers by the switch alone, the test with no and with
 only switched-off connections fails.
+A message sent with a terminal picked gets the terminal's tools unless tool servers are off; on
+dev c15f28649, with the chat keeping its `terminal_id` while they are off and the checks dropped
+from the tool and terminal resolution, the terminal test fails on the instance with tool servers
+off (the model is offered `run_command`); the chat dropping the terminal is one of several
+guards, and undoing it alone leaves the test green.
 """
 
 from __future__ import annotations
@@ -105,6 +110,18 @@ def _reload_tool_servers(admin_there: Actor) -> None:
         assert reloaded.status_code == 200, reloaded.text
 
 
+TERMINAL_TOOL = "run_command"
+TERMINAL_SPEC = {
+    "openapi": "3.0.0",
+    "info": {"title": "terminal", "version": "1"},
+    "paths": {
+        "/execute": {
+            "post": {"operationId": TERMINAL_TOOL, "responses": {"200": {"description": "ok"}}}
+        }
+    },
+}
+
+
 @dataclass(frozen=True)
 class Plugins:
     tool_id: str
@@ -130,6 +147,7 @@ def plugins(admin, preserve, listener) -> Plugins:
         terminal = stack.enter_context(serving_terminal())
         terminal_connection = terminal.connection(config={"access_grants": [EVERYONE_READS]})
         terminal.route("GET", "/x", json_answer({"reached": True}))
+        terminal.route("GET", "/openapi.json", json_answer(TERMINAL_SPEC))
         terminal.route("GET", "/api/config", json_answer({}))
         with admin.client() as client:
             saved = client.post(TOOL_SERVERS[1], json={"TOOL_SERVER_CONNECTIONS": [openapi, mcp]})
@@ -315,24 +333,44 @@ def test_tool_server_tools_run_with_another_switch_off(
 
 @pytest.mark.parametrize("switch", EVERY_INSTANCE)
 def test_terminal_servers_are_listed_and_reached_unless_tool_servers_are_off(
-    switched_off, admin, plugins, switch
+    switched_off, admin, upstream, plugins, switch
 ):
     with _on(switched_off(switch), admin).client() as client:
         listed = client.get("/api/v1/terminals/")
         proxied = client.get(f"/api/v1/terminals/{plugins.terminal_id}/x")
+        reached = plugins.terminal.requests_to("/x")
+        if switch != TOOL_SERVERS_SWITCH:
+            _reload_terminals(client)
+        plugins.terminal.clear()
+        # a message sent with the terminal picked, as a page loaded before the switch sends it
+        offered = offered_tools(client, upstream, terminal_id=plugins.terminal_id)
 
     assert listed.status_code == 200, listed.text
     listed_ids = {terminal["id"] for terminal in listed.json()}
-    reached = plugins.terminal.requests_to("/x")
     if switch == TOOL_SERVERS_SWITCH:
         assert listed_ids == set(), f"tool servers are off, yet terminals are listed: {listed_ids}"
         assert proxied.status_code == 403, f"the terminal proxy answered {proxied.status_code}"
         assert reached == [], "tool servers are off, yet the proxy reached the terminal"
+        assert TERMINAL_TOOL not in offered, (
+            f"tool servers are off, yet the model was offered the terminal's {TERMINAL_TOOL}"
+        )
+        asked = [request.path for request in plugins.terminal.received]
+        assert asked == [], f"tool servers are off, yet the message reached the terminal: {asked}"
     else:
         state = switch or "every switch on"
         assert plugins.terminal_id in listed_ids, f"with {state} the terminal is not listed"
         assert proxied.status_code == 200, f"with {state} the proxy answered {proxied.text}"
         assert len(reached) == 1, f"with {state} the proxy did not reach the terminal"
+        assert TERMINAL_TOOL in offered, (
+            f"with {state} the model was not offered the picked terminal's tools: {sorted(offered)}"
+        )
+
+
+def _reload_terminals(client) -> None:
+    """Saves the stored terminals again through this instance, so its Redis copy holds them."""
+    saved = client.get(TERMINAL_SERVERS_CONFIG[0])
+    assert saved.status_code == 200, saved.text
+    configure_terminals(client, *saved.json()["TERMINAL_SERVER_CONNECTIONS"])
 
 
 def _calls_to_servers(plugins: Plugins, listener) -> int:
