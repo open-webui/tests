@@ -21,7 +21,6 @@ On dev f659c0d12, a frontend copy with the switch put back turns that test red.
 from __future__ import annotations
 
 import re
-import time
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -35,6 +34,7 @@ from harness.terminal_server import (
 )
 from utils.cached_chat import open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input
+from utils.shell_tab import READABLE_SHELL, expect_on_screen, type_into
 from utils.terminal_connections import fill_terminal, save_terminal, terminal_dialog
 from utils.tooltips import tooltip_button
 from utils.user_menu import open_settings
@@ -45,12 +45,6 @@ NAME = "Lab shell"
 TYPED = "echo lighthouse"
 # the label, or its translation key where the build has no English text for it
 REMOVED_SETTING = re.compile(r"show\s*files\s*on\s*terminal\s*select", re.IGNORECASE)
-NO_WEBGL = """
-const getContext = HTMLCanvasElement.prototype.getContext;
-HTMLCanvasElement.prototype.getContext = function (type, ...options) {
-    return /webgl/i.test(type) ? null : getContext.call(this, type, ...options);
-};
-"""
 
 
 @pytest.fixture
@@ -77,24 +71,11 @@ def _saves_terminals(response) -> bool:
     return response.request.method == "POST" and response.url.endswith(TERMINAL_SERVERS_CONFIG[1])
 
 
-def _screen_text(terminal: Locator, text: str, timeout: float = 15.0) -> None:
-    """Wait until `text` is on the terminal's screen; long lines wrap onto the next row."""
-    deadline = time.monotonic() + timeout
-    shown = ""
-    while time.monotonic() < deadline:
-        shown = terminal.inner_text().replace("\n", "")
-        if text in shown:
-            return
-        time.sleep(0.2)
-    raise AssertionError(f"the terminal never showed {text!r}; it shows {shown!r}")
-
-
 def test_a_connected_terminal_opens_a_shell_from_the_chat(
     page_for, make_user, preserve, fake_terminal
 ):
     preserve(TERMINAL_SERVERS_CONFIG)
-    page = page_for(make_user(role="admin"))
-    page.add_init_script(NO_WEBGL)
+    page = page_for(make_user(role="admin"), init_script=READABLE_SHELL)
     section = _terminal_section(page)
     expect(section.get_by_text("No terminal connections configured")).to_be_visible()
     tooltip_button(section, "Add Connection").click()
@@ -116,8 +97,8 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
     pick_terminal(page, NAME)
     shell = open_new_terminal(page)
 
-    shell.get_by_role("textbox", name="Terminal input").press_sequentially(TYPED)
-    _screen_text(shell.locator(".xterm-rows"), TYPED)
+    type_into(shell, TYPED)
+    expect_on_screen(shell, TYPED)
 
     assert fake_terminal.requests_to("/api/terminals"), "no session was created on the terminal"
     session = fake_terminal.sessions[-1]

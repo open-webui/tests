@@ -178,6 +178,7 @@ def _signed_in_page(
     load_timeout_ms: float,
     hold_events: bool = True,
     path: str = "/",
+    init_script: str | None = None,
 ) -> Page:
     """A page on `path` whose localStorage carries the session token, handed over once loaded.
 
@@ -190,6 +191,8 @@ def _signed_in_page(
     page.add_init_script(
         f"try {{ localStorage.setItem('token', {json.dumps(token)}); }} catch (e) {{}}"
     )
+    if init_script:
+        page.add_init_script(init_script)
     for _ in range(LOAD_TRIES):
         # a container that comes or goes (a terminal's machine) changes this machine's addresses
         wait_until_addresses_settle()
@@ -209,18 +212,26 @@ def page_for(
     """`page_for(actor)` opens a signed-in page on the actor's instance, in a browser of its own.
 
     `path` opens that page directly in place of the chat page, such as `path="/admin/users"`.
+    `init_script` runs in the page before the app does, such as `utils.shell_tab.READABLE_SHELL`.
     Further keywords go to the browser context, such as `timezone_id` for a browser in another zone
     or `utils.phone.PHONE` for a phone's screen.
     """
     opened: list[BrowserContext] = []
     hold_events = request.node.get_closest_marker("real_socket_timing") is None
 
-    def open_page(actor: Actor, path: str = "/", **context_options) -> Page:
+    def open_page(
+        actor: Actor, path: str = "/", init_script: str | None = None, **context_options
+    ) -> Page:
         _dismiss_first_run_modals(actor)
         browser_context = _new_context(browser, config, actor.base_url, **context_options)
         opened.append(browser_context)
         return _signed_in_page(
-            browser_context, actor.token, config.navigation_timeout, hold_events, path
+            browser_context,
+            actor.token,
+            config.navigation_timeout,
+            hold_events,
+            path,
+            init_script,
         )
 
     yield open_page
