@@ -381,6 +381,25 @@ def _wait_until_it_answers(terminals: Terminals) -> None:
     pytest.fail(f"the Terminals service did not answer within {BOOT_SECONDS}s")
 
 
+def _wait_until_addresses_settle() -> None:
+    """Wait until no network interface of this machine is still checking a new address.
+
+    The run's bridge and the service's link get an IPv6 address a second or so after they come up,
+    and a browser drops every request it has queued when an address appears: the first page a
+    test opened right after the stack started lost its scripts (net::ERR_NETWORK_CHANGED).
+    """
+    if shutil.which("ip") is None:
+        return
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        checking = subprocess.run(
+            ["ip", "-6", "-o", "addr", "show", "tentative"], capture_output=True, timeout=10
+        )
+        if checking.returncode != 0 or not checking.stdout.strip():
+            return
+        time.sleep(0.1)
+
+
 @contextlib.contextmanager
 def serving_terminals(env: dict[str, str] | None = None) -> Iterator[Terminals]:
     """Run the service; `env` adds to its settings, such as `TERMINALS_IDLE_TIMEOUT_MINUTES`."""
@@ -422,6 +441,7 @@ def serving_terminals(env: dict[str, str] | None = None) -> Iterator[Terminals]:
             address = _docker("port", name, "3000/tcp").splitlines()[0]
             terminals = Terminals(f"http://{address}", api_key, run_id, data_dir)
             _wait_until_it_answers(terminals)
+            _wait_until_addresses_settle()
             try:
                 yield terminals
             finally:
