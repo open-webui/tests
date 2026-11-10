@@ -54,7 +54,7 @@ PATH_CONVERTER = re.compile(r"\{([^}:]+):[^}]+\}")
 INVALID_BODY = b'"not the body this route wants"'
 REFUSED = {401, 403}
 
-BROWSER_VIEW = "/api/v1/terminals/{server_id}/browser/view/{sid}/{ticket}/{path}"
+BROWSER_VIEW = "/api/v1/terminals/{server_id}/browser/view/{sid}/{browser_token}/{path}"
 
 # Routes that need no account, by (method, path): why.
 PUBLIC_ROUTES = {
@@ -186,26 +186,36 @@ def _declared_routes(tree: ast.Module):
                 yield method, path.value, node
 
 
-def _router_prefixes(tree: ast.Module) -> dict[str, str]:
-    """`{module: prefix}` from every `<app or router>.include_router(<module>.router, ...)`."""
+def _router_module(tree: ast.Module, router: ast.expr) -> str:
+    """The dotted module behind `<module>.router`, or behind a router imported under a name."""
+    if isinstance(router, ast.Attribute):
+        name, from_its_module = router.value.id, False
+    else:
+        # `from <module> import router as <name>` (terminals mounts templates, 6f2fc7bc7)
+        name, from_its_module = router.id, True
+    return next(
+        node.module if from_its_module else f"{node.module}.{alias.name}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if (alias.asname or alias.name) == name
+    )
+
+
+def _included_routers(tree: ast.Module) -> dict[str, str]:
+    """`{dotted module: prefix}` from every `<app or router>.include_router(<router>, ...)`."""
     prefixes = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or getattr(node.func, "attr", None) != "include_router":
             continue
-        router = node.args[0]
         prefix = next((k.value.value for k in node.keywords if k.arg == "prefix"), "")
-        prefixes[router.value.id] = prefix
+        prefixes[_router_module(tree, node.args[0])] = prefix
     return prefixes
 
 
-def _router_source(backend: Path, tree: ast.Module, module: str) -> Path:
-    """The file `tree` imports `module` from, or its package's `__init__.py` (audio, 093bfce2b)."""
-    package = next(
-        node.module
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and any(alias.name == module for alias in node.names)
-    )
-    module_path = backend.joinpath(*package.split("."), module)
+def _router_source(backend: Path, dotted_module: str) -> Path:
+    """The module's file, or its package's `__init__.py` (audio, 093bfce2b)."""
+    module_path = backend.joinpath(*dotted_module.split("."))
     module_file = module_path.with_suffix(".py")
     return module_file if module_file.exists() else module_path / "__init__.py"
 
@@ -226,8 +236,9 @@ def classify_source_routes(backend: Path) -> dict[tuple[str, str], tuple[str, st
     including = [("", main_tree)]
     while including:
         parent_prefix, parent_tree = including.pop()
-        for module, prefix in _router_prefixes(parent_tree).items():
-            source = _router_source(backend, parent_tree, module).read_text(encoding="utf-8")
+        for dotted_module, prefix in _included_routers(parent_tree).items():
+            source = _router_source(backend, dotted_module).read_text(encoding="utf-8")
+            module = dotted_module.rsplit(".", 1)[-1]
             modules[module] = (parent_prefix + prefix, ast.parse(source))
             including.append(modules[module])
 
@@ -314,7 +325,7 @@ def test_a_terminal_browser_frame_wants_a_browser_ticket(admin, ticket):
     path = BROWSER_VIEW.format(
         server_id="sweep-missing-id",
         sid="sweep-session",
-        ticket=admin.token if ticket == "session" else "not-a-ticket",
+        browser_token=admin.token if ticket == "session" else "not-a-ticket",
         path="index.html",
     )
     with admin.client() as client:

@@ -104,9 +104,6 @@ POST /api/v1/configs/oauth/clients/register
 POST /api/v1/configs/subagents
 POST /api/v1/configs/suggestions
 POST /api/v1/configs/terminal_servers
-POST /api/v1/configs/terminal_servers/lifecycle
-POST /api/v1/configs/terminal_servers/policy
-POST /api/v1/configs/terminal_servers/refresh
 POST /api/v1/configs/terminal_servers/verify
 POST /api/v1/configs/tool_servers
 POST /api/v1/configs/tool_servers/verify
