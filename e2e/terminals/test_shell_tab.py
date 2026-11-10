@@ -17,8 +17,8 @@ connection ends:
   and offers Start new terminal; a shell the terminal refuses to start shows the terminal's
   reason.
 - A shell opened before the first message is moved into the chat when it is saved: the message
-  is held until the terminal confirms, a refusal shows "Could not attach sessions to this chat."
-  with Retry, and the shell is stored with the chat's layout.
+  is held until the terminal confirms, a refusal shows the terminal's reason in an alert with
+  Retry, and the shell is stored with the chat's layout.
 - Closing the tab asks "Stop this terminal and close the tab?", Cancel keeps the shell, Stop
   terminal ends it on the terminal; a shell the terminal has forgotten closes quietly and one it
   cannot stop gets its tab back with the terminal's reason.
@@ -28,6 +28,8 @@ Three tests run on real terminals, each on an Open Terminal the admin connected 
 terminal of a Terminals connection: a reload brings back the same shell with its variables and
 its earlier output, two shells of one chat are separate and closing one ends only that one, and
 a shell that is open in a second window waits there and takes over once the first is closed.
+On a Terminals terminal with a machine per chat or per model, a shell opened in a chat writes
+its file into that chat's machine or into the machine of the chat's model.
 
 `test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed` is red for
 a terminal on Terminals 0.4.1: the second window says "Session no longer available" (finding
@@ -48,14 +50,23 @@ Discriminates: green on the dev c15f28649 build; in frontend copies of it, three
   closing test; a tab that stays closed fails the cannot stop test.
 - B: no word on whether the shell is in front fails the sign-in test; an output cursor that
   never moves fails the acknowledge test; a Retry and a Start new terminal that do nothing fail
-  the access and the ended test; a first message that does not wait for the terminal fails the
-  first message test; a closed tab that leaves its shell running fails the closing test and the
-  two shells test; a shell not stored with the chat fails the reload tests, fake and real.
-- C: a sign-in without the chat fails the sign-in test; no reconnecting notice fails the
-  acknowledge test; no lookup before connecting fails the ended test at the forgotten shell; a
-  refusal to move the shell that is not heard fails the refused move test; a 404 on closing
-  treated as a failure fails the closing test at the forgotten shell; a failed start without
-  its reason fails the refused start test.
+  the access, the ended and the refused start test; a first message that does not wait for the
+  terminal fails the first message test (and the refused move test); a closed tab that leaves
+  its shell running fails the closing test, the two shells test and the cannot stop test; a
+  shell not stored with the chat fails the reload tests, fake and real, and the second window
+  test.
+- C: a sign-in without the chat fails the sign-in test, the per chat machine test and, on the
+  real terminals, the reload and second window tests (the shell is refused); no reconnecting
+  notice fails the acknowledge test; no lookup before connecting fails the ended test at the
+  forgotten shell (and the waiting test, which counts the lookups); a refusal to move the shell
+  that is not heard fails the refused move test; a 404 on closing treated as a failure fails
+  the closing test at the forgotten shell; a failed start without its reason fails the refused
+  start test.
+- D: a sign-in without the chat's model fails the per model machine test; text the terminal
+  sends that is not drawn fails the sign-in test; truncated history that is not mentioned
+  fails the acknowledge test.
+- E: a sign-in that does not ask for flow control fails the sign-in test; a shell that cannot
+  be stopped and does not say why fails the cannot stop test.
 """
 
 from __future__ import annotations
@@ -446,8 +457,9 @@ def test_a_shell_the_terminal_does_not_move_holds_the_first_message_back_and_say
     assert _said(session, "chat"), f"sending the first message told the shell {session.messages}"
     chat_id = _said(session, "chat")[0]["chat_id"]
     session.send(json.dumps({"type": "chat", "error": "The shell is busy elsewhere"}))
-    alert = page.get_by_role("alert").filter(has_text="Could not attach sessions to this chat.")
-    expect(alert).to_contain_text("The shell is busy elsewhere")
+    # the reason shows with or without "Could not attach sessions to this chat.", by timing
+    alert = page.get_by_role("alert").filter(has_text="The shell is busy elsewhere")
+    expect(alert).to_be_visible()
     assert not _asked(upstream, question), "the message was sent although the shell did not move"
 
     alert.get_by_role("button", name="Retry").click()

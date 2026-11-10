@@ -12,7 +12,8 @@ nothing, the waiting command ends once it is fed through the terminal, and both 
 
 On a fake terminal the test speaks for the terminal's streams. The dock asks for the list and
 the output in the chat's name, reads output on from where it has read to after a broken stream
-and says "Live updates unavailable" meanwhile. Where the list's stream never delivers anything
+and says "Live updates unavailable" meanwhile; the arrow keys and Home move between the
+commands, and the one in front gets its output. Where the list's stream never delivers anything
 the dock asks over HTTP every second instead, and says when earlier output was left out. A
 stream the terminal closes with a 4xxx code is not opened again.
 
@@ -24,7 +25,12 @@ Discriminates: green on the dev c15f28649 build; in frontend copies of it, three
 - B: output shown without its command line fails the real terminal test (and the two fake
   tests that read the command line).
 - C: left out output not mentioned fails the every second test; a broken stream that is not
-  opened again fails the refused test and the live test.
+  opened again fails the refused test; streams that sign in without the chat fail the live test
+  and the real terminal test (no command is listed).
+- D: arrow keys that do not move fail the live test; finished commands counted as running fail
+  the real terminal test.
+- E: output read from the start every time fails the live test and the every second test; a
+  broken stream that is not mentioned fails the refused test.
 """
 
 from __future__ import annotations
@@ -205,11 +211,11 @@ def test_the_dock_follows_the_terminals_live_list_and_output_of_the_chats_comman
 
     # the output's stream breaks and is picked up after what was read
     output.close(1011)
-    expect(_dock(page).get_by_text(NO_LIVE_UPDATES)).to_be_visible()
     resumed = _stream(terminal, f"/execute/{PROCESS}/status", 2)
     assert _asked_for(resumed.path)["offset"] == "1", (
         f"after one piece of output the dock asked again with {resumed.path}"
     )
+    expect(_dock(page).get_by_text(NO_LIVE_UPDATES)).to_be_visible()
     resumed.send(json.dumps(_output("plotted\r\n", next_offset=2, status="done", exit_code=3)))
     expect_on_screen(_dock(page), "plotted")
     expect(_dock(page).get_by_text(NO_LIVE_UPDATES)).to_have_count(0)
