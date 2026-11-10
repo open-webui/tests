@@ -19,6 +19,14 @@ and left out of an automation's run the two run tests and the working-directory 
 offered `run_command`); the working directory dropped from the run fails the working-directory
 test alone; every terminal counting as shared fails the not-shared test; the channel check
 removed fails the channel test.
+
+Regression, open: on a terminal with a machine per chat a sub-agent's commands run in a machine
+of the sub-agent's own hidden chat. It does not find the files of the chat that handed it the
+task, what it writes never reaches that chat's machine, and its machine is left running. Finding
+`open-webui-subagent-gets-own-machine-on-per-chat-terminal` of the terminal suite; the issue and
+the fix PR are not filed yet. The two per-chat sub-agent tests are red on dev c15f28649 for it
+(the sub-agent's `cat` prints "No such file or directory") and pass with the fix branch
+`fix-subagent-per-chat-terminal`.
 """
 
 from __future__ import annotations
@@ -46,11 +54,12 @@ RUN_WAIT = 60.0
 
 @pytest.fixture
 def subagents_on(admin, preserve):
-    """Sub-agents and timers, which one switch enables."""
+    """Sub-agents, in the background as well, and timers, which the first switch enables too."""
     preserve(SUBAGENTS)
+    switches = {"ENABLE_SUBAGENTS": True, "SUBAGENTS_BACKGROUND_ENABLED": True}
     with admin.client() as client:
         current = client.get(SUBAGENTS[0]).json()
-        client.post(SUBAGENTS[1], json={**current, "ENABLE_SUBAGENTS": True}).raise_for_status()
+        client.post(SUBAGENTS[1], json={**current, **switches}).raise_for_status()
 
 
 @pytest.fixture
@@ -76,6 +85,17 @@ def _run(command: str, call_id: str = "call_1", **options) -> reply.Reply:
 
 def _requests_for(upstream, prompt: str) -> list[dict]:
     return [request for request in upstream.chat_requests() if reply.answering(prompt)(request)]
+
+
+def _handed(task: str):
+    """A `match` for a sub-agent's own requests; its result names the task to the chat again."""
+
+    def matches(request: dict) -> bool:
+        return reply.answering(task)(request) and not reply.answering(f"Original task: {task}")(
+            request
+        )
+
+    return matches
 
 
 def _offered(request: dict) -> set[str]:
@@ -205,6 +225,61 @@ def test_a_sub_agent_works_in_the_persons_machine(
     assert terminals.holding(name) == {f"user:{person.id}": "herring\n"}, (
         f"the sub-agent's command ran outside the person's machine: {terminals.holding(name)}"
     )
+
+
+@pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
+def test_a_sub_agent_on_a_per_chat_terminal_works_in_the_machine_of_the_chat_that_delegated(
+    background, subagents_on, make_user, shared_terminal, terminals, upstream
+):
+    person = make_user()
+    terminal_id = shared_terminal(person, scope="chat")
+    tag = uuid.uuid4().hex[:8]
+    prompt, task = f"split the watch {tag}", f"read the log and add to it {tag}"
+    result = f"Original task: {task}"
+    from_the_chat, from_the_sub_agent = f"log-{tag}.txt", f"entry-{tag}.txt"
+    upstream.queue(
+        _run(f"echo high water > ~/{from_the_chat}", match=reply.answering(prompt)),
+        reply.tool_call(
+            "delegate_task",
+            {"task": task, "background": background},
+            "delegation",
+            match=reply.answering(prompt),
+        ),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+        _run(
+            f"cat ~/{from_the_chat}; echo herring > ~/{from_the_sub_agent}",
+            "sub_call",
+            match=_handed(task),
+        ),
+        reply.text("Logged.", match=_handed(task)),
+        # a background sub-agent's result comes back as a turn of the chat
+        reply.text("Noted.", match=reply.answering(result)),
+    )
+
+    with person.client() as client:
+        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        returned = not background or wait_until(lambda: _requests_for(upstream, result), RUN_WAIT)
+        delegated = [request for request in upstream.chat_requests() if _handed(task)(request)]
+        read_in_the_chat = output_of(
+            execute(client, terminal_id, f"cat ~/{from_the_sub_agent}", chat_id=turn.chat_id)
+        )
+
+    assert message.get("content") == "Handed over.", f"the chat did not finish: {message}"
+    assert returned, f"the sub-agent's result never came back to the chat: {delegated}"
+    assert len(delegated) == 2, f"the sub-agent did not run its command: {delegated}"
+    assert _printed_by_the_last_command(delegated[-1]).strip() == "high water", (
+        "the sub-agent did not find the file its chat wrote"
+    )
+    assert read_in_the_chat.strip() == "herring", (
+        f"the chat does not find the file its sub-agent wrote: {read_in_the_chat!r}"
+    )
+    assert terminals.holding(from_the_sub_agent) == {f"chat:{turn.chat_id}": "herring\n"}, (
+        "the sub-agent's file is outside the machine of the chat that delegated: "
+        f"{terminals.holding(from_the_sub_agent)}"
+    )
+    assert [machine["context_id"] for machine in terminals.instances()] == [
+        f"chat:{turn.chat_id}"
+    ], f"the sub-agent got a machine of its own: {terminals.instances()}"
 
 
 @pytest.mark.parametrize("scope", ["user", "chat"])
