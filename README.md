@@ -59,7 +59,7 @@ uv venv ../oix-env && uv pip install --python ../oix-env "../oix[fastapi]" uvico
 export OIX_PYTHON=../oix-env/bin/python
 ```
 
-The Terminals tests (`integration/terminals`, `e2e/terminals`) run the real [Terminals](https://github.com/open-webui/terminals) orchestrator on Docker, which starts an Open Terminal container for every terminal's machine. Build both images from their release tags and name them in `TERMINALS_SERVICE_IMAGE` and `OPEN_TERMINAL_IMAGE`; nothing is pulled while the tests run, and they skip without the images or a working Docker daemon (`OWUI_TEST_REQUIRE_TERMINALS=1` turns that skip into a failure):
+The Terminals tests (`integration/terminals`, `e2e/terminals` and every other test that asks for the `terminals` fixture) run the real [Terminals](https://github.com/open-webui/terminals) orchestrator on Docker, which starts an Open Terminal container for every terminal's machine. Build both images from their release tags and name them in `TERMINALS_SERVICE_IMAGE` and `OPEN_TERMINAL_IMAGE`; nothing is pulled while the tests run, and they skip without the images or a working Docker daemon (`OWUI_TEST_REQUIRE_TERMINALS=1` turns that skip into a failure):
 
 ```bash
 git clone --branch v0.4.1 https://github.com/open-webui/terminals ../terminals
@@ -176,9 +176,8 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `refuses_unknown_names` | skips a c-ares test of a name that does not resolve where the machine's DNS server keeps c-ares from refusing one at once |
 | `listener` | a local HTTP service for the instance to call, recording what it gets |
 | `open_terminal` | a real Open Terminal for the session (`OPEN_TERMINAL_BIN`), skipped where it is not installed |
-| `terminal_orchestrator` | a Terminals orchestrator stand-in that gives each terminal context (the shared one, `chat:<id>` per chat) a real Open Terminal of its own |
 | `terminals` | the real Terminals orchestrator on Docker (`TERMINALS_SERVICE_IMAGE`, `OPEN_TERMINAL_IMAGE`), one for the session; the templates and containers a test made are removed after it. Skipped without the images or Docker |
-| `connect_terminals(*grants)` | the admin connects that orchestrator and gives the connection those grants; returns the connection, for `create_template` and the other helpers in `harness.terminals` |
+| `connect_terminals(*grants, config={...})` | the admin connects that orchestrator and gives the connection those grants, and settings such as `chat_uploads`; returns the connection, for `create_template` and the other helpers in `harness.terminals` |
 | `shared_terminal(*people, **data)` | the same, plus a terminal the admin creates on the connection and shares with those people; returns the terminal's id |
 
 `harness.chat.ask(client, "text")` sends a message the way the web client does and returns the stored reply.

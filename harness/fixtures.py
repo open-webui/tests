@@ -253,15 +253,6 @@ def agent_terminal() -> Generator:
         yield terminal
 
 
-@pytest.fixture
-def terminal_orchestrator() -> Generator:
-    """A Terminals orchestrator stand-in giving each terminal context a real Open Terminal."""
-    from harness.terminal_orchestrator import serving_terminal_orchestrator
-
-    with serving_terminal_orchestrator() as orchestrator:
-        yield orchestrator
-
-
 @pytest.fixture(scope="session")
 def terminals_service() -> Generator:
     """The real Terminals orchestrator on Docker for the session; skips without its images."""
