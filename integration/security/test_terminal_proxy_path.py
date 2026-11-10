@@ -10,6 +10,8 @@ unit/security/test_terminal_proxy_path.py.
 Discriminates: passes on dev bbfa876af, fails with the backslash dropped from the sanitizer's
 refused characters (`safe\segment`, `a/..\..\etc/passwd` and the encoded forms reach the fake
 terminal server; a leading `..\` is still refused by the older `..` prefix check).
+With the refusal of a path that is still encoded after the last decoding pass dropped, the
+deeply encoded parent folder reaches the fake terminal server still encoded.
 """
 
 from __future__ import annotations
@@ -95,3 +97,27 @@ def test_ordinary_paths_reach_the_terminal_normalized(proxy, terminal, path, arr
     terminal.route("GET", arrives_as, json_answer({"ok": True}))
     assert proxy(path).status_code == 200
     assert [request.path for request in terminal.received] == [arrives_as]
+
+
+def _encoded(character: str, depth: int) -> str:
+    """`character` percent-encoded, and the result encoded again, `depth` times in all."""
+    encoded = f"%{ord(character):02x}"
+    for _ in range(depth - 1):
+        encoded = encoded.replace("%", "%25")
+    return encoded
+
+
+def test_a_path_encoded_deeper_than_the_proxy_decodes_is_refused(proxy, terminal):
+    terminal.route("GET", "/files/report.pdf", json_answer({"ok": True}))
+
+    shallow = proxy(f"files/{_encoded('r', 3)}eport.pdf")
+    deep = proxy(f"{_encoded('.', 12) * 2}/etc/passwd")
+
+    assert shallow.status_code == 200, (
+        f"a name encoded three times over was not decoded and passed on: {shallow.status_code}"
+    )
+    assert deep.status_code == 400, (
+        "a parent folder encoded deeper than the proxy decodes was passed on for the terminal "
+        f"to decode: {deep.status_code} {deep.text}"
+    )
+    assert [request.path for request in terminal.received] == ["/files/report.pdf"]
