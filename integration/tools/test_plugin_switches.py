@@ -19,6 +19,8 @@ the three switched-off config tests fail. Every other test passes under each of 
 6f2fc7bc7 an orchestrator is managed through its templates in place of the policy, lifecycle and
 refresh routes; on dev c15f28649, with the ENABLE_TOOL_SERVERS check dropped from
 `get_connection`, the three terminal template route tests fail (404 in place of the refusal).
+With `/api/config` reporting terminal servers by the switch alone, the test with no and with
+only switched-off connections fails.
 """
 
 from __future__ import annotations
@@ -173,6 +175,27 @@ def test_the_config_reports_which_plugin_kinds_are_on(switched_off, admin, plugi
         "enable_tool_servers": switch != TOOL_SERVERS_SWITCH,
         "enable_terminal_servers": switch != TOOL_SERVERS_SWITCH,
     }, f"with {switch or 'every switch on'} the web client is told {reported}"
+
+
+def test_the_config_reports_terminal_servers_only_while_a_connection_is_switched_on(
+    admin, preserve
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    reported = {}
+    with serving_terminal() as terminal, admin.client() as client:
+        on, off = terminal.connection(), terminal.connection(enabled=False)
+        for label, connections in [
+            ("none", []),
+            ("only switched off", [off]),
+            ("one switched on", [off, on]),
+        ]:
+            configure_terminals(client, *connections)
+            features = client.get("/api/config").json()["features"]
+            reported[label] = features.get("enable_terminal_servers")
+
+    assert reported == {"none": False, "only switched off": False, "one switched on": True}, (
+        f"by its saved terminal connections the web client is told {reported}"
+    )
 
 
 # --- workspace tools ---------------------------------------------------------------------

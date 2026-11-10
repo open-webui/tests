@@ -33,7 +33,8 @@ Discriminates: passes on dev bbfa876af; fails with the bearer branch formatting 
 again (both keyless calls carry the header) and with an empty cached terminal list trusted again
 (the chat on the terminal is refused as unavailable); the nearby tests pass on both. On dev
 ef67cc3fa, formatting the system OAuth header without the token check fails the system OAuth
-case.
+case. On dev c15f28649, with orchestrators no longer skipped when the tool lists are fetched,
+the saving test fails (the orchestrator is asked for `/openapi.json`).
 """
 
 from __future__ import annotations
@@ -354,4 +355,28 @@ def test_a_session_terminal_offers_its_tools_and_runs_them_as_the_user(
     [executed] = session_orchestrator.requests_to("/execute")
     assert executed.headers.get("authorization") == f"Bearer {member.token}", (
         "the command did not run under the user's own session"
+    )
+
+
+def test_saving_connections_fetches_a_tool_list_from_terminals_and_none_from_an_orchestrator(
+    admin, preserve, session_orchestrator
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    orchestrator = session_orchestrator.connection(
+        key=ORCHESTRATOR_KEY, auth_type="bearer", server_type="orchestrator"
+    )
+    with serving_terminal() as terminal, admin.client() as client:
+        terminal.route("GET", "/openapi.json", json_answer(_openapi("run_command", "/execute")))
+        configure_terminals(client, orchestrator, terminal.connection())
+        menu = [entry["name"] for entry in client.get("/api/v1/terminals/").json()]
+        fetched_from_terminal = len(terminal.requests_to("/openapi.json"))
+
+    assert fetched_from_terminal == 1, (
+        f"saving fetched the plain terminal's tool list {fetched_from_terminal} times"
+    )
+    assert sorted(menu) == ["Fake terminal", "Workbench"], f"the terminal menu shows {menu}"
+    asked = [request.path for request in session_orchestrator.received]
+    assert asked == [TEMPLATES], (
+        "an orchestrator has no tools of its own, its terminals are asked one by one; saving "
+        f"and listing asked it for {asked}"
     )

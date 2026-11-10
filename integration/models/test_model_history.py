@@ -9,7 +9,8 @@ change the model see or touch its versions: the owner, a writer and the admin, n
 or a stranger, and a refused request leaves the versions and the model as they were. Restoring
 a version re-checks what it points at, so a writer cannot bring back the owner's private
 knowledge base through an old version. A version that attached a note restores with the note,
-and a writer who cannot read that note is refused (open-webui#32317).
+and a writer who cannot read that note is refused (open-webui#32317). The same holds for a
+version's default terminal: it comes back only while the account still has that terminal.
 
 Discriminates: passes on dev 206bf9723 (3 of 3). In backend copies: creating a model without
 storing its first version turns `test_creating_a_model_records_its_first_version` red; a save
@@ -27,6 +28,9 @@ instead of `write` and restoring without re-checking knowledge access turn every
 Passes on dev 5032e834e; with 5477d5a77 (open-webui#32317) reverted a note is looked up as a
 knowledge base, so `test_setting_an_old_version_as_production_brings_it_back` and
 `test_a_writer_cannot_restore_a_version_pointing_at_a_note_they_cannot_read` get a 400.
+On dev c15f28649, with the terminal check dropped from the restore,
+`test_a_version_comes_back_with_its_default_terminal_only_while_the_account_has_it` fails (the
+version is restored with a terminal the account no longer has).
 """
 
 from __future__ import annotations
@@ -38,6 +42,12 @@ import pytest
 
 from harness.access import Shareable, attempts, cast, make_group
 from harness.actors import Actor
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -356,3 +366,43 @@ def test_a_writer_cannot_restore_a_version_pointing_at_a_note_they_cannot_read(c
 
     assert refused.status_code == 403, refused.text
     assert current["params"]["system"] == "without the plan"
+
+
+def test_a_version_comes_back_with_its_default_terminal_only_while_the_account_has_it(
+    admin, preserve, curator
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    with serving_terminal() as terminal:
+        shared = terminal.connection(config={"access_grants": [read_grant(curator.id)]})
+        with admin.client() as client:
+            configure_terminals(client, shared)
+        with curator.client() as client:
+            model = _create(client, "first draft", terminalId=shared["id"])
+            _save(client, model["id"], "second draft")
+            while_shared = _set_production(client, model["id"], model["version_id"])
+            restored = _model(client, model["id"])
+            _save(client, model["id"], "third draft")
+        with admin.client() as client:
+            configure_terminals(client, {**shared, "config": {"access_grants": []}})
+        with curator.client() as client:
+            menu = client.get("/api/v1/terminals/").json()
+            taken_away = _set_production(client, model["id"], model["version_id"])
+            current = _model(client, model["id"])
+
+    assert while_shared.status_code == 200, while_shared.text
+    assert (restored["params"]["system"], restored["meta"].get("terminalId")) == (
+        "first draft",
+        shared["id"],
+    ), f"the version did not come back with its default terminal: {restored}"
+    assert menu == [], f"the account still has terminals: {menu}"
+    assert (taken_away.status_code, taken_away.json().get("detail")) == (
+        400,
+        "The referenced terminal is missing or inaccessible.",
+    ), (
+        "a version came back with a default terminal the account no longer has: "
+        f"{taken_away.status_code} {taken_away.text}"
+    )
+    assert (current["params"]["system"], current["meta"].get("terminalId")) == (
+        "third draft",
+        None,
+    ), f"the refused restore changed the model: {current}"
