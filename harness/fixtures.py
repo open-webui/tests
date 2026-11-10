@@ -254,6 +254,15 @@ def agent_terminal() -> Generator:
 
 
 @pytest.fixture(scope="session")
+def native_agent_terminal() -> Generator:
+    """A real Open Terminal with stand-ins for Claude Code, Codex and Pi; skips without it."""
+    from harness.coding_agent import serving_agent_terminal
+
+    with serving_agent_terminal(native=True) as terminal:
+        yield terminal
+
+
+@pytest.fixture(scope="session")
 def full_open_terminal() -> Generator:
     """A real Open Terminal from the full image, in a container: Chromium for Chrome mode, a
     desktop with sound and notebook kernels. Skips without `OPEN_TERMINAL_FULL_IMAGE`."""
