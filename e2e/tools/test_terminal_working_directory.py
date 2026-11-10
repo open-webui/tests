@@ -53,6 +53,14 @@ terminals, so a person cannot make their own terminal a folder's default.
 Switching a new chat to a model without a default terminal keeps the terminal picked in it
 (b433aab65, a01b2ed55; the switch turned it off). The test passes on dev e8c0ad85e and fails on a
 build of it whose model switch takes the model's default terminal, none when it has none.
+
+Since dev 6f2fc7bc7 the chat stores its terminal and working directory, also a temporary chat
+saved afterwards, and a folder's terminal replaces the one picked before, on the way into the
+folder and when the folder's settings are saved while its page is open. On a build of dev
+c15f28649 that creates a chat without the two fields and saves a temporary chat without them,
+the picked-folder and temporary chat tests fail. On a build that never applies a folder's
+terminal, the replaced pick, saved-for-the-open-folder, folder default and missing directory
+tests fail; on one that only leaves out the saved settings, the saved-for-the-open-folder test.
 """
 
 from __future__ import annotations
@@ -67,6 +75,7 @@ import uuid
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Iterator
 from urllib.parse import urlparse
 
 import pytest
@@ -75,13 +84,18 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import grant
 from harness.backends import wait_until
-from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
+from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID, conversation
-from utils.cached_chat import ask, calling
+from utils.cached_chat import ask, calling, choose_terminal
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
 from utils.model_editor import save
 from utils.model_selector import SELECTOR_BUTTON, select_model
-from utils.sidebar_folders import click_folder_menu_button, folder_row, open_advanced
+from utils.sidebar_folders import (
+    click_folder_menu_button,
+    folder_link,
+    folder_row,
+    open_advanced,
+)
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -89,6 +103,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 TERMINAL = "Workbench"
 UNAVAILABLE = "Working directory is unavailable"
 PERSONAL = "My laptop"
+SPARE = "Spare shell"
 EVERYONE_READS = grant("user", "*", "read")
 
 
@@ -157,6 +172,15 @@ def where_pwd_ran(page: Page, upstream) -> str:
     return json.loads(results[-1])["cwd"]
 
 
+def kept_with_the_chat(person, page: Page) -> tuple[str | None, str | None]:
+    """The terminal and the working directory stored on the chat the page shows."""
+    with person.client() as client:
+        found = client.get(f"/api/v1/chats/{urlparse(page.url).path.removeprefix('/c/')}")
+    assert found.status_code == 200, found.text
+    chat = found.json()["chat"]
+    return chat.get("terminal_id"), chat.get("working_directory")
+
+
 def open_folder_page(person, page_for, folder_id: str) -> Page:
     page = page_for(person, path=f"/folders/{folder_id}")
     # the folder page reads the folder and its terminal's models before it shows the chat input,
@@ -220,10 +244,31 @@ def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_rel
 
     assert where_pwd_ran(page, upstream) == str(folder), "the command ran outside the folder"
     expect(page).to_have_url(re.compile("/c/"))
+    assert kept_with_the_chat(person, page) == (terminal["id"], f"{folder}/")
     reopened = page_for(person, path=urlparse(page.url).path)
     expect(directory_button(reopened)).to_contain_text(folder.name)
     # a518ff163: the folder can be changed again once the chat has messages
     expect(directory_button(reopened)).to_be_enabled()
+
+
+def test_a_temporary_chat_saved_afterwards_keeps_its_terminal_and_directory(
+    page_for, make_user, terminal, open_terminal, upstream
+):
+    person = make_user()
+    page = page_for(person, path="/?temporary-chat=true")
+    pick_terminal(page, TERMINAL)
+    folder = _directory(open_terminal)
+    choose_directory(page, folder)
+    assert where_pwd_ran(page, upstream) == str(folder), "the command ran outside the folder"
+
+    page.get_by_role("button", name="Save Chat").click()
+
+    expect(page.get_by_text("Conversation saved successfully")).to_be_visible()
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    assert kept_with_the_chat(person, page) == (terminal["id"], f"{folder}/")
+    reopened = page_for(person, path=urlparse(page.url).path)
+    expect(reopened.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
+    expect(directory_button(reopened)).to_contain_text(folder.name)
 
 
 def test_a_recently_used_folder_and_no_folder_can_be_picked_from_the_menu(
@@ -266,6 +311,71 @@ def test_a_new_chat_in_a_folder_starts_on_its_terminal_and_directory(
     expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     expect(directory_button(page)).to_contain_text(folder.name)
     assert where_pwd_ran(page, upstream) == str(folder), "the folder's directory was not used"
+
+
+@pytest.fixture
+def spare_terminal(admin, terminal) -> Iterator[dict]:
+    """A second terminal beside the Open Terminal, for every account; returns its connection."""
+    with serving_terminal() as server:
+        connection = server.connection(name=SPARE, config={"access_grants": [EVERYONE_READS]})
+        with admin.client() as client:
+            configure_terminals(client, terminal, connection)
+        yield connection
+
+
+def open_folder_from_the_sidebar(page: Page, name: str) -> None:
+    opener = page.get_by_role("button", name="Open Sidebar", exact=True)
+    if opener.is_visible():
+        opener.click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+    folders = sidebar.get_by_role("button", name="Folders", exact=True)
+    expect(folders).to_be_visible()
+    if folders.get_attribute("aria-expanded") != "true":
+        folders.click()
+    folder_link(sidebar, name).click()
+    expect(page).to_have_url(re.compile(r"/folders/"))
+    expect(chat_input(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+
+
+def test_a_folders_terminal_replaces_the_terminal_picked_before(
+    page_for, make_user, terminal, spare_terminal, open_terminal, upstream
+):
+    person = make_user()
+    folder = _directory(open_terminal)
+    _, name = create_folder(
+        person, {"terminal_id": terminal["id"], "working_directory": str(folder)}
+    )
+    page = page_for(person)
+    choose_terminal(page, SPARE)
+
+    open_folder_from_the_sidebar(page, name)
+
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
+    expect(composer.get_by_role("button", name=SPARE, exact=True)).to_have_count(0)
+    expect(directory_button(page)).to_contain_text(folder.name)
+    assert where_pwd_ran(page, upstream) == str(folder), "the folder's terminal was not used"
+
+
+def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
+    page_for, make_user, terminal, open_terminal, upstream
+):
+    person = make_user()
+    folder = _directory(open_terminal)
+    folder_id, name = create_folder(person, {})
+    page = open_folder_page(person, page_for, folder_id)
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name="Terminal", exact=True)).to_be_visible()
+
+    dialog = open_folder_dialog(page, name)
+    choose_default_terminal(page, dialog, TERMINAL)
+    dialog.get_by_label("Working directory").fill(str(folder))
+    dialog.get_by_role("button", name="Save").click()
+    expect(page.get_by_text("Folder updated successfully")).to_be_visible()
+
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
+    expect(directory_button(page)).to_contain_text(folder.name)
+    assert where_pwd_ran(page, upstream) == str(folder), "the saved directory was not used"
 
 
 def test_a_folders_missing_directory_refuses_the_first_message(
