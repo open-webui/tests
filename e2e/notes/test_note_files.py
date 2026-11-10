@@ -60,6 +60,7 @@ from playwright.sync_api import Locator, Page, Request, Route, expect
 from harness import upstream as reply
 from harness.access import grant
 from harness.actors import Actor
+from harness.socket_client import frame_carries
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import expect_reply, send
@@ -314,7 +315,11 @@ def test_a_file_still_uploading_when_the_note_saves_finishes_attaching(page_for,
         "websocket",
         lambda socket: socket.on(
             "framereceived",
-            lambda frame: note_echoes.append(str(frame)) if "events:note" in str(frame) else None,
+            lambda frame: (
+                note_echoes.append(str(frame))
+                if frame_carries(str(frame), "note:updated")
+                else None
+            ),
         ),
     )
     held_uploads: list[Route] = []

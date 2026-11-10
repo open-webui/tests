@@ -36,7 +36,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import grant
 from harness.actors import Actor
-from harness.socket_client import connected
+from harness.socket_client import connected, on_live
 from utils.note_pages import create_page
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -217,7 +217,7 @@ def _wait_until_on_page(owner: Actor, note_id: str, person: Actor, page_id: str)
     """Wait until the server places `person` on the page, as the note's presence list says."""
     with connected(owner) as tab:
         lists: list[dict] = []
-        tab.client.on("note:presence", lists.append)
+        on_live(tab.client, "note:presence", lists.append)
         tab.call("note:join", {"note_id": note_id, "auth": {"token": owner.token}})
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
