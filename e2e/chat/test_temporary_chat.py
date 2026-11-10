@@ -8,7 +8,7 @@ either. Since da850248d the first message put an address in the address bar that
 not open, and the reload left a normal new chat whose messages were saved (#34049). Before the
 first message the address ends in `?temporary-chat=true`, which is what the reload goes by; a
 visit to another tab (Notes) and back, or a reload inside a folder, dropped that ending while the
-label still showed, so the next reload left a normal new chat (#TBD). With it off,
+label still showed, so the next reload left a normal new chat (#34071). With it off,
 the same message makes a saved chat. A temporary chat that has an answer can still be kept
 through the header's Save Chat button, and an account that turned on Temporary Chat by Default in
 its Interface settings starts every new chat temporary. A temporary chat offers no Fork chat
@@ -23,7 +23,7 @@ Temporary Chat label is gone and the next message is saved and listed in the sid
 fix it fails with the server taking the first message under a `temporary:` id for a new chat (it
 is stored, listed in the sidebar and shown again after the reload). The fork test passes with
 the #32833 fix and fails on dev ca8f451cc (Fork chat and the / menu's Fork are offered and fail).
-The Notes and folder tests pass with the #TBD fix and fail on dev c15f28649 (after the reload,
+The Notes and folder tests pass with the #34071 fix and fail on dev c15f28649 (after the reload,
 in the folder after the second one, the Temporary Chat label is gone and the message is saved).
 On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
 Temporary Chat on (no toggle on a new chat).
@@ -134,7 +134,7 @@ def test_a_temporary_chat_is_answered_and_left_out_of_history_search_and_storage
 def test_a_temporary_chat_is_still_temporary_after_a_visit_to_notes_and_a_reload(
     page_for, make_user, upstream
 ):
-    """#TBD: back on the chat tab the address had lost `?temporary-chat=true`."""
+    """#34071: back on the chat tab the address had lost `?temporary-chat=true`."""
     account = make_user()
     page = page_for(account)
     upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
@@ -152,20 +152,20 @@ def test_a_temporary_chat_is_still_temporary_after_a_visit_to_notes_and_a_reload
 
     expect(new_chat_greeting(page)).to_be_visible()
     expect(
-        temporary_label(page), "the new chat after the reload is no longer temporary (#TBD)"
+        temporary_label(page), "the new chat after the reload is no longer temporary (#34071)"
     ).to_be_visible()
     send(page, PROMPT)
     expect_reply(page, ANSWER)
     expect(page.locator('a[href^="/c/"]'), "the message made a sidebar chat").to_have_count(0)
     saved = stored_chats(account, "Carinthia")
-    assert saved == [], f"the message sent after the reload was saved (#TBD): {saved}"
+    assert saved == [], f"the message sent after the reload was saved (#34071): {saved}"
 
 
 @pytest.mark.regression
 def test_a_temporary_chat_in_a_folder_is_still_temporary_after_two_reloads(
     page_for, make_user, upstream
 ):
-    """#TBD: the first reload dropped `?temporary-chat=true` from the folder's address."""
+    """#34071: the first reload dropped `?temporary-chat=true` from the folder's address."""
     account = make_user()
     with account.client() as client:
         created = client.post("/api/v1/folders/", json={"name": "Lighthouse"})
@@ -182,12 +182,12 @@ def test_a_temporary_chat_in_a_folder_is_still_temporary_after_two_reloads(
 
     expect(new_chat_greeting(page)).to_be_visible()
     expect(
-        temporary_label(page), "the folder's new chat is no longer temporary (#TBD)"
+        temporary_label(page), "the folder's new chat is no longer temporary (#34071)"
     ).to_be_visible()
     send(page, PROMPT_TWO)
     expect_reply(page, ANSWER_TWO)
     saved = stored_chats(account, "Salzburg")
-    assert saved == [], f"the message sent after the reloads was saved (#TBD): {saved}"
+    assert saved == [], f"the message sent after the reloads was saved (#34071): {saved}"
 
 
 def test_turning_temporary_chat_off_again_saves_the_chat(page_for, make_user, upstream):
