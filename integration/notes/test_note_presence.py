@@ -24,7 +24,7 @@ import uuid
 import pytest
 
 from harness.access import grant, make_group
-from harness.socket_client import SocketSession, connected
+from harness.socket_client import SocketSession, connected, on_live
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -81,7 +81,7 @@ def _page_document(note_id: str, page_id: str) -> str:
 def _watch_presence(session: SocketSession) -> list[dict]:
     """Record every `note:presence` the tab receives."""
     received: list[dict] = []
-    session.client.on("note:presence", received.append)
+    on_live(session.client, "note:presence", received.append)
     return received
 
 
