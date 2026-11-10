@@ -5,12 +5,13 @@ uses, and each call an admin or a chat makes to a tool server or a terminal open
 Each test names the service by `localhost`, a hosts-file name for `::1` alone or a hosts-file name
 for another local address and expects the same outcome under both resolvers. An OpenAPI tool server
 is verified by the admin, its spec loaded when a chat uses it and its operation called by the
-model. A terminal server is verified, has its orchestrator policy, lifecycle and refresh proxied,
-its files and terminal sessions proxied for the web client, and serves a chat its spec, working
-directory, system prompt, AGENTS.md, skills and tool call. A server whose name does not resolve
-fails each of those with the same status and message, the resolver's own wording aside, and a chat
-that names it still answers. The MCP SDK talks through httpx and the terminal working directory
-call of automations is never reached, so neither is covered here.
+model. A terminal server is verified, an orchestrator has its status read and its templates
+listed, created and changed (the policy, lifecycle and refresh routes went with dev 6f2fc7bc7), a
+terminal has its files and terminal sessions proxied for the web client, and serves a chat its
+spec, working directory, system prompt, AGENTS.md, skills and tool call. A server whose name does
+not resolve fails each of those with the same status and message, the resolver's own wording
+aside, and a chat that names it still answers. The MCP SDK talks through httpx and the terminal
+working directory call of automations is never reached, so neither is covered here.
 
 Discriminates: on dev 176d31d1d, a backend copy whose `env.py` installs a resolver that fails every
 lookup when the flag is on turns every c-ares run of a by-name test red and leaves every threaded
@@ -26,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
+import uuid
 from contextlib import contextmanager
 
 import pytest
@@ -229,47 +231,49 @@ def test_a_terminal_serves_a_chat_by_name(
 
 
 @pytest.mark.parametrize("name_form", name_forms())
-def test_a_terminal_is_verified_and_its_orchestrator_calls_are_proxied_by_name(
-    resolver, name_form, resolving_admin
+def test_a_terminal_is_verified_and_its_orchestrator_is_managed_by_name(
+    resolver, name_form, resolving_instance, resolving_admin, preserve
 ):
+    preserve(TERMINAL_SERVERS_CONFIG, on=resolving_instance)
+    templates = "/api/v1/terminals/templates"
+    template = {"id": "tpl-1", "data": {"name": "Workbench"}}
+    renamed = {"id": "tpl-1", "data": {"name": "Bench"}}
     with _terminal_by_name(name_form) as server, resolving_admin.client() as client:
         server.route("GET", "/api/config", json_answer({"features": {}}))
-        server.route("GET", "/api/v1/policies/dev", json_answer({"image": "base"}))
-        server.route("PUT", "/api/v1/policies/dev", json_answer({"image": "large"}))
-        server.route("GET", "/api/v1/policies/dev/lifecycle", json_answer({"idle": 60}))
-        server.route("PUT", "/api/v1/policies/dev/lifecycle", json_answer({"idle": 30}))
-        server.route("POST", "/api/v1/terminals/refresh", json_answer({"refreshed": 2}))
         target = {"url": server.base_url, "key": "", "auth_type": "none"}
         plain = client.post("/api/v1/configs/terminal_servers/verify", json=target)
-        server.route("GET", "/api/v1/policies", json_answer([]))
+        server.route("GET", templates, json_answer([template]))
+        server.route("POST", templates, json_answer(template, status=201))
+        server.route("GET", f"{templates}/tpl-1", json_answer(template))
+        server.route("PATCH", f"{templates}/tpl-1", json_answer(renamed))
+        server.route("GET", "/api/v1/terminals/status", json_answer({"version": "0.4.1"}))
         orchestrator = client.post("/api/v1/configs/terminal_servers/verify", json=target)
-        policy = {**target, "policy_id": "dev"}
-        read_policy = client.post("/api/v1/configs/terminal_servers/policy", json=policy)
-        write_policy = client.post(
-            "/api/v1/configs/terminal_servers/policy",
-            json={**policy, "policy_data": {"image": "large"}},
+        connection = server.connection(
+            key="orchestrator-key", auth_type="bearer", server_type="orchestrator"
         )
-        read_lifecycle = client.post("/api/v1/configs/terminal_servers/lifecycle", json=policy)
-        write_lifecycle = client.post(
-            "/api/v1/configs/terminal_servers/lifecycle",
-            json={**policy, "lifecycle_data": {"idle": 30}},
+        configure_terminals(client, connection)
+        terminal_id = f"template:{connection['id']}:tpl-1"
+        status = client.get(f"{templates}/connections/{connection['id']}/status")
+        created = client.post(
+            templates,
+            json={"id": str(uuid.uuid4()), "connection_id": connection["id"], "data": {}},
         )
-        refreshed = client.post("/api/v1/configs/terminal_servers/refresh", json=target)
+        changed = client.patch(f"{templates}/{terminal_id}", json={"name": "Bench"})
+        listed = client.get("/api/v1/terminals/")
 
     assert (plain.status_code, plain.json()) == (200, {"status": True, "type": "terminal"})
     assert (orchestrator.status_code, orchestrator.json()) == (
         200,
         {"status": True, "type": "orchestrator"},
     )
-    assert read_policy.json() == {"image": "base"}
-    assert write_policy.json() == {"image": "large"}
-    assert read_lifecycle.json() == {"idle": 60}
-    assert write_lifecycle.json() == {"idle": 30}
-    assert (refreshed.status_code, refreshed.json()) == (200, {"refreshed": 2})
+    assert (status.status_code, status.json()) == (200, {"version": "0.4.1"})
+    assert (created.status_code, created.json()) == (201, {**template, "terminal_id": terminal_id})
+    assert (changed.status_code, changed.json()) == (200, renamed)
+    assert [(entry["id"], entry["name"]) for entry in listed.json()] == [(terminal_id, "Workbench")]
     [written] = [
-        entry for entry in server.requests_to("/api/v1/policies/dev") if entry.method == "PUT"
+        entry for entry in server.requests_to(f"{templates}/tpl-1") if entry.method == "PATCH"
     ]
-    assert json.loads(written.body) == {"image": "large"}
+    assert json.loads(written.body) == {"name": "Bench"}
 
 
 @pytest.mark.parametrize("name_form", name_forms())

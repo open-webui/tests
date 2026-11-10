@@ -14,12 +14,16 @@ The terminal tests run on an instance of their own backed by a Redis stand-in th
 to, which plays the other worker.
 
 A third fix, 5232f9bb2 (PR open-webui/open-webui#33699, issues #30001 and #33579): a terminal
-connection with Auth set to Session sent no key on Verify Connection, the policy, lifecycle and
-refresh calls and the tool list fetch, so an orchestrator refused them all and every chat on it
-failed with "Terminal server is unavailable". Those calls now carry the connection's key, while
-the commands a user runs still go out under the user's own session. The Session tests pass on dev
-f659c0d12 and fail on a backend copy with the backend half of 5232f9bb2 reverted (each admin call
-is refused, and the chat gets no terminal tools).
+connection with Auth set to Session sent no key on Verify Connection, the orchestrator's
+management calls and the tool list fetch, so an orchestrator refused them all and every chat on
+it failed with "Terminal server is unavailable". Those calls carry the connection's key, while
+the commands a user runs on a plain terminal still go out under the user's own session. Since
+dev 6f2fc7bc7 an orchestrator is managed through its templates (the policy, lifecycle and refresh
+routes are gone), Verify Connection asks for the template list, and the dialog saves an
+orchestrator with Bearer auth; a connection stored with Session before that keeps working, which
+the template tests here pin. On dev c15f28649 they fail on a backend copy where Verify Connection
+sends the key for Bearer alone (verify) and where the template calls send the key for Bearer
+alone (the menu, status, create and command cases).
 
 Twin of unit/tools/test_tool_server_auth_and_terminal_cache.py, which keeps the audit of every
 bearer branch and the empty cached list with no terminal able to serve. The system OAuth and
@@ -211,14 +215,8 @@ def test_a_populated_cache_is_used_without_refetching(shared_redis, cached_termi
 # --- 5232f9bb2: a Session terminal reaches its orchestrator with the connection's key ------
 
 ORCHESTRATOR_KEY = "orchestrator-key-0123"
-TERMINAL_ADMIN = "/api/v1/configs/terminal_servers"
-# the admin panel's call: (route, the form's own fields, the answer the admin gets)
-TERMINAL_ADMIN_CALLS = {
-    "verify": (f"{TERMINAL_ADMIN}/verify", {}, {"status": True, "type": "orchestrator"}),
-    "policy": (f"{TERMINAL_ADMIN}/policy", {"policy_id": "dev"}, {"image": "base"}),
-    "lifecycle": (f"{TERMINAL_ADMIN}/lifecycle", {"policy_id": "dev"}, {"idle": 60}),
-    "refresh": (f"{TERMINAL_ADMIN}/refresh", {}, {"refreshed": 1}),
-}
+TEMPLATE = {"id": "tpl-1", "data": {"name": "Workbench", "scope": "user"}}
+TEMPLATES = "/api/v1/terminals/templates"
 
 
 def _requiring(credential: str, answer: Answer) -> Callable[[TerminalRequest], Answer]:
@@ -237,32 +235,91 @@ def session_orchestrator():
     """A terminal orchestrator that answers its admin and spec routes only with its key."""
     with serving_terminal() as terminal:
         for method, path, answer in [
-            ("GET", "/api/v1/policies", json_answer([])),
-            ("GET", "/api/v1/policies/dev", json_answer({"image": "base"})),
-            ("GET", "/api/v1/policies/dev/lifecycle", json_answer({"idle": 60})),
-            ("POST", "/api/v1/terminals/refresh", json_answer({"refreshed": 1})),
+            ("GET", TEMPLATES, json_answer([TEMPLATE])),
+            ("POST", TEMPLATES, json_answer(TEMPLATE, status=201)),
+            ("GET", f"{TEMPLATES}/{TEMPLATE['id']}", json_answer(TEMPLATE)),
+            ("GET", "/api/v1/terminals/status", json_answer({"version": "0.4.1"})),
+            ("GET", "/files/cwd", json_answer({"cwd": "/home/user"})),
             ("GET", "/openapi.json", json_answer(_openapi("run_command", "/execute"))),
         ]:
             terminal.route(method, path, _requiring(f"Bearer {ORCHESTRATOR_KEY}", answer))
         yield terminal
 
 
-@pytest.mark.parametrize("call", list(TERMINAL_ADMIN_CALLS))
-def test_a_session_terminal_is_managed_with_its_orchestrator_key(admin, session_orchestrator, call):
-    path, fields, expected = TERMINAL_ADMIN_CALLS[call]
+def test_a_session_terminal_is_verified_with_its_orchestrator_key(admin, session_orchestrator):
     target = {
         "url": session_orchestrator.base_url,
         "key": ORCHESTRATOR_KEY,
         "auth_type": "session",
-        **fields,
     }
 
     with admin.client() as client:
-        answered = client.post(path, json=target)
+        answered = client.post("/api/v1/configs/terminal_servers/verify", json=target)
 
-    assert (answered.status_code, answered.json()) == (200, expected), (
-        f"{call} of a terminal with Session auth went out without the orchestrator's key and "
-        f"was refused (#30001, #33579): {answered.status_code} {answered.text}"
+    assert (answered.status_code, answered.json()) == (
+        200,
+        {"status": True, "type": "orchestrator"},
+    ), (
+        "Verify Connection of a terminal with Session auth went out without the orchestrator's "
+        f"key and was refused (#30001, #33579): {answered.status_code} {answered.text}"
+    )
+
+
+def _menu(client, terminal_id: str):
+    listed = client.get("/api/v1/terminals/")
+    return listed.status_code, [entry["name"] for entry in listed.json()]
+
+
+def _status(client, terminal_id: str):
+    connection_id = terminal_id.split(":")[1]
+    answered = client.get(f"{TEMPLATES}/connections/{connection_id}/status")
+    return answered.status_code, answered.json()
+
+
+def _create(client, terminal_id: str):
+    form = {"id": str(uuid.uuid4()), "connection_id": terminal_id.split(":")[1], "data": {}}
+    answered = client.post(TEMPLATES, json=form)
+    return answered.status_code, answered.json().get("terminal_id")
+
+
+def _command(client, terminal_id: str):
+    answered = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+    return answered.status_code, answered.json()
+
+
+# what the page does with an orchestrator: (the call, the answer a person with access gets)
+TEMPLATE_CALLS = {
+    "menu": (_menu, lambda terminal_id: (200, ["Workbench"])),
+    "status": (_status, lambda terminal_id: (200, {"version": "0.4.1"})),
+    "create": (_create, lambda terminal_id: (201, terminal_id)),
+    "command": (_command, lambda terminal_id: (200, {"cwd": "/home/user"})),
+}
+
+
+@pytest.mark.parametrize("call", list(TEMPLATE_CALLS))
+def test_a_session_orchestrator_saved_before_templates_is_still_reached_with_its_key(
+    admin, preserve, session_orchestrator, call
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    connection = session_orchestrator.connection(
+        key=ORCHESTRATOR_KEY, auth_type="session", server_type="orchestrator"
+    )
+    terminal_id = f"template:{connection['id']}:{TEMPLATE['id']}"
+    send, expected = TEMPLATE_CALLS[call]
+
+    with admin.client() as client:
+        configure_terminals(client, connection)
+        answered = send(client, terminal_id)
+
+    assert answered == expected(terminal_id), (
+        f"{call} on an orchestrator stored with Session auth went out without the "
+        f"orchestrator's key and was refused (#30001, #33579): {answered}"
+    )
+    credentials = {
+        request.headers.get("authorization") for request in session_orchestrator.received
+    }
+    assert credentials == {f"Bearer {ORCHESTRATOR_KEY}"}, (
+        f"the orchestrator was sent {credentials}; a session token of a user never belongs there"
     )
 
 

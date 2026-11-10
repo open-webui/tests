@@ -15,7 +15,10 @@ ENABLE_FUNCTIONS checks dropped from the functions router, the filter run and th
 the three functions lists and the filter test fail; with the ENABLE_TOOL_SERVERS checks dropped
 from the terminals, configs and tools routers and the tool server resolution, the listed and
 offered, terminal and six config route tests fail; with `/api/config` reporting all three on,
-the three switched-off config tests fail. Every other test passes under each of these.
+the three switched-off config tests fail. Every other test passes under each of these. Since dev
+6f2fc7bc7 an orchestrator is managed through its templates in place of the policy, lifecycle and
+refresh routes; on dev c15f28649, with the ENABLE_TOOL_SERVERS check dropped from
+`get_connection`, the three terminal template route tests fail (404 in place of the refusal).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import secrets
+import uuid
 from dataclasses import dataclass
 from typing import Callable
 
@@ -312,27 +316,42 @@ def _calls_to_servers(plugins: Plugins, listener) -> int:
     return len(plugins.terminal.received) + len(listener.requests_to("/openapi.json"))
 
 
-def _server_routes(plugins: Plugins, listener) -> dict[str, dict]:
+TEMPLATES = "/api/v1/terminals/templates"
+
+
+def _server_routes(plugins: Plugins, listener) -> dict[str, tuple[str, str, dict | None]]:
+    """Each route that reaches a tool or terminal server: its method, path and form."""
     terminal_url = plugins.terminal.base_url
+    terminal_id = plugins.terminal_id
+    template = {"id": str(uuid.uuid4()), "connection_id": terminal_id, "data": {}}
     return {
-        "/api/v1/configs/tool_servers/verify": openapi_connection(listener.base_url, "Verify"),
-        "/api/v1/configs/terminal_servers/verify": {"url": terminal_url, "auth_type": "none"},
-        "/api/v1/configs/terminal_servers/policy": {"url": terminal_url, "policy_id": "pol1"},
-        "/api/v1/configs/terminal_servers/lifecycle": {"url": terminal_url, "policy_id": "pol1"},
-        "/api/v1/configs/terminal_servers/refresh": {"url": terminal_url},
-        "/api/v1/configs/oauth/clients/register": {
-            "url": listener.base_url,
-            "client_id": "harbour",
-        },
+        "/api/v1/configs/tool_servers/verify": (
+            "POST",
+            "/api/v1/configs/tool_servers/verify",
+            openapi_connection(listener.base_url, "Verify"),
+        ),
+        "/api/v1/configs/terminal_servers/verify": (
+            "POST",
+            "/api/v1/configs/terminal_servers/verify",
+            {"url": terminal_url, "auth_type": "none"},
+        ),
+        "terminal status": ("GET", f"{TEMPLATES}/connections/{terminal_id}/status", None),
+        "terminal create": ("POST", TEMPLATES, template),
+        "terminal settings": ("GET", f"{TEMPLATES}/template:{terminal_id}:tpl-1", None),
+        "/api/v1/configs/oauth/clients/register": (
+            "POST",
+            "/api/v1/configs/oauth/clients/register",
+            {"url": listener.base_url, "client_id": "harbour"},
+        ),
     }
 
 
 SERVER_ROUTES = [
     "/api/v1/configs/tool_servers/verify",
     "/api/v1/configs/terminal_servers/verify",
-    "/api/v1/configs/terminal_servers/policy",
-    "/api/v1/configs/terminal_servers/lifecycle",
-    "/api/v1/configs/terminal_servers/refresh",
+    "terminal status",
+    "terminal create",
+    "terminal settings",
     "/api/v1/configs/oauth/clients/register",
 ]
 
@@ -341,10 +360,10 @@ SERVER_ROUTES = [
 def test_the_server_config_routes_refuse_while_tool_servers_are_off(
     switched_off, admin, listener, plugins, route
 ):
-    form = _server_routes(plugins, listener)[route]
+    method, path, form = _server_routes(plugins, listener)[route]
     with _on(switched_off(TOOL_SERVERS_SWITCH), admin).client() as client:
         before = _calls_to_servers(plugins, listener)
-        refused = client.post(route, json=form)
+        refused = client.request(method, path, json=form)
 
     assert refused.status_code == 403, f"{route} answered {refused.status_code}: {refused.text}"
     assert "Tool servers are disabled" in refused.text
@@ -358,10 +377,10 @@ def test_the_server_config_routes_refuse_while_tool_servers_are_off(
 def test_the_server_config_routes_answer_with_another_switch_off(
     switched_off, admin, listener, plugins, switch, route
 ):
-    form = _server_routes(plugins, listener)[route]
+    _, path, form = _server_routes(plugins, listener)[route]
     with _on(switched_off(switch), admin).client() as client:
         before = _calls_to_servers(plugins, listener)
-        verified = client.post(route, json=form)
+        verified = client.post(path, json=form)
 
     state = switch or "every switch on"
     assert verified.status_code == 200, f"with {state} {route} answered {verified.text}"
