@@ -18,14 +18,13 @@ a715f569d reverted (the owner's and the admin's typing is saved with Notes off).
 
 from __future__ import annotations
 
-import threading
 import time
 import uuid
 
 import pytest
 
 from harness.access import make_group
-from harness.socket_client import SocketSession, connected, note_text
+from harness.socket_client import SocketSession, connected, note_edits, note_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -90,17 +89,6 @@ def _saved_markdown(admin, note_id: str, expected: str, wait: float) -> str:
             time.sleep(0.2)
 
 
-def _renames(session: SocketSession, title: str) -> threading.Event:
-    arrived = threading.Event()
-
-    def record(*payload) -> None:
-        if title in str(payload):
-            arrived.set()
-
-    session.client.on("events:note", record)
-    return arrived
-
-
 def _follow_note(session: SocketSession, account, note_id: str) -> None:
     """Open the note the way the note page does: follow its changes and its live document."""
     session.call("note:join", {"auth": {"token": account.token}, "note_id": note_id})
@@ -149,8 +137,8 @@ def test_a_user_without_the_permission_gets_no_live_edits_of_a_shared_note(
         granted_update = granted_tab.note_update(note_id, timeout=ARRIVAL_TIMEOUT)
 
         title = f"renamed {uuid.uuid4().hex[:6]}"
-        to_restricted = _renames(restricted_tab, title)
-        to_granted = _renames(granted_tab, title)
+        to_restricted = note_edits(restricted_tab.client, note_id, title)
+        to_granted = note_edits(granted_tab.client, note_id, title)
         with owner.client() as client:
             renamed = client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})
         assert renamed.status_code == 200, renamed.text

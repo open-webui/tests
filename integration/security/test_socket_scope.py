@@ -31,7 +31,7 @@ import uuid
 
 import pytest
 
-from harness.socket_client import connected, note_text
+from harness.socket_client import connected, note_edits, note_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -198,11 +198,13 @@ def test_join_note_follows_the_note_only_for_a_shared_account(make_user, permiss
     _share_note(owner, note_id, visitor, permission)
     shared = permission is not None
 
+    title = f"renamed {uuid.uuid4().hex[:8]}"
+
     with connected(visitor) as visitors_tab:
-        arrived = _flag_on(visitors_tab, "events:note")
+        arrived = note_edits(visitors_tab.client, note_id, title)
         visitors_tab.call("note:join", {"auth": {"token": visitor.token}, "note_id": note_id})
         with owner.client() as client:
-            edited = client.post(f"/api/v1/notes/{note_id}/update", json={"title": "renamed"})
+            edited = client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})
         assert edited.status_code == 200, edited.text
         received = _arrives(arrived, shared)
 

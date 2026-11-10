@@ -12,7 +12,8 @@ socket is opened without a token wherever a handler checks the token itself, so 
 that handler and not the handshake. Since 24e30d1cb a handler may drop a refused socket, or fail
 on a deleted account's token, where it used to answer nothing; either counts as refused. Since
 553b18a34 a note's edit reaches its followers inside the shared `events` message as `note:updated`,
-before that as an `events:note` message of its own; the note case reads both.
+before that as an `events:note` message of its own; the note case reads both through the
+harness.
 
 Twin of unit/security/test_websocket_role_gate.py.
 
@@ -35,6 +36,8 @@ import pytest
 import socketio
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.client import connect
+
+from harness.socket_client import note_edits
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -101,24 +104,6 @@ def _answer(client: socketio.Client, event: str, data: dict, expected: bool):
         return client.call(event, data, timeout=30 if expected else ARRIVAL_TIMEOUT)
     except socketio.exceptions.TimeoutError:
         return None
-
-
-def _note_edits(client: socketio.Client, note_id: str, title: str) -> threading.Event:
-    """Set once the socket is told the note now carries `title`, in either shape of that message."""
-    arrived = threading.Event()
-
-    def record(note) -> None:
-        if isinstance(note, dict) and note.get("id") == note_id and note.get("title") == title:
-            arrived.set()
-
-    def record_shared(message) -> None:
-        event = message.get("data") if isinstance(message, dict) else None
-        if isinstance(event, dict) and event.get("type") == "note:updated":
-            record(event.get("data"))
-
-    client.on("events:note", record)
-    client.on("events", record_shared)
-    return arrived
 
 
 def _arrives(flag: threading.Event, expected: bool) -> bool:
@@ -193,7 +178,7 @@ def test_join_note_joins_only_a_verified_account(instance, admin, make_user, rol
     title = f"edited by the admin {uuid.uuid4().hex[:8]}"
 
     with _socket(instance) as (client, _):
-        edit_arrived = _note_edits(client, note_id, title)
+        edit_arrived = note_edits(client, note_id, title)
         client.call("note:join", {"auth": {"token": owner.token}, "note_id": note_id}, timeout=30)
         with admin.client() as admin_client:
             edited = admin_client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})

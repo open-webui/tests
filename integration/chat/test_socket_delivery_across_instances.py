@@ -77,7 +77,7 @@ from harness.chat import ask, send_message, wait_for_reply
 from harness.direct_connection import answering, chunk_line, direct_model
 from harness.instance import LaunchedInstance
 from harness.python_tools import python_tool
-from harness.socket_client import SocketSession, connected, note_text
+from harness.socket_client import SocketSession, connected, note_text, on_live
 from harness.upstream import MOCK_MODEL_ID, conversation
 
 pytestmark = [
@@ -695,14 +695,15 @@ def test_an_instance_on_a_redis_account_limited_to_its_channels_is_heard(
     )
 
 
-DOCUMENT_EVENTS = ("ydoc:awareness:update", "ydoc:user:joined", "ydoc:user:left", "events:note")
+DOCUMENT_EVENTS = ("ydoc:awareness:update", "ydoc:user:joined", "ydoc:user:left")
 
 
 def _listening(tab: SocketSession) -> dict[str, list]:
     """Everything the note events send to the tab, by event name, filled in as it arrives."""
-    seen = {event: [] for event in DOCUMENT_EVENTS}
-    for event, arrived in seen.items():
-        tab.client.on(event, arrived.append)
+    seen = {event: [] for event in (*DOCUMENT_EVENTS, "note:updated")}
+    for event in DOCUMENT_EVENTS:
+        tab.client.on(event, seen[event].append)
+    on_live(tab.client, "note:updated", seen["note:updated"].append)
     return seen
 
 
@@ -843,20 +844,20 @@ def test_a_notes_http_edit_reaches_the_tabs_that_followed_it_on_the_other_instan
         _follow_note(strangers_tab, stranger, note_id)
         _follow_note(owners_tab, owner, note_id)
         _retitle(owner, note_id, "Fahrplan", markdown="Zug nach Graz um 8:15")
-        assert _wait_until(lambda: writer_heard["events:note"]), "the edit never arrived"
-        assert _wait_until(lambda: owner_heard["events:note"])
+        assert _wait_until(lambda: writer_heard["note:updated"]), "the edit never arrived"
+        assert _wait_until(lambda: owner_heard["note:updated"])
         time.sleep(QUIET_PERIOD)
 
-    [seen] = writer_heard["events:note"]
+    [seen] = writer_heard["note:updated"]
     assert (seen["id"], seen["title"]) == (note_id, "Fahrplan")
     assert seen["data"]["content"]["md"] == "Zug nach Graz um 8:15"
-    assert owner_heard["events:note"] == [seen]
+    assert owner_heard["note:updated"] == [seen]
     assert _heard_nothing(strangers_tab, stranger_heard), "an account without access heard it"
 
 
 def _titles(heard: dict[str, list]) -> list[str]:
     """The titles of the note's HTTP edits; a save of typed text carries the page instead."""
-    return [event["title"] for event in heard["events:note"] if "title" in event]
+    return [event["title"] for event in heard["note:updated"] if "title" in event]
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -873,7 +874,7 @@ def test_a_collaborator_removed_on_one_instance_stops_hearing_the_note_on_the_ot
         for tab, account in [(removed_tab, removed), (kept_tab, kept), (owners_tab, owner)]:
             _follow_note(tab, account, note_id)
         _retitle(owner, note_id, "while shared")
-        assert _wait_until(lambda: removed_heard["events:note"] and kept_heard["events:note"])
+        assert _wait_until(lambda: removed_heard["note:updated"] and kept_heard["note:updated"])
 
         with owner.client() as client:
             revoked = client.post(
@@ -885,13 +886,13 @@ def test_a_collaborator_removed_on_one_instance_stops_hearing_the_note_on_the_ot
         owners_tab.edit_note(note_id, "after the removal")
         assert _wait_until(lambda: kept_tab.document_updates), "the kept tab lost the edit"
         assert _wait_until(lambda: len(_titles(kept_heard)) == 2)
-        assert _wait_until(lambda: any("page" in event for event in kept_heard["events:note"])), (
+        assert _wait_until(lambda: any("page" in event for event in kept_heard["note:updated"])), (
             "the kept tab never heard the typed edit being saved"
         )
         time.sleep(QUIET_PERIOD)
 
     assert _titles(kept_heard) == ["while shared", "after the removal"]
-    assert [event.get("title") for event in removed_heard["events:note"]] == ["while shared"], (
+    assert [event.get("title") for event in removed_heard["note:updated"]] == ["while shared"], (
         "a removed collaborator's tab on the other instance still gets the note's edits"
     )
     assert removed_tab.document_updates == [], "a removed collaborator still gets the live edits"

@@ -21,7 +21,7 @@ import uuid
 import pytest
 
 from harness.channel_quotes import enable_channels, post_message
-from harness.socket_client import SocketSession, connected
+from harness.socket_client import SocketSession, connected, note_edits
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -165,8 +165,8 @@ def test_a_reader_removed_from_a_note_stops_getting_its_edits(make_user):
         _follow_note(kept_tab, kept, note_id)
         _share_note(owner, note_id, kept)
         title = f"renamed {uuid.uuid4().hex[:6]}"
-        to_removed = _arrivals(removed_tab, "events:note", title)
-        to_kept = _arrivals(kept_tab, "events:note", title)
+        to_removed = note_edits(removed_tab.client, note_id, title)
+        to_kept = note_edits(kept_tab.client, note_id, title)
         with owner.client() as client:
             renamed = client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})
         assert renamed.status_code == 200, renamed.text
@@ -215,7 +215,7 @@ def test_an_admin_keeps_getting_a_notes_edits_after_the_grants_change(admin, mak
         _follow_note(admins_tab, admin, note_id)
         _share_note(owner, note_id)
         title = f"renamed {uuid.uuid4().hex[:6]}"
-        arrived = _arrivals(admins_tab, "events:note", title)
+        arrived = note_edits(admins_tab.client, note_id, title)
         with owner.client() as client:
             renamed = client.post(f"/api/v1/notes/{note_id}/update", json={"title": title})
         assert renamed.status_code == 200, renamed.text
