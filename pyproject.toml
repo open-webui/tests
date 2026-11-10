@@ -100,6 +100,8 @@ markers = [
     "api: API-level test via httpx, no browser",
     "real_socket_timing: page_for pages get a new chat's socket events unheld, for a bug in that race (e2e)",
     "secure_context: the test's browsers open the loopback address, a secure context, for a feature the browser offers only there (e2e)",
+    # ── area (set at collection, by path) ──────────────────────────────────
+    "terminal: a terminal test: under a terminals/ directory, or with terminal or tether in its file name",
     # ── dependency contract tests (unit/deps/) ─────────────────────────────
     "depcheck: per-dependency API-surface / usage contract test (run after a bump)",
     # ── capability (positive selection; tests also auto-skip when unmet) ────

@@ -335,6 +335,17 @@ def _is_drift(excinfo) -> bool:
     )
 
 
+def _is_terminal_test(path: Path) -> bool:
+    return "terminals" in path.parts[:-1] or "terminal" in path.name or "tether" in path.name
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    # `-m terminal` is every terminal test, with no marker in the files themselves
+    for item in items:
+        if _is_terminal_test(item.path.relative_to(config.rootpath)):
+            item.add_marker(pytest.mark.terminal)
+
+
 def pytest_collection_finish(session) -> None:
     slow_machine.limit_to_browser_runs(session.items)
 
