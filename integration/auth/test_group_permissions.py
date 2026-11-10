@@ -27,7 +27,7 @@ from typing import Iterator
 import pytest
 
 from harness.access import make_group
-from harness.socket_client import SocketSession, connected
+from harness.socket_client import SocketSession, connected, on_live
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -182,7 +182,7 @@ class Tab:
         self.session = session
         self.told = threading.Event()
         self.dropped = threading.Event()
-        session.client.on("access:updated", lambda *_: self.told.set())
+        on_live(session.client, "access:updated", lambda _: self.told.set())
         session.client.on("disconnect", lambda *_: self.dropped.set())
 
     def was_told(self) -> bool:
@@ -211,7 +211,9 @@ def test_a_permission_change_tells_the_members_open_tab_and_no_one_else(admin, m
         _update_group(admin, group_id, permissions={"workspace": {"knowledge": True}})
 
         assert member_tab.was_told(), "the member's open tab was not told to reload its access"
-        assert outsider_tab.heard_nothing()
+        assert outsider_tab.heard_nothing(), (
+            "a member of another group was told to reload its access or lost its socket"
+        )
 
 
 def test_an_edit_that_keeps_the_permissions_tells_nobody(admin, make_user, groups):
@@ -223,7 +225,9 @@ def test_an_edit_that_keeps_the_permissions_tells_nobody(admin, make_user, group
         member_tab = Tab(member_socket)
         _update_group(admin, group_id, description="renamed", permissions=permissions)
 
-        assert member_tab.heard_nothing()
+        assert member_tab.heard_nothing(), (
+            "an edit that left the permissions as they were made the member reload its access"
+        )
 
 
 def test_removing_a_member_tells_their_open_tab(admin, make_user, groups):
@@ -239,4 +243,6 @@ def test_removing_a_member_tells_their_open_tab(admin, make_user, groups):
         assert removed.status_code == 200, removed.text
 
         assert member_tab.was_told(), "the removed member's open tab kept its old access"
-        assert staying_tab.heard_nothing()
+        assert staying_tab.heard_nothing(), (
+            "a member who stayed in the group was told to reload its access or lost its socket"
+        )
