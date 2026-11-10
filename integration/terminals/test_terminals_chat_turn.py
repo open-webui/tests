@@ -14,7 +14,8 @@ files and nothing else, and cannot write. The model gets the two tools for the p
 shell only while a shell is open in the chat, and they read and type in that shell. A picture
 the model draws is copied into the machine. With the orchestrator down a message fails with the
 reason, and one sent while the machine is still starting, past `AIOHTTP_CLIENT_TIMEOUT_TERMINAL`,
-says so and works when sent again.
+says so and works when sent again. A chat keeps the terminal of its first message: a message
+naming another one is refused. A file uploaded for a chat is in the machine its model works in.
 
 The real Terminals service (open-webui/terminals) runs on Docker and starts a real Open Terminal
 container per machine (`harness.terminals`); without its images or Docker the tests skip.
@@ -33,7 +34,9 @@ removed from the preview link fails the preview test; the shell tools offered wh
 shell is open fails the shell test; the copy to the terminal skipped fails the picture test; a
 failed read of the machine's skills taken for no skills fails the orchestrator-down test (the
 model answers without the terminal); the timeout no longer turned into its message fails the
-still-starting test.
+still-starting test; the check of the chat's stored terminal removed fails the other-terminal
+test (the command runs in the other terminal's machine); the chat left out of what the
+orchestrator is sent fails the upload test (the upload is refused).
 
 `test_the_still_starting_message_names_the_terminal_the_person_picked` is red on dev c15f28649:
 the message names the admin's connection (finding
@@ -666,4 +669,79 @@ def test_the_still_starting_message_names_the_terminal_the_person_picked(
     assert _error_of(first.message) == f"Terminal '{name}' {STILL_STARTING}", (
         f"the message names something other than the terminal the person picked ({name}): "
         f"{_error_of(first.message)}"
+    )
+
+
+def test_a_message_naming_another_terminal_than_the_chats_own_is_refused(
+    admin, make_user, connect_terminals, terminals, upstream
+):
+    person = make_user()
+    connection = connect_terminals(read_grant(person.id))
+    with admin.client() as client:
+        first, other = (create_template(client, connection)["terminal_id"] for _ in range(2))
+        for terminal_id in (first, other):
+            share_template(client, terminal_id, read_grant(person.id))
+    tag = uuid.uuid4().hex[:8]
+
+    started = _ask(
+        person, upstream, _run(f"echo first > ~/{tag}.txt"), reply.text("Ran."), terminal_id=first
+    )
+    chat = _after(person, started.turn.chat_id)
+    switched = _ask(
+        person,
+        upstream,
+        _run(f"echo other > ~/{tag}.txt"),
+        reply.text("Ran."),
+        terminal_id=other,
+        **chat,
+    )
+
+    assert "error" not in started.results()[0], f"the chat's own terminal failed: {started.message}"
+    assert _error_of(switched.message) == "Chat terminal selection changed; refresh the chat", (
+        f"a message naming another terminal was not refused with the reason: {switched.message}"
+    )
+    assert switched.requests == [], "the model was asked on a terminal the chat does not have"
+    assert terminals.holding(f"{tag}.txt") == {f"user:{person.id}": "first\n"}, (
+        f"a command ran in the other terminal's machine: {terminals.holding(f'{tag}.txt')}"
+    )
+    assert len(terminals.instances()) == 1, (
+        f"the refused message started the other terminal's machine: {terminals.instances()}"
+    )
+
+
+def test_a_file_uploaded_for_a_chat_is_where_the_chats_model_works(
+    make_user, shared_terminal, terminals, upstream
+):
+    person = make_user()
+    terminal_id = shared_terminal(person, scope="chat")
+    tag = uuid.uuid4().hex[:8]
+    name, content = f"manifest-{tag}.txt", f"twelve crates {tag}\n"
+
+    started = _ask(person, upstream, reply.text("Hello."), terminal_id=terminal_id)
+    chat_id = started.turn.chat_id
+    base, session = f"/api/v1/terminals/{terminal_id}", {"X-Session-Id": chat_id}
+    with person.client() as client:
+        cwd = client.get(f"{base}/files/cwd", headers=session)
+        assert cwd.status_code == 200, f"the chat's working directory could not be read: {cwd.text}"
+        uploaded = client.post(
+            f"{base}/files/upload",
+            params={"directory": cwd.json()["cwd"]},
+            headers=session,
+            files={"file": (name, content.encode(), "text/plain")},
+        )
+    assert uploaded.status_code == 200, f"the upload failed: {uploaded.text}"
+    read = _ask(
+        person,
+        upstream,
+        _run(f"cat {uploaded.json()['path']}"),
+        reply.text("Read."),
+        terminal_id=terminal_id,
+        **_after(person, chat_id),
+    )
+
+    assert _printed(read.results()[0]) == content.replace("\n", "\r\n"), (
+        f"the model did not find the chat's upload: {read.results()[0]}"
+    )
+    assert terminals.holding(name) == {f"chat:{chat_id}": content}, (
+        f"the upload is not in the chat's own machine alone: {terminals.holding(name)}"
     )
