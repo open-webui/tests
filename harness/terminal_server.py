@@ -5,6 +5,9 @@ is recorded with its headers (names lower-cased) and cookies; `route` scripts an
 `redirect` a redirect, and unrouted paths answer 404. A WebSocket upgrade on any path opens a
 `TerminalSession`: its first message is the auth handshake, later ones are recorded and echoed
 back the way a shell prints what it is typed, and `ended` is set once either side closes.
+`script_sessions(script)` replaces the echo: the script gets each new session and decides what
+the terminal sends, when it closes and with which code, or that it hangs up without closing;
+`refuse_sessions(status)` answers the upgrade itself with an HTTP status.
 Setting `cors` lets a page of another origin call it, as a terminal a user added in their own
 settings is called from their browser: every answer allows any origin and a preflight gets 204.
 
@@ -14,6 +17,9 @@ settings is called from their browser: every answer allows any origin and a pref
 from __future__ import annotations
 
 import json
+import queue
+import socket
+import struct
 import threading
 import time
 import uuid
@@ -25,8 +31,8 @@ from typing import Callable, Iterator
 
 import httpx
 from websockets.datastructures import Headers
-from websockets.exceptions import ConnectionClosed
-from websockets.frames import Opcode
+from websockets.exceptions import ConnectionClosed, InvalidState
+from websockets.frames import Frame, Opcode
 from websockets.http11 import Request
 from websockets.protocol import State
 from websockets.server import ServerProtocol
@@ -48,16 +54,66 @@ class TerminalRequest:
     body: bytes
 
 
+class SessionEnded(Exception):
+    """The instance's side of a scripted session has gone."""
+
+
 @dataclass
 class TerminalSession:
+    """One WebSocket the instance opened on the terminal.
+
+    A test reads `auth`, `messages`, `ended` and `closed_with`. A script from `script_sessions`
+    also drives it: `authenticated`, `receive`, `send`, `close` and `drop`.
+    """
+
     path: str
     headers: dict[str, str]
     auth: dict | None = None
     messages: list[str | bytes] = field(default_factory=list)
     ended: threading.Event = field(default_factory=threading.Event)
+    # the close frame the instance sent, as (code, reason); None when it only hung up
+    closed_with: tuple[int, str] | None = None
+    # what the session's script raised, for the test to assert on
+    failure: BaseException | None = None
+    _authenticated: threading.Event = field(default_factory=threading.Event, repr=False)
+    _inbox: queue.Queue = field(default_factory=queue.Queue, repr=False)
+    _write: Callable[[bytes | str], None] | None = field(default=None, repr=False)
+    _write_close: Callable[[bytes], None] | None = field(default=None, repr=False)
+    _hang_up: Callable[[], None] | None = field(default=None, repr=False)
+
+    def authenticated(self, timeout: float = 10) -> dict:
+        """Wait for the first message, the auth handshake, and return it."""
+        if not self._authenticated.wait(timeout):
+            raise SessionEnded("the session sent no auth message")
+        return self.auth
+
+    def receive(self, timeout: float = 10) -> str | bytes:
+        """The next message after the auth handshake; SessionEnded once the instance has left."""
+        try:
+            message = self._inbox.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError(f"the session sent nothing within {timeout}s") from None
+        if message is None:
+            self._inbox.put(None)
+            raise SessionEnded("the instance left the session")
+        return message
+
+    def send(self, data: str | bytes) -> None:
+        """Send a text or a binary message, as a shell prints output."""
+        self._write(data)
+
+    def close(self, code: int | None = 1000, reason: str = "") -> None:
+        """Close with any code, reserved ones included; None sends a close without a code."""
+        payload = b"" if code is None else struct.pack("!H", code) + reason.encode()
+        self._write_close(payload)
+
+    def drop(self) -> None:
+        """Hang up without a close frame, as a terminal that died does."""
+        self._hang_up()
 
 
 Handler = Callable[[TerminalRequest], Answer]
+SessionScript = Callable[[TerminalSession], None]
 
 
 @dataclass
@@ -68,6 +124,21 @@ class FakeTerminalServer:
     sessions: list[TerminalSession] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
     cors: bool = False
+    session_scripts: dict[str, SessionScript] = field(default_factory=dict)
+    session_refusals: dict[str, int] = field(default_factory=dict)
+
+    def script_sessions(self, script: SessionScript, path: str = "*") -> None:
+        """Run `script(session)` for each new session on `path` in place of the echo.
+
+        `path` is the upgrade's path without the query string; one ending in `*` takes every
+        path under that prefix. The script runs in a thread of its own once the upgrade is
+        answered. A session it returns from stays open until one side closes it.
+        """
+        self.session_scripts[path] = script
+
+    def refuse_sessions(self, status: int, path: str = "*") -> None:
+        """Answer the WebSocket upgrade on `path` with an HTTP status; the try is in `received`."""
+        self.session_refusals[path] = status
 
     def route(self, method: str, path: str, handler: Handler | Answer) -> None:
         """Answer `method path` (path without the query string) with a handler or a fixed answer."""
@@ -101,6 +172,14 @@ class FakeTerminalServer:
             "config": {"access_grants": []},
             **fields,
         }
+
+
+def _for_path(scripted: dict, path: str):
+    """The entry for `path`: its own, else the longest `prefix*` that covers it."""
+    if path in scripted:
+        return scripted[path]
+    prefixes = [key for key in scripted if key.endswith("*") and path.startswith(key[:-1])]
+    return scripted[max(prefixes, key=len)] if prefixes else None
 
 
 def read_grant(user_id: str) -> dict:
@@ -171,39 +250,105 @@ def serving_terminal(host: str = "127.0.0.1") -> Iterator[FakeTerminalServer]:
             }
 
         def _serve_session(self) -> None:
-            session = TerminalSession(
-                path=self.path,
-                headers={name.lower(): value for name, value in self.headers.items()},
-            )
-            with server_state.lock:
-                server_state.sessions.append(session)
+            headers = {name.lower(): value for name, value in self.headers.items()}
+            path = self.path.split("?")[0]
+            refusal = _for_path(server_state.session_refusals, path)
+            if refusal is not None:
+                refused = TerminalRequest(self.command, self.path, headers, {}, b"")
+                with server_state.lock:
+                    server_state.received.append(refused)
+                self.send_response(refusal)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                self.close_connection = True
+                return
+            session = TerminalSession(path=self.path, headers=headers)
+            script = _for_path(server_state.session_scripts, path)
             handshake = ServerProtocol().accept(Request(self.path, Headers(self.headers.items())))
             protocol = ServerProtocol(state=State.OPEN)
+            # the script's thread and this one both write
+            writing = threading.Lock()
+            closing = threading.Event()
+
+            def write(data: bytes | str) -> None:
+                try:
+                    with writing:
+                        if isinstance(data, str):
+                            protocol.send_text(data.encode())
+                        else:
+                            protocol.send_binary(data)
+                        self._flush(protocol)
+                except (OSError, InvalidState) as error:
+                    raise SessionEnded("the instance left the session") from error
+
+            def write_close(payload: bytes) -> None:
+                closing.set()
+                try:
+                    with writing:
+                        # past the protocol, which refuses the reserved codes
+                        self.wfile.write(Frame(Opcode.CLOSE, payload).serialize(mask=False))
+                except OSError as error:
+                    raise SessionEnded("the instance left the session") from error
+
+            def hang_up() -> None:
+                closing.set()
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+            def run_script() -> None:
+                try:
+                    script(session)
+                except SessionEnded:
+                    pass
+                except BaseException as error:
+                    session.failure = error
+                    hang_up()
+
+            session._write, session._write_close, session._hang_up = write, write_close, hang_up
+            with server_state.lock:
+                server_state.sessions.append(session)
             try:
                 self.wfile.write(handshake.serialize())
+                if script:
+                    threading.Thread(target=run_script, daemon=True).start()
                 while not protocol.close_expected():
                     data = self.rfile.read1(65536)
                     if not data:
                         break
-                    protocol.receive_data(data)
-                    for frame in protocol.events_received():
-                        self._answer_frame(protocol, session, frame)
-                    self._flush(protocol)
+                    with writing:
+                        protocol.receive_data(data)
+                        for frame in protocol.events_received():
+                            self._take_frame(protocol, session, frame, echo=script is None)
+                        # the script's own close frame is the only one the instance gets
+                        if not closing.is_set():
+                            self._flush(protocol)
             except OSError:
                 pass
             finally:
+                session._inbox.put(None)
                 session.ended.set()
                 self.close_connection = True
 
-        def _answer_frame(self, protocol: ServerProtocol, session: TerminalSession, frame) -> None:
+        def _take_frame(
+            self, protocol: ServerProtocol, session: TerminalSession, frame, echo: bool
+        ) -> None:
+            if frame.opcode == Opcode.CLOSE:
+                code = struct.unpack("!H", frame.data[:2])[0] if len(frame.data) >= 2 else 1005
+                session.closed_with = (code, frame.data[2:].decode(errors="replace"))
+                return
             if frame.opcode not in (Opcode.TEXT, Opcode.BINARY):
                 return
             if session.auth is None and frame.opcode == Opcode.TEXT:
                 session.auth = json.loads(frame.data)
+                session._authenticated.set()
                 return
-            session.messages.append(
-                frame.data.decode() if frame.opcode == Opcode.TEXT else frame.data
-            )
+            message = frame.data.decode() if frame.opcode == Opcode.TEXT else bytes(frame.data)
+            session.messages.append(message)
+            session._inbox.put(message)
+            if not echo:
+                return
             if frame.opcode == Opcode.TEXT:
                 protocol.send_text(frame.data)
             else:
