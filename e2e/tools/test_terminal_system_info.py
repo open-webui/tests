@@ -6,13 +6,19 @@ in the Terminal menu has a System info button that opens a window reading the te
 processes, its uptime and, folded under Network, each interface with its addresses. When the
 terminal cannot answer, the window says System info unavailable with the reason. A terminal
 that gives every chat its own environment offers no System info in a chat that is not saved yet,
-as it has nothing to report there. A local fake terminal answers with fixed numbers.
+as it has nothing to report there, and offers it once a message has saved the chat. A local fake
+terminal answers with fixed numbers; the per-chat terminal is one scoped to the chat on a real
+Terminals orchestrator on Docker (`harness.terminals`, since 6f2fc7bc7), and its test skips
+without it.
 
 Discriminates: passes on dev f659c0d12; with the System info button removed from the menu in a
 frontend build every test fails; on the integration side, test_terminal_system_info.py pins the
 proxy's refusal for an unsaved per-chat terminal.
 The uptime and Network checks pass on dev e8c0ad85e and fail on a copy of the dev e8c0ad85e build
 whose window labels the uptime otherwise and lists no interface addresses.
+The per-chat test passes on the dev c15f28649 build and fails with the terminal list no longer
+telling the browser a terminal's scope, in a backend copy (More options, with System info, is
+offered before the chat is saved).
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import upstream as reply
 from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -29,7 +36,8 @@ from harness.terminal_server import (
     read_grant,
     serving_terminal,
 )
-from utils.chat_ui import chat_input
+from harness.terminals import create_template, share_template
+from utils.chat_ui import chat_input, expect_reply, send
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -133,27 +141,33 @@ def test_system_info_says_when_the_terminal_cannot_answer(
 
 
 def test_a_per_chat_terminal_offers_no_system_info_before_the_chat_is_saved(
-    page_for, make_user, admin, preserve, fake_terminal
+    page_for, make_user, admin, connect_terminals, upstream
 ):
     person = make_user()
-    shared = _connect(admin, preserve, fake_terminal, person)
-    per_chat = f"Per chat box {uuid.uuid4().hex[:6]}"
-    connections = [
-        fake_terminal.connection(name=shared),
-        fake_terminal.connection(
-            name=per_chat,
-            server_type="orchestrator",
-            config={"contexts": {"chat": {"context_id": "chat_id"}}},
-        ),
-    ]
-    for connection in connections:
-        connection["config"]["access_grants"] = [read_grant(person.id)]
+    tag = uuid.uuid4().hex[:6]
+    per_user, per_chat = f"Own box {tag}", f"Per chat box {tag}"
+    connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
-        configure_terminals(client, *connections)
+        for name, scope in ((per_user, "user"), (per_chat, "chat")):
+            terminal_id = create_template(client, connection, name=name, scope=scope)["terminal_id"]
+            share_template(client, terminal_id, read_grant(person.id))
     page = page_for(person)
 
     menu = _terminal_menu(page)
 
     expect(menu.get_by_role("menuitemradio", name=per_chat)).to_be_visible()
-    expect(menu.get_by_role("menuitem", name=f"System info for {shared}")).to_have_count(1)
-    expect(menu.get_by_role("menuitem", name=f"System info for {per_chat}")).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name=f"More options for {per_user}")).to_have_count(1)
+    expect(menu.get_by_role("menuitem", name=f"More options for {per_chat}")).to_have_count(0)
+
+    # once a message has saved the chat, the chat has a machine to report on
+    menu.get_by_role("menuitemradio", name=per_chat).click()
+    expect(page.get_by_role("menu")).to_have_count(0)
+    prompt = f"which box is this {tag}"
+    upstream.queue(reply.text("Yours.", match=reply.answering(prompt)))
+    send(page, prompt)
+    expect_reply(page, "Yours.")
+    page.get_by_role("main").get_by_role("button", name=per_chat, exact=True).click()
+    # a terminal's More options show once its row is pointed at
+    page.get_by_role("menu").get_by_role("menuitemradio", name=per_chat).hover()
+    page.get_by_role("menuitem", name=f"More options for {per_chat}").click()
+    expect(page.get_by_role("menuitem", name="System info", exact=True)).to_be_visible()

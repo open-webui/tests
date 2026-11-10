@@ -74,9 +74,14 @@ files show and the tab reads Home again. A per-chat terminal picked in a new cha
 until the chat exists; after the first message the tab shows that chat's own empty home. All
 three are red on dev 560f2b4c6 (the new chat ones also on b13d02e09), where the tab kept the first
 terminal's folder and files since the workspace of tabs came in 0.13.0
-(open-webui/open-webui#33951), and pass on a build of 560f2b4c6 with the fix. The per-chat test
-also fails on a build of the fix whose file browser skips loading when the chat and the terminal
-arrive together (the tab stays on "/" and reads Files).
+(open-webui/open-webui#33951), and pass on a build of 560f2b4c6 with the fix, which is on dev
+since eb2a3a6a2 (#33954). The per-chat test also fails on a build of the fix whose file browser
+skips loading when the chat and the terminal arrive together (the tab stays on "/" and reads
+Files). Since 6f2fc7bc7 a per-chat terminal is a terminal scoped to the chat on a Terminals
+orchestrator, so that test runs against the real service on Docker (`harness.terminals`) and
+skips without it; on the dev c15f28649 build it fails with the terminal list no longer telling
+the browser a terminal's scope, in a backend copy (the file browser asks for the terminal's
+files before the chat exists and fails to load them).
 """
 
 from __future__ import annotations
@@ -95,6 +100,7 @@ from harness.access import make_group
 from harness.actors import Actor
 from harness.open_terminal import HOME_TAB, serving_open_terminal
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
+from harness.terminals import create_template, share_template
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, expect_reply, send
 
@@ -905,12 +911,12 @@ def test_side_chat_and_comments_shortcuts_answer_only_where_allowed(
 
 
 def _files_in_a_folder_of_harbour(
-    page_for, make_user, admin, open_terminal, other: dict
+    page_for, make_user, admin, open_terminal, other: dict, person: Actor | None = None
 ) -> tuple[Page, Locator, str]:
-    """A fresh account's new chat on Harbour, with `other` open to it too, its Files tab in a
-    folder of Harbour and split beside the conversation; returns the page, the file browser and
-    the folder's name."""
-    person = make_user()
+    """A new chat on Harbour of `person` (else a fresh account), with `other` open to it too, its
+    Files tab in a folder of Harbour and split beside the conversation; returns the page, the
+    file browser and the folder's name."""
+    person = person or make_user()
     grants = [read_grant(person.id)]
     harbour = open_terminal.connection(name="Harbour", config={"access_grants": grants})
     other = {**other, "config": {**other["config"], "access_grants": grants}}
@@ -977,12 +983,16 @@ def test_picking_another_terminal_in_a_chat_with_messages_shows_its_files(
 
 
 def test_a_per_chat_terminal_picked_before_the_first_message_shows_its_files_once_the_chat_starts(
-    page_for, make_user, admin, preserve, upstream, open_terminal, terminal_orchestrator
+    page_for, make_user, admin, upstream, open_terminal, connect_terminals
 ):
-    preserve(TERMINAL_SERVERS_CONFIG)
-    per_chat = terminal_orchestrator.connection(name="Lighthouse")
+    person = make_user()
+    # Lighthouse is a terminal on a Terminals orchestrator that gives every chat its own machine
+    orchestrator = connect_terminals(read_grant(person.id))
+    with admin.client() as client:
+        lighthouse = create_template(client, orchestrator, name="Lighthouse", scope="chat")
+        share_template(client, lighthouse["terminal_id"], read_grant(person.id))
     page, files, folder = _files_in_a_folder_of_harbour(
-        page_for, make_user, admin, open_terminal, per_chat
+        page_for, make_user, admin, open_terminal, orchestrator, person
     )
 
     _pick_another_terminal(page, "Harbour", "Lighthouse")
@@ -993,7 +1003,7 @@ def test_a_per_chat_terminal_picked_before_the_first_message_shows_its_files_onc
     send(page, prompt)
     expect_reply(page, "Charted.")
 
-    # the chat's own terminal starts with an empty home
+    # the chat's own machine starts with an empty home
     expect(_tab_strip(page).get_by_role("tab", name=FILES, exact=True)).to_be_visible()
     expect(files.get_by_text("This folder is empty")).to_be_visible()
     expect(files.get_by_text("manifest.txt", exact=True)).to_have_count(0)

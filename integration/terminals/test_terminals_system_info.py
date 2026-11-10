@@ -23,19 +23,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from harness.terminal_server import read_grant
-from harness.terminals import create_template, execute, output_of, share_template
+from harness.terminals import execute, output_of
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
-
-
-def _terminal_for(admin, connect_terminals, person, scope: str | None) -> str:
-    """A terminal of that scope shared with `person`; returns its id."""
-    connection = connect_terminals(read_grant(person.id))
-    with admin.client() as client:
-        terminal_id = create_template(client, connection, scope=scope)["terminal_id"]
-        share_template(client, terminal_id, read_grant(person.id))
-    return terminal_id
 
 
 def _system_info(client: httpx.Client, terminal_id: str, chat_id: str | None) -> httpx.Response:
@@ -53,10 +43,10 @@ def _system_details(answer: httpx.Response) -> dict:
 
 
 def test_a_per_chat_terminal_shows_system_info_only_for_a_saved_chat(
-    admin, make_user, connect_terminals, terminals
+    make_user, shared_terminal, terminals
 ):
     person = make_user()
-    terminal_id = _terminal_for(admin, connect_terminals, person, "chat")
+    terminal_id = shared_terminal(person, scope="chat")
 
     with person.client() as client:
         created = client.post("/api/v1/chats/new", json={"chat": {"title": "System"}})
@@ -85,10 +75,10 @@ def test_a_per_chat_terminal_shows_system_info_only_for_a_saved_chat(
 
 
 def test_a_terminal_with_one_machine_for_all_shows_system_info_without_a_chat(
-    admin, make_user, connect_terminals, terminals
+    make_user, shared_terminal, terminals
 ):
     person = make_user()
-    terminal_id = _terminal_for(admin, connect_terminals, person, None)
+    terminal_id = shared_terminal(person, scope=None)
 
     with person.client() as client:
         host = output_of(execute(client, terminal_id, "hostname")).strip()
