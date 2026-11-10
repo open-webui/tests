@@ -5,7 +5,7 @@ confirms it received it (`{"received": true}`) and says whatever it has to say a
 channel message, as late as it likes. When a mention cannot be delivered, Open WebUI posts why
 as the app's own "App error:" reply to it, for everyone in the channel; only when the app cannot
 post there (inactive, outside the channel, no write scope) is the asker alone told over their
-socket (`events:app`). The reason is the app's own error text, or Open WebUI's when the app was
+socket (`channel:app`). The reason is the app's own error text, or Open WebUI's when the app was
 never asked, with the app's API key, its connection token and the execution token replaced by
 "[redacted]".
 A button press is still answered within 2.5 seconds: a private answer reaches only the presser,

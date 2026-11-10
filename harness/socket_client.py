@@ -10,15 +10,20 @@ order they arrived, for a test that compares sequences (its handlers must not wa
 `join_note` and `edit_note` do what the note editor does with a note's live Yjs document;
 `note_edit(text)` is the raw update it sends after typing `text` into an empty note (built with
 pycrdt, which the backend depends on) and `note_text(state)` reads back a document state the
-server sent. Private app replies (`events:app`) are recorded in `app_events`, and what the
+server sent. Private app replies (`channel:app`) are recorded in `app_events`, and what the
 encrypted chat relay sends (`encryption:event`, `encryption:available`) in `encryption_events` and
 `encryption_invitations`; `join_channels()` joins the channel rooms the way the web client does.
+The live messages in `LIVE_MESSAGES` had an event name of their own up to v0.13.3 and are entries
+of the shared `events` message since (62849662d to 553b18a34). `on_live(client, kind, handler)`
+hands over their payload in either shape, `note_edits` waits for one edit of a note and
+`frame_carries` finds one in a browser's websocket frame. Listen for them only through these.
 A temporary chat belongs to the tab that starts it: `temporary_chat_id()` makes its id from the
 tab's `sid` as the page does, and its requests carry that `sid` as their `session_id`.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -30,6 +35,59 @@ import pycrdt
 import socketio
 
 from harness.actors import Actor
+
+# the type a live message carries inside `events`, and its own event name up to v0.13.3
+LIVE_MESSAGES = {
+    "access:updated": "access:updated",
+    "channel:app": "events:app",
+    "comments:changed": "comments:changed",
+    "comments:unavailable": "comments:unavailable",
+    "encryption:available": "encryption:available",
+    "note:presence": "note:presence",
+    "note:updated": "events:note",
+    "notifications:changed": "notifications:changed",
+}
+
+
+def on_live(client: socketio.Client, kind: str, handler) -> None:
+    """Hand `handler` the payload of every `kind` message the client gets, in either shape."""
+
+    def from_events(message) -> None:
+        event = message.get("data") if isinstance(message, dict) else None
+        if isinstance(event, dict) and event.get("type") == kind:
+            handler(event.get("data") or {})
+
+    _also_on(client, "events", from_events)
+    _also_on(client, LIVE_MESSAGES[kind], lambda payload=None: handler(payload or {}))
+
+
+def _also_on(client: socketio.Client, event: str, handler) -> None:
+    # the client keeps one handler per event name
+    earlier = client.handlers.get("/", {}).get(event)
+
+    def both(*payload):
+        answer = earlier(*payload) if earlier is not None else None
+        handler(*payload)
+        return answer
+
+    client.on(event, both)
+
+
+def note_edits(client: socketio.Client, note_id: str, title: str) -> threading.Event:
+    """Set once the client is told that the note now carries `title`."""
+    arrived = threading.Event()
+
+    def record(note: dict) -> None:
+        if note.get("id") == note_id and note.get("title") == title:
+            arrived.set()
+
+    on_live(client, "note:updated", record)
+    return arrived
+
+
+def frame_carries(frame: str, kind: str) -> bool:
+    """Whether a websocket frame a browser received is a `kind` message, in either shape."""
+    return f'"{kind}"' in frame or f'"{LIVE_MESSAGES[kind]}"' in frame
 
 
 @dataclass
@@ -128,9 +186,9 @@ def connected(
     session.client.on("events", session.events.append)
     session.client.on("ydoc:document:state", session.document_states.append)
     session.client.on("ydoc:document:update", session.document_updates.append)
-    session.client.on("events:app", session.app_events.append)
     session.client.on("encryption:event", session.encryption_events.append)
-    session.client.on("encryption:available", session.encryption_invitations.append)
+    on_live(session.client, "channel:app", session.app_events.append)
+    on_live(session.client, "encryption:available", session.encryption_invitations.append)
     session.client.connect(
         actor.base_url,
         socketio_path="/ws/socket.io",

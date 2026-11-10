@@ -343,7 +343,7 @@ def wait_for_message(
 
 
 def reply_events(socket, timeout: float = 20.0, **match) -> dict:
-    """The first private app reply (`events:app`) that reached the socket and carries `match`."""
+    """The first private app reply (`channel:app`) that reached the socket and carries `match`."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         for event in list(socket.app_events):
