@@ -13,6 +13,15 @@ Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when
 is cut: the suggested prompts for a summary and for action items renamed, the panel not sending
 the selected text, the model chosen in the selector not reaching the request and "Insert into
 note" inserting nothing.
+
+Since dev da850248d a note opens as a tab beside the chat tab, whose message box stays in the
+page unseen, so the typed questions go into the note chat's own box, found by its name. Notes
+open directly in their page, so a test never waits for the app to load a second time, and
+every answer is read in the chat, since dev c15f28649 repeats a finished note chat answer in a
+notification. The module passes five runs in a row on dev c15f28649. In a copy of that build
+each test fails when its behaviour is cut: the two suggested prompts renamed, the selected text
+left out of the message and "Insert into note" inserting nothing. In a backend copy, the picked
+model's system prompt left out of the request turns the model test red.
 """
 
 from __future__ import annotations
@@ -27,8 +36,9 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply
 from utils.model_selector import select_model
+from utils.note_chat import open_note_chat, send_in_note_chat
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -72,15 +82,12 @@ def _note_editor(page: Page) -> Locator:
     return page.get_by_role("main").get_by_label("Write something...")
 
 
-def _open_note(page: Page, note_id: str, text: str) -> Locator:
-    page.goto(f"/notes/{note_id}")
+def _open_note(page_for, actor: Actor, note_id: str, text: str) -> tuple[Page, Locator]:
+    """The note in a page of the actor's own, opened directly so it is handed over loaded."""
+    page = page_for(actor, path=f"/notes/{note_id}")
     editor = _note_editor(page)
     expect(editor).to_contain_text(text)
-    return editor
-
-
-def _open_note_chat(page: Page) -> None:
-    page.get_by_role("main").get_by_role("button", name="Chat", exact=True).click()
+    return page, editor
 
 
 def _requests_answering(upstream, prompt: str) -> list[dict]:
@@ -101,10 +108,9 @@ def test_summarizing_the_note_shows_the_answer_and_leaves_the_note_alone(
             "The launch is Friday after QA on Thursday.", match=reply.answering(SUMMARIZE_PROMPT)
         )
     )
-    page = page_for(author)
-    editor = _open_note(page, note_id, text)
+    page, editor = _open_note(page_for, author, note_id, text)
 
-    _open_note_chat(page)
+    open_note_chat(page)
     page.get_by_role("button", name=SUMMARIZE_PROMPT).click()
 
     expect_reply(page, "The launch is Friday after QA on Thursday.")
@@ -123,10 +129,9 @@ def test_extracting_action_items_shows_the_answer_and_leaves_the_note_alone(
             "Ana: book the room. Ben: send the agenda.", match=reply.answering(ACTION_ITEMS_PROMPT)
         )
     )
-    page = page_for(author)
-    editor = _open_note(page, note_id, text)
+    page, editor = _open_note(page_for, author, note_id, text)
 
-    _open_note_chat(page)
+    open_note_chat(page)
     page.get_by_role("button", name=ACTION_ITEMS_PROMPT).click()
 
     expect_reply(page, "Ana: book the room. Ben: send the agenda.")
@@ -168,15 +173,14 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
         ),
         reply.text("Rewrote the selected line.", match=reply.answering(REWRITE_PROMPT)),
     )
-    page = page_for(author)
-    editor = _open_note(page, note_id, selected)
+    page, editor = _open_note(page_for, author, note_id, selected)
     _wait_until_stored(author, note_id, f"{kept}\n{selected}")
     editor.get_by_text(selected).click(click_count=3)
 
-    _open_note_chat(page)
+    open_note_chat(page)
     page.get_by_role("button", name=REWRITE_PROMPT).click()
 
-    expect(page.get_by_text("Rewrote the selected line.")).to_be_visible()
+    expect_reply(page, "Rewrote the selected line.")
     expect(editor).to_contain_text(rewritten)
     expect(editor).not_to_contain_text(selected)
     expect(editor).to_contain_text(kept)
@@ -219,12 +223,11 @@ def test_the_note_chat_answers_with_the_model_picked_by_name(page_for, note_chat
     note_id = _create_note(admin, _unique("List"), text)
     question = "what is a good breakfast?"
     upstream.queue(reply.text("Eggs on toast.", match=reply.answering(question)))
-    page = page_for(admin)
-    editor = _open_note(page, note_id, text)
+    page, editor = _open_note(page_for, admin, note_id, text)
 
-    _open_note_chat(page)
+    open_note_chat(page)
     select_model(page, model_name)
-    send(page, question)
+    send_in_note_chat(page, question)
 
     expect_reply(page, "Eggs on toast.")
     expect(editor).to_have_text(text)
@@ -240,11 +243,10 @@ def test_insert_into_note_puts_the_answer_into_the_note(page_for, make_user, ups
     question = "suggest one activity"
     answer = "Go for a group hike."
     upstream.queue(reply.text(answer, match=reply.answering(question)))
-    page = page_for(author)
-    editor = _open_note(page, note_id, text)
+    page, editor = _open_note(page_for, author, note_id, text)
 
-    _open_note_chat(page)
-    send(page, question)
+    open_note_chat(page)
+    send_in_note_chat(page, question)
     expect_reply(page, answer)
     page.get_by_role("button", name="Insert into note").click()
 

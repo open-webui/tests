@@ -26,6 +26,11 @@ the editor not leaving a note it cannot load, the downloads writing the HTML, th
 search sending no query and the composer's note picker attaching nothing. In the a5bc78300
 build with #30968 reverted, the shared note is gone from the picker once a name is typed. In a
 backend copy, `GET /api/v1/notes/{id}` ignoring write grants turns the writer test red.
+
+Since dev da850248d a note opens as a tab beside the chat tab, so the enhance test opens the
+note's chat through the shared helper and reads the answer in that chat. It passes five runs in
+a row on dev c15f28649 and fails in a copy of that build whose note editor ignores the model's
+edit.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from harness.actors import Actor
 from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
+from utils.note_chat import open_note_chat
 from utils.notes_page import note_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -120,13 +126,14 @@ def test_asking_the_note_chat_to_enhance_rewrites_the_open_note(page_for, make_u
         ),
         reply.text("The note is tidied up.", match=reply.answering(ENHANCE_PROMPT)),
     )
-    page = page_for(author)
-    editor = _open_note(page, note_id, "meeting tuesday bring slides")
+    page = page_for(author, path=f"/notes/{note_id}")
+    editor = _note_editor(page)
+    expect(editor).to_contain_text("meeting tuesday bring slides")
 
-    page.get_by_role("main").get_by_role("button", name="Chat", exact=True).click()
+    open_note_chat(page)
     page.get_by_role("button", name=ENHANCE_PROMPT).click()
 
-    expect(page.get_by_text("The note is tidied up.")).to_be_visible()
+    expect_reply(page, "The note is tidied up.")
     expect(editor).to_have_text(enhanced)
     assert _stored_markdown(author, note_id) == enhanced
     first_request = upstream.chat_requests()[0]
