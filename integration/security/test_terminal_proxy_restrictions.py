@@ -10,11 +10,19 @@ so demoting the user or switching off or removing the connection left the open s
 a watchdog now re-checks every 10 seconds and closes the session. Twin of
 unit/security/test_terminal_proxy_restrictions.py.
 
+Since dev 6f2fc7bc7 a terminal of a Terminals orchestrator is a template, and its proxy sends
+the orchestrator's own key with every request. The orchestrator's admin API (its templates, its
+status, every machine) sits under `api/v1/terminals`, so the proxy must not pass a call there
+on for a person a terminal is shared with. That test runs on the real Terminals service
+(`harness.terminals`) and skips without Docker or its images.
+
 Discriminates: passes on dev bbfa876af; with the ADMIN_API_PATHS check removed the admin-path
 tests fail (the fake terminal gets the request), with `allow_redirects=False` removed the
 redirect test fails (the redirect target is fetched), with tab, CR and LF dropped from the
 sanitizer the tab and CR tests fail, and without the watchdog task the revoked sessions stay
-open past the bound.
+open past the bound. On dev c15f28649 with Terminals 0.4.1, `api/v1/terminals` taken out of
+ADMIN_API_PATHS turns the shared terminal test red (the call goes out under the orchestrator's
+key, and only Terminals' own refusal of a call made for a user stops it).
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from harness.terminal_server import (
     serving_terminal,
     terminal_session,
 )
+from harness.terminals import create_template, share_template
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -83,6 +92,35 @@ def test_the_terminal_admin_api_is_never_proxied(proxy_under, terminal, base_pat
         "(51bb8cb14)"
     )
     assert terminal.received == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "api/v1/terminals/templates",
+        "api/v1/terminals/status",
+        "api/v1/terminals",
+        "api%2Fv1%2Fterminals%2F%2E%2Ftemplates",
+    ],
+)
+def test_a_shared_terminal_gives_no_way_to_the_orchestrators_admin_api(
+    admin, make_user, connect_terminals, terminals, path
+):
+    reader = make_user()
+    connection = connect_terminals(read_grant(reader.id))
+    with admin.client() as client:
+        terminal_id = create_template(client, connection)["terminal_id"]
+        share_template(client, terminal_id, read_grant(reader.id))
+
+    with reader.client() as client:
+        own_folder = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        refused = client.get(f"/api/v1/terminals/{terminal_id}/{path}")
+
+    assert own_folder.status_code == 200, f"the shared terminal did not answer: {own_folder.text}"
+    assert (refused.status_code, refused.json()) == (403, {"error": "Path not allowed"}), (
+        f"{path} of the orchestrator's admin API was not stopped by the proxy for a person the "
+        f"terminal is only shared with: {refused.status_code} {refused.text}"
+    )
 
 
 @pytest.mark.parametrize("path", ["api/v1/policiesx", "api/config", "files/list"])
