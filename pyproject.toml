@@ -102,6 +102,7 @@ markers = [
     "secure_context: the test's browsers open the loopback address, a secure context, for a feature the browser offers only there (e2e)",
     # ── area (set at collection, by path) ──────────────────────────────────
     "terminal: a test of a terminal module: under a terminals/ directory, or with terminal or tether in its file name",
+    "full_terminal: a test that asks for the full Open Terminal image (full_open_terminal, full_terminal_image); set at collection",
     # ── dependency contract tests (unit/deps/) ─────────────────────────────
     "depcheck: per-dependency API-surface / usage contract test (run after a bump)",
     # ── capability (positive selection; tests also auto-skip when unmet) ────

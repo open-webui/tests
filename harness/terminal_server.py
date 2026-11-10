@@ -11,7 +11,8 @@ the terminal sends, when it closes and with which code, or that it hangs up with
 Setting `cors` lets a page of another origin call it, as a terminal a user added in their own
 settings is called from their browser: every answer allows any origin and a preflight gets 204.
 
-`terminal_session` opens the browser's side of that WebSocket against the instance's proxy.
+`terminal_session` opens the browser's side of a shell against the instance's proxy and
+`terminal_socket` the browser's side of any other of the terminal's WebSockets.
 """
 
 from __future__ import annotations
@@ -385,6 +386,18 @@ def terminal_session(
     with connect(url, proxy=None, open_timeout=10, close_timeout=2) as session:
         session.send(json.dumps({"type": "auth", "token": token, "chat_id": chat_id}))
         yield session
+
+
+@contextmanager
+def terminal_socket(
+    base_url: str, token: str, terminal_id: str, path: str, **auth
+) -> Iterator[ClientConnection]:
+    """Another of the terminal's WebSockets through the instance (`events`, `desktop/stream`,
+    `execute/<id>/status?tail=10`), past its first-message auth; `auth` adds fields to it."""
+    url = base_url.replace("http://", "ws://", 1) + f"/api/v1/terminals/{terminal_id}/{path}"
+    with connect(url, proxy=None, open_timeout=10, close_timeout=2, max_size=None) as socket:
+        socket.send(json.dumps({"type": "auth", "token": token, **auth}))
+        yield socket
 
 
 def close_of(session: ClientConnection, timeout: float) -> tuple[int, str] | None:

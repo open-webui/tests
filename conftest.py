@@ -335,6 +335,10 @@ def _is_drift(excinfo) -> bool:
     )
 
 
+# the tests that only run where the full Open Terminal image is, by the fixture they ask for
+FULL_TERMINAL_FIXTURES = {"full_open_terminal", "full_terminal_image"}
+
+
 def _is_terminal_test(path: Path) -> bool:
     return "terminals" in path.parts[:-1] or "terminal" in path.name or "tether" in path.name
 
@@ -344,6 +348,8 @@ def pytest_collection_modifyitems(config, items) -> None:
     for item in items:
         if _is_terminal_test(item.path.relative_to(config.rootpath)):
             item.add_marker(pytest.mark.terminal)
+        if FULL_TERMINAL_FIXTURES & set(getattr(item, "fixturenames", ())):
+            item.add_marker(pytest.mark.full_terminal)
 
 
 def pytest_collection_finish(session) -> None:

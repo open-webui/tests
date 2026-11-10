@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ''
+      full-open-terminal:
+        description: Also build the full Open Terminal image and run the tests that need Chromium, a desktop or notebook kernels in the terminal
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       open-webui-ref:
@@ -47,6 +52,11 @@ on:
         required: false
         type: string
         default: ''
+      full-open-terminal:
+        description: Also build the full Open Terminal image and run the tests that need Chromium, a desktop or notebook kernels in the terminal
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -583,5 +593,178 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: terminals-e2e-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          path: tests/test-results
+          if-no-files-found: ignore
+
+  # Only with the full-open-terminal option. The image adds Chromium, a desktop with sound and
+  # notebook kernels to the slim one, and only the tests that ask for it run here.
+  full-terminal:
+    if: ${{ inputs.full-open-terminal }}
+    needs: [stack, e2e-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - name: Restore the frontend build
+        uses: actions/cache/restore@v4
+        with:
+          path: open-webui/build
+          key: ${{ needs.e2e-build.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
+
+      # The instances run offline, so the default embedding model is fetched up front.
+      - name: Cache the embedding model
+        id: embedding-model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
+
+      # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
+      - name: Install dependencies
+        env:
+          OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+          uv venv "$RUNNER_TEMP/open-terminal"
+          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
+
+      - name: Download the embedding model
+        if: steps.embedding-model.outputs.cache-hit != 'true'
+        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+
+      - name: Name the Playwright build
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ steps.playwright.outputs.version }}
+
+      # With the browser restored from the cache, this only installs its system libraries.
+      - name: Install the browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Restore the Terminals images
+        uses: actions/cache/restore@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ needs.stack.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      # The tests that need the stack fail here where they would skip in the regression suite.
+      - name: Load the Terminals images
+        run: |
+          docker load -i terminals-stack.tar
+          {
+            echo "TERMINALS_SERVICE_IMAGE=owui-tests/terminals:ci"
+            echo "OPEN_TERMINAL_IMAGE=owui-tests/open-terminal:ci"
+            echo "OWUI_TEST_REQUIRE_TERMINALS=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Look up the full Open Terminal image
+        id: full-image-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: open-terminal-full.tar
+          key: open-terminal-full-${{ needs.stack.outputs.open-terminal-commit }}-${{ hashFiles('tests/harness/open_terminal_full.Dockerfile') }}
+
+      - name: Build the full Open Terminal image
+        if: steps.full-image-cache.outputs.cache-hit != 'true'
+        run: |
+          docker build --build-arg BASE=owui-tests/open-terminal:ci -t owui-tests/open-terminal-full:ci - < tests/harness/open_terminal_full.Dockerfile
+          docker save -o open-terminal-full.tar owui-tests/open-terminal-full:ci
+
+      - name: Save the full Open Terminal image
+        if: steps.full-image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: open-terminal-full.tar
+          key: open-terminal-full-${{ needs.stack.outputs.open-terminal-commit }}-${{ hashFiles('tests/harness/open_terminal_full.Dockerfile') }}
+
+      - name: Load the full Open Terminal image
+        run: |
+          docker load -i open-terminal-full.tar
+          {
+            echo "OPEN_TERMINAL_FULL_IMAGE=owui-tests/open-terminal-full:ci"
+            echo "OWUI_TEST_REQUIRE_FULL_TERMINAL=1"
+          } >> "$GITHUB_ENV"
+
+      # The browser reports the locale as its language, and the runner's C locale as en-US@POSIX.
+      - name: Run the tests that need the full Open Terminal
+        working-directory: tests
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+        run: pytest integration e2e -m full_terminal -q --junitxml=test-results/junit.xml --html=test-results/full-terminal-report.html --self-contained-html
+
+      - name: Summarise the results
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py test-results/junit.xml "Terminal tests on the full Open Terminal image" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report, traces and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminals-full-terminal-report-${{ inputs.open-webui-ref }}
           path: tests/test-results
           if-no-files-found: ignore

@@ -517,4 +517,6 @@ def output_of(answer: httpx.Response) -> str:
 
 
 if __name__ == "__main__":
-    print("\n".join(sweep()) or "nothing left behind")
+    from harness.open_terminal import sweep_containers
+
+    print("\n".join([*sweep(), *sweep_containers()]) or "nothing left behind")

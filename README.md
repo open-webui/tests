@@ -72,6 +72,13 @@ export TERMINALS_SERVICE_IMAGE=owui-tests/terminals:v0.4.1 OPEN_TERMINAL_IMAGE=o
 
 The slim image starts in `/app`, which its user cannot write, so the last build moves it to the home the orchestrator mounts, where the full image starts. Each run's containers and network carry a label of their own and are removed when it ends; `python -m harness.terminals` removes what a killed run left behind.
 
+A few terminal tests need what only a full Open Terminal has: Chromium for the Browser tab's Chrome mode, a desktop with sound, and notebook kernels. They ask for the `full_open_terminal` or `full_terminal_image` fixture and carry the `full_terminal` marker. Build that image on top of the one above and name it in `OPEN_TERMINAL_FULL_IMAGE`; the tests skip without it (`OWUI_TEST_REQUIRE_FULL_TERMINAL=1` turns that skip into a failure):
+
+```bash
+docker build --build-arg BASE=owui-tests/open-terminal:v0.17.7 -t owui-tests/open-terminal-full:v0.17.7 - < harness/open_terminal_full.Dockerfile
+export OPEN_TERMINAL_FULL_IMAGE=owui-tests/open-terminal-full:v0.17.7
+```
+
 ### Frontend suite
 
 `frontend/` imports `src/lib` modules straight out of the checkout, so the checkout needs `npm ci` and a `svelte-kit sync` first (its `tsconfig.json` extends the generated one).
@@ -136,7 +143,7 @@ On Linux every scratch instance after the first is forked from a process that ha
 
 The integration and browser suites run in parallel shards, split by `pytest-split` along the timings CI measured for each mode: `durations/integration.json`, `durations/integration-postgres-redis.json` and `durations/e2e.json`. After a green run of `main` dispatched in this repository, the run's timings are folded into these files and committed back to `main`. A test missing from a file still runs and counts at the average. To split a local run the same way, pass the mode's file: `pytest integration --splits 10 --group 1 --splitting-algorithm duration_based_chunks --durations-path durations/integration.json`.
 
-`.github/workflows/terminals.yml` runs every terminal module (`-m terminal`) of the integration and browser suites on demand, with the real Terminals orchestrator, the integration ones on SQLite and again on Postgres and Redis: `gh workflow run terminals.yml -f open-webui-ref=dev`. It builds the orchestrator from `terminals-ref` and the Open Terminal image from `open-terminal-ref` (a PyPI version or a ref; both default to the latest release), builds Open WebUI the way the regression workflow does and writes the same summaries and reports. Other workflows can call it.
+`.github/workflows/terminals.yml` runs every terminal module (`-m terminal`) of the integration and browser suites on demand, with the real Terminals orchestrator, the integration ones on SQLite and again on Postgres and Redis: `gh workflow run terminals.yml -f open-webui-ref=dev`. It builds the orchestrator from `terminals-ref` and the Open Terminal image from `open-terminal-ref` (a PyPI version or a ref; both default to the latest release), builds Open WebUI the way the regression workflow does and writes the same summaries and reports. With `-f full-open-terminal=true` one more job builds the full Open Terminal image and runs the tests marked `full_terminal`; without it they skip and no job waits on that image. Other workflows can call it.
 
 ---
 

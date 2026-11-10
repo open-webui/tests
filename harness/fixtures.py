@@ -254,6 +254,32 @@ def agent_terminal() -> Generator:
 
 
 @pytest.fixture(scope="session")
+def full_open_terminal() -> Generator:
+    """A real Open Terminal from the full image, in a container: Chromium for Chrome mode, a
+    desktop with sound and notebook kernels. Skips without `OPEN_TERMINAL_FULL_IMAGE`."""
+    from harness.open_terminal import serving_full_open_terminal
+
+    with serving_full_open_terminal() as terminal:
+        yield terminal
+
+
+@pytest.fixture(scope="session")
+def full_terminal_image() -> str:
+    """The name of the full Open Terminal image, for a template's `image` on the Terminals
+    orchestrator; skips without `OPEN_TERMINAL_FULL_IMAGE`."""
+    import os
+
+    from harness.open_terminal import FULL_IMAGE_ENV, FULL_REQUIRED_ENV, full_image_unavailable
+
+    reason = full_image_unavailable()
+    if reason and os.getenv(FULL_REQUIRED_ENV):
+        pytest.fail(reason)
+    if reason:
+        pytest.skip(reason)
+    return os.environ[FULL_IMAGE_ENV]
+
+
+@pytest.fixture(scope="session")
 def terminals_service() -> Generator:
     """The real Terminals orchestrator on Docker for the session; skips without its images."""
     from harness.terminals import serving_terminals
