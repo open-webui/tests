@@ -5,7 +5,10 @@ layout a wide window gets (#33680). With it on, the reply arrives as usual while
 out of the sidebar history, out of the chat search and out of the database, and a reload of the
 page leaves an empty new chat that is temporary again, so a message sent there is not saved
 either. Since da850248d the first message put an address in the address bar that a reload could
-not open, and the reload left a normal new chat whose messages were saved (#34049). With it off,
+not open, and the reload left a normal new chat whose messages were saved (#34049). Before the
+first message the address ends in `?temporary-chat=true`, which is what the reload goes by; a
+visit to another tab (Notes) and back, or a reload inside a folder, dropped that ending while the
+label still showed, so the next reload left a normal new chat (#TBD). With it off,
 the same message makes a saved chat. A temporary chat that has an answer can still be kept
 through the header's Save Chat button, and an account that turned on Temporary Chat by Default in
 its Interface settings starts every new chat temporary. A temporary chat offers no Fork chat
@@ -20,6 +23,8 @@ Temporary Chat label is gone and the next message is saved and listed in the sid
 fix it fails with the server taking the first message under a `temporary:` id for a new chat (it
 is stored, listed in the sidebar and shown again after the reload). The fork test passes with
 the #32833 fix and fails on dev ca8f451cc (Fork chat and the / menu's Fork are offered and fail).
+The Notes and folder tests pass with the #TBD fix and fail on dev c15f28649 (after the reload,
+in the folder after the second one, the Temporary Chat label is gone and the message is saved).
 On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
 Temporary Chat on (no toggle on a new chat).
 """
@@ -31,6 +36,8 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
+from conftest import AppConfig
+from e2e.conftest import APP_LOADED
 from harness import upstream as reply
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.search_dialog import no_matches, open_search_from_sidebar, search
@@ -57,6 +64,12 @@ def temporary_label(page: Page):
 def new_chat_greeting(page: Page):
     """The message box as only a chat without messages shows it."""
     return chat_input(page).locator('[data-placeholder="How can I help you today?"]')
+
+
+def reload(page: Page) -> None:
+    """Reload the page and wait, as `page_for` does, until the app has loaded."""
+    page.reload()
+    page.wait_for_function(APP_LOADED, timeout=AppConfig().navigation_timeout)
 
 
 def stored_chats(account, text: str) -> list[dict]:
@@ -95,7 +108,7 @@ def test_a_temporary_chat_is_answered_and_left_out_of_history_search_and_storage
     expect(no_matches(dialog)).to_be_visible()
     assert stored_chats(account, "Carinthia") == []
 
-    page.reload()
+    reload(page)
 
     expect(new_chat_greeting(page)).to_be_visible()
     expect(page.get_by_text(PROMPT)).to_have_count(0)
@@ -115,6 +128,66 @@ def test_a_temporary_chat_is_answered_and_left_out_of_history_search_and_storage
     ).to_have_count(0)
     saved = stored_chats(account, "Salzburg")
     assert saved == [], f"the message sent after the reload was saved (#34049): {saved}"
+
+
+@pytest.mark.regression
+def test_a_temporary_chat_is_still_temporary_after_a_visit_to_notes_and_a_reload(
+    page_for, make_user, upstream
+):
+    """#TBD: back on the chat tab the address had lost `?temporary-chat=true`."""
+    account = make_user()
+    page = page_for(account)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
+    expect(chat_input(page)).to_be_visible()
+
+    temporary_toggle(page).click()
+    expect(temporary_label(page)).to_be_visible()
+    page.get_by_role("link", name="Notes", exact=True).click()
+    expect(page.get_by_role("tab", name="Notes", exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
+    page.get_by_role("tab", name="New Chat", exact=True).click()
+    expect(temporary_label(page)).to_be_visible()
+    reload(page)
+
+    expect(new_chat_greeting(page)).to_be_visible()
+    expect(
+        temporary_label(page), "the new chat after the reload is no longer temporary (#TBD)"
+    ).to_be_visible()
+    send(page, PROMPT)
+    expect_reply(page, ANSWER)
+    expect(page.locator('a[href^="/c/"]'), "the message made a sidebar chat").to_have_count(0)
+    saved = stored_chats(account, "Carinthia")
+    assert saved == [], f"the message sent after the reload was saved (#TBD): {saved}"
+
+
+@pytest.mark.regression
+def test_a_temporary_chat_in_a_folder_is_still_temporary_after_two_reloads(
+    page_for, make_user, upstream
+):
+    """#TBD: the first reload dropped `?temporary-chat=true` from the folder's address."""
+    account = make_user()
+    with account.client() as client:
+        created = client.post("/api/v1/folders/", json={"name": "Lighthouse"})
+    assert created.status_code == 200, created.text
+    page = page_for(account, path=f"/folders/{created.json()['id']}")
+    upstream.queue(reply.text(ANSWER_TWO, match=reply.answering(PROMPT_TWO)))
+    expect(chat_input(page)).to_be_visible()
+
+    temporary_toggle(page).click()
+    expect(temporary_label(page)).to_be_visible()
+    reload(page)
+    expect(temporary_label(page)).to_be_visible()
+    reload(page)
+
+    expect(new_chat_greeting(page)).to_be_visible()
+    expect(
+        temporary_label(page), "the folder's new chat is no longer temporary (#TBD)"
+    ).to_be_visible()
+    send(page, PROMPT_TWO)
+    expect_reply(page, ANSWER_TWO)
+    saved = stored_chats(account, "Salzburg")
+    assert saved == [], f"the message sent after the reloads was saved (#TBD): {saved}"
 
 
 def test_turning_temporary_chat_off_again_saves_the_chat(page_for, make_user, upstream):
