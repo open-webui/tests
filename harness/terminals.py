@@ -491,6 +491,26 @@ def start_instance(client: httpx.Client, terminal_id: str, **context) -> dict:
     return instance_of(client, terminal_id)
 
 
+def act_on_instance(
+    client: httpx.Client, terminal_id: str, action: str, **context
+) -> httpx.Response:
+    """`start`, `stop`, `restart`, `reset` or `delete` a machine as the terminal's settings do.
+
+    `context` names the machine (`user_id`, `chat_id`, `model_id`); without it, the caller's own.
+    """
+    base = f"/api/v1/terminals/templates/{terminal_id}"
+    if action == "delete":
+        return client.request("DELETE", f"{base}/instance", json=context)
+    return client.post(f"{base}/{action}", json=context)
+
+
+def list_instances(client: httpx.Client, terminal_id: str) -> dict[str, dict]:
+    """The machines the terminal's settings list, by context (`user:<id>`, `chat:<id>`, ...)."""
+    listed = client.get(f"/api/v1/terminals/templates/{terminal_id}/instances")
+    assert listed.status_code == 200, f"listing the terminal's machines failed: {listed.text}"
+    return {machine["context_id"]: machine for machine in listed.json()}
+
+
 def instance_of(client: httpx.Client, terminal_id: str, **context) -> dict:
     """The machine the terminal gives `client`'s user: its id and status."""
     found = client.get(f"/api/v1/terminals/templates/{terminal_id}/instance", params=context)
@@ -499,13 +519,21 @@ def instance_of(client: httpx.Client, terminal_id: str, **context) -> dict:
 
 
 def execute(
-    client: httpx.Client, terminal_id: str, command: str, chat_id: str | None = None
+    client: httpx.Client,
+    terminal_id: str,
+    command: str,
+    chat_id: str | None = None,
+    model_id: str | None = None,
 ) -> httpx.Response:
-    """Run `command` in the terminal through Open WebUI and wait for it to finish."""
+    """Run `command` in the terminal through Open WebUI and wait for it to finish.
+
+    `chat_id` and `model_id` name the chat and the model the page sends with the request.
+    """
+    context = {"X-Session-Id": chat_id, "X-Terminal-Model-Id": model_id}
     return client.post(
         f"/api/v1/terminals/{terminal_id}/execute",
         params={"wait": 30},
-        headers={"X-Session-Id": chat_id} if chat_id else {},
+        headers={name: value for name, value in context.items() if value},
         json={"command": command},
     )
 
