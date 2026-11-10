@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Generator, Iterator
@@ -36,6 +37,7 @@ from harness.instance import (
 from harness.prepared_data import serving
 from harness.reply_gate import hold_new_chat_events
 from harness.terminals import wait_until_addresses_settle
+from utils.chat_surface import MAIN_CHAT, SIDE_CHAT, ChatOpener
 
 ARTIFACTS_DIR = Path("test-results")
 LOAD_TRIES = 3
@@ -238,6 +240,35 @@ def page_for(
     with contextlib.ExitStack() as closing:
         for index, browser_context in enumerate(opened):
             closing.callback(_close_context, browser_context, request.node, f"browser-{index}")
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """A test that opens its chat with `chat_for` runs once per place a chat can be in: the main
+    chat and a side chat, or the places its `chat_surfaces` marker names."""
+    if "chat_for" not in metafunc.fixturenames:
+        return
+    marker = metafunc.definition.get_closest_marker("chat_surfaces")
+    places = marker.args if marker else (MAIN_CHAT, SIDE_CHAT)
+    metafunc.parametrize("chat_place", places)
+
+
+@pytest.fixture
+def chat_for(
+    chat_place: str, page_for, upstream, admin: Actor, preserve
+) -> Generator[ChatOpener, None, None]:
+    """`chat_for(actor)` opens a new chat of `actor` and `chat_for(actor, chat_id=...)` a saved
+    one, in the place this run of the test is for; see `utils/chat_surface.py`."""
+    if chat_place != MAIN_CHAT:
+        preserve("permissions")
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    held: list[threading.Event] = []
+    yield ChatOpener(chat_place, page_for, upstream, admin, held)
+    for release in held:
+        release.set()
 
 
 @pytest.fixture

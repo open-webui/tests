@@ -99,6 +99,7 @@ markers = [
     "admin_required: requires an admin session",
     "api: API-level test via httpx, no browser",
     "real_socket_timing: page_for pages get a new chat's socket events unheld, for a bug in that race (e2e)",
+    "chat_surfaces: the places a test that opens its chat with chat_for runs in, in place of the main chat and a side chat (e2e)",
     "secure_context: the test's browsers open the loopback address, a secure context, for a feature the browser offers only there (e2e)",
     # ── area (set at collection, by path) ──────────────────────────────────
     "terminal: a test of a terminal module: under a terminals/ directory, or with terminal or tether in its file name",
