@@ -40,6 +40,10 @@ that page and shows only there (a backend copy of dev 05e115366 whose live save 
 page's text on the first page turns that test red). The reader's chip test was red on dev
 b34885efc (the chip in the reader's read-only editor offered its remove button) and passes on dev
 05e115366.
+
+Since dev da850248d a note opens as a tab beside the chat tab, whose message box stays in the
+page unseen, so the chat tests type into the note chat's own box, found by its name. The module
+passes on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -57,13 +61,15 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Locator, Page, Request, Route, expect
 
+from e2e.conftest import APP_LOADED
 from harness import upstream as reply
 from harness.access import grant
 from harness.actors import Actor
 from harness.socket_client import frame_carries
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.cached_chat import this_turns_tool_results
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply
+from utils.note_chat import open_note_chat, send_in_note_chat
 from utils.note_content import note_files, note_images
 from utils.note_menu import open_note_menu
 from utils.note_pages import create_page, open_pages, page_tab
@@ -122,11 +128,23 @@ def stored_file_names(owner: Actor, note_id: str) -> list[str]:
     return [entry.get("name") for entry in stored_files(owner, note_id)]
 
 
-def open_note(page: Page, note_id: str) -> Locator:
+def note_editor(page: Page) -> Locator:
+    return page.get_by_role("main").get_by_label("Write something...")
+
+
+def open_note(page_for, actor: Actor, note_id: str) -> Page:
+    """The note in a page of the actor's own, opened directly so it is handed over loaded."""
+    page = page_for(actor, path=f"/notes/{note_id}")
+    expect(note_editor(page)).to_contain_text("see the file")
+    return page
+
+
+def go_to_note(page: Page, note_id: str) -> None:
+    """Load the note in a page that is already open, such as one a test listens on first."""
     page.goto(f"/notes/{note_id}")
-    editor = page.get_by_role("main").get_by_label("Write something...")
-    expect(editor).to_contain_text("see the file")
-    return editor
+    # the app loads again from cold, which the note's own wait should not pay for
+    page.wait_for_function(APP_LOADED)
+    expect(note_editor(page)).to_contain_text("see the file")
 
 
 def upload_to_note(page: Page, name: str, content: bytes, mime_type: str = "text/plain") -> None:
@@ -158,8 +176,7 @@ def note_with_file(page_for, make_user) -> SharedNote:
         grant("user", writer.id, "write"),
     ]
     note_id = create_note(owner, grants)
-    page = page_for(owner)
-    open_note(page, note_id)
+    page = open_note(page_for, owner, note_id)
     upload_to_note(page, FILE_NAME, FILE_TEXT.encode())
     expect(file_chip(page, FILE_NAME)).to_be_visible()
     eventually(lambda: stored_file_names(owner, note_id), [FILE_NAME])
@@ -173,16 +190,15 @@ def ask_note_chat(page: Page, upstream, question: str) -> list[dict]:
         reply.tool_call("grep_chat_files", {"pattern": "pilot boat"}, match=answering),
         reply.text("Noted.", match=answering),
     )
-    page.get_by_role("main").get_by_role("button", name="Chat", exact=True).click()
-    send(page, question)
+    open_note_chat(page)
+    send_in_note_chat(page, question)
     expect_reply(page, "Noted.")
     *_, answered = [body for body in upstream.chat_requests() if answering(body)]
     return this_turns_tool_results(answered)
 
 
 def test_an_uploaded_file_shows_on_the_note_and_opens_its_text(note_with_file, page_for):
-    page = page_for(note_with_file.owner)
-    open_note(page, note_with_file.note_id)
+    page = open_note(page_for, note_with_file.owner, note_with_file.note_id)
 
     file_chip(page, FILE_NAME).click()
 
@@ -220,8 +236,7 @@ def test_a_file_uploaded_on_a_page_stays_on_that_page(page_for, make_user):
 
 
 def test_the_owners_note_chat_is_given_the_notes_file(note_with_file, page_for, upstream):
-    page = page_for(note_with_file.owner)
-    open_note(page, note_with_file.note_id)
+    page = open_note(page_for, note_with_file.owner, note_with_file.note_id)
 
     found = ask_note_chat(page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}")
 
@@ -229,8 +244,7 @@ def test_the_owners_note_chat_is_given_the_notes_file(note_with_file, page_for, 
 
 
 def test_a_reader_opens_the_notes_file_but_cannot_detach_it(note_with_file, page_for):
-    page = page_for(note_with_file.reader)
-    open_note(page, note_with_file.note_id)
+    page = open_note(page_for, note_with_file.reader, note_with_file.note_id)
     expect(page.get_by_role("main").get_by_text("Read-Only Access")).to_be_visible()
 
     chip = file_chip(page, FILE_NAME)
@@ -246,14 +260,12 @@ def test_a_reader_opens_the_notes_file_but_cannot_detach_it(note_with_file, page
 def test_a_reader_previews_a_spreadsheet_the_owner_put_on_the_note(page_for, make_user):
     owner, reader = make_user(), make_user()
     note_id = create_note(owner, [grant("user", reader.id, "read")])
-    owner_page = page_for(owner)
-    open_note(owner_page, note_id)
+    owner_page = open_note(page_for, owner, note_id)
     upload_to_note(owner_page, SHEET_NAME, SHEET_CSV.encode(), "text/csv")
     expect(file_chip(owner_page, SHEET_NAME)).to_be_visible()
     eventually(lambda: stored_file_names(owner, note_id), [SHEET_NAME])
 
-    page = page_for(reader)
-    open_note(page, note_id)
+    page = open_note(page_for, reader, note_id)
     file_chip(page, SHEET_NAME).click()
     dialog = page.get_by_role("dialog").filter(has_text=SHEET_NAME)
     dialog.get_by_role("button", name="Preview", exact=True).click()
@@ -264,8 +276,7 @@ def test_a_reader_previews_a_spreadsheet_the_owner_put_on_the_note(page_for, mak
 
 
 def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, upstream):
-    page = page_for(note_with_file.reader)
-    open_note(page, note_with_file.note_id)
+    page = open_note(page_for, note_with_file.reader, note_with_file.note_id)
 
     found = ask_note_chat(page, upstream, f"when does the pilot boat wait? {uuid.uuid4().hex[:6]}")
 
@@ -275,8 +286,7 @@ def test_a_readers_note_chat_is_given_the_notes_file(note_with_file, page_for, u
 
 
 def test_a_writer_detaches_the_file_for_everyone(note_with_file, page_for):
-    page = page_for(note_with_file.writer)
-    open_note(page, note_with_file.note_id)
+    page = open_note(page_for, note_with_file.writer, note_with_file.note_id)
 
     chip = file_chip(page, FILE_NAME)
     chip.hover()
@@ -284,8 +294,7 @@ def test_a_writer_detaches_the_file_for_everyone(note_with_file, page_for):
 
     expect(page.get_by_role("main").get_by_text(FILE_NAME)).to_have_count(0)
     eventually(lambda: stored_file_names(note_with_file.owner, note_with_file.note_id), [])
-    owner_page = page_for(note_with_file.owner)
-    open_note(owner_page, note_with_file.note_id)
+    owner_page = open_note(page_for, note_with_file.owner, note_with_file.note_id)
     expect(owner_page.get_by_role("main").get_by_text(FILE_NAME)).to_have_count(0)
 
 
@@ -331,7 +340,7 @@ def test_a_file_still_uploading_when_the_note_saves_finishes_attaching(page_for,
             route.continue_()
 
     page.route("**/api/v1/files/**", hold_uploads)
-    open_note(page, note_id)
+    go_to_note(page, note_id)
     with page.expect_request(_is_upload):
         upload_to_note(page, FILE_NAME, FILE_TEXT.encode())
 
@@ -351,7 +360,7 @@ def test_a_file_still_uploading_when_the_note_saves_finishes_attaching(page_for,
     assert stored_uploads(owner, note_id) == [(FILE_NAME, True)], (
         "the finished upload never reached the note with its file id"
     )
-    open_note(page, note_id)
+    go_to_note(page, note_id)
     file_chip(page, FILE_NAME).click()
     dialog = page.get_by_role("dialog").filter(has_text=FILE_NAME)
     expect(dialog.get_by_text(FILE_TEXT)).to_be_visible()
@@ -364,8 +373,7 @@ def test_a_file_over_the_max_upload_size_is_refused_on_a_note(page_for, make_use
     assert saved.status_code == 200, saved.text
     owner = make_user()
     note_id = create_note(owner)
-    page = page_for(owner)
-    open_note(page, note_id)
+    page = open_note(page_for, owner, note_id)
 
     upload_to_note(page, "atlas.txt", b"x" * (2 * 1024 * 1024))
 
@@ -397,8 +405,8 @@ def test_a_picture_pasted_into_a_note_is_shrunk_by_the_persons_image_compression
         saved = client.post("/api/v1/users/user/settings/update", json={"ui": compression})
     assert saved.status_code == 200, saved.text
     note_id = create_note(owner)
-    page = page_for(owner)
-    editor = open_note(page, note_id)
+    page = open_note(page_for, owner, note_id)
+    editor = note_editor(page)
 
     editor.click()
     editor.evaluate(PASTE_IMAGE, buoy_png())
@@ -412,8 +420,8 @@ def test_a_picture_picked_with_upload_files_shows_in_the_note(page_for, make_use
     # open-webui/open-webui#32793, fix 4604f2a3b
     owner = make_user()
     note_id = create_note(owner)
-    page = page_for(owner)
-    editor = open_note(page, note_id)
+    page = open_note(page_for, owner, note_id)
+    editor = note_editor(page)
     expect(editor.locator("img")).to_have_count(0)
 
     upload_to_note(page, "buoy.png", base64.b64decode(buoy_png()), "image/png")
