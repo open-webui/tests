@@ -12,15 +12,21 @@ Setting `cors` lets a page of another origin call it, as a terminal a user added
 settings is called from their browser: every answer allows any origin and a preflight gets 204.
 
 `terminal_session` opens the browser's side of a shell against the instance's proxy and
-`terminal_socket` the browser's side of any other of the terminal's WebSockets.
+`terminal_socket` the browser's side of any other of the terminal's WebSockets. `BarePage` is
+the browser's side on one plain socket that the test ends the way it chooses (a close frame, a
+cut connection, a reset), and `pages_of_another_process` opens such pages in a process the test
+can kill.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import queue
 import socket
 import struct
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -28,9 +34,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Callable, Iterator
 
 import httpx
+from websockets.client import ClientProtocol
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed, InvalidState
 from websockets.frames import Frame, Opcode
@@ -38,6 +46,7 @@ from websockets.http11 import Request
 from websockets.protocol import State
 from websockets.server import ServerProtocol
 from websockets.sync.client import ClientConnection, connect
+from websockets.uri import parse_uri
 
 from harness.instance import free_port
 from harness.listener import Answer, IPv6HTTPServer, read_body
@@ -388,16 +397,169 @@ def terminal_session(
         yield session
 
 
+def stream_url(base_url: str, terminal_id: str, path: str) -> str:
+    """The address of one of the terminal's WebSockets on the instance."""
+    return base_url.replace("http://", "ws://", 1) + f"/api/v1/terminals/{terminal_id}/{path}"
+
+
 @contextmanager
 def terminal_socket(
     base_url: str, token: str, terminal_id: str, path: str, **auth
 ) -> Iterator[ClientConnection]:
     """Another of the terminal's WebSockets through the instance (`events`, `desktop/stream`,
     `execute/<id>/status?tail=10`), past its first-message auth; `auth` adds fields to it."""
-    url = base_url.replace("http://", "ws://", 1) + f"/api/v1/terminals/{terminal_id}/{path}"
-    with connect(url, proxy=None, open_timeout=10, close_timeout=2, max_size=None) as socket:
-        socket.send(json.dumps({"type": "auth", "token": token, **auth}))
-        yield socket
+    url = stream_url(base_url, terminal_id, path)
+    with connect(url, proxy=None, open_timeout=10, close_timeout=2, max_size=None) as page_side:
+        page_side.send(json.dumps({"type": "auth", "token": token, **auth}))
+        yield page_side
+
+
+class BarePage:
+    """The browser's side of a WebSocket on one plain socket, with no thread reading behind it.
+
+    The test decides how the connection ends: `close` sends a close frame as a page that is
+    closed does, `cut` ends the connection without one, `reset` resets it. `sign_in` is sent as
+    the first message. Messages are whole frames; a fragmented one is not put together.
+    """
+
+    def __init__(self, url: str, sign_in: dict | None = None) -> None:
+        uri = parse_uri(url)
+        self.socket = socket.create_connection((uri.host, uri.port), timeout=10)
+        self._protocol = ClientProtocol(uri, max_size=None)
+        self._messages: list[str | bytes] = []
+        self._protocol.send_request(self._protocol.connect())
+        self._flush()
+        while self._protocol.state is State.CONNECTING:
+            self._read()
+        if self._protocol.handshake_exc is not None:
+            self.socket.close()
+            raise self._protocol.handshake_exc
+        if sign_in is not None:
+            self.send(json.dumps(sign_in))
+
+    def send(self, message: str | bytes) -> None:
+        if isinstance(message, str):
+            self._protocol.send_text(message.encode())
+        else:
+            self._protocol.send_binary(message)
+        self._flush()
+
+    def receive(self, timeout: float = 10) -> str | bytes:
+        """The next message; ConnectionError once the other side has gone."""
+        deadline = time.monotonic() + timeout
+        while not self._messages:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"nothing arrived within {timeout}s")
+            self.socket.settimeout(remaining)
+            try:
+                self._read()
+            except socket.timeout:
+                raise TimeoutError(f"nothing arrived within {timeout}s") from None
+        return self._messages.pop(0)
+
+    @property
+    def closed_with(self) -> tuple[int, str] | None:
+        """The close frame the other side sent, as (code, reason); None without one."""
+        received = self._protocol.close_rcvd
+        return (received.code, received.reason) if received else None
+
+    def close(self) -> None:
+        """Leave with a close frame and wait for the answer, as a closed page does."""
+        self._protocol.send_close(1000)
+        self._flush()
+        self.socket.settimeout(2)
+        try:
+            while self._protocol.state is not State.CLOSED:
+                self._read()
+        except OSError:
+            pass
+        self.socket.close()
+
+    def cut(self) -> None:
+        """End the connection without a close frame."""
+        self.socket.shutdown(socket.SHUT_RDWR)
+        self.socket.close()
+
+    def reset(self) -> None:
+        """Reset the connection: no close frame and no orderly end."""
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        self.socket.close()
+
+    def _flush(self) -> None:
+        for data in self._protocol.data_to_send():
+            if data:
+                self.socket.sendall(data)
+
+    def _read(self) -> None:
+        data = self.socket.recv(65536)
+        if data:
+            self._protocol.receive_data(data)
+        else:
+            self._protocol.receive_eof()
+        self._flush()
+        for event in self._protocol.events_received():
+            if isinstance(event, Frame) and event.opcode == Opcode.TEXT:
+                self._messages.append(event.data.decode())
+            elif isinstance(event, Frame) and event.opcode == Opcode.BINARY:
+                self._messages.append(bytes(event.data))
+        if not data and not self._messages:
+            raise ConnectionError("the other side ended the connection")
+
+
+_PAGES_OF_A_PROCESS = """
+import json, sys, time
+from harness.terminal_server import BarePage
+
+request = json.load(sys.stdin)
+give_up = time.monotonic() + request["patience"]
+pages = []
+for url, sign_in in request["pages"]:
+    while True:
+        page = BarePage(url, sign_in)
+        try:
+            for _ in range(request["messages"]):
+                page.receive(timeout=10)
+            break
+        except ConnectionError:
+            page.cut()
+            if time.monotonic() > give_up:
+                raise
+            time.sleep(0.1)
+    pages.append(page)
+print("open", flush=True)
+time.sleep(600)
+"""
+
+
+@contextmanager
+def pages_of_another_process(
+    pages: list[tuple[str, dict]], patience: float = 0, messages: int = 1
+) -> Iterator[subprocess.Popen]:
+    """Open each `(url, sign_in)` as a `BarePage` in a process of its own, as another browser.
+
+    Yields the process once every page has read its first `messages` messages; `kill()` it to
+    have all its pages vanish at once, as a browser that is killed. It is killed with the block
+    at the latest. A page that is closed on before that is opened again for `patience` seconds.
+    """
+    process = subprocess.Popen(
+        [sys.executable, "-c", _PAGES_OF_A_PROCESS],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent)},
+    )
+    try:
+        process.stdin.write(
+            json.dumps({"pages": pages, "patience": patience, "messages": messages})
+        )
+        process.stdin.close()
+        opened = process.stdout.readline().strip()
+        assert opened == "open", "the pages of the other process did not all open"
+        yield process
+    finally:
+        process.kill()
+        process.wait(timeout=10)
 
 
 def close_of(session: ClientConnection, timeout: float) -> tuple[int, str] | None:
