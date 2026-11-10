@@ -218,6 +218,10 @@ class Terminals:
                 parts.append(f"--- {container} ---\n(docker logs did not answer)")
         return "\n".join(parts)
 
+    def stop(self) -> None:
+        """Stop the service, as an outage; only for a stack of the test's own."""
+        _docker("stop", "-t", "5", self.name)
+
     def reset(self) -> None:
         """Delete every template with its machines and files, so the next test starts empty."""
         with self.client() as client:
