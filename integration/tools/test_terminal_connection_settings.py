@@ -30,6 +30,13 @@ form's default for Auth is `none` (no key reaches the terminal) and where the fo
 unknown fields (the extra field is gone); with the address check dropped from Verify
 Connection it fails on the answer for an empty address.
 
+Every save of the connections is reported as the event `config.terminal_servers.updated`
+with the admin who saved and the number of connections, and a save that is refused reports
+nothing. `policy` and `lifecycle`, the two entries a connection of the policy model before
+templates could be sent with, are not stored; everything else sent is. On dev c15f28649 the
+event test fails in a backend copy that saves without publishing the event, and the policy
+test in one that stores a connection as it was sent.
+
 What the terminal fails to say never holds a turn up. A terminal that cannot name its folder
 leaves `run_command` without the folder line. Its prompt is read for the person at each turn and,
 when that read fails or is empty, taken as it was read when the connection was saved; a terminal
@@ -50,6 +57,7 @@ picked-terminal condition dropped, the not-picked test.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
@@ -59,6 +67,7 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ask
 from harness.listener import Answer, json_answer
+from harness.plugins import installed_function
 from harness.socket_client import connected
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -329,6 +338,88 @@ def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_ke
         "Terminal server URL is required",
     ), f"Verify Connection without an address answered {unverified.status_code} {unverified.text}"
     assert still_stored == stored, f"a refused save changed the connections: {still_stored}"
+
+
+FORWARD_CONNECTION_EVENTS = """
+import json
+import urllib.request
+
+
+class Event:
+    def event(self, event):
+        if event["event"] == "config.terminal_servers.updated":
+            body = json.dumps(event).encode()
+            headers = {{"Content-Type": "application/json"}}
+            request = urllib.request.Request("{url}", data=body, headers=headers)
+            urllib.request.urlopen(request, timeout=10).close()
+"""
+
+
+def _eventually(read, timeout: float = 10):
+    """The first truthy `read()` within the timeout, else its last value."""
+    deadline = time.monotonic() + timeout
+    value = read()
+    while not value and time.monotonic() < deadline:
+        time.sleep(0.1)
+        value = read()
+    return value
+
+
+def test_a_save_of_the_connections_is_reported_with_who_saved_and_how_many(
+    admin, make_user, terminal, listener
+):
+    saver, member = make_user(role="admin"), make_user()
+    listener.route("POST", "/events", json_answer({}))
+    connections = [terminal.connection(), terminal.connection()]
+
+    def reported() -> list[tuple]:
+        events = [request.json() for request in listener.requests_to("/events")]
+        return [(event["actor"]["id"], event["subject"], event["data"]) for event in events]
+
+    source = FORWARD_CONNECTION_EVENTS.format(url=f"{listener.base_url}/events")
+    with installed_function(admin, source):
+        with member.client() as client:
+            refused = client.post(
+                TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": connections}
+            )
+        with saver.client() as client:
+            configure_terminals(client, *connections)
+        saves = _eventually(reported)
+        with saver.client() as client:
+            configure_terminals(client)
+        both_saves = _eventually(lambda: reported() if len(reported()) > 1 else None)
+
+    assert refused.status_code == 401, f"a user's save answered {refused.status_code}"
+    subject = {"type": "config", "id": "terminal_server.connections"}
+    assert saves == [(saver.id, subject, {"count": 2})], (
+        f"one save of two connections by an admin, after a refused one, was reported as {saves}"
+    )
+    assert both_saves == [(saver.id, subject, {"count": 2}), (saver.id, subject, {"count": 0})], (
+        f"a second save, of no connection, left the reports at {both_saves or reported()}"
+    )
+
+
+def test_a_connection_sent_with_the_policy_of_the_old_model_is_stored_without_it(admin, terminal):
+    connection = terminal.connection(
+        policy_id="default",
+        policy={"image": "registry.example.com/terminal:1"},
+        lifecycle={"idle_timeout_minutes": 30},
+    )
+    with admin.client() as client:
+        saved = client.post(
+            TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": [connection]}
+        )
+        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+
+    assert saved.status_code == 200, saved.text
+    # the kind is stored empty until Verify Connection or the dialog's Save has found it
+    kept = {"server_type": None} | {
+        name: value for name, value in connection.items() if name not in ("policy", "lifecycle")
+    }
+    assert stored == [kept], f"the connection was stored as {stored}"
+    assert saved.json()["TERMINAL_SERVER_CONNECTIONS"] == [kept], (
+        f"the save answered with {saved.text}"
+    )
 
 
 @pytest.mark.parametrize(
