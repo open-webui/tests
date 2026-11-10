@@ -26,6 +26,22 @@ system prompt test); no cancel sent to the agent on Stop (the stop test). The pa
 title test passes with the fix for #33970 on dev 553b18a34 and fails on dev 553b18a34 (the chat
 keeps "New Chat": the agent run skips the post-reply title task).
 
+The rules around a turn: a model id that names no agent model is refused ("Invalid agent model");
+an agent does not run in a temporary chat or for a regenerated reply; model details the client
+sends with an agent model are ignored, so a request cannot claim a direct connection for it; a
+picture sent to an agent that takes none ends the reply with the reason; a request of the agent
+takes one answer, of its own kind. The agent's session belongs to the reply it was stored on: a
+message sent from an earlier reply resumes that reply's session, and a cloned chat starts a
+session of its own that is given the conversation so far. Opening an agent chat whose stored
+chat names no model, terminal or folder fills them in from the session.
+Discriminates (these tests): pass on dev c15f28649; each fails alone under its mutation in a
+backend copy: the id shape check dropped; the saved-chat check dropped; the regeneration check
+dropped; the client's model details kept; the ACP image check dropped; the kind check and the
+pending check of an agent request dropped (the once-and-in-kind test, the kind check also the
+question card test); the chat's most recent session resumed wherever the message is sent from
+(the earlier-reply test); a session token of another chat accepted (the clone test); the
+selections not filled on open (the opening test).
+
 Until dev 1782e9bc5 the server refused a message sent from an earlier point of an agent
 conversation ("Agent history cannot be branched in place"). That commit reads the agent's
 session from the chain of stored messages and dropped the refusal, so its test went with it. The
@@ -51,6 +67,7 @@ from harness.coding_agent import (
     connect_agent_terminal,
     model_id,
 )
+from harness.direct_connection import direct_model
 from harness.fake_acp_agent import REFUSAL
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
@@ -609,3 +626,274 @@ def test_an_agent_chat_the_page_created_is_titled_by_the_task_model(
             time.sleep(0.1)
 
     assert title == "Parser cleanup", f"the agent chat was not titled by the task model: {title!r}"
+
+
+def test_a_malformed_agent_model_id_is_refused(make_user, connect):
+    person = make_user()
+    terminal = connect(person)
+
+    with person.client() as client:
+        refused = client.post(
+            "/api/chat/completions",
+            json={
+                "model": f"agent:{terminal['id']}:opencode",
+                "terminal_id": terminal["id"],
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+            },
+        )
+        works = wait_for_reply(client, ask_agent(client, terminal["id"], "hello"), REPLY_TIMEOUT)
+
+    assert (refused.status_code, refused.json().get("detail")) == (400, "Invalid agent model"), (
+        f"an agent model id without a model was not refused: {refused.status_code} {refused.text}"
+    )
+    assert "error" not in works, works
+
+
+def test_an_agent_does_not_run_in_a_temporary_chat(make_user, connect, agent_terminal):
+    person = make_user()
+    terminal = connect(person)
+    prompt = f"work without a trace {uuid.uuid4().hex[:6]}"
+
+    with person.client() as client, connected(person) as tab:
+        chat_id = tab.temporary_chat_id()
+        ask_agent(client, terminal["id"], prompt, chat_id=chat_id, session_id=tab.sid)
+        refused = tab.wait_for(chat_id, "chat:message:error")
+        saved = wait_for_reply(client, ask_agent(client, terminal["id"], prompt), REPLY_TIMEOUT)
+
+    assert refused["data"]["error"] == {"content": "Agent conversations require a saved chat"}, (
+        f"the temporary chat was not told why the agent cannot run: {refused}"
+    )
+    heard = [
+        params for params in agent_terminal.received("session/prompt") if prompt in str(params)
+    ]
+    assert len(heard) == 1, f"the agent ran for the temporary chat as well: {heard}"
+    assert saved["content"].startswith(f"Agent heard: {prompt} ["), saved
+
+
+def test_regenerating_an_agent_reply_over_the_api_is_refused(make_user, connect, agent_terminal):
+    person = make_user()
+    terminal = connect(person)
+    prompt = f"write the changelog {uuid.uuid4().hex[:6]}"
+
+    with person.client() as client:
+        first = ask_agent(client, terminal["id"], prompt)
+        wait_for_reply(client, first, REPLY_TIMEOUT)
+        again = ask_agent(
+            client,
+            terminal["id"],
+            prompt,
+            chat_id=first.chat_id,
+            regeneration_message_id=first.assistant_message_id,
+        )
+        refused = wait_for_reply(client, again, REPLY_TIMEOUT)
+
+    assert (refused.get("error") or {}).get("content") == (
+        "Continue an agent conversation with a new message"
+    ), f"regenerating an agent reply was not refused: {refused}"
+    heard = [
+        params for params in agent_terminal.received("session/prompt") if prompt in str(params)
+    ]
+    assert len(heard) == 1, f"the agent was asked again for the regenerated reply: {heard}"
+
+
+def test_model_details_the_client_sends_are_ignored_for_an_agent_model(make_user, connect):
+    person = make_user()
+    terminal = connect(person)
+    agent = model_id(terminal["id"])
+
+    with person.client() as client:
+        turn = ask_agent(client, terminal["id"], "who answers?", model_item=direct_model(agent))
+        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    assert reply.get("content", "").startswith("Agent heard: who answers? ["), (
+        f"the agent did not answer a request that claimed a direct connection: {reply}"
+    )
+
+
+def test_a_message_sent_from_an_earlier_reply_resumes_that_replys_agent_session(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+
+    def session_of(prompt: str) -> str:
+        asked = [
+            params
+            for params in agent_terminal.received("session/prompt")
+            if prompt in str(params["prompt"])
+        ]
+        assert len(asked) == 1, f"the agent was not asked {prompt!r} once: {asked}"
+        return asked[0]["sessionId"]
+
+    tag = uuid.uuid4().hex[:6]
+    with person.client() as client:
+        first = ask_agent(client, terminal["id"], f"first thread {tag}")
+        wait_for_reply(client, first, REPLY_TIMEOUT)
+        other = ask_agent(client, terminal["id"], f"second thread {tag}", chat_id=first.chat_id)
+        wait_for_reply(client, other, REPLY_TIMEOUT)
+        branch = ask_agent(
+            client,
+            terminal["id"],
+            f"back to the first {tag}",
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+        )
+        reply = wait_for_reply(client, branch, REPLY_TIMEOUT)
+
+    assert "error" not in reply, f"a message from an earlier reply was refused: {reply}"
+    sessions = [session_of(f"{name} {tag}") for name in ("first thread", "second thread")]
+    assert sessions[0] != sessions[1], f"the two threads share one agent session: {sessions}"
+    assert session_of(f"back to the first {tag}") == sessions[0], (
+        "the message from the first reply did not resume the first reply's agent session"
+    )
+
+
+def test_a_cloned_agent_chat_starts_an_agent_session_of_its_own_with_the_conversation_so_far(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+    tag = uuid.uuid4().hex[:6]
+    history = [{"role": "user", "content": f"remember the word lantern {tag}"}]
+
+    with person.client() as client:
+        first = ask_agent(client, terminal["id"], history[0]["content"])
+        history.append(
+            {
+                "role": "assistant",
+                "content": wait_for_reply(client, first, REPLY_TIMEOUT)["content"],
+            }
+        )
+        cloned = client.post(f"/api/v1/chats/{first.chat_id}/clone", json={})
+        assert cloned.status_code == 200, f"cloning the chat failed: {cloned.text}"
+        for chat_id, question in ((cloned.json()["id"], "clone"), (first.chat_id, "original")):
+            turn = ask_agent(
+                client,
+                terminal["id"],
+                f"what was the word, {question} {tag}?",
+                chat_id=chat_id,
+                parent_id=first.assistant_message_id,
+                history=history,
+            )
+            reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+            assert "error" not in reply, f"the {question} chat's next turn failed: {reply}"
+
+    prompts = {
+        question: [
+            params
+            for params in agent_terminal.received("session/prompt")
+            if f"{question} {tag}?" in str(params["prompt"])
+        ][-1]
+        for question in ("clone", "original")
+    }
+    started = [
+        params
+        for params in agent_terminal.received("session/prompt")
+        if history[0]["content"] in str(params["prompt"])
+    ][0]["sessionId"]
+    assert prompts["original"]["sessionId"] == started, (
+        "the original chat did not go on in its agent session"
+    )
+    assert prompts["clone"]["sessionId"] != started, (
+        "the cloned chat went on in the original chat's agent session"
+    )
+    assert prompts["clone"]["prompt"][-1]["text"] == (
+        f"user: {history[0]['content']}\n\nassistant: {history[1]['content']}\n\n"
+        f"user: what was the word, clone {tag}?"
+    ), f"the clone's new agent session was not given the conversation so far: {prompts['clone']}"
+    assert prompts["original"]["prompt"][-1]["text"] == f"what was the word, original {tag}?", (
+        f"the resumed session was sent the conversation again: {prompts['original']}"
+    )
+
+
+def test_opening_an_agent_chat_restores_its_agent_terminal_and_folder(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+
+    with person.client() as client:
+        created = client.post(
+            "/api/v1/chats/new",
+            json={"chat": {"title": "New Chat", "history": {"messages": {}, "currentId": None}}},
+        )
+        assert created.status_code == 200, created.text
+        before = created.json()["chat"]
+        turn = ask_agent(client, terminal["id"], "set things up", chat_id=created.json()["id"])
+        wait_for_reply(client, turn, REPLY_TIMEOUT)
+        opened = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
+
+    selections = {key: opened.get(key) for key in ("models", "terminal_id", "working_directory")}
+    assert not any(key in before for key in selections), f"the new chat already had: {before}"
+    assert selections == {
+        "models": [model_id(terminal["id"])],
+        "terminal_id": terminal["id"],
+        "working_directory": str(agent_terminal.terminal.home),
+    }, f"the opened chat does not name its agent, terminal and folder: {selections}"
+
+
+def test_a_picture_sent_to_an_agent_that_takes_none_ends_the_reply_with_the_reason(
+    make_user, connect
+):
+    person = make_user()
+    terminal = connect(person)
+    pixel = (
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
+        "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    )
+    seen = [
+        {"type": "text", "text": "what is on this?"},
+        {"type": "image_url", "image_url": {"url": pixel}},
+    ]
+
+    with person.client() as client:
+        turn = ask_agent(
+            client,
+            terminal["id"],
+            "what is on this?",
+            messages=[{"role": "user", "content": seen}],
+        )
+        refused = wait_for_reply(client, turn, REPLY_TIMEOUT)
+        plain = wait_for_reply(
+            client, ask_agent(client, terminal["id"], "what is on this?"), REPLY_TIMEOUT
+        )
+
+    assert (refused.get("error") or {}).get("content") == (
+        "This agent does not support image prompts"
+    ), f"the picture was not refused with the reason: {refused}"
+    assert plain["content"].startswith("Agent heard: what is on this? ["), plain
+
+
+def test_an_agents_request_is_answered_once_and_only_in_its_own_kind(
+    make_user, connect, tool_permissions
+):
+    person = make_user()
+    terminal = connect(person)
+
+    with person.client() as client:
+        turn = ask_agent(
+            client, terminal["id"], "[permission] clean up", params={"tool_approval_mode": "ask"}
+        )
+        asked = pending_call(client, turn)
+        as_a_question = resolve(
+            client, turn, asked["call_id"], action="answer", answers={"colour": "amber"}
+        )
+        still = [i for i in stored(client, turn)["output"] if i.get("call_id") == asked["call_id"]]
+        approved = resolve(client, turn, asked["call_id"], action="approve")
+        changed_mind = resolve(client, turn, asked["call_id"], action="reject")
+        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    assert (as_a_question.status_code, as_a_question.json().get("detail")) == (
+        400,
+        "Invalid response for this agent request",
+    ), f"a permission request took an answer meant for a question: {as_a_question.text}"
+    assert still[0]["status"] == "pending", f"the refused answer changed the request: {still}"
+    assert approved.status_code == 200, approved.text
+    assert (changed_mind.status_code, changed_mind.json().get("detail")) == (
+        409,
+        "Agent request is no longer pending",
+    ), f"an answered request took a second answer: {changed_mind.status_code} {changed_mind.text}"
+    assert reply["content"] == "Permission outcome: allow-it", (
+        f"the agent did not get the first answer: {reply}"
+    )
