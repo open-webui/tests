@@ -262,6 +262,39 @@ def terminal_orchestrator() -> Generator:
         yield orchestrator
 
 
+@pytest.fixture(scope="session")
+def terminals_service() -> Generator:
+    """The real Terminals orchestrator on Docker for the session; skips without its images."""
+    from harness.terminals import serving_terminals
+
+    with serving_terminals() as terminals:
+        yield terminals
+
+
+@pytest.fixture
+def terminals(terminals_service) -> Generator:
+    """The real Terminals orchestrator; the templates and containers a test made go after it."""
+    yield terminals_service
+    terminals_service.reset()
+
+
+@pytest.fixture
+def connect_terminals(admin: Actor, preserve, terminals) -> Callable[..., dict]:
+    """`connect_terminals(*grants)`: the admin connects the Terminals orchestrator under
+    Settings > Integrations, replacing the terminal connections there, and gives the connection
+    those grants (`read_grant`, `write_grant`); returns the connection."""
+    from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
+
+    def connect(*grants: dict, **fields) -> dict:
+        preserve(TERMINAL_SERVERS_CONFIG)
+        connection = terminals.connection(config={"access_grants": list(grants)}, **fields)
+        with admin.client() as client:
+            configure_terminals(client, connection)
+        return connection
+
+    return connect
+
+
 @pytest.fixture
 def refuses_unknown_names(resolver: str) -> None:
     """Skips a c-ares test of a name that does not resolve where this machine's DNS server keeps

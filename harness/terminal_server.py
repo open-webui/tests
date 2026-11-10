@@ -107,6 +107,11 @@ def read_grant(user_id: str) -> dict:
     return {"principal_type": "user", "principal_id": user_id, "permission": "read"}
 
 
+def write_grant(user_id: str) -> dict:
+    """On an orchestrator connection: the user may create terminals of their own on it."""
+    return {"principal_type": "user", "principal_id": user_id, "permission": "write"}
+
+
 def configure_terminals(client: httpx.Client, *connections: dict) -> None:
     """Save the terminal connections the way the admin panel does, replacing the current ones."""
     saved = client.post(
