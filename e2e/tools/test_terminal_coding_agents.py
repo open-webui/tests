@@ -20,6 +20,20 @@ Once the agent's terminal is gone, its chat and a new chat take the default mode
 person had the agent as their default model, and the next message goes to it (#33843, #33860).
 That test passes on dev e8c0ad85e and fails on a frontend build of it with both fixes undone,
 where no model is selected.
+
+Three more journeys. A Codex model brings its reasoning efforts as a model control: the chat
+input shows it with the model's default, and a pick reaches the agent's turn (the agent is
+`harness/fake_native_agent.py`). A new chat in a folder with a default terminal and working
+directory offers the agents the terminal lists for that directory, where a chat outside the
+folder gets those of the terminal's own (the terminal is the fake of `harness/agent_carrier.py`,
+which lists a different agent per directory). And an agent model cannot be edited or built on:
+its entry in the model selector has no Edit, and the workspace's model editor does not offer it
+as a base model, while it offers and edits the provider's model.
+Discriminates: these three pass on the dev c15f28649 build. The effort test fails in a backend
+copy that builds no model controls from the catalog (no Model controls row); the folder test
+fails in a backend copy whose `/api/models` does not pass the directory on (the folder's chat is
+offered the agent of the terminal's own directory); the edit and base model test fails on a
+frontend build with the `terminal` checks of the model item menu and the base model list undone.
 """
 
 from __future__ import annotations
@@ -31,12 +45,19 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.agent_carrier import agent, catalog, serving_agents
 from harness.coding_agent import FAST, connect_agent_terminal
 from harness.fake_acp_agent import REFUSAL
 from harness.plain_http import loopback_url
-from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
+from utils.chat_controls import choose_model_control, model_control_row
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -47,7 +68,7 @@ from utils.chat_ui import (
     send,
     set_tool_approval_mode,
 )
-from utils.model_selector import select_model
+from utils.model_selector import model_options, model_search, select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -240,3 +261,113 @@ def test_an_agent_error_shows_on_the_reply(agent_chat):
     send(page, "[refuse] do it")
 
     expect(last_reply(page)).to_contain_text(REFUSAL, timeout=REPLY_TIMEOUT_MS)
+
+
+def test_a_codex_models_reasoning_effort_is_picked_in_the_chat_and_reaches_the_agent(
+    page_for, make_user, admin, preserve, native_agent_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    name = f"Agent box {uuid.uuid4().hex[:6]}"
+    connect_agent_terminal(admin, native_agent_terminal, person, name=name)
+    page = page_for(person)
+    choose_terminal(page, name)
+    select_model(page, "codex/codex-fake")
+    prompt = f"think harder {uuid.uuid4().hex[:6]}"
+
+    page.get_by_label("Model controls", exact=True).click()
+    expect(model_control_row(page, "Reasoning effort")).to_contain_text("medium")
+    page.keyboard.press("Escape")
+    choose_model_control(page, "Reasoning effort", "high")
+    send(page, prompt)
+    expect_reply(page, f"codex heard: {prompt} [model codex-fake,")
+
+    turns = [
+        message["params"]
+        for message in native_agent_terminal.messages("codex")
+        if message.get("method") == "turn/start" and prompt in str(message["params"])
+    ]
+    assert [turn.get("effort") for turn in turns] == ["high"], (
+        f"the picked effort did not reach the agent's turn: {turns}"
+    )
+
+
+def test_a_folders_new_chat_offers_the_agents_of_its_terminal_and_directory(
+    page_for, make_user, admin, preserve
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    name = f"Agent box {uuid.uuid4().hex[:6]}"
+    with serving_terminal() as terminal:
+        agents = serving_agents(terminal)
+        agents.catalog = lambda folder: catalog(
+            agent("opencode", {"id": f"model-of-{(folder or 'nowhere').rsplit('/', 1)[-1]}"})
+        )
+        connection = terminal.connection(name=name)
+        connection["config"]["access_grants"] = [read_grant(person.id)]
+        with admin.client() as client:
+            configure_terminals(client, connection)
+        with person.client() as client:
+            created = client.post(
+                "/api/v1/folders/",
+                json={
+                    "name": f"Atlas {uuid.uuid4().hex[:6]}",
+                    "data": {"terminal_id": connection["id"], "working_directory": "/srv/atlas"},
+                },
+            )
+        assert created.status_code == 200, f"creating the folder failed: {created.text}"
+
+        outside = page_for(person)
+        choose_terminal(outside, name)
+        expect(model_options(outside, "opencode/model-of-work")).to_be_visible()
+        model_search(outside).fill("opencode/model-of-atlas")
+        expect(model_options(outside, "opencode/model-of-atlas")).to_have_count(0)
+
+        inside = page_for(person, path=f"/folders/{created.json()['id']}")
+        expect(chat_input(inside)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        select_model(inside, "opencode/model-of-atlas")
+        send(inside, "map the coast")
+        expect_reply(inside, "Scripted agent heard: map the coast")
+        assert agents.starts[-1].options["cwd"] == "/srv/atlas", (
+            f"the folder chat's agent did not start in the folder's directory: {agents.starts[-1]}"
+        )
+
+
+def test_an_agent_model_has_no_edit_entry_and_is_not_offered_as_a_base_model(
+    page_for, make_user, admin, preserve, agent_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    owner = make_user(role="admin")
+    name = f"Agent box {uuid.uuid4().hex[:6]}"
+    connect_agent_terminal(admin, agent_terminal, owner, name=name)
+    page = page_for(owner)
+    choose_terminal(page, name)
+
+    def offers_edit(model_name: str) -> bool:
+        """Whether the model's More Options in the model selector hold Edit."""
+        row = model_options(page, model_name)
+        row.hover()
+        row.get_by_label("More Options", exact=True).click()
+        menu = page.get_by_role("menu")
+        expect(menu.get_by_role("menuitem", name="Copy Link", exact=True)).to_be_visible()
+        offered = menu.get_by_role("menuitem", name="Edit", exact=True).count() == 1
+        page.keyboard.press("Escape")
+        expect(menu).to_have_count(0)
+        # the first Escape may leave the selector open
+        if model_search(page).count():
+            page.keyboard.press("Escape")
+        expect(model_search(page)).to_have_count(0)
+        return offered
+
+    assert offers_edit(MOCK_MODEL_ID), "the provider's model offers an admin no Edit"
+    assert not offers_edit(AGENT_NAME), "an agent model offers Edit"
+
+    page.get_by_role("link", name="Workspace", exact=True).click()
+    page.get_by_role("button", name="Create", exact=True).click()
+    page.wait_for_url(re.compile(r"/workspace/models/create"))
+    page.get_by_role("main").get_by_role("button", name="Select a base model", exact=True).click()
+    bases = page.get_by_role("listbox", name="Available models")
+    model_search(page).fill(MOCK_MODEL_ID)
+    expect(bases.get_by_role("option", name=f"Select {MOCK_MODEL_ID} model")).to_be_visible()
+    model_search(page).fill("opencode")
+    expect(bases.get_by_role("option")).to_have_count(0)

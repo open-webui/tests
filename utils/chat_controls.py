@@ -8,6 +8,8 @@ found under either role.
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Locator, Page, expect
 
 from utils.chat_ui import chat_input
@@ -53,3 +55,22 @@ def open_section(panel: Locator, title: str) -> Locator:
         toggle.click()
     expect(toggle).to_have_attribute("aria-expanded", "true")
     return panel
+
+
+def model_control_row(page: Page, label: str) -> Locator:
+    """A model control's row in the open Model controls menu; it reads the option in use."""
+    return late_menu_entry(page, label, exact=True)
+
+
+def choose_model_control(page: Page, control_label: str, option_label: str) -> None:
+    """Pick `option_label` of the model control `control_label` and wait until it is saved."""
+    expect(chat_input(page)).to_be_visible()
+    page.get_by_label("Model controls", exact=True).click()
+    model_control_row(page, control_label).click()
+    option = page.get_by_role("menuitemradio", name=option_label, exact=True)
+    with page.expect_response(re.compile(r"/api/v1/users/user/settings/update")) as saved:
+        option.click()
+    assert saved.value.ok, saved.value.text()
+    expect(option).to_have_attribute("aria-checked", "true")
+    page.keyboard.press("Escape")
+    page.keyboard.press("Escape")
