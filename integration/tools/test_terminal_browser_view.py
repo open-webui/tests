@@ -5,10 +5,11 @@ page never gets the terminal's own token: Open WebUI hands out one it signed, an
 frame loads `/api/v1/terminals/<id>/browser/view/<tab>/<token>/...` with it, without a session,
 since a sandboxed frame has none. Open WebUI then asks the terminal with the terminal's token,
 the connection's key and the person's id and chat, and passes on only the frame's accept,
-origin, preflight, last-event-id and range headers. The token opens that one tab on that one
-terminal for as long as its person may use the terminal: after the account is deleted or set
-to pending it answers 401, and after the terminal is unshared or switched off or the chat is
-deleted the terminal is not asked any more. The frame's origin is opaque, so these paths skip
+origin, preflight, last-event-id and range headers; a terminal that takes the person's session
+and cookies gets those of the request that opened the tab. The token opens that one tab on
+that one terminal for as long as its person may use the terminal: after the account is deleted
+or set to pending it answers 401, and after the terminal is unshared or switched off or the chat
+is deleted the terminal is not asked any more. The frame's origin is opaque, so these paths skip
 Open WebUI's own CORS answers and the terminal's reach the frame. The tab's three sockets (`ws`,
 `stream`, `vnc`) are relayed both ways, text and binary; any other name is refused, a terminal
 that refuses the socket ends it with 4004 (401, 403, 404) or 1011, and an open socket ends
@@ -26,12 +27,15 @@ socket-name test, an account not checked for its role the account test; resolvin
 without the token's chat fails the lost-access test (deleted chat) and the header test; running
 the app's CORS answers on view paths fails the CORS test; relaying any socket name fails the
 socket-name test; closing every refused socket with 1011 fails the 401, 403 and 404 cases; a
-re-check that never ends the relay fails the open-socket test. The close-code test is red on
-dev and passes with the terminal's 4xxx close code passed on to the page.
+re-check that never ends the relay fails the open-socket test, and so does opening a tab's
+socket as the admin (it opens again after the access is gone); asking the terminal for a frame
+or a socket without the cookies the tab was opened with fails the sign-in test. The close-code
+test is red on dev and passes with the terminal's 4xxx close code passed on to the page.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import uuid
@@ -134,9 +138,8 @@ def share_terminal(admin, preserve, terminal):
 
     def share(*people, **fields) -> dict:
         grants = [read_grant(person.id) for person in people]
-        connection = terminal.connection(
-            key=KEY, auth_type="bearer", config={"access_grants": grants}, **fields
-        )
+        settings = {"key": KEY, "auth_type": "bearer", **fields}
+        connection = terminal.connection(config={"access_grants": grants}, **settings)
         with admin.client() as client:
             configure_terminals(client, connection)
         return connection
@@ -290,6 +293,52 @@ def test_the_terminal_is_asked_as_the_tabs_person_with_only_the_frames_own_heade
         f"field={tag}".encode(),
         "application/x-www-form-urlencoded",
     ), f"the frame's form post reached the terminal as {form}"
+
+
+def test_a_frame_reaches_the_terminal_with_the_sign_in_its_tab_was_opened_with(
+    instance, make_user, share_terminal, terminal
+):
+    """A terminal that takes the person's own session and cookies gets both for the frame too."""
+    person = make_user()
+    tab_terminal = share_terminal(person, auth_type="session", forward_cookies=True)
+    tag = uuid.uuid4().hex[:8]
+    with person.client() as client:
+        chat_id = seed_chat(client, [{"role": "user", "content": "open the page"}])[0]
+        opened = client.post(
+            f"/api/v1/terminals/{tab_terminal['id']}/browser/sessions",
+            headers={"X-Session-Id": chat_id, "Cookie": f"sso=opened-{tag}"},
+            json={"url": "http://example.com/"},
+        )
+    assert opened.status_code == 200, f"opening the Browser tab failed: {opened.text}"
+    tab = Tab(tab_terminal["id"], opened.json()["id"], opened.json()["token"], chat_id, {})
+    terminal.clear()
+
+    with _signed_out(instance) as frame:
+        loaded = frame.get(
+            tab.view("frame/http/example.com/"), headers={"Cookie": f"sso=frame-{tag}"}
+        )
+    socket_url = instance.base_url.replace("http://", "ws://", 1) + tab.view("stream")
+    with connect(socket_url, proxy=None, open_timeout=10) as socket:
+        socket.send(FIRST_MESSAGE)
+        socket.send("ping")
+        echoed = socket.recv(timeout=10)
+
+    assert (loaded.status_code, loaded.text) == (200, _page(tab.id)), (
+        f"the tab's page did not load: {loaded.status_code} {loaded.text}"
+    )
+    [asked] = [entry for entry in terminal.received if entry.path.startswith("/browser/view/")]
+    [viewer] = terminal.sessions
+    assert echoed == "ping", f"the tab's socket did not relay: {echoed!r}"
+    signed_in = {
+        "page": (asked.headers.get("authorization"), asked.cookies.get("sso")),
+        "socket": (
+            viewer.headers.get("authorization"),
+            viewer.headers.get("cookie", "").partition("sso=")[2].split(";")[0],
+        ),
+    }
+    assert signed_in == dict.fromkeys(signed_in, (f"Bearer {person.token}", f"opened-{tag}")), (
+        f"the terminal was asked for the tab's frame with {signed_in}"
+    )
 
 
 def test_a_token_opens_only_its_own_tab_on_its_own_terminal(
@@ -601,6 +650,11 @@ def test_a_viewer_the_terminal_closes_ends_with_the_terminals_code(
     )
 
 
+def _terminal_side(terminal, tab: Tab) -> TerminalSession:
+    [session] = [entry for entry in terminal.sessions if entry.path == tab.upstream("stream")]
+    return session
+
+
 def _is_live(socket) -> bool:
     probe = f"probe-{uuid.uuid4().hex[:8]}"
     socket.send(probe)
@@ -619,11 +673,13 @@ def test_an_open_tab_socket_ends_once_its_person_lost_the_terminal_or_the_accoun
         "pending": (pending, _open_tab(pending, connection["id"])),
     }
     terminal.clear()
-    sockets = {
-        label: connect(_socket_url(person, tab, "stream"), proxy=None, open_timeout=10)
-        for label, (person, tab) in tabs.items()
-    }
-    try:
+    with contextlib.ExitStack() as opened:
+        sockets = {
+            label: opened.enter_context(
+                connect(_socket_url(person, tab, "stream"), proxy=None, open_timeout=10)
+            )
+            for label, (person, tab) in tabs.items()
+        }
         for socket in sockets.values():
             socket.send(FIRST_MESSAGE)
         live_before = {label: _is_live(socket) for label, socket in sockets.items()}
@@ -642,17 +698,23 @@ def test_an_open_tab_socket_ends_once_its_person_lost_the_terminal_or_the_accoun
         }
         kept_live = _is_live(sockets["kept"])
         left_on_terminal = {
-            label: next(
-                session for session in terminal.sessions if session.path == tab.upstream("stream")
-            ).ended.wait(timeout=5)
+            label: _terminal_side(terminal, tab).ended.wait(timeout=5)
             for label, (_, tab) in tabs.items()
             if label != "kept"
         }
-    finally:
-        for socket in sockets.values():
-            socket.close()
+        reopened = {}
+        for label in ("unshared", "pending"):
+            person, tab = tabs[label]
+            try:
+                with connect(_socket_url(person, tab, "stream"), proxy=None, open_timeout=10):
+                    reopened[label] = "opened"
+            except InvalidStatus as error:
+                reopened[label] = error.response.status_code
 
     assert live_before == dict.fromkeys(tabs, True), f"the sockets did not relay: {live_before}"
+    assert reopened == {"unshared": 403, "pending": 403}, (
+        f"a tab's socket opened again after its person lost access: {reopened}"
+    )
     assert ended == {"unshared": True, "pending": True}, (
         f"a tab's socket outlived its person's access for {RECHECK_BOUND_SECONDS} s: {ended}"
     )
