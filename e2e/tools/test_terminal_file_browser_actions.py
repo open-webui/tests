@@ -22,6 +22,9 @@ sides leaves the files where they were. The move, grid and Git tests pass on the
 build (three runs) and each fails on one frontend build of it with these mutations: dropping on a
 folder moving nothing, the view switch doing nothing, folders above a change left unmarked, and
 file change events no longer refreshing the Git status.
+The grid test is red on dev c15f28649 in most runs: the reload drops the terminal picked for the
+new chat (finding "issue: [regression] [dev] The terminal picked for a new chat is dropped when
+the page is reloaded").
 The rename test also pins PR open-webui/open-webui#33786 (fix 17579c522): the field losing focus
 right after Enter renamed the old path again and showed an error. It passes on dev e8c0ad85e and
 fails in a frontend copy with 17579c522 reverted (two moves are sent).
