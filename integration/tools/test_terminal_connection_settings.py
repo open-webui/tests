@@ -22,6 +22,13 @@ Discriminates: passes on dev 1c010b438; with a20b622ba's backend hunks reverted 
 the working-directory-off test and both `always` tests fail (the description names the folder; the
 shell tools are dropped). The default, `auto`, open-shell and AGENTS.md tests pass on both. On dev
 d22c4449c the `auto` tests turn red when the terminal's answer is ignored in a backend copy.
+
+A connection saved with nothing but its address and key, as an API client or an import may
+send it, is switched on, asked for `/openapi.json` and sent its key as bearer, and a field the
+form does not know is kept. On dev c15f28649 that test fails in backend copies where the
+form's default for Auth is `none` (no key reaches the terminal) and where the form ignores
+unknown fields (the extra field is gone); with the address check dropped from Verify
+Connection it fails on the answer for an empty address.
 """
 
 from __future__ import annotations
@@ -248,3 +255,56 @@ def test_a_personal_terminal_carries_its_user_shell_tools_setting(
     assert (SHELL_TOOLS <= offered) is (setting == "always"), (
         f"a personal terminal set to {setting!r} with its shell closed offered {sorted(offered)}"
     )
+
+
+def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_key_as_bearer(
+    admin, terminal
+):
+    connection_id = f"terminal-{uuid.uuid4().hex[:8]}"
+    key = f"key-{uuid.uuid4().hex[:8]}"
+    sent = {"id": connection_id, "url": terminal.base_url, "key": key, "region": "north"}
+    with admin.client() as client:
+        saved = client.post(
+            TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": [sent]}
+        )
+        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        menu = [entry["id"] for entry in client.get("/api/v1/terminals/").json()]
+        folder = client.get(f"/api/v1/terminals/{connection_id}/files/cwd")
+        without_address = client.post(
+            TERMINAL_SERVERS_CONFIG[1],
+            json={"TERMINAL_SERVER_CONNECTIONS": [{"id": connection_id, "key": key}]},
+        )
+        unverified = client.post(
+            "/api/v1/configs/terminal_servers/verify", json={"url": "", "key": key}
+        )
+        still_stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+
+    assert saved.status_code == 200, saved.text
+    expected = {
+        **sent,
+        "enabled": True,
+        "path": "/openapi.json",
+        "auth_type": "bearer",
+        "forward_cookies": False,
+    }
+    assert len(stored) == 1, f"one connection was saved, {len(stored)} are stored: {stored}"
+    assert {name: stored[0].get(name) for name in expected} == expected, (
+        f"the connection was not stored as sent, with the form's defaults: {stored}"
+    )
+    assert menu == [connection_id], f"the terminal menu shows {menu}"
+    assert folder.status_code == 200, folder.text
+    credentials = {
+        path: [request.headers.get("authorization") for request in terminal.requests_to(path)]
+        for path in ("/openapi.json", "/files/cwd")
+    }
+    assert credentials == {"/openapi.json": [f"Bearer {key}"], "/files/cwd": [f"Bearer {key}"]}, (
+        f"the terminal was asked for its tool list and its folder with {credentials}"
+    )
+    assert without_address.status_code == 422, (
+        f"a connection without an address was saved: {without_address.status_code}"
+    )
+    assert (unverified.status_code, unverified.json().get("detail")) == (
+        400,
+        "Terminal server URL is required",
+    ), f"Verify Connection without an address answered {unverified.status_code} {unverified.text}"
+    assert still_stored == stored, f"a refused save changed the connections: {still_stored}"
