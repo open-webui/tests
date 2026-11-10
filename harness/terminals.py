@@ -161,14 +161,33 @@ class Terminals:
         """The folder on this machine that the instance's container mounts as its home."""
         return self.data_dir / "terminals" / ".terminals" / instance_id
 
+    def read_file(self, instance_id: str, name: str) -> str | None:
+        """What the file `name` in the machine's home holds, or None without one.
+
+        Read inside the service's container: the machine's user owns its files, and one it
+        keeps to itself (an upload) cannot be read from here where that user is another.
+        """
+        ran = subprocess.run(
+            [
+                "docker",
+                "exec",
+                self.name,
+                "cat",
+                f"/app/data/terminals/.terminals/{instance_id}/{name}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        return ran.stdout if ran.returncode == 0 else None
+
     def holding(self, name: str) -> dict[str, str]:
         """What the file `name` in a machine's home holds, by the context of each that has it."""
-        homes = {machine["context_id"]: self.home(machine["id"]) for machine in self.instances()}
-        return {
-            context: (home / name).read_text()
-            for context, home in homes.items()
-            if (home / name).exists()
+        found = {
+            machine["context_id"]: self.read_file(machine["id"], name)
+            for machine in self.instances()
         }
+        return {context: content for context, content in found.items() if content is not None}
 
     def limits(self, instance_id: str) -> tuple[int, int]:
         """The memory in bytes and the CPUs in billionths Docker holds the machine to."""

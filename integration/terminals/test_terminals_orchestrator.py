@@ -173,19 +173,12 @@ def test_a_file_one_person_writes_is_not_in_another_persons_machine(
     assert name not in seen.split() and line not in seen, (
         f"the reader's machine shows the writer's file: {seen}"
     )
-    homes = {
-        machine["context_id"]: terminals.home(machine["id"]) for machine in terminals.instances()
-    }
-    assert set(homes) == {f"user:{writer.id}", f"user:{reader.id}"}, (
-        f"the two people did not get a machine each: {sorted(homes)}"
+    held = terminals.holding(name)
+    assert held == {f"user:{writer.id}": f"{line}\n"}, (
+        f"on disk the writer's file is in these machines' homes: {held}"
     )
-    writers_file = homes[f"user:{writer.id}"] / name
-    assert writers_file.read_text().strip() == line, (
-        f"the writer's file on disk holds {writers_file.read_text()!r}"
-    )
-    assert (homes[f"user:{reader.id}"] / own).exists(), "the reader's home is not where it is read"
-    assert not (homes[f"user:{reader.id}"] / name).exists(), (
-        "the writer's file is in the reader's home on disk"
+    assert set(terminals.holding(own)) == {f"user:{reader.id}"}, (
+        f"on disk the reader's own file is in these machines' homes: {terminals.holding(own)}"
     )
 
 

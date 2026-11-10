@@ -57,6 +57,6 @@ def test_the_model_runs_a_command_in_the_machine_of_the_terminal_a_person_picked
     assert [machine["context_id"] for machine in machines] == [f"user:{person.id}"], (
         f"the command did not start the person's own machine: {machines}"
     )
-    tide = terminals.home(machines[0]["id"]) / "tide.txt"
-    assert tide.exists(), "the command's file is not in the person's machine"
-    assert tide.read_text().strip() == f"high-{tag}", f"the file holds {tide.read_text()!r}"
+    tide = terminals.read_file(machines[0]["id"], "tide.txt")
+    assert tide is not None, "the command's file is not in the person's machine"
+    assert tide.strip() == f"high-{tag}", f"the command's file holds {tide!r}"
