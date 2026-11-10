@@ -11,16 +11,17 @@
 * `9a772f42c` and `09d4cccb7` (issue #26945): the terminal policy route `/p/<policy>` was built
   per call site and only for orchestrator connections, so a connection with a policy but another
   `server_type` reached the root route and the orchestrator started an unintended container.
-  `get_terminal_server_url` now builds it for any policy, as one encoded path segment.
-
-Twin of unit/tools/test_integration_surface.py.
+  Dev 6f2fc7bc7 replaced policies with templates and removed the policy route: a terminal of an
+  orchestrator is called by its template, and a call that names the orchestrator connection
+  itself is refused before anything reaches the orchestrator, a policy left over in the stored
+  connection or not.
 
 Discriminates: passes on dev bbfa876af; fails with the availability gate of `9a6d16849` removed
 (the three refused actions run), with `301bf519a`'s visited set dropped again (the server offers
-no tool, not even its ordinary operations), with `a9a3e5b95` reverted (the owned items are
-missing), with the orchestrator-only condition of `get_terminal_server_url` restored (the local
-and untyped policy connections reach the root route) and with the policy id unquoted (the
-escaping tests); every other test passes under each of these.
+no tool, not even its ordinary operations) and with `a9a3e5b95` reverted (the owned items are
+missing); every other test passes under each of these. On dev c15f28649, with the refusal of a
+call that names an orchestrator connection removed, the two orchestrator tests fail (the call
+arrives on the orchestrator's root route); the plain terminal and slash tests pass on both.
 """
 
 from __future__ import annotations
@@ -388,7 +389,7 @@ def test_the_preview_leaves_out_what_others_keep_to_themselves(admin, make_user,
     assert owned[kind] not in _listed(_preview(admin, make_user().id), kind)
 
 
-# --- 9a772f42c and 09d4cccb7: a policy routes through /p/<policy> ------------------------
+# --- 9a772f42c and 09d4cccb7, 6f2fc7bc7: an orchestrator is only called by a template ----
 
 
 @pytest.fixture
@@ -398,48 +399,47 @@ def terminal():
 
 
 @pytest.fixture
-def proxied_path(admin, preserve, terminal):
-    """`proxied_path(**connection)` is the path a GET for /x arrives at through that connection."""
+def proxied(admin, preserve, terminal):
+    """`proxied(**connection)` sends a GET for /x through that connection; returns the answer."""
     preserve(TERMINAL_SERVERS_CONFIG)
     client = admin.client()
 
-    def route(**fields) -> str:
+    def send(**fields):
         connection = terminal.connection(**fields)
         configure_terminals(client, connection)
         terminal.clear()
-        client.get(f"/api/v1/terminals/{connection['id']}/x")
-        return [request.path for request in terminal.received][-1]
+        return client.get(f"/api/v1/terminals/{connection['id']}/x")
 
-    yield route
+    yield send
     client.close()
 
 
-@pytest.mark.parametrize("server_type", ["orchestrator", "local", None])
-def test_a_policy_routes_through_its_policy_path_whatever_the_server_type(
-    proxied_path, server_type
-):
-    arrived_at = proxied_path(policy_id="pol1", server_type=server_type)
+@pytest.mark.parametrize("stored", [{}, {"policy_id": "pol1"}], ids=["plain", "old_policy"])
+def test_an_orchestrator_called_without_a_template_is_never_reached(proxied, terminal, stored):
+    answered = proxied(server_type="orchestrator", key="orchestrator-key", **stored)
 
-    assert arrived_at == "/p/pol1/x", (
-        f"a {server_type} connection with a policy reached {arrived_at}; the orchestrator starts "
-        "an unintended container on the root route (#26945)"
+    assert (answered.status_code, answered.json()) == (
+        409,
+        {"detail": "Select a terminal template"},
+    ), f"a call naming the orchestrator connection itself answered {answered.text}"
+    arrived_at = [request.path for request in terminal.received]
+    assert arrived_at == [], (
+        f"a call without a template reached the orchestrator at {arrived_at}, where it starts "
+        "an unintended container (#26945)"
     )
 
 
-@pytest.mark.parametrize(
-    "policy_id, segment", [("a/b", "a%2Fb"), ("a?b", "a%3Fb"), ("../root", "..%2Froot")]
-)
-def test_a_policy_id_is_one_encoded_path_segment(proxied_path, policy_id, segment):
-    assert proxied_path(policy_id=policy_id, server_type="orchestrator") == f"/p/{segment}/x"
+@pytest.mark.parametrize("server_type", ["local", None])
+def test_a_plain_terminal_is_called_on_its_root_route(proxied, terminal, server_type):
+    terminal.route("GET", "/x", json_answer({"reached": True}))
+
+    answered = proxied(server_type=server_type)
+
+    assert (answered.status_code, answered.json()) == (200, {"reached": True})
+    assert [request.path for request in terminal.received] == ["/x"]
 
 
-@pytest.mark.parametrize("policy_id", [None, "", "   "])
-def test_a_connection_without_a_policy_keeps_the_root_route(proxied_path, policy_id):
-    assert proxied_path(policy_id=policy_id, server_type="orchestrator") == "/x"
+def test_trailing_slashes_on_the_url_are_not_doubled(proxied, terminal):
+    proxied(url=f"{terminal.base_url}///")
 
-
-def test_trailing_slashes_on_the_url_are_not_doubled(proxied_path, terminal):
-    arrived_at = proxied_path(
-        url=f"{terminal.base_url}///", policy_id="pol1", server_type="orchestrator"
-    )
-    assert arrived_at == "/p/pol1/x"
+    assert [request.path for request in terminal.received] == ["/x"]
