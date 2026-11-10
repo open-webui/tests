@@ -4,10 +4,11 @@
 a tool round and the answer after it are one call. `attach` uploads a file through the chat
 input's menu and `attach_from_menu` attaches a knowledge base, note or chat from it.
 `choose_terminal` picks an Open Terminal for the chat before the first message, `pick_terminal`
-also opens its file browser (`open_files_tab` alone opens it again), and `open_new_terminal`
-opens a shell of it in the side panel; `chat_requests` is every streamed request the provider
-received, the ones the cache sees, and `this_turns_tool_results` what the model's own tool calls
-returned since the last question.
+also opens its file browser (`open_files_tab` alone opens it again), `open_new_terminal`
+opens a shell of it in the side panel and `open_terminal_options` opens a terminal's More options
+in the Terminal menu (System info, View files, Terminal settings); `chat_requests` is every
+streamed request the provider received, the ones the cache sees, and `this_turns_tool_results`
+what the model's own tool calls returned since the last question.
 """
 
 from __future__ import annotations
@@ -75,6 +76,20 @@ def choose_terminal(page: Page, name: str) -> None:
     expect(page.get_by_role("main").get_by_role("button", name=name, exact=True)).to_be_visible()
     # while the menu fades out, keys like the voice note's Esc are left to it
     expect(page.get_by_role("menu")).to_have_count(0)
+
+
+def open_terminal_options(page: Page, name: str) -> Locator:
+    """Open the Terminal menu and the More options of the terminal `name` in it; returns the
+    options menu."""
+    expect(chat_input(page)).to_be_visible()
+    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    menu = page.get_by_role("menu")
+    # the button shows once the pointer is on the terminal's row
+    menu.get_by_role("menuitemradio", name=name).hover()
+    more = menu.get_by_role("menuitem", name=f"More options for {name}")
+    more.click()
+    expect(more).to_have_attribute("aria-expanded", "true")
+    return page.get_by_role("menu").filter(has_not=more)
 
 
 def pick_terminal(page: Page, name: str) -> None:

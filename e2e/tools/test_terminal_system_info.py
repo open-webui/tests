@@ -1,8 +1,9 @@
 """Journey: the chat's Terminal menu opens a terminal's System Info with what the terminal reports.
 
 New on dev for 0.13.1 (7d4dda270, 36d049490, 8a8e42d17, d49756cf1, titled `refac`). Each terminal
-in the Terminal menu has a System info button that opens a window reading the terminal's
-`system/info` through the instance: host name, CPU, memory and disk use, cores and the busiest
+in the Terminal menu has a More options button whose menu holds System info (a button of its own
+on the row until f4cf2ca0c), which opens a window reading the terminal's `system/info` through
+the instance: host name, CPU, memory and disk use, cores and the busiest
 processes, its uptime and, folded under Network, each interface with its addresses. When the
 terminal cannot answer, the window says System info unavailable with the reason. A terminal
 that gives every chat its own environment offers no System info in a chat that is not saved yet,
@@ -19,6 +20,11 @@ whose window labels the uptime otherwise and lists no interface addresses.
 The per-chat test passes on the dev c15f28649 build and fails with the terminal list no longer
 telling the browser a terminal's scope, in a backend copy (More options, with System info, is
 offered before the chat is saved).
+Retargeted at the More options menu on dev c15f28649: both window tests were red there on the old
+button and pass again; with the instance answering 404 for `system/info` in a backend copy the
+reports test fails (the window says System info unavailable). The cannot-answer test has no
+backend mutation, a refusal being what it expects; the frontend proofs above still hold for it,
+the window being reached through the one System info entry.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from harness.terminals import create_template, share_template
+from utils.cached_chat import open_terminal_options
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.tooltips import tooltip_button
 
@@ -88,9 +95,8 @@ def _terminal_menu(page: Page) -> Locator:
 
 
 def _open_system_info(page: Page, name: str) -> Locator:
-    menu = _terminal_menu(page)
-    menu.get_by_role("menuitemradio", name=name).hover()
-    menu.get_by_role("menuitem", name=f"System info for {name}").click()
+    options = open_terminal_options(page, name)
+    options.get_by_role("menuitem", name="System info", exact=True).click()
     dialog = page.get_by_role("dialog", name=f"System info for {name}")
     expect(dialog).to_be_visible()
     return dialog
