@@ -287,7 +287,8 @@ def connect_terminals(admin: Actor, preserve, terminals) -> Callable[..., dict]:
 
     def connect(*grants: dict, **fields) -> dict:
         preserve(TERMINAL_SERVERS_CONFIG)
-        connection = terminals.connection(config={"access_grants": list(grants)}, **fields)
+        config = {**fields.pop("config", {}), "access_grants": list(grants)}
+        connection = terminals.connection(config=config, **fields)
         with admin.client() as client:
             configure_terminals(client, connection)
         return connection

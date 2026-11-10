@@ -161,6 +161,15 @@ class Terminals:
         """The folder on this machine that the instance's container mounts as its home."""
         return self.data_dir / "terminals" / ".terminals" / instance_id
 
+    def holding(self, name: str) -> dict[str, str]:
+        """What the file `name` in a machine's home holds, by the context of each that has it."""
+        homes = {machine["context_id"]: self.home(machine["id"]) for machine in self.instances()}
+        return {
+            context: (home / name).read_text()
+            for context, home in homes.items()
+            if (home / name).exists()
+        }
+
     def logs(self) -> str:
         """The service's log and each terminal container's, for a failure message."""
         parts = []
