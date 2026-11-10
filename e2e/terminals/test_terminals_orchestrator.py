@@ -22,8 +22,6 @@ import uuid
 import pytest
 
 from harness import upstream as reply
-from harness.terminal_server import read_grant
-from harness.terminals import create_template, share_template
 from harness.upstream import conversation
 from utils.cached_chat import ask, calling, choose_terminal
 
@@ -31,15 +29,12 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 
 def test_the_model_runs_a_command_in_the_machine_of_the_terminal_a_person_picked(
-    page_for, make_user, admin, connect_terminals, terminals, upstream
+    page_for, make_user, shared_terminal, terminals, upstream
 ):
     person = make_user()
     tag = uuid.uuid4().hex[:8]
     name = f"Workbench {tag}"
-    connection = connect_terminals(read_grant(person.id))
-    with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
-        share_template(client, terminal_id, read_grant(person.id))
+    shared_terminal(person, name=name)
     prompt = f"note the tide {tag}"
     command = f"echo high-{tag} > ~/tide.txt && cat ~/tide.txt"
 
@@ -62,4 +57,6 @@ def test_the_model_runs_a_command_in_the_machine_of_the_terminal_a_person_picked
     assert [machine["context_id"] for machine in machines] == [f"user:{person.id}"], (
         f"the command did not start the person's own machine: {machines}"
     )
-    assert (terminals.home(machines[0]["id"]) / "tide.txt").read_text().strip() == f"high-{tag}"
+    tide = terminals.home(machines[0]["id"]) / "tide.txt"
+    assert tide.exists(), "the command's file is not in the person's machine"
+    assert tide.read_text().strip() == f"high-{tag}", f"the file holds {tide.read_text()!r}"
