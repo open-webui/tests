@@ -319,6 +319,31 @@ def shared_terminal(admin: Actor, connect_terminals) -> Callable[..., str]:
 
 
 @pytest.fixture
+def connect_device(instance: LaunchedInstance) -> Generator[Callable[..., object], None, None]:
+    """`connect_device(account, **options)`: a fake Tether device of that account, connected with
+    a renewable session of its own (`device.session`) until the test ends. `on=` connects it to
+    another instance; the options are those of `harness.tether_device.tether_device`."""
+    from harness.tether_device import tether_device, tether_session
+
+    devices = []
+    with contextlib.ExitStack() as stack:
+
+        def connect(account: Actor, on: LaunchedInstance | None = None, **options):
+            target = on or instance
+            session = tether_session(target, account)
+            device = stack.enter_context(
+                tether_device(target.base_url, session["token"], **options)
+            )
+            device.session = session
+            devices.append(device)
+            return device
+
+        yield connect
+    failures = [failure for device in devices for failure in device.failures]
+    assert not failures, f"the fake device failed while serving: {failures!r}"
+
+
+@pytest.fixture
 def refuses_unknown_names(resolver: str) -> None:
     """Skips a c-ares test of a name that does not resolve where this machine's DNS server keeps
     c-ares from refusing one at once, naming the reason; the probe runs once per session."""
