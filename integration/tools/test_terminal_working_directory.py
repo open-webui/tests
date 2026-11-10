@@ -26,6 +26,9 @@ the user has no grant on answers as one that does not exist ("not found" where i
 denied"): it passes on dev c15f28649, and in a backend copy without the access checks in
 `find_terminal_connection` and `get_terminal_tools` the folder lends the terminal and the chat
 gets a reply.
+Since dev 6f2fc7bc7 a chat the server creates stores its terminal and working directory, the
+folder's where the folder lent them. In a backend copy of dev c15f28649 that stores neither, the
+chosen-directory, no-directory and folder-default tests fail.
 """
 
 from __future__ import annotations
@@ -129,6 +132,15 @@ def _session_cwd(actor, terminal_id: str, chat_id: str) -> str:
     return answer.json()["cwd"]
 
 
+def _kept_with_the_chat(actor, chat_id: str) -> tuple[str | None, str | None]:
+    """The terminal and the working directory stored on the chat."""
+    with actor.client() as client:
+        found = client.get(f"/api/v1/chats/{chat_id}")
+    assert found.status_code == 200, found.text
+    chat = found.json()["chat"]
+    return chat.get("terminal_id"), chat.get("working_directory")
+
+
 def _failed_reply(actor, **options) -> str:
     """The error a new chat's first reply ends in, as a reload shows it."""
     with actor.client() as client:
@@ -163,6 +175,9 @@ def test_a_new_chat_runs_the_models_commands_in_the_chosen_directory(
     assert _session_cwd(member, terminal_id, chat_id) == str(chosen), (
         "the chat's terminal session does not keep the chosen directory"
     )
+    assert _kept_with_the_chat(member, chat_id) == (terminal_id, str(chosen)), (
+        "the chat does not store the terminal and directory it was started with"
+    )
 
 
 def test_a_new_chat_without_a_directory_runs_in_the_terminals_own(
@@ -172,10 +187,13 @@ def test_a_new_chat_without_a_directory_runs_in_the_terminals_own(
         member, upstream, terminal_id=terminal_id, terminal_cwd=str(_directory(open_terminal))
     )
 
-    _, requests = _where_pwd_ran(member, upstream, terminal_id=terminal_id)
+    chat_id, requests = _where_pwd_ran(member, upstream, terminal_id=terminal_id)
 
     assert _ran_in(requests) == str(open_terminal.home), (
         "a chat with no directory chosen ran somewhere other than the terminal's home"
+    )
+    assert _kept_with_the_chat(member, chat_id) == (terminal_id, ""), (
+        "a chat with no directory chosen stores one, or not its terminal"
     )
 
 
@@ -221,10 +239,13 @@ def test_a_folder_chat_gets_the_folders_terminal_and_directory(
         member, {"terminal_id": terminal_id, "working_directory": str(default)}
     )
 
-    _, requests = _where_pwd_ran(member, upstream, folder_id=folder_id)
+    chat_id, requests = _where_pwd_ran(member, upstream, folder_id=folder_id)
 
     assert _ran_in(requests) == str(default), (
         "a new chat in the folder did not run in the folder's working directory"
+    )
+    assert _kept_with_the_chat(member, chat_id) == (terminal_id, str(default)), (
+        "the folder's chat does not store the folder's terminal and directory"
     )
 
 
