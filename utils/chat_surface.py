@@ -33,6 +33,7 @@ from harness.upstream import MOCK_MODEL_ID
 REPLY_TIMEOUT_MS = 30_000
 MAIN_CHAT = "main chat"
 SIDE_CHAT = "side chat"
+MAIN_PANEL_ID = "chat-panel-main-chat-view"
 NEW_TAB = re.compile(r"^New Chat \d+$")
 
 
@@ -77,13 +78,22 @@ class ChatSurface:
         """A button of the chat's panel: under a message or beside the message box."""
         return self.panel.get_by_role("button", name=name, exact=True)
 
-    def show(self) -> None:
-        """Select the chat's tab, so its panel is the one on screen in its group of tabs."""
-        if self.panel.is_visible():
-            return
+    @property
+    def tab(self) -> Locator:
+        """The chat's tab; its name is the chat's title."""
         label = self.panel.get_attribute("aria-labelledby")
         assert label, "the chat's panel names no tab"
-        self.page.locator(f"[id='{label}']").click()
+        return self.page.locator(f"[id='{label}']")
+
+    @property
+    def tab_bar(self) -> Locator:
+        """The bar holding the chat's tab, with the "Chat actions" menu of the chat it shows."""
+        return self.page.locator("[data-panel-tab-bar]").filter(has=self.tab)
+
+    def show(self) -> None:
+        """Select the chat's tab, which makes it the chat the address and a reload follow."""
+        # a panel in view can still be the unfocused one of two side by side
+        self.tab.click()
         expect(self.panel).to_be_visible()
 
     def send(self, text: str) -> None:
@@ -107,7 +117,12 @@ class ChatSurface:
 
 
 def main_chat(page: Page) -> ChatSurface:
-    return ChatSurface(page, page.locator("#chat-panel-main-chat-view"), MAIN_CHAT)
+    return ChatSurface(page, page.locator(f"#{MAIN_PANEL_ID}"), MAIN_CHAT)
+
+
+def surface_of(chat: Page | ChatSurface) -> ChatSurface:
+    """The chat a helper is handed: a page stands for the page's main chat."""
+    return chat if isinstance(chat, ChatSurface) else main_chat(chat)
 
 
 def _held(page: Page, panel: Locator, place: str = SIDE_CHAT) -> ChatSurface:
@@ -115,6 +130,7 @@ def _held(page: Page, panel: Locator, place: str = SIDE_CHAT) -> ChatSurface:
     expect(panel).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
     panel_id = panel.get_attribute("id")
     assert panel_id, "the tab's panel has no id to hold on to it by"
+    assert panel_id != MAIN_PANEL_ID, f"the {place} opened as the page's own chat, not in a tab"
     surface = ChatSurface(page, page.locator(f"[id='{panel_id}']"), place)
     expect(surface.input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     return surface
