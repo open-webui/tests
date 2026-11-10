@@ -13,7 +13,15 @@ their tabs, the active tab, the divider) is saved for its person on the server (
 it comes back after leaving the chat and returning, after a reload and in another browser, also
 when it was arranged before the first message; an admin opening the same chat gets the
 conversation alone. Layout changes made after the browser reports the network back are still
-saved.
+saved. Since da850248d a new chat started from a chat keeps that chat's tabs beside it and takes
+its place in the browser history, so the reload test returns to the chat through the sidebar
+(it went back in the browser before, and expected the new chat's conversation alone).
+
+`test_a_new_chat_started_beside_an_open_shell_sends_its_first_message` is red on dev c15f28649:
+with a shell of the saved chat among the kept tabs, the new chat's first message is never sent
+and the page says "Could not attach sessions to this chat" (finding "issue: [dev] The first
+message of a new chat is not sent while a shell tab from the previous chat is open", from
+da850248d). With only the Files tab kept the message is sent.
 
 The workspace shortcuts (80ddf8e3b) open Files (Ctrl+Shift+E), a shell (Ctrl+`), a new file
 (Ctrl+Alt+N) and a browser (Ctrl+Shift+B), step through a pane's tabs (Ctrl+Shift+] and [) and
@@ -103,6 +111,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.terminals import create_template, share_template
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.sidebar_chats import chat_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -285,6 +294,11 @@ def _answered_chat(page: Page, upstream, terminal: str) -> str:
     return page.url.rsplit("/", 1)[-1]
 
 
+def _open_from_sidebar(page: Page, title: str) -> None:
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    chat_row(page.get_by_role("navigation", name="Chat history"), title).click()
+
+
 def _saved_view(person, chat_id: str) -> dict | None:
     with person.client() as client:
         response = client.get(f"/api/v1/chats/{chat_id}/view")
@@ -436,19 +450,21 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     _wait_until(lambda: _layout_of(_saved_view(person, chat_id)) == held)
     assert _layout_of(_saved_view(person, chat_id)) == held, _saved_view(person, chat_id)
 
-    # leaving for a new chat and coming back brings the layout back too
+    # the sidebar row under the pointer previews the chat, so the reply is looked for in main
+    answer = page.get_by_role("main").get_by_text("Start at the lighthouse.")
+    # leaving for a new chat and coming back through the sidebar brings the layout back too
     page.keyboard.press("Control+Shift+O")
-    _expect_panes(page, [["New Chat"]])
-    page.go_back()
+    expect(page.get_by_role("tab", name="New Chat", exact=True)).to_be_visible()
+    expect(answer).to_have_count(0)
+    _open_from_sidebar(page, title)
+    expect(answer).to_be_visible()
     _expect_panes(page, layout)
     _selected(page, "Terminal 1")
     expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
 
     page.reload()
     # a reload is a cold load, which page_for would otherwise wait out
-    expect(page.get_by_text("Start at the lighthouse.")).to_be_visible(
-        timeout=config.navigation_timeout
-    )
+    expect(answer).to_be_visible(timeout=config.navigation_timeout)
     _expect_panes(page, layout)
     _selected(page, "Terminal 1")
     expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
@@ -463,6 +479,37 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     expect(overseer.get_by_text("Start at the lighthouse.")).to_be_visible()
     _expect_panes(overseer, [[title]])
     expect(_divider(overseer)).to_have_count(0)
+
+
+def test_a_new_chat_started_beside_an_open_shell_sends_its_first_message(
+    terminal_account, page_for, upstream
+):
+    """Red on dev c15f28649, finding "issue: [dev] The first message of a new chat is not sent
+    while a shell tab from the previous chat is open"."""
+    person, terminal = terminal_account
+    page = page_for(person)
+    _answered_chat(page, upstream, terminal)
+    # a shell opened in the saved chat
+    page.keyboard.press("Control+Backquote")
+    expect(page.get_by_role("tabpanel", name="Terminal 1")).to_be_visible()
+
+    page.keyboard.press("Control+Shift+O")
+    conversation = page.get_by_role("tab", name="New Chat", exact=True)
+    conversation.click()
+    expect(page.get_by_text("Start at the lighthouse.")).to_have_count(0)
+    question = f"where do the ferries leave {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("From the east pier.", match=reply.answering(question)))
+    send(page, question)
+
+    def asked() -> bool:
+        return any(map(reply.answering(question), upstream.chat_requests()))
+
+    _wait_until(asked)
+    assert asked(), (
+        "the new chat's first message never reached the model; the page says "
+        f"{page.get_by_role('alert').all_inner_texts()}"
+    )
+    expect_reply(page, "From the east pier.")
 
 
 def test_a_layout_arranged_before_the_first_message_is_kept_with_the_chat(
