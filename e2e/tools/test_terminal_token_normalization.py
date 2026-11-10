@@ -5,17 +5,20 @@ a user types for a terminal in their own settings can carry surrounding whitespa
 calls that terminal straight from the browser: HTTP calls send the key in the Authorization
 header, where a trailing space is dropped, so file listing worked; the terminal WebSocket sends
 it inside a JSON `auth` message the server compares exactly, so the shell showed
-"[Connection closed]". The fix trims the key in the WebSocket auth message and when the
-connection is saved, and the HTTP calls trim it too.
+"[Connection closed]". The fix trims the key in the WebSocket auth message and trimmed it when
+the connection was saved, and the HTTP calls trim it too. The dialog rebuilt in dev 6f2fc7bc7
+stores the key as typed, so what is left to pin is that the page trims it wherever it sends it.
 
 The terminal is the local fake from harness/terminal_server.py, answering the page across
-origins. A key saved before the fix, with spaces on both sides, must reach the WebSocket and the
-session request trimmed (a leading space survives in a header); a key typed with a trailing
-space into the Add Connection form is saved trimmed.
+origins. A key saved with spaces on both sides must reach the WebSocket and the session request
+trimmed (a leading space survives in a header); a key typed with a trailing space into the Add
+Terminal Connection form must still open the shell with the key alone.
 
 Discriminates: passes on the ef67cc3fa build; on a build with `.trim()` dropped from the
-WebSocket auth token the auth test fails, with it dropped from the Bearer header of the terminal
-requests the header test fails, and with the trim on save removed the settings test fails.
+WebSocket auth token the auth test fails, and with it dropped from the Bearer header of the
+terminal requests the header test fails. The typed key test reads the same auth message from a
+connection added through the form; on the dev c15f28649 build it passes, and it was red there
+while it asked for the stored key to be trimmed.
 """
 
 from __future__ import annotations
@@ -29,6 +32,12 @@ from harness.actors import Actor
 from harness.listener import json_answer
 from harness.terminal_server import FakeTerminalServer, serving_terminal
 from utils.cached_chat import open_new_terminal, pick_terminal
+from utils.terminal_connections import (
+    PERSONAL_SETTINGS,
+    fill_terminal,
+    save_terminal,
+    terminal_dialog,
+)
 from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -124,7 +133,7 @@ def test_every_request_to_the_terminal_carries_the_trimmed_key(opened_with_a_pad
     assert not untrimmed, f"these calls sent the terminal key untrimmed: {untrimmed} (#25613)"
 
 
-def test_a_key_typed_with_a_trailing_space_is_saved_trimmed(
+def test_a_key_typed_with_a_trailing_space_still_opens_the_shell(
     page_for, make_user, personal_terminal, direct_integrations
 ):
     direct_integrations(True)
@@ -136,18 +145,18 @@ def test_a_key_typed_with_a_trailing_space_is_saved_trimmed(
     settings.get_by_role("tab", name="Integrations").first.click()
     terminals = settings.get_by_role("heading", name="Open Terminal").locator("xpath=../..")
     terminals.get_by_role("button", name="Add Connection").click()
-
-    adding = page.get_by_role("dialog").filter(has_text="Add Terminal Connection")
-    adding.get_by_role("textbox", name="Name").fill(NAME)
-    adding.get_by_role("textbox", name="URL").fill(personal_terminal.base_url)
-    adding.get_by_placeholder("API Key").fill(f"{KEY} ")
-    with page.expect_response(
-        lambda response: response.url.endswith("/api/v1/users/user/settings/update")
-    ):
-        adding.get_by_role("button", name="Save").click()
-
+    adding = terminal_dialog(page)
+    fill_terminal(adding, NAME, personal_terminal.base_url, key=f"{KEY} ")
+    save_terminal(page, adding, saved_to=PERSONAL_SETTINGS)
     with account.client() as client:
         stored = client.get("/api/v1/users/user/settings").json()["ui"]["terminalServers"]
-    assert [terminal["key"] for terminal in stored] == [KEY], (
-        f"the key was saved as {[terminal['key'] for terminal in stored]} (#25613)"
+    assert [terminal["name"] for terminal in stored] == [NAME], stored
+    personal_terminal.clear()
+
+    open_terminal_shell(page)
+
+    auth = wait_for_session_auth(personal_terminal)
+    assert auth["token"] == KEY, (
+        f"the terminal WebSocket sent the typed key as {auth['token']!r}, so the terminal "
+        "refuses it and closes the session (#25613)"
     )

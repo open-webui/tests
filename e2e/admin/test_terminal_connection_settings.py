@@ -8,23 +8,36 @@ and reopening the connection shows them as saved. A connection saved without tou
 stores the defaults. integration/tools/test_terminal_connection_settings.py covers what each
 setting changes for the model.
 
-For a Terminals orchestrator the dialog also edits the connection's policy, and Save sends the
-policy back to the orchestrator, which replaces it whole. The dialog shows only some policy
-fields, so saving used to drop the rest (restricted mode, security contexts) and terminals then
-started without them (open-webui/open-webui#33580). Saving must keep every field the dialog does
-not show, untouched or with shown fields edited.
+A dialog shows only some of what is stored, and Save must keep the rest. For a Terminals
+orchestrator the connection dialog used to edit the connection's policy and dropped the policy
+fields it did not show (restricted mode, security contexts), so terminals started without them
+(open-webui/open-webui#33580). Dev 6f2fc7bc7 rebuilt the dialog and replaced policies with
+templates: the connection dialog edits the connection alone, and each terminal of an
+orchestrator has a Terminal settings dialog of its own in the chat input's Terminal menu, which
+shows its name, scope, image, limits, network and environment. The same must hold for both: a
+connection saved untouched is stored as it was, fields the dialog does not show included, and a
+terminal saved from its dialog, untouched or with a shown field edited, keeps the fields its
+dialog does not show (idle timeout, maximum lifetime). The terminal tests run on the real
+Terminals service (`harness.terminals`) and skip without Docker or its images.
 
-Discriminates: passes on dev 1c010b438 with its built frontend; on a build with a20b622ba (and the
-unrelated 7d205a86d) reverted the first two tests fail (the dialog has neither control and the
-connection is stored without them). The two policy tests pass with the #33580 fix and fail on dev
-f3ef8b949 (the saved policy lacks the fields the dialog does not show).
+The rebuilt connection dialog asks for an API key whatever Auth is set to, so a terminal that
+needs none (Auth set to None) cannot be saved without typing one; 0.13.3 showed no key field
+there. The test of that stays red until it is fixed (finding: `issue: [regression] [dev] A
+terminal connection with Auth set to None cannot be saved without an API key`).
+
+Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1, the Auth None test aside.
+The two settings tests and the untouched connection test fail in a backend copy that stores a
+connection without its `config` (the settings tests also failed on a build without a20b622ba,
+where the dialog has neither control). The two terminal tests fail in a backend copy whose
+template update clears every stored field the request does not name, as a whole replacement
+would (the idle timeout and lifetime are gone).
 """
 
 from __future__ import annotations
 
-import json
 import secrets
 from typing import Iterator
+from urllib.parse import unquote
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -33,36 +46,43 @@ from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     FakeTerminalServer,
-    TerminalRequest,
     configure_terminals,
     serving_terminal,
+)
+from harness.terminals import create_template
+from utils.chat_ui import chat_input
+from utils.terminal_connections import (
+    add_admin_terminal,
+    admin_terminal_section,
+    choose_terminal_auth,
+    fill_terminal,
+    save_terminal,
+    show_advanced,
+    terminal_dialog,
 )
 from utils.tool_servers import connection_row
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
+KEY = "build-box-key"
 SPEC = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
-# The dialog shows the first six fields; the rest are set in Terminals itself.
-STORED_POLICY = {
-    "image": "ghcr.io/open-webui/open-terminal:latest",
-    "cpu_limit": "2",
-    "memory_limit": "2Gi",
-    "storage": "10Gi",
-    "idle_timeout_minutes": 45,
-    "env": {"TZ": "Europe/Vienna"},
-    "restricted": True,
-    "storage_mode": "per-user",
-    "pod_security_context": {"runAsNonRoot": True, "runAsUser": 1000},
-    "container_security_context": {"allowPrivilegeEscalation": False},
+# The Terminal settings dialog shows none of these; they are set in Terminals itself.
+UNSHOWN_TEMPLATE_FIELDS = {"idle_timeout_minutes": 45, "max_lifetime_minutes": 600}
+SHOWN_TEMPLATE_FIELDS = {
+    "scope": "user",
+    "cpu_limit": "1",
+    "memory_limit": "512Mi",
+    "env": {"TZ": "UTC", "OPEN_TERMINAL_START_DIR": "work"},
 }
-STORED_LIFECYCLE = {"max_lifetime_minutes": 600}
 
 
 @pytest.fixture
 def terminal() -> Iterator[FakeTerminalServer]:
     with serving_terminal() as server:
         server.route("GET", "/openapi.json", json_answer(SPEC))
+        # Save asks the server what it is before it stores the connection
+        server.route("GET", "/api/config", json_answer({"features": {}}))
         yield server
 
 
@@ -72,56 +92,17 @@ def admin_account(make_user, preserve):
     return make_user(role="admin")
 
 
-def terminal_section(page: Page) -> Locator:
-    page.goto("/admin/settings/integrations")
-    heading = page.get_by_role("dialog").get_by_text("Open Terminal", exact=True)
-    expect(heading).to_be_visible()
-    return heading.locator("xpath=../..")
-
-
-def open_add_dialog(page: Page) -> Locator:
-    tooltip_button(terminal_section(page), "Add Connection").click()
-    return terminal_dialog(page, "Add Terminal Connection")
-
-
-def terminal_dialog(page: Page, title: str) -> Locator:
-    dialog = page.get_by_role("dialog").filter(has_text=title)
-    expect(dialog).to_be_visible()
-    return dialog
-
-
-def show_advanced(dialog: Locator) -> None:
-    dialog.get_by_role("button", name="Advanced", exact=True).click()
-    expect(dialog.get_by_label("User Shell Tools")).to_be_visible()
-
-
-def fill_and_save(page: Page, dialog: Locator, name: str, url: str) -> None:
-    dialog.get_by_label("Name", exact=True).fill(name)
-    dialog.get_by_label("URL", exact=True).fill(url)
-    save(page, dialog)
-
-
-def save(page: Page, dialog: Locator) -> None:
-    with page.expect_response(
-        lambda response: (
-            response.url.endswith(TERMINAL_SERVERS_CONFIG[1]) and response.request.method == "POST"
-        )
-    ) as saved:
-        dialog.get_by_role("button", name="Save", exact=True).click()
-    assert saved.value.ok, saved.value.text()
-
-
-def stored_config(admin_account, name: str) -> dict:
+def stored_connection(admin_account, name: str) -> dict:
     with admin_account.client() as client:
         connections = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
     [connection] = [entry for entry in connections if entry.get("name") == name]
-    return connection.get("config") or {}
+    return connection
 
 
 def test_both_settings_are_saved_and_shown_again(page_for, admin_account, terminal):
     page = page_for(admin_account)
     name = f"Build box {secrets.token_hex(3)}"
-    dialog = open_add_dialog(page)
+    dialog = add_admin_terminal(page)
     show_advanced(dialog)
     working_directory = dialog.get_by_role("switch", name="Working Directory Context")
     expect(working_directory).to_be_checked()
@@ -130,13 +111,14 @@ def test_both_settings_are_saved_and_shown_again(page_for, admin_account, termin
     dialog.get_by_label("User Shell Tools").select_option(label="Always Include")
     expect(dialog.get_by_text("Keep tools listed even while your shell is closed.")).to_be_visible()
 
-    fill_and_save(page, dialog, name, terminal.base_url)
+    fill_terminal(dialog, name, terminal.base_url, key=KEY)
+    save_terminal(page, dialog)
 
-    config = stored_config(admin_account, name)
+    config = stored_connection(admin_account, name).get("config") or {}
     assert config.get("working_directory_context") is False, config
     assert config.get("user_shell_tools") == "always", config
 
-    section = terminal_section(page)
+    section = admin_terminal_section(page)
     tooltip_button(connection_row(section, name), "Configure").click()
     reopened = terminal_dialog(page, "Edit Terminal Connection")
     show_advanced(reopened)
@@ -147,75 +129,141 @@ def test_both_settings_are_saved_and_shown_again(page_for, admin_account, termin
 def test_a_connection_saved_untouched_stores_the_defaults(page_for, admin_account, terminal):
     page = page_for(admin_account)
     name = f"Build box {secrets.token_hex(3)}"
-    dialog = open_add_dialog(page)
+    dialog = add_admin_terminal(page)
     show_advanced(dialog)
     expect(dialog.get_by_role("switch", name="Working Directory Context")).to_be_checked()
     expect(dialog.get_by_label("User Shell Tools")).to_have_value("auto")
 
-    fill_and_save(page, dialog, name, terminal.base_url)
+    fill_terminal(dialog, name, terminal.base_url, key=KEY)
+    save_terminal(page, dialog)
 
-    config = stored_config(admin_account, name)
+    config = stored_connection(admin_account, name).get("config") or {}
     assert config.get("working_directory_context") is True, config
     assert config.get("user_shell_tools") == "auto", config
 
 
-def serve_policy(terminal: FakeTerminalServer, policy_id: str) -> str:
-    """Serve `policy_id`'s policy and lifecycle as an orchestrator does; returns the policy path."""
-    path = f"/api/v1/policies/{policy_id}"
-
-    def echo(request: TerminalRequest):
-        return json_answer({"id": policy_id, "data": json.loads(request.body)})
-
-    terminal.route("GET", path, json_answer({"id": policy_id, "data": STORED_POLICY}))
-    terminal.route("PUT", path, echo)
-    terminal.route("GET", f"{path}/lifecycle", json_answer({"data": STORED_LIFECYCLE}))
-    terminal.route("PUT", f"{path}/lifecycle", echo)
-    return path
-
-
-def open_orchestrator(page_for, admin_account, terminal) -> tuple[Page, Locator, str]:
-    """Save an orchestrator connection and open it in the Edit dialog with its policy loaded."""
-    name = f"Orchestrator {secrets.token_hex(3)}"
-    policy_id = f"policy-{secrets.token_hex(3)}"
-    policy_path = serve_policy(terminal, policy_id)
-    with admin_account.client() as client:
-        configure_terminals(
-            client, terminal.connection(name=name, server_type="orchestrator", policy_id=policy_id)
-        )
-    page = page_for(admin_account)
-    tooltip_button(connection_row(terminal_section(page), name), "Configure").click()
-    dialog = terminal_dialog(page, "Edit Terminal Connection")
-    dialog.get_by_role("button", name="Orchestrator", exact=True).click()
-    expect(dialog.get_by_label("Image")).to_have_value(STORED_POLICY["image"])
-    return page, dialog, policy_path
-
-
-def sent_to(terminal: FakeTerminalServer, path: str) -> dict:
-    [put] = [request for request in terminal.requests_to(path) if request.method == "PUT"]
-    return json.loads(put.body)
-
-
-def test_saving_an_orchestrator_untouched_keeps_its_whole_policy(page_for, admin_account, terminal):
-    page, dialog, policy_path = open_orchestrator(page_for, admin_account, terminal)
-
-    save(page, dialog)
-
-    policy = sent_to(terminal, policy_path)
-    assert policy == STORED_POLICY, f"saving the untouched dialog changed the policy to {policy}"
-    lifecycle = sent_to(terminal, f"{policy_path}/lifecycle")
-    assert lifecycle == STORED_LIFECYCLE, f"saving changed the lifecycle to {lifecycle}"
-
-
-def test_editing_policy_fields_keeps_the_fields_the_dialog_does_not_show(
+def test_a_terminal_without_authentication_is_saved_without_a_key(
     page_for, admin_account, terminal
 ):
-    page, dialog, policy_path = open_orchestrator(page_for, admin_account, terminal)
-    dialog.get_by_label("CPU", exact=True).fill("4")
-    dialog.get_by_label("Storage", exact=True).select_option(label="Ephemeral")
-    expect(dialog.get_by_label("Size", exact=True)).to_be_hidden()
+    """Red on dev c15f28649, where the API Key field must be filled in whatever Auth is set to:
+    `issue: [regression] [dev] A terminal connection with Auth set to None cannot be saved
+    without an API key`."""
+    page = page_for(admin_account)
+    name = f"Open box {secrets.token_hex(3)}"
+    dialog = add_admin_terminal(page)
+    choose_terminal_auth(dialog, "None")
+    expect(dialog.get_by_text("No authentication", exact=True)).to_be_visible()
 
-    save(page, dialog)
+    fill_terminal(dialog, name, terminal.base_url)
+    save_terminal(page, dialog)
 
-    policy = sent_to(terminal, policy_path)
-    expected = {key: value for key, value in STORED_POLICY.items() if key != "storage"}
-    assert policy == {**expected, "cpu_limit": "4"}, f"the edited policy was saved as {policy}"
+    stored = stored_connection(admin_account, name)
+    assert (stored["auth_type"], stored["key"]) == ("none", ""), stored
+
+
+def test_saving_a_stored_connection_untouched_keeps_everything_stored(
+    page_for, admin_account, terminal
+):
+    name = f"Build box {secrets.token_hex(3)}"
+    # the dialog shows neither the list's switch nor a config entry it does not know
+    stored = terminal.connection(
+        name=name,
+        enabled=False,
+        key=KEY,
+        auth_type="session",
+        forward_cookies=True,
+        server_type="terminal",
+        config={
+            "access_grants": [],
+            "chat_uploads": "default",
+            "working_directory_context": False,
+            "user_shell_tools": "always",
+            "label": "set over the API",
+        },
+    )
+    with admin_account.client() as client:
+        configure_terminals(client, stored)
+    page = page_for(admin_account)
+    tooltip_button(connection_row(admin_terminal_section(page), name), "Configure").click()
+    dialog = terminal_dialog(page, "Edit Terminal Connection")
+    expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
+
+    save_terminal(page, dialog)
+
+    saved = stored_connection(admin_account, name)
+    changed = {
+        field: (stored.get(field), saved.get(field))
+        for field in stored.keys() | saved.keys()
+        if stored.get(field) != saved.get(field)
+    }
+    assert not changed, f"saving the untouched dialog changed (stored, saved): {changed}"
+
+
+def open_terminal_settings(page: Page, name: str) -> Locator:
+    """Open the Terminal settings of the terminal `name` from the chat input's Terminal menu."""
+    expect(chat_input(page)).to_be_visible()
+    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    menu = page.get_by_role("menu")
+    row = menu.get_by_role("menuitemradio", name=name)
+    expect(row).to_be_visible()
+    # the row's More button shows on hover
+    row.hover()
+    menu.get_by_role("menuitem", name=f"More options for {name}").click()
+    page.get_by_role("menuitem", name="Terminal settings", exact=True).click()
+    dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=name))
+    expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
+    return dialog
+
+
+def save_terminal_settings(page: Page, dialog: Locator, terminal_id: str) -> None:
+    def updates_it(response) -> bool:
+        return response.request.method == "PATCH" and unquote(response.url).endswith(
+            f"/api/v1/terminals/templates/{terminal_id}"
+        )
+
+    with page.expect_response(updates_it) as saved:
+        dialog.get_by_role("button", name="Save", exact=True).click()
+    assert saved.value.ok, saved.value.text()
+    expect(dialog).to_be_hidden()
+
+
+@pytest.fixture
+def terminal_settings(page_for, admin_account, connect_terminals, terminals):
+    """A terminal of the orchestrator holding fields its dialog does not show, opened in its
+    Terminal settings dialog; yields (page, dialog, terminal id, what the orchestrator stores)."""
+    name = f"Workbench {secrets.token_hex(3)}"
+    connection = connect_terminals()
+    with admin_account.client() as client:
+        created = create_template(
+            client, connection, name=name, **SHOWN_TEMPLATE_FIELDS, **UNSHOWN_TEMPLATE_FIELDS
+        )
+    [template] = terminals.templates()
+    assert template["data"].items() >= UNSHOWN_TEMPLATE_FIELDS.items(), (
+        f"the orchestrator did not store the fields the dialog does not show: {template}"
+    )
+    page = page_for(admin_account)
+    return page, open_terminal_settings(page, name), created["terminal_id"], template["data"]
+
+
+def test_saving_a_terminal_untouched_keeps_everything_stored(terminal_settings, terminals):
+    page, dialog, terminal_id, stored = terminal_settings
+
+    save_terminal_settings(page, dialog, terminal_id)
+
+    [template] = terminals.templates()
+    assert template["data"] == stored, (
+        f"saving the untouched Terminal settings changed the terminal to {template['data']}"
+    )
+
+
+def test_editing_a_terminal_keeps_the_fields_its_dialog_does_not_show(terminal_settings, terminals):
+    page, dialog, terminal_id, stored = terminal_settings
+    dialog.get_by_role("button", name="Advanced").click()
+    dialog.get_by_label("CPU", exact=True).fill("0.5")
+
+    save_terminal_settings(page, dialog, terminal_id)
+
+    [template] = terminals.templates()
+    assert template["data"] == {**stored, "cpu_limit": "0.5"}, (
+        f"the edited terminal was saved as {template['data']}"
+    )

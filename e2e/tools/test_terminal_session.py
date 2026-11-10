@@ -1,12 +1,13 @@
 """Journey: a terminal the admin connects under Integrations opens a live shell from a chat.
 
-A fresh admin adds a terminal connection to a local fake terminal server in the admin settings
-and switches it on, each change saving by itself; it is still there, on, when the tab is opened
-again. In a chat the admin picks the terminal from the input's Terminal menu, which opens its
-file browser, and opens a New Terminal tab beside it. The page opens a session through the
-instance's proxy, and what is typed reaches the fake shell and comes back on screen. The page
-runs without WebGL, so the terminal keeps its fallback text rows (f789a0742 draws on a WebGL
-canvas where it can), the only screen a test can read.
+A fresh admin adds a terminal connection to a local fake terminal server in the admin settings,
+with its API key, and it is on from the start (since dev 6f2fc7bc7; before, it had to be
+switched on). Switching it off and on again saves each change by itself; it is still there, on,
+when the tab is opened again. In a chat the admin picks the terminal from the input's Terminal
+menu, which opens its file browser, and opens a New Terminal tab beside it. The page opens a
+session through the instance's proxy, and what is typed reaches the fake shell and comes back on
+screen. The page runs without WebGL, so the terminal keeps its fallback text rows (f789a0742
+draws on a WebGL canvas where it can), the only screen a test can read.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the terminal WebSocket proxy
 dropping what the browser sends the typed command never reaches the shell and nothing comes
@@ -34,6 +35,7 @@ from harness.terminal_server import (
 )
 from utils.cached_chat import open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input
+from utils.terminal_connections import fill_terminal, save_terminal, terminal_dialog
 from utils.tooltips import tooltip_button
 from utils.user_menu import open_settings
 
@@ -96,15 +98,15 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
     section = _terminal_section(page)
     expect(section.get_by_text("No terminal connections configured")).to_be_visible()
     tooltip_button(section, "Add Connection").click()
-    adding = page.get_by_role("dialog").filter(has_text="Add Terminal Connection")
-    adding.get_by_role("textbox", name="Name").fill(NAME)
-    adding.get_by_role("textbox", name="URL").fill(fake_terminal.base_url)
-    adding.get_by_role("combobox").last.select_option(label="None")
-    with page.expect_response(_saves_terminals):
-        adding.get_by_role("button", name="Save").click()
+    adding = terminal_dialog(page)
+    fill_terminal(adding, NAME, fake_terminal.base_url, key="lab-shell-key")
+    save_terminal(page, adding)
     expect(section.get_by_text(NAME)).to_be_visible()
-    with page.expect_response(_saves_terminals):
-        section.get_by_role("switch").click()
+    # a new connection is on from the start (6f2fc7bc7); off and on again each save by themselves
+    for state in (False, True):
+        with page.expect_response(_saves_terminals):
+            section.get_by_role("switch").click()
+        expect(section.get_by_role("switch")).to_be_checked(checked=state)
 
     section = _terminal_section(page)
     expect(section.get_by_text(NAME)).to_be_visible()
