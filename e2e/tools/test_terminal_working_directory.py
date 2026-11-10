@@ -12,7 +12,9 @@ first message with a "Working directory is unavailable" toast before the model i
 21da7627b the page opens the directory itself; the reply carried the error before). A model's
 editor also offers a Default terminal, which a new chat on the model starts with. The recently
 used folders are kept per person on the terminal, so another person on it sees none of them,
-and the menu's search narrows them by name. Since a9478213a the picker clones a Git repository
+and the menu's search narrows them by name. Since 77d3d1c31 each recent folder's row also has
+an Open folder button that shows the folder in Files, so the menu entry that opens the picker is
+found by the words it shows. Since a9478213a the picker clones a Git repository
 from an HTTP(S) or SSH address into the folder it shows and uses the clone as the directory; an
 address of another kind and a repository that cannot be cloned show the reason. A personal
 terminal, one the person added in their own settings, is reached by the browser only, so the
@@ -37,6 +39,13 @@ On a copy of the dev e8c0ad85e build: recent folders kept for all people alike, 
 bad option and the clone error replaced by a fixed text turn the per-person, clone and both clone
 error tests red; on a second copy, the menu search matching every folder and file:// addresses let
 through turn the per-person and not-HTTP tests red.
+
+On dev c15f28649 the recent-folder test passes again and fails on a backend copy whose terminal
+proxy refuses to write files (no picked folder is kept).
+
+`test_a_models_default_terminal_is_picked_for_its_new_chats` is red on dev c15f28649: the model is
+saved, then the editor asks "Discard unsaved changes?" and stays open (finding "issue: [dev]
+Saving a model asks "Discard unsaved changes?" right after the save", from da850248d).
 
 Gap (strict xfail, not a bug in what exists): a folder's Default terminal lists only admin
 terminals, so a person cannot make their own terminal a folder's default.
@@ -124,10 +133,17 @@ def pick_in_picker(dialog: Locator, folder: Path) -> None:
     expect(dialog).to_have_count(0)
 
 
-def choose_directory(page: Page, folder: Path) -> None:
+def open_folder_picker(page: Page) -> Locator:
+    """Open the working directory menu and its Open folder entry; returns the picker."""
     directory_button(page).click()
-    page.get_by_role("menuitem", name="Open folder").click()
-    pick_in_picker(page.get_by_role("dialog", name="Choose working directory"), folder)
+    # each recent folder's row has an Open folder button too; the picker's entry shows the words
+    entries = page.get_by_role("menu").get_by_role("menuitem")
+    entries.filter(has=page.get_by_text("Open folder", exact=True)).click()
+    return page.get_by_role("dialog", name="Choose working directory")
+
+
+def choose_directory(page: Page, folder: Path) -> None:
+    pick_in_picker(open_folder_picker(page), folder)
     expect(directory_button(page)).to_contain_text(folder.name)
 
 
@@ -500,9 +516,7 @@ def git_server():
 
 
 def open_picker_in(page: Page, folder: Path) -> Locator:
-    directory_button(page).click()
-    page.get_by_role("menuitem", name="Open folder").click()
-    dialog = page.get_by_role("dialog", name="Choose working directory")
+    dialog = open_folder_picker(page)
     dialog.get_by_text(folder.name, exact=True).click()
     expect(dialog.get_by_text("charts", exact=True)).to_be_visible()
     return dialog
