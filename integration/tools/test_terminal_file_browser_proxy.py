@@ -4,11 +4,15 @@ The file browser in a chat changes files through the terminal proxy: Save upload
 into its folder, dragging a file onto a folder moves it, and Delete removes it. A person with a
 grant on the connection does each of these the way the browser does and the Open Terminal's disk
 changes to match, a saved workbook of several megabytes arriving byte for byte. A person without
-a grant gets 403 for each, and the disk stays as it was.
+a grant is told the terminal does not exist for each (404 since the terminal rework on dev,
+6f2fc7bc7; 403 before it), and the disk stays as it was.
 
 Discriminates: passes on dev f659c0d12 (three runs). In a backend copy whose terminal proxy
 forwards an empty body and skips its access check, every test here fails: the save and move tests
 get 422 from the terminal (nothing written or moved), and the stranger's delete goes through.
+Retargeted for 6f2fc7bc7: passes on dev c15f28649, and in a backend copy whose
+`find_terminal_connection` drops its access check the stranger's save, move and delete answer
+200 and the file is gone.
 """
 
 from __future__ import annotations
@@ -131,6 +135,10 @@ def test_a_person_without_a_grant_changes_no_file(granted, make_user, open_termi
         }
 
     refused = {action: answer.status_code for action, answer in answers.items()}
-    assert refused == {"save": 403, "move": 403, "delete": 403}, f"the stranger got {refused}"
+    assert refused == {"save": 404, "move": 404, "delete": 404}, f"the stranger got {refused}"
+    not_found = {"error": f"Terminal server '{connection['id']}' not found"}
+    assert all(answer.json() == not_found for answer in answers.values()), (
+        f"the refusals read {[answer.text for answer in answers.values()]}"
+    )
     assert kept.read_text() == "original\n", f"the file now reads {kept.read_text()!r}"
     assert not (folder / kept.name).exists(), "the stranger's move went through"

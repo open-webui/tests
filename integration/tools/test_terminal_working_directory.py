@@ -21,6 +21,11 @@ up without the write check turns the reader and stranger rows red; `not requeste
 place of `is None` (834c47ee0 undone) turns the "No folder" test red; applying the directory on
 every message turns the later-message test red; dropping the type check turns the not-a-path test
 red; applying the folder's directory to any terminal turns the other-terminal test red.
+The refused-terminal test was retargeted for the terminal rework (6f2fc7bc7), where a terminal
+the user has no grant on answers as one that does not exist ("not found" where it said "Access
+denied"): it passes on dev c15f28649, and in a backend copy without the access checks in
+`find_terminal_connection` and `get_terminal_tools` the folder lends the terminal and the chat
+gets a reply.
 """
 
 from __future__ import annotations
@@ -299,7 +304,8 @@ def test_a_folder_default_terminal_the_user_may_not_use_is_refused(
     plain_error = _failed_reply(member, folder_id=plain)
     directory_error = _failed_reply(member, folder_id=with_directory)
 
-    assert "Access denied" in plain_error, f"the folder lent a terminal: {plain_error}"
+    not_found = f"Terminal unavailable: Terminal server '{private['id']}' not found"
+    assert not_found in plain_error, f"the folder lent a terminal: {plain_error}"
     assert UNAVAILABLE in directory_error, directory_error
     assert len(upstream.chat_requests()) == before, "the model was asked with that terminal"
 

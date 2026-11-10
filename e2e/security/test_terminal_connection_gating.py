@@ -4,8 +4,10 @@ Fix `753798923` (0.11.0) refused a disabled terminal connection on every entry p
 resolves one by id, where before only the list had hidden it. A user chats with a terminal picked
 from the chat input's Terminal menu; the admin then switches it off through a config import, which
 saves the connection without rebuilding the terminal list cached in Redis. The user's next message
-in that chat still names the terminal, and the reply shows that it is disabled instead of the
-model being offered its tools.
+in that chat still names the terminal, and the reply shows that the terminal is unavailable
+instead of the model being offered its tools. Since the terminal rework on dev (6f2fc7bc7) a
+switched-off terminal answers as one that does not exist, so the reply reads "Terminal
+unavailable: Terminal server '<id>' not found" where it said "is disabled" before.
 
 Since 21da7627b the page opens a new chat's working directory on the terminal before the first
 message is sent, and a terminal that refuses ends the send with a toast before the model is
@@ -16,6 +18,9 @@ Discriminates: passes on dev ef67cc3fa with its built frontend; with the `enable
 from `get_terminal_tools` in a backend copy the model is offered the terminal's tools and the
 reply shows no error. Retargeted for 21da7627b: passes on dev a072aaf31 with its build, and with
 the same check removed there the message after the switch-off is answered with no refusal.
+Retargeted for 6f2fc7bc7: passes on dev c15f28649 with its build, and in a backend copy whose
+`find_terminal_connection` and `get_terminal_tools` drop their `enabled` checks the second
+message is answered "ready" with no refusal.
 """
 
 from __future__ import annotations
@@ -102,7 +107,8 @@ def test_a_terminal_switched_off_mid_chat_offers_no_tools(page_for, cached_insta
 
         cached_instance.upstream.queue(reply.text("ready", match=reply.answering(SECOND_PROMPT)))
         send(page, SECOND_PROMPT)
-        expect(conversation(page).get_by_text("is disabled")).to_be_visible()
+        refusal = re.compile(r"Terminal unavailable: Terminal server '.+' not found")
+        expect(conversation(page).get_by_text(refusal)).to_be_visible()
 
     def offered(prompt: str) -> list[str]:
         return [

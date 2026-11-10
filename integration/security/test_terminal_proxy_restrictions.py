@@ -7,7 +7,9 @@ so that `.<TAB>.` turns into `..`. The fix refuses those paths relative to the c
 stops following redirects and adds tab, CR and LF to the sanitizer's refusals (LF never matches
 the route). `a1189a2d7`: an interactive terminal session checked access once, at the handshake,
 so demoting the user or switching off or removing the connection left the open shell running;
-a watchdog now re-checks every 10 seconds and closes the session. Twin of
+a watchdog now re-checks every 10 seconds and closes the session. Since the terminal rework on
+dev (6f2fc7bc7) a terminal that is switched off or no longer granted closes the session as one
+that was removed does, with 4004, where it closed with 4003 before. Twin of
 unit/security/test_terminal_proxy_restrictions.py.
 
 Since dev 6f2fc7bc7 a terminal of a Terminals orchestrator is a template, and its proxy sends
@@ -22,7 +24,9 @@ redirect test fails (the redirect target is fetched), with tab, CR and LF droppe
 sanitizer the tab and CR tests fail, and without the watchdog task the revoked sessions stay
 open past the bound. On dev c15f28649 with Terminals 0.4.1, `api/v1/terminals` taken out of
 ADMIN_API_PATHS turns the shared terminal test red (the call goes out under the orchestrator's
-key, and only Terminals' own refusal of a call made for a user stops it).
+key, and only Terminals' own refusal of a call made for a user stops it). The open-session test
+was retargeted for 6f2fc7bc7: it passes on dev c15f28649, and in a backend copy whose terminal
+WebSocket starts no `_watch_access` task the four revoked sessions stay open.
 """
 
 from __future__ import annotations
@@ -167,8 +171,8 @@ def _granted_to(*actors) -> dict:
 
 def test_open_sessions_end_once_access_is_revoked(admin, preserve, make_user, terminal):
     preserve(TERMINAL_SERVERS_CONFIG)
-    kept, demoted, switched_off, removed = (make_user() for _ in range(4))
-    shared = terminal.connection(config=_granted_to(kept, demoted))
+    kept, demoted, ungranted, switched_off, removed = (make_user() for _ in range(5))
+    shared = terminal.connection(config=_granted_to(kept, demoted, ungranted))
     retiring = terminal.connection(config=_granted_to(switched_off))
     deleting = terminal.connection(config=_granted_to(removed))
     with admin.client() as client:
@@ -181,6 +185,7 @@ def test_open_sessions_end_once_access_is_revoked(admin, preserve, make_user, te
             for label, actor, target in [
                 ("kept", kept, shared),
                 ("demoted", demoted, shared),
+                ("ungranted", ungranted, shared),
                 ("switched off", switched_off, retiring),
                 ("removed", removed, deleting),
             ]
@@ -188,23 +193,25 @@ def test_open_sessions_end_once_access_is_revoked(admin, preserve, make_user, te
         assert all(_is_live(session) for session in sessions.values())
 
         with admin.client() as client:
-            configure_terminals(client, shared, {**retiring, "enabled": False})
+            still_shared = {**shared, "config": _granted_to(kept, demoted)}
+            configure_terminals(client, still_shared, {**retiring, "enabled": False})
             demoting = client.post(f"/api/v1/users/{demoted.id}/update", json={"role": "pending"})
         assert demoting.status_code == 200, demoting.text
         deadline = time.monotonic() + RECHECK_BOUND_SECONDS
 
         close_codes = {}
-        for label in ("demoted", "switched off", "removed"):
+        for label in ("demoted", "ungranted", "switched off", "removed"):
             closed = close_of(sessions[label], max(deadline - time.monotonic(), 0.5))
             close_codes[label] = closed[0] if closed else "still open"
-        assert close_codes == {"demoted": 4001, "switched off": 4003, "removed": 4004}, (
+        expected = {"demoted": 4001, "ungranted": 4004, "switched off": 4004, "removed": 4004}
+        assert close_codes == expected, (
             "a terminal session outlived the access it was opened with (a1189a2d7)"
         )
         assert _is_live(sessions["kept"]), "a session whose access never changed was closed"
         revoked_shells = [
             shell for shell in terminal.sessions if shell.headers["x-user-id"] != kept.id
         ]
-        assert len(revoked_shells) == 3
+        assert len(revoked_shells) == 4
         assert all(shell.ended.wait(timeout=5) for shell in revoked_shells), (
             "the shell on the terminal server outlived the revoked session"
         )

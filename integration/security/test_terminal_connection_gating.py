@@ -8,6 +8,11 @@ every connection right after it is added, was refused to everyone including the 
 created it; the fix makes it admin-only. Each entry point is driven against a fake terminal
 server that records whether anything reached it.
 
+Since the terminal rework on dev (6f2fc7bc7) one lookup serves every entry point, and a terminal
+that is switched off or not granted to the caller answers exactly as an id that does not exist:
+404 "Terminal server '<id>' not found" on the proxy, close 4004 on the WebSocket and "not found"
+in a chat. Before it they answered 403 and 4003 with "disabled" or "Access denied".
+
 A chat with a terminal selected is the fourth entry point. Without Redis every chat rebuilds the
 terminal list from the saved connections and leaves disabled ones out, so the gate only shows on
 an instance backed by Redis whose cached list still names the terminal: the admin switches it
@@ -18,7 +23,12 @@ Discriminates: passes on dev bbfa876af; with the proxy and WebSocket `enabled` c
 request and the shell; the list filtered before the fix), with the `enabled` check removed from
 `get_terminal_tools` the chat on the disabled terminal is offered its tools, and with 867006acc
 reverted the admin tests on the no-bypass instance fail on every entry point (403, a 4003 close,
-not listed).
+not listed). Retargeted for 6f2fc7bc7: passes on dev c15f28649; in a backend copy whose
+`find_terminal_connection` and `get_terminal_tools` drop their `enabled` checks the
+disabled-terminal proxy, session, close and chat tests fail (the fake terminal gets the request
+and the shell, the chat is offered `run_command`), and with their access checks dropped the user
+rows of the empty-grants tests and the grant-of-their-own test fail (the user reaches the
+terminal).
 
 The closed-before-sign-in test pins PR open-webui/open-webui#33863 (fix ac45fc0fc, issue #33850):
 a terminal WebSocket the browser closed before sending its sign-in made the server try to close
@@ -60,6 +70,9 @@ def terminal() -> Iterator[FakeTerminalServer]:
         yield server
 
 
+UNKNOWN_ID = "terminal-that-was-never-added"
+
+
 def _granted_to(actor: Actor) -> dict:
     return {"access_grants": [read_grant(actor.id)]}
 
@@ -74,8 +87,17 @@ def _listed(caller: Actor, connection: dict, terminal: FakeTerminalServer) -> bo
 def _proxied(caller: Actor, connection: dict, terminal: FakeTerminalServer) -> bool:
     with caller.client() as client:
         response = client.get(f"/api/v1/terminals/{connection['id']}/probe")
+        unknown = client.get(f"/api/v1/terminals/{UNKNOWN_ID}/probe")
+    assert unknown.status_code == 404, unknown.text
     reached = bool(terminal.requests_to("/probe"))
-    assert response.status_code == (200 if reached else 403), response.text
+    if reached:
+        assert response.status_code == 200, response.text
+    else:
+        refusal = unknown.text.replace(UNKNOWN_ID, connection["id"])
+        assert (response.status_code, response.text) == (404, refusal), (
+            f"a refused terminal answers {response.status_code} {response.text}, which tells it "
+            f"apart from one that does not exist ({unknown.text})"
+        )
     return reached
 
 
@@ -128,12 +150,17 @@ def test_no_entry_point_serves_a_disabled_terminal(save, member, terminal, entry
     )
 
 
-def test_a_disabled_terminal_closes_the_session_saying_so(save, member, terminal):
+def test_a_disabled_terminal_closes_the_session_like_one_that_does_not_exist(
+    save, member, terminal
+):
     disabled = terminal.connection(enabled=False, config=_granted_to(member))
     save(disabled)
-    with terminal_session(member.base_url, member.token, disabled["id"]) as session:
-        code, reason = close_of(session, timeout=10) or (None, "")
-    assert code == 4003 and "disabled" in reason.lower(), (code, reason)
+    closes = {}
+    for label, terminal_id in [("disabled", disabled["id"]), ("unknown", UNKNOWN_ID)]:
+        with terminal_session(member.base_url, member.token, terminal_id) as session:
+            closes[label] = close_of(session, timeout=10)
+    assert closes["disabled"] == closes["unknown"] == (4004, "Terminal server not found"), closes
+    assert not terminal.sessions, "the switched-off terminal was asked for a shell"
 
 
 def test_a_session_closed_before_it_signs_in_logs_no_error(instance, save, member, terminal):
@@ -310,7 +337,8 @@ def test_a_chat_gets_no_tools_from_a_disabled_terminal_still_cached(cached_termi
 
     assert "run_command" not in offered, "a switched-off terminal still hands its tools to a chat"
     assert terminal.received == [], "the chat reached the switched-off terminal"
-    assert "disabled" in (message.get("error") or {}).get("content", ""), message
+    error = (message.get("error") or {}).get("content", "")
+    assert "Terminal unavailable" in error and "not found" in error, message
 
 
 @pytest.mark.slow
