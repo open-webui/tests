@@ -7,6 +7,11 @@ that answer, and the reply is then lost, which no real provider is fast enough t
 `hold_new_chat_events(page)` holds the chat events the socket brings while a new chat's send is
 out, until the page joins the chat's room right after taking the id. It runs inside the page, so
 every other frame passes untouched and nothing waits on the test's own thread.
+
+The page still gets the browser's own sockets: the gate listens on each one as it is made and
+wraps the one `send` they share. A subclass of `WebSocket` in their place is refused by noVNC,
+which reads a socket's methods from its own prototype, so the Chrome viewer and the Desktop tab
+never connected.
 """
 
 from __future__ import annotations
@@ -42,24 +47,28 @@ GATE = r"""
         }
     };
 
-    window.WebSocket = class extends NativeWebSocket {
-        constructor(...args) {
-            super(...args);
-            this.addEventListener('message', (event) => {
-                if (released.has(event) || !waiting) return;
-                const { name, payload } = eventOf(event.data);
-                if (name !== 'events' || !payload.chat_id) return;
-                event.stopImmediatePropagation();
-                held.push([this, event.data]);
-            });
-        }
+    const hold = (socket) => {
+        socket.addEventListener('message', (event) => {
+            if (released.has(event) || !waiting) return;
+            const { name, payload } = eventOf(event.data);
+            if (name !== 'events' || !payload.chat_id) return;
+            event.stopImmediatePropagation();
+            held.push([socket, event.data]);
+        });
+        return socket;
+    };
 
-        send(data) {
-            super.send(data);
-            const { name, payload } = eventOf(data);
-            // the page joins a chat's room right after it took the chat's id
-            if (name === 'events:chat' && payload.data?.type === 'join') release();
-        }
+    // the page's sockets stay the browser's own: noVNC refuses a subclass
+    window.WebSocket = new Proxy(NativeWebSocket, {
+        construct: (target, args) => hold(new target(...args))
+    });
+
+    const nativeSend = NativeWebSocket.prototype.send;
+    NativeWebSocket.prototype.send = function (data) {
+        nativeSend.call(this, data);
+        const { name, payload } = eventOf(data);
+        // the page joins a chat's room right after it took the chat's id
+        if (name === 'events:chat' && payload.data?.type === 'join') release();
     };
 
     const isNewChatSend = (input, init) => {
