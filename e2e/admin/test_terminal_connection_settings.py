@@ -37,10 +37,9 @@ from __future__ import annotations
 
 import secrets
 from typing import Iterator
-from urllib.parse import unquote
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import expect
 
 from harness.listener import json_answer
 from harness.terminal_server import (
@@ -50,7 +49,6 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from harness.terminals import create_template
-from utils.chat_ui import chat_input
 from utils.terminal_connections import (
     add_admin_terminal,
     admin_terminal_section,
@@ -62,6 +60,7 @@ from utils.terminal_connections import (
 )
 from utils.tool_servers import connection_row
 from utils.tooltips import tooltip_button
+from utils.user_terminals import open_terminal_settings, save_terminal_settings
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -197,34 +196,6 @@ def test_saving_a_stored_connection_untouched_keeps_everything_stored(
         if stored.get(field) != saved.get(field)
     }
     assert not changed, f"saving the untouched dialog changed (stored, saved): {changed}"
-
-
-def open_terminal_settings(page: Page, name: str) -> Locator:
-    """Open the Terminal settings of the terminal `name` from the chat input's Terminal menu."""
-    expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
-    menu = page.get_by_role("menu")
-    row = menu.get_by_role("menuitemradio", name=name)
-    expect(row).to_be_visible()
-    # the row's More button shows on hover
-    row.hover()
-    menu.get_by_role("menuitem", name=f"More options for {name}").click()
-    page.get_by_role("menuitem", name="Terminal settings", exact=True).click()
-    dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=name))
-    expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
-    return dialog
-
-
-def save_terminal_settings(page: Page, dialog: Locator, terminal_id: str) -> None:
-    def updates_it(response) -> bool:
-        return response.request.method == "PATCH" and unquote(response.url).endswith(
-            f"/api/v1/terminals/templates/{terminal_id}"
-        )
-
-    with page.expect_response(updates_it) as saved:
-        dialog.get_by_role("button", name="Save", exact=True).click()
-    assert saved.value.ok, saved.value.text()
-    expect(dialog).to_be_hidden()
 
 
 @pytest.fixture

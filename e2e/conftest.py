@@ -13,11 +13,14 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import time
 from pathlib import Path
 from typing import Callable, Generator, Iterator
 
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from conftest import AppConfig
 from harness import plain_http
@@ -32,8 +35,11 @@ from harness.instance import (
 )
 from harness.prepared_data import serving
 from harness.reply_gate import hold_new_chat_events
+from harness.terminals import wait_until_addresses_settle
 
 ARTIFACTS_DIR = Path("test-results")
+LOAD_TRIES = 3
+LOAD_CHECK_MS = 1000
 MICROPHONE_BROWSERS = {"speaking_browser", "capturing_browser"}
 
 
@@ -137,6 +143,35 @@ APP_LOADED = """() => !document.getElementById('splash-screen')
         || !!document.getElementById('main-content'))"""
 
 
+def _loaded(page: Page, path: str, load_timeout_ms: float) -> bool:
+    """Load `path` and wait for the app; False when the browser dropped part of the load because
+    this machine's network addresses changed under it (net::ERR_NETWORK_CHANGED)."""
+    dropped: list[str] = []
+
+    def note_dropped(request) -> None:
+        if "ERR_NETWORK_CHANGED" in (request.failure or ""):
+            dropped.append(request.url)
+
+    page.on("requestfailed", note_dropped)
+    deadline = time.monotonic() + load_timeout_ms / 1000
+    try:
+        page.goto(path)
+        # a cold load is slow on a busy runner; the test's first default wait should not pay for it
+        while not dropped:
+            try:
+                page.wait_for_function(APP_LOADED, timeout=LOAD_CHECK_MS)
+                break
+            except PlaywrightTimeoutError:
+                if time.monotonic() >= deadline:
+                    raise
+    except PlaywrightError:
+        if not dropped:
+            raise
+    finally:
+        page.remove_listener("requestfailed", note_dropped)
+    return not dropped
+
+
 def _signed_in_page(
     context: BrowserContext,
     token: str,
@@ -155,9 +190,13 @@ def _signed_in_page(
     page.add_init_script(
         f"try {{ localStorage.setItem('token', {json.dumps(token)}); }} catch (e) {{}}"
     )
-    page.goto(path)
-    # a cold load is slow on a busy runner; the test's first default wait should not pay for it
-    page.wait_for_function(APP_LOADED, timeout=load_timeout_ms)
+    for _ in range(LOAD_TRIES):
+        # a container that comes or goes (a terminal's machine) changes this machine's addresses
+        wait_until_addresses_settle()
+        if _loaded(page, path, load_timeout_ms):
+            break
+    else:
+        pytest.fail(f"{LOAD_TRIES} loads of {path} in a row were cut short by a network change")
     secure = page.evaluate("isSecureContext")
     assert secure is plain_http.is_secure_context_test(), f"the page opened at {page.url}"
     return page
