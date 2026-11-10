@@ -34,11 +34,11 @@ from harness.terminal_server import FakeTerminalServer, serving_terminal
 from utils.cached_chat import open_new_terminal, pick_terminal
 from utils.terminal_connections import (
     PERSONAL_SETTINGS,
+    add_terminal,
     fill_terminal,
+    personal_terminal_section,
     save_terminal,
-    terminal_dialog,
 )
-from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -139,13 +139,7 @@ def test_a_key_typed_with_a_trailing_space_still_opens_the_shell(
     direct_integrations(True)
     account = make_user(role="admin")
     page = page_for(account)
-    open_settings(page)
-    settings = page.get_by_role("dialog")
-    # the personal tab comes before the admin tab of the same name
-    settings.get_by_role("tab", name="Integrations").first.click()
-    terminals = settings.get_by_role("heading", name="Open Terminal").locator("xpath=../..")
-    terminals.get_by_role("button", name="Add Connection").click()
-    adding = terminal_dialog(page)
+    adding = add_terminal(personal_terminal_section(page))
     fill_terminal(adding, NAME, personal_terminal.base_url, key=f"{KEY} ")
     save_terminal(page, adding, saved_to=PERSONAL_SETTINGS)
     with account.client() as client:
