@@ -9,9 +9,17 @@ reads what it received. The positive half runs on an instance that signs in thro
 OpenID Connect provider, so the caller holds a real OAuth session whose access token the
 terminal must get.
 
+Since the terminal rework on dev (6f2fc7bc7) the proxy reads `X-Session-Id` as the chat the
+request belongs to, as the page sends it, and answers 403 "Chat access denied" for a saved chat
+the caller may not write to. The pass-through test therefore sends a chat of the caller's own,
+and a second test pins that someone else's chat is refused before anything reaches the terminal.
+
 Discriminates: passes on dev ef67cc3fa, fails with 3a9b9a1a7 reverted (the forged header
 reaches the terminal server as `Authorization: Bearer forged-by-the-caller`, and the SSO
-caller's own session token never does).
+caller's own session token never does). The two session header tests pass on dev c15f28649; in
+a backend copy whose proxy drops `x-session-id` from the headers it forwards the pass-through
+test fails (the terminal gets no session header), and with the chat check removed from
+`find_terminal_connection` the request naming someone else's chat reaches the terminal.
 """
 
 from __future__ import annotations
@@ -97,12 +105,44 @@ def test_each_auth_type_sends_its_own_credential(proxy_as, make_user, auth_type)
     assert received.headers.get("authorization") == expected
 
 
+def _saved_chat(owner) -> str:
+    with owner.client() as client:
+        created = client.post("/api/v1/chats/new", json={"chat": {"title": "Terminal chat"}})
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
 def test_session_and_content_type_headers_still_pass_through(proxy_as, make_user):
     caller = make_user()
-    sent = {"x-session-id": "terminal-session-42", "content-type": "application/json"}
+    chat_id = _saved_chat(caller)
+    sent = {"x-session-id": chat_id, "content-type": "application/json"}
     received = proxy_as(caller, headers=sent)
-    assert received.headers["x-session-id"] == "terminal-session-42"
-    assert received.headers["content-type"] == "application/json"
+    assert received.headers.get("x-session-id") == chat_id, "the chat id never reached the terminal"
+    assert received.headers.get("content-type") == "application/json"
+
+
+def test_a_session_header_naming_someone_elses_chat_is_refused(
+    admin, preserve, make_user, terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    caller, someone_else = make_user(), make_user()
+    connection = terminal.connection(config={"access_grants": [read_grant(caller.id)]})
+    with admin.client() as client:
+        configure_terminals(client, connection)
+    terminal.clear()
+    probe = f"/api/v1/terminals/{connection['id']}/probe"
+
+    with caller.client() as client:
+        refused = client.get(probe, headers={"x-session-id": _saved_chat(someone_else)})
+        own = client.get(probe, headers={"x-session-id": _saved_chat(caller)})
+
+    assert (refused.status_code, refused.json()) == (403, {"detail": "Chat access denied"}), (
+        f"a request naming someone else's chat answered {refused.status_code} {refused.text}"
+    )
+    assert own.status_code == 200, own.text
+    assert len(terminal.requests_to("/probe")) == 1, (
+        "the request naming someone else's chat reached the terminal"
+    )
 
 
 @pytest.mark.parametrize("forward_cookies", [True, False])
