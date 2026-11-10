@@ -65,7 +65,13 @@ UNFORWARDED = {"host", "connection", "content-length", "transfer-encoding"}
 
 
 def _docker(*arguments: str, check: bool = True) -> str:
-    ran = subprocess.run(["docker", *arguments], capture_output=True, text=True, timeout=120)
+    """What the Docker command printed; without `check` a failure or a timeout gives ""."""
+    try:
+        ran = subprocess.run(["docker", *arguments], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        if check:
+            raise
+        return ""
     if check and ran.returncode != 0:
         raise RuntimeError(f"docker {' '.join(arguments)} failed: {ran.stderr.strip()}")
     return ran.stdout.strip()
@@ -73,17 +79,9 @@ def _docker(*arguments: str, check: bool = True) -> str:
 
 @functools.cache
 def _daemon_socket() -> str | None:
-    """The unix socket of the Docker daemon the CLI talks to, or None without a local one."""
-    if shutil.which("docker") is None:
-        return None
-    try:
-        host = _docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}", check=False)
-        answers = (
-            subprocess.run(["docker", "info"], capture_output=True, timeout=60).returncode == 0
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return host.removeprefix("unix://") if answers and host.startswith("unix://") else None
+    """The unix socket of the Docker daemon the CLI talks to, or None when it is not a local one."""
+    host = _docker("context", "inspect", "--format", "{{.Endpoints.docker.Host}}", check=False)
+    return host.removeprefix("unix://") if host.startswith("unix://") else None
 
 
 @functools.cache
@@ -93,10 +91,12 @@ def unavailable() -> str | None:
     unset = [name for name, image in images.items() if not image]
     if unset:
         return f"needs the Terminals stack (set {' and '.join(unset)})"
+    if shutil.which("docker") is None or not _docker("info", "--format", "{{.ID}}", check=False):
+        return "needs a working Docker daemon (`docker info` must succeed for this user)"
     if _daemon_socket() is None:
-        return "needs a working local Docker daemon (`docker info` must succeed for this user)"
+        return "needs a Docker daemon on a local unix socket, which the Terminals service mounts"
     for name, image in images.items():
-        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
+        if not _docker("image", "inspect", "--format", "{{.Id}}", image, check=False):
             return f"{name} names {image}, which is not on this Docker daemon (pull or build it)"
     return None
 
@@ -170,14 +170,33 @@ class Terminals:
             if (home / name).exists()
         }
 
+    def limits(self, instance_id: str) -> tuple[int, int]:
+        """The memory in bytes and the CPUs in billionths Docker holds the machine to."""
+        held = _docker(
+            *("inspect", "--format", "{{.HostConfig.Memory}} {{.HostConfig.NanoCpus}}"),
+            f"terminal-{instance_id}",
+        )
+        memory, cpus = held.split()
+        return int(memory), int(cpus)
+
+    def hostname(self, instance_id: str) -> str:
+        """The host name commands see inside the machine."""
+        return _docker("inspect", "--format", "{{.Config.Hostname}}", f"terminal-{instance_id}")
+
     def logs(self) -> str:
         """The service's log and each terminal container's, for a failure message."""
         parts = []
         for container in [self.name, *self.containers()]:
-            ran = subprocess.run(
-                ["docker", "logs", "--tail", "200", container], capture_output=True, text=True
-            )
-            parts.append(f"--- {container} ---\n{ran.stdout}{ran.stderr}")
+            try:
+                ran = subprocess.run(
+                    ["docker", "logs", "--tail", "200", container],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                parts.append(f"--- {container} ---\n{ran.stdout}{ran.stderr}")
+            except subprocess.TimeoutExpired:
+                parts.append(f"--- {container} ---\n(docker logs did not answer)")
         return "\n".join(parts)
 
     def reset(self) -> None:
