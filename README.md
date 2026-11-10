@@ -59,6 +59,19 @@ uv venv ../oix-env && uv pip install --python ../oix-env "../oix[fastapi]" uvico
 export OIX_PYTHON=../oix-env/bin/python
 ```
 
+The Terminals tests (`integration/terminals`, `e2e/terminals`) run the real [Terminals](https://github.com/open-webui/terminals) orchestrator on Docker, which starts an Open Terminal container for every terminal's machine. Build both images from their release tags and name them in `TERMINALS_SERVICE_IMAGE` and `OPEN_TERMINAL_IMAGE`; nothing is pulled while the tests run, and they skip without the images or a working Docker daemon (`OWUI_TEST_REQUIRE_TERMINALS=1` turns that skip into a failure):
+
+```bash
+git clone --branch v0.4.1 https://github.com/open-webui/terminals ../terminals
+git clone --branch v0.17.7 https://github.com/open-webui/open-terminal ../open-terminal-source
+docker build -t owui-tests/terminals:v0.4.1 ../terminals
+docker build -f ../open-terminal-source/Dockerfile.slim -t owui-tests/open-terminal:slim ../open-terminal-source
+printf 'FROM owui-tests/open-terminal:slim\nWORKDIR /home/user\n' | docker build -t owui-tests/open-terminal:v0.17.7 -
+export TERMINALS_SERVICE_IMAGE=owui-tests/terminals:v0.4.1 OPEN_TERMINAL_IMAGE=owui-tests/open-terminal:v0.17.7
+```
+
+The slim image starts in `/app`, which its user cannot write, so the last build moves it to the home the orchestrator mounts, where the full image starts. Each run's containers and network carry a label of their own and are removed when it ends; `python -m harness.terminals` removes what a killed run left behind.
+
 ### Frontend suite
 
 `frontend/` imports `src/lib` modules straight out of the checkout, so the checkout needs `npm ci` and a `svelte-kit sync` first (its `tsconfig.json` extends the generated one).
@@ -79,6 +92,7 @@ pytest unit                              # set DATA_DIR and STATIC_DIR to scratc
 pytest -k collection_access              # name filter
 pytest -m regression                     # only issue/PR-pinned regressions
 pytest -m "not slow"                     # skip the modules that boot extra instances
+pytest -m terminal                       # every terminal test, wherever it lives
 ```
 
 A run against the latest `dev` is expected to show **red for any regression whose fix isn't merged yet**. Each failing test names the issue or PR that turns it green. Failures that stop before any assertion (an import, a renamed attribute, a changed signature) are listed apart as likely upstream drift.
@@ -122,6 +136,8 @@ On Linux every scratch instance after the first is forked from a process that ha
 
 The integration and browser suites run in parallel shards, split by `pytest-split` along the timings CI measured for each mode: `durations/integration.json`, `durations/integration-postgres-redis.json` and `durations/e2e.json`. After a green run of `main` dispatched in this repository, the run's timings are folded into these files and committed back to `main`. A test missing from a file still runs and counts at the average. To split a local run the same way, pass the mode's file: `pytest integration --splits 10 --group 1 --splitting-algorithm duration_based_chunks --durations-path durations/integration.json`.
 
+`.github/workflows/terminals.yml` runs every terminal test (`-m terminal`) of the integration and browser suites on demand, with the real Terminals orchestrator: `gh workflow run terminals.yml -f open-webui-ref=dev`. It builds the orchestrator from `terminals-ref` and the Open Terminal image from `open-terminal-ref` (a PyPI version or a ref; both default to the latest release), builds Open WebUI the way the regression workflow does and writes the same summaries and reports. Other workflows can call it.
+
 ---
 
 ## Markers
@@ -139,6 +155,7 @@ Registered in `pyproject.toml` (`--strict-markers` is on). Combine with `-m "<ex
 | `requires_postgres` | needs `pgserver` |
 | `public` / `auth_required` / `admin_required` | page-access scope in the browser suite |
 | `depcheck` | dependency contract test under `unit/deps/`, or its feature smoke test under `integration/deps/` |
+| `terminal` | a terminal test; set at collection for every test under a `terminals/` directory or with `terminal` or `tether` in its file name |
 
 Tests skip when what they need is absent, so the whole suite runs anywhere and only the runnable part executes.
 
@@ -160,6 +177,8 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `listener` | a local HTTP service for the instance to call, recording what it gets |
 | `open_terminal` | a real Open Terminal for the session (`OPEN_TERMINAL_BIN`), skipped where it is not installed |
 | `terminal_orchestrator` | a Terminals orchestrator stand-in that gives each terminal context (the shared one, `chat:<id>` per chat) a real Open Terminal of its own |
+| `terminals` | the real Terminals orchestrator on Docker (`TERMINALS_SERVICE_IMAGE`, `OPEN_TERMINAL_IMAGE`), one for the session; the templates and containers a test made are removed after it. Skipped without the images or Docker |
+| `connect_terminals(*grants)` | the admin connects that orchestrator and gives the connection those grants; returns the connection, for `create_template` and the other helpers in `harness.terminals` |
 
 `harness.chat.ask(client, "text")` sends a message the way the web client does and returns the stored reply.
 

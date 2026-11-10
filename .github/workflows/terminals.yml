@@ -1,0 +1,513 @@
+# Runs every terminal test (pytest -m terminal) against a given Open WebUI ref, with the real
+# Terminals orchestrator and real Open Terminal containers on the runner's Docker.
+name: Terminal suite
+
+on:
+  workflow_call:
+    inputs:
+      open-webui-ref:
+        description: Ref of open-webui/open-webui to test (tag, branch or SHA)
+        required: false
+        type: string
+        default: dev
+      tests-ref:
+        description: Ref of open-webui/tests to run
+        required: false
+        type: string
+        default: main
+      open-terminal-ref:
+        description: Open Terminal to run, a PyPI version (0.17.7) or a ref of open-webui/open-terminal; empty for the latest release
+        required: false
+        type: string
+        default: ''
+      terminals-ref:
+        description: Ref of open-webui/terminals the orchestrator is built from; empty for the latest release
+        required: false
+        type: string
+        default: ''
+      oix-ref:
+        description: Ref of open-webui/oix the reference app is built from
+        required: false
+        type: string
+        default: main
+  workflow_dispatch:
+    inputs:
+      open-webui-ref:
+        description: Ref of open-webui/open-webui to test (tag, branch or SHA)
+        required: false
+        type: string
+        default: dev
+      tests-ref:
+        description: Ref of open-webui/tests to run
+        required: false
+        type: string
+        default: main
+      open-terminal-ref:
+        description: Open Terminal to run, a PyPI version (0.17.7) or a ref of open-webui/open-terminal; empty for the latest release
+        required: false
+        type: string
+        default: ''
+      terminals-ref:
+        description: Ref of open-webui/terminals the orchestrator is built from; empty for the latest release
+        required: false
+        type: string
+        default: ''
+      oix-ref:
+        description: Ref of open-webui/oix the reference app is built from
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terminals-${{ inputs.open-webui-ref }}-${{ inputs.tests-ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The orchestrator and the Open Terminal image it starts, built once from the two refs and
+  # handed to the test jobs through the cache, so no test waits on a pull.
+  stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      cache-key: ${{ steps.key.outputs.cache-key }}
+      open-terminal-commit: ${{ steps.open-terminal.outputs.commit }}
+    steps:
+      # A PyPI version is its release tag without the v.
+      - name: Resolve the refs
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERMINALS_REF: ${{ inputs.terminals-ref }}
+          OPEN_TERMINAL_REF: ${{ inputs.open-terminal-ref }}
+        run: |
+          terminals=${TERMINALS_REF:-$(gh api repos/open-webui/terminals/releases/latest --jq .tag_name)}
+          open_terminal=${OPEN_TERMINAL_REF:-$(gh api repos/open-webui/open-terminal/releases/latest --jq .tag_name)}
+          if [[ "$open_terminal" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
+            open_terminal="v$open_terminal"
+          fi
+          echo "terminals=$terminals" >> "$GITHUB_OUTPUT"
+          echo "open-terminal=$open_terminal" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Terminals
+        id: terminals
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/terminals
+          ref: ${{ steps.refs.outputs.terminals }}
+          path: terminals
+
+      - name: Check out Open Terminal
+        id: open-terminal
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-terminal
+          ref: ${{ steps.refs.outputs.open-terminal }}
+          path: open-terminal
+
+      - name: Name the images
+        id: key
+        env:
+          TERMINALS: ${{ steps.refs.outputs.terminals }} (${{ steps.terminals.outputs.commit }})
+          OPEN_TERMINAL: ${{ steps.refs.outputs.open-terminal }} (${{ steps.open-terminal.outputs.commit }})
+        run: |
+          echo "cache-key=terminals-stack-${{ steps.terminals.outputs.commit }}-${{ steps.open-terminal.outputs.commit }}" >> "$GITHUB_OUTPUT"
+          echo "Terminals $TERMINALS, Open Terminal $OPEN_TERMINAL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Look up the images
+        id: images-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ steps.key.outputs.cache-key }}
+          lookup-only: true
+
+      # Open Terminal's slim image, the smallest. It starts in /app, which its user cannot write;
+      # the full image starts in the home the orchestrator mounts, so the last build moves it there.
+      - name: Build the images
+        if: steps.images-cache.outputs.cache-hit != 'true'
+        run: |
+          docker build -t owui-tests/terminals:ci terminals
+          docker build -f open-terminal/Dockerfile.slim -t owui-tests/open-terminal:slim open-terminal
+          printf 'FROM owui-tests/open-terminal:slim\nWORKDIR /home/user\n' | docker build -t owui-tests/open-terminal:ci -
+          docker save -o terminals-stack.tar owui-tests/terminals:ci owui-tests/open-terminal:ci
+
+      - name: Save the images
+        if: steps.images-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ steps.key.outputs.cache-key }}
+
+  # The suite boots its own instances from the checkout, as the regression workflow does.
+  integration:
+    needs: stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
+
+      # The instances run offline, so the default embedding model is fetched up front.
+      - name: Cache the embedding model
+        id: embedding-model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
+
+      # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
+      - name: Install dependencies
+        env:
+          OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
+        run: |
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+          uv venv "$RUNNER_TEMP/open-terminal"
+          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
+
+      - name: Download the embedding model
+        if: steps.embedding-model.outputs.cache-hit != 'true'
+        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+
+      - name: Name the Playwright build
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ steps.playwright.outputs.version }}
+
+      # With the browser restored from the cache, this only installs its system libraries.
+      - name: Install the browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Check out oix
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/oix
+          ref: ${{ inputs.oix-ref }}
+          path: oix
+
+      # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
+      # environment of its own and checked here: it must serve its manifest with every scope.
+      - name: Build the reference app
+        run: |
+          uv venv "$RUNNER_TEMP/oix-env"
+          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
+          echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
+          export API_KEY=$(openssl rand -hex 32)
+          APP_PRIVATE_KEY_FILE="$RUNNER_TEMP/app-key.pem" APP_PORT=8765 \
+            APP_RECORD_FILE="$RUNNER_TEMP/app-records.jsonl" \
+            "$RUNNER_TEMP/oix-env/bin/python" tests/harness/reference_app/app.py &
+          for attempt in $(seq 30); do
+            curl -sf -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/events > "$RUNNER_TEMP/manifest.json" && break
+            sleep 1
+          done
+          kill %1
+          python -c "import json, sys; assert len(json.load(open(sys.argv[1]))['requested_scopes']) == 4" "$RUNNER_TEMP/manifest.json"
+
+      - name: Restore the Terminals images
+        uses: actions/cache/restore@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ needs.stack.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      # The tests that need the stack fail here where they would skip in the regression suite.
+      - name: Load the Terminals images
+        run: |
+          docker load -i terminals-stack.tar
+          {
+            echo "TERMINALS_SERVICE_IMAGE=owui-tests/terminals:ci"
+            echo "OPEN_TERMINAL_IMAGE=owui-tests/open-terminal:ci"
+            echo "OWUI_TEST_REQUIRE_TERMINALS=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Run the terminal tests of the integration suite
+        working-directory: tests
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+
+      - name: Summarise the results
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py test-results/junit.xml "Terminal tests, integration suite" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminals-integration-report-${{ inputs.open-webui-ref }}
+          path: tests/test-results
+          if-no-files-found: ignore
+
+  # Built once for the browser shards, which restore it from the cache the regression workflow
+  # shares.
+  e2e-build:
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.key.outputs.cache-key }}
+    steps:
+      - name: Check out Open WebUI
+        id: open-webui
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - name: Name the build
+        id: key
+        run: echo "cache-key=e2e-frontend-build-${{ steps.open-webui.outputs.commit }}" >> "$GITHUB_OUTPUT"
+
+      - name: Look up the frontend build
+        id: build-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: open-webui/build
+          key: ${{ steps.key.outputs.cache-key }}
+          lookup-only: true
+
+      - uses: actions/setup-node@v5
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: open-webui/package-lock.json
+
+      # The build needs neither onnxruntime's CUDA binaries, fetched from GitHub releases, nor Cypress.
+      - name: Build the frontend
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        working-directory: open-webui
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+          CYPRESS_INSTALL_BINARY: '0'
+        run: |
+          npm ci --force
+          npm run build
+
+      - name: Save the frontend build
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: open-webui/build
+          key: ${{ steps.key.outputs.cache-key }}
+
+  # Split in two on the browser timings in durations/e2e.json, to stay near 20 minutes.
+  e2e:
+    needs: [stack, e2e-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - name: Restore the frontend build
+        uses: actions/cache/restore@v4
+        with:
+          path: open-webui/build
+          key: ${{ needs.e2e-build.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
+
+      # The instances that share a Redis start a redis-server of their own.
+      - name: Install dependencies
+        env:
+          OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e ./tests
+          uv venv "$RUNNER_TEMP/open-terminal"
+          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
+
+      - name: Name the Playwright build
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ steps.playwright.outputs.version }}
+
+      # With the browser restored from the cache, this only installs its system libraries.
+      - name: Install the browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Check out oix
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/oix
+          ref: ${{ inputs.oix-ref }}
+          path: oix
+
+      # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
+      # environment of its own and checked here: it must serve its manifest with every scope.
+      - name: Build the reference app
+        run: |
+          uv venv "$RUNNER_TEMP/oix-env"
+          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
+          echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
+          export API_KEY=$(openssl rand -hex 32)
+          APP_PRIVATE_KEY_FILE="$RUNNER_TEMP/app-key.pem" APP_PORT=8765 \
+            APP_RECORD_FILE="$RUNNER_TEMP/app-records.jsonl" \
+            "$RUNNER_TEMP/oix-env/bin/python" tests/harness/reference_app/app.py &
+          for attempt in $(seq 30); do
+            curl -sf -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/events > "$RUNNER_TEMP/manifest.json" && break
+            sleep 1
+          done
+          kill %1
+          python -c "import json, sys; assert len(json.load(open(sys.argv[1]))['requested_scopes']) == 4" "$RUNNER_TEMP/manifest.json"
+
+      - name: Restore the Terminals images
+        uses: actions/cache/restore@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ needs.stack.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      # The tests that need the stack fail here where they would skip in the regression suite.
+      - name: Load the Terminals images
+        run: |
+          docker load -i terminals-stack.tar
+          {
+            echo "TERMINALS_SERVICE_IMAGE=owui-tests/terminals:ci"
+            echo "OPEN_TERMINAL_IMAGE=owui-tests/open-terminal:ci"
+            echo "OWUI_TEST_REQUIRE_TERMINALS=1"
+          } >> "$GITHUB_ENV"
+
+      # The browser reports the locale as its language, and the runner's C locale as en-US@POSIX.
+      - name: Run the terminal tests of the browser suite
+        working-directory: tests
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+        run: pytest e2e -m terminal -q --splits 2 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
+
+      - name: Summarise the results
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py test-results/junit.xml "Terminal tests, browser suite, shard ${{ matrix.shard }} of 2" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report, traces and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminals-e2e-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          path: tests/test-results
+          if-no-files-found: ignore
