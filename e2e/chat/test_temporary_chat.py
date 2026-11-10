@@ -3,22 +3,25 @@
 The toggle sits in the header beside the model selector on a new chat, also in the tabbed
 layout a wide window gets (#33680). With it on, the reply arrives as usual while the chat stays
 out of the sidebar history, out of the chat search and out of the database, and a reload of the
-page leaves an empty new chat. Since da850248d the address bar names the temporary chat while it
-is open; that address holds nothing to come back to. With it off, the same message makes a saved
-chat. A temporary chat that has an answer can still be kept through the header's Save Chat
-button, and an account that turned on Temporary Chat by Default in its Interface settings
-starts every new chat temporary. A temporary chat offers no Fork chat under its reply and no
-Fork in its / menu (#32833), since a fork copies a stored chat and there is none. That a
-temporary chat offers no per chat terminal (#33866) is pinned in
+page leaves an empty new chat that is temporary again, so a message sent there is not saved
+either. Since da850248d the first message put an address in the address bar that a reload could
+not open, and the reload left a normal new chat whose messages were saved (#34049). With it off,
+the same message makes a saved chat. A temporary chat that has an answer can still be kept
+through the header's Save Chat button, and an account that turned on Temporary Chat by Default in
+its Interface settings starts every new chat temporary. A temporary chat offers no Fork chat
+under its reply and no Fork in its / menu (#32833), since a fork copies a stored chat and there
+is none. That a temporary chat offers no per chat terminal (#33866) is pinned in
 e2e/terminals/test_terminals_per_chat.py, against a real Terminals orchestrator.
 
 Twin of integration/chat/test_temporary_chat.py.
 
-Discriminates: passes on dev c15f28649, fails with the server taking the first message under a
-`temporary:` id for a new chat (it is stored, listed in the sidebar and shown again after the
-reload). The fork test passes with the #32833 fix and fails on dev ca8f451cc (Fork chat and the
-/ menu's Fork are offered and fail). On dev f659c0d12, a frontend copy with 40b7b5201 (#33680)
-undone turns every test red that turns Temporary Chat on (no toggle on a new chat).
+Discriminates: passes with the #34049 fix and fails on dev c15f28649 (after the reload the
+Temporary Chat label is gone and the next message is saved and listed in the sidebar). With the
+fix it fails with the server taking the first message under a `temporary:` id for a new chat (it
+is stored, listed in the sidebar and shown again after the reload). The fork test passes with
+the #32833 fix and fails on dev ca8f451cc (Fork chat and the / menu's Fork are offered and fail).
+On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
+Temporary Chat on (no toggle on a new chat).
 """
 
 from __future__ import annotations
@@ -99,6 +102,19 @@ def test_a_temporary_chat_is_answered_and_left_out_of_history_search_and_storage
     expect(page.get_by_text(ANSWER)).to_have_count(0)
     expect(page.locator('a[href^="/c/"]')).to_have_count(0)
     assert stored_chats(account, "Carinthia") == []
+    expect(
+        temporary_label(page), "the new chat after the reload is no longer temporary (#34049)"
+    ).to_be_visible()
+
+    upstream.queue(reply.text(ANSWER_TWO, match=reply.answering(PROMPT_TWO)))
+    send(page, PROMPT_TWO)
+
+    expect_reply(page, ANSWER_TWO)
+    expect(
+        page.locator('a[href^="/c/"]'), "the message sent after the reload made a sidebar chat"
+    ).to_have_count(0)
+    saved = stored_chats(account, "Salzburg")
+    assert saved == [], f"the message sent after the reload was saved (#34049): {saved}"
 
 
 def test_turning_temporary_chat_off_again_saves_the_chat(page_for, make_user, upstream):
