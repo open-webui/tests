@@ -419,15 +419,20 @@ class BarePage:
 
     The test decides how the connection ends: `close` sends a close frame as a page that is
     closed does, `cut` ends the connection without one, `reset` resets it. `sign_in` is sent as
-    the first message. Messages are whole frames; a fragmented one is not put together.
+    the first message and `headers` go with the upgrade request. Messages are whole frames; a
+    fragmented one is not put together.
     """
 
-    def __init__(self, url: str, sign_in: dict | None = None) -> None:
+    def __init__(
+        self, url: str, sign_in: dict | None = None, headers: dict[str, str] | None = None
+    ) -> None:
         uri = parse_uri(url)
         self.socket = socket.create_connection((uri.host, uri.port), timeout=10)
         self._protocol = ClientProtocol(uri, max_size=None)
         self._messages: list[str | bytes] = []
-        self._protocol.send_request(self._protocol.connect())
+        request = self._protocol.connect()
+        request.headers.update(headers or {})
+        self._protocol.send_request(request)
         self._flush()
         while self._protocol.state is State.CONNECTING:
             self._read()
@@ -513,20 +518,28 @@ from harness.terminal_server import BarePage
 
 request = json.load(sys.stdin)
 give_up = time.monotonic() + request["patience"]
-pages = []
-for url, sign_in in request["pages"]:
+
+
+def opened(url, sign_in):
+    page = BarePage(url, sign_in, request["headers"])
+    for message in request["then"]:
+        page.send(message)
+    return page
+
+
+pages = [opened(url, sign_in) for url, sign_in in request["pages"]]
+for place, (url, sign_in) in enumerate(request["pages"]):
     while True:
-        page = BarePage(url, sign_in)
         try:
             for _ in range(request["messages"]):
-                page.receive(timeout=10)
+                pages[place].receive(timeout=10)
             break
         except ConnectionError:
-            page.cut()
+            pages[place].cut()
             if time.monotonic() > give_up:
                 raise
             time.sleep(0.1)
-    pages.append(page)
+            pages[place] = opened(url, sign_in)
 print("open", flush=True)
 time.sleep(600)
 """
@@ -534,13 +547,19 @@ time.sleep(600)
 
 @contextmanager
 def pages_of_another_process(
-    pages: list[tuple[str, dict]], patience: float = 0, messages: int = 1
+    pages: list[tuple[str, dict]],
+    patience: float = 0,
+    messages: int = 1,
+    then: tuple[str, ...] = (),
+    headers: dict[str, str] | None = None,
 ) -> Iterator[subprocess.Popen]:
     """Open each `(url, sign_in)` as a `BarePage` in a process of its own, as another browser.
 
-    Yields the process once every page has read its first `messages` messages; `kill()` it to
-    have all its pages vanish at once, as a browser that is killed. It is killed with the block
-    at the latest. A page that is closed on before that is opened again for `patience` seconds.
+    Each page sends the messages of `then` after signing in, and `headers` with its upgrade
+    request. Yields the process once every page has read its first `messages` messages;
+    `kill()` it to have all its pages vanish at once, as a browser that is killed, or stop it
+    (`SIGSTOP`) for pages that go silent without closing. It is killed with the block at the
+    latest. A page that is closed on before that is opened again for `patience` seconds.
     """
     process = subprocess.Popen(
         [sys.executable, "-c", _PAGES_OF_A_PROCESS],
@@ -551,7 +570,15 @@ def pages_of_another_process(
     )
     try:
         process.stdin.write(
-            json.dumps({"pages": pages, "patience": patience, "messages": messages})
+            json.dumps(
+                {
+                    "pages": pages,
+                    "patience": patience,
+                    "messages": messages,
+                    "then": list(then),
+                    "headers": headers or {},
+                }
+            )
         )
         process.stdin.close()
         opened = process.stdout.readline().strip()

@@ -14,6 +14,10 @@ image, which must already be on the Docker daemon (`harness/open_terminal_full.D
 builds it); without it the tests that need it skip and say why, and with
 `OWUI_TEST_REQUIRE_FULL_TERMINAL=1` they fail. Its home is inside the container, so files go in
 through `write_file`.
+
+`event_counts()` reads what a terminal holds for the pages that watch it: its open connections
+and its file watchers (`EventCounts`). It only reads the kernel's tables and sends the terminal
+nothing. `wait_for_event_counts` polls such a reading until it is the expected one.
 """
 
 from __future__ import annotations
@@ -22,12 +26,13 @@ import contextlib
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator, NamedTuple
 
 import httpx
 import pytest
@@ -44,6 +49,61 @@ FULL_CPUS = "2"
 # the Files tab is named after the folder it shows, but Home in the terminal's home (241c8c0e4)
 HOME_TAB = "Home"
 BOOT_SECONDS = 60
+SERVER_PORT_IN_A_CONTAINER = 8000
+# each file watcher of Open Terminal is one thread of this name
+WATCHER_THREAD = "notify-rs"
+INOTIFY_LIMIT = Path("/proc/sys/fs/inotify/max_user_instances")
+# Prints "<connections> <watchers>" from /proc; argv[1] is the server's port and argv[2] the
+# folder with its threads (`/proc/<pid>`, or `/proc/[0-9]*` for every process of a container).
+EVENT_COUNTS_SNIPPET = """
+import glob, sys
+port, watchers, connections = int(sys.argv[1]), 0, 0
+for name in glob.glob(sys.argv[2] + "/task/*/comm"):
+    try:
+        watchers += open(name).read().startswith(sys.argv[3])
+    except OSError:
+        pass
+for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+    try:
+        rows = open(table).read().splitlines()[1:]
+    except OSError:
+        continue
+    for row in rows:
+        fields = row.split()
+        connections += int(fields[1].rsplit(":", 1)[1], 16) == port and fields[3] == "01"
+print(connections, watchers)
+"""
+
+
+class EventCounts(NamedTuple):
+    """What a terminal holds for the pages watching it."""
+
+    # established TCP connections on the server's port
+    connections: int
+    # file watchers; Open Terminal 0.17.7 runs one for each live-update connection with a folder
+    watchers: int
+
+    def __add__(self, other: tuple[int, int]) -> EventCounts:
+        return EventCounts(self.connections + other[0], self.watchers + other[1])
+
+
+def wait_for_event_counts(
+    read: Callable[[], EventCounts],
+    expected: EventCounts | Callable[[EventCounts], bool],
+    timeout: float,
+) -> EventCounts:
+    """Poll `read` until it gives `expected`, or a reading that `expected` accepts; returns the
+    last reading, also when time ran out."""
+    accepts = expected if callable(expected) else lambda counts: counts == expected
+    deadline = time.monotonic() + timeout
+    while not accepts(counts := read()) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return counts
+
+
+def inotify_limit() -> int:
+    """How many file watchers the kernel lets one user hold, over all their processes."""
+    return int(INOTIFY_LIMIT.read_text())
 
 
 @dataclass
@@ -51,6 +111,19 @@ class OpenTerminal:
     base_url: str
     home: Path
     api_key: str = API_KEY
+    pid: int = 0
+
+    def event_counts(self) -> EventCounts:
+        """The connections open on the terminal's port and the file watchers it runs."""
+        port = self.base_url.rsplit(":", 1)[1]
+        read = subprocess.run(
+            [sys.executable, "-c", EVENT_COUNTS_SNIPPET, port, f"/proc/{self.pid}", WATCHER_THREAD],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return EventCounts(*map(int, read.stdout.split()))
 
     def connection(self, **fields) -> dict:
         """The terminal connection as the admin form saves it, bearer auth with its key."""
@@ -93,6 +166,21 @@ class ContainedOpenTerminal(OpenTerminal):
 
         return _docker("logs", "--tail", "200", self.container, check=False)
 
+    def event_counts(self) -> EventCounts:
+        return container_event_counts(self.container)
+
+
+def container_event_counts(container: str) -> EventCounts:
+    """The same reading for an Open Terminal that runs in a container, taken inside it."""
+    from harness.terminals import _docker
+
+    port = str(SERVER_PORT_IN_A_CONTAINER)
+    read = _docker(
+        *("exec", container, "python3", "-c", EVENT_COUNTS_SNIPPET),
+        *(port, "/proc/[0-9]*", WATCHER_THREAD),
+    )
+    return EventCounts(*map(int, read.split()))
+
 
 def open_terminal_binary() -> str | None:
     return os.getenv("OPEN_TERMINAL_BIN") or shutil.which("open-terminal")
@@ -122,7 +210,7 @@ def serving_open_terminal(env: dict[str, str] | None = None) -> Iterator[OpenTer
     base_url = f"http://127.0.0.1:{port}"
     try:
         _wait_until_it_answers(process, base_url, scratch / "server.log")
-        yield OpenTerminal(base_url=base_url, home=home)
+        yield OpenTerminal(base_url=base_url, home=home, pid=process.pid)
     finally:
         process.terminate()
         try:

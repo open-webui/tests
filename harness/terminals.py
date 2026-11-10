@@ -47,6 +47,7 @@ import psutil
 import pytest
 
 from harness.listener import read_body
+from harness.open_terminal import EventCounts, container_event_counts
 
 SERVICE_IMAGE_ENV = "TERMINALS_SERVICE_IMAGE"
 OPEN_TERMINAL_IMAGE_ENV = "OPEN_TERMINAL_IMAGE"
@@ -201,6 +202,14 @@ class Terminals:
     def hostname(self, instance_id: str) -> str:
         """The host name commands see inside the machine."""
         return _docker("inspect", "--format", "{{.Config.Hostname}}", f"terminal-{instance_id}")
+
+    def event_counts(self, instance_id: str) -> EventCounts:
+        """The connections open on the machine's Open Terminal and the file watchers it runs."""
+        return container_event_counts(f"terminal-{instance_id}")
+
+    def touch_file(self, instance_id: str, name: str) -> None:
+        """Make the empty file `name` in the machine's home, from the service's container."""
+        _docker("exec", self.name, "touch", f"/app/data/terminals/.terminals/{instance_id}/{name}")
 
     def logs(self) -> str:
         """The service's log and each terminal container's, for a failure message."""
