@@ -7,10 +7,12 @@ Every helper that acts on the chat takes the page, meaning the page's main chat,
 from __future__ import annotations
 
 import re
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import Locator, Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
+from harness.plain_http import loopback_url
 from utils.chat_surface import REPLY_TIMEOUT_MS as REPLY_TIMEOUT_MS
 from utils.chat_surface import ChatSurface
 
@@ -214,3 +216,57 @@ def open_add_context(chat: Chat) -> Locator:
     menu.get_by_role("menuitem", name="Add Context").click()
     expect(menu.get_by_role("menuitem", name="Upload Files")).to_have_count(0)
     return menu
+
+
+def _names_by_id(page: Page, path: str) -> dict[str, str]:
+    """The name of each model or tool the account is offered at `path`, by id."""
+    token = page.evaluate("localStorage.token")
+    listed = page.request.get(
+        loopback_url(page.url, path), headers={"Authorization": f"Bearer {token}"}
+    )
+    assert listed.ok, f"{path} answered {listed.status}: {listed.text()}"
+    entries = listed.json()
+    if isinstance(entries, dict):
+        entries = entries["data"]
+    return {entry["id"]: entry["name"] for entry in entries}
+
+
+def _pick_model(chat: ChatSurface, name: str) -> None:
+    page = chat.page
+    chat.button(re.compile("^(Select a model|Selected model)")).last.click()
+    page.get_by_role("combobox", name="Search In Models").fill(name)
+    page.get_by_role("listbox", name="Available models").get_by_role(
+        "option", name=f"Select {name} model", exact=True
+    ).click()
+    expect(chat.button(f"Selected model: {name}")).to_be_visible()
+
+
+def _pick_tool(chat: ChatSurface, name: str) -> None:
+    menu = open_input_menu(chat)
+    menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    tool = menu.get_by_role("menuitemcheckbox", name=name, exact=True)
+    if tool.get_attribute("aria-checked") != "true":
+        tool.click()
+    expect(tool).to_have_attribute("aria-checked", "true")
+    close_menu(chat)
+
+
+def start_from_link(chat: ChatSurface, link: str) -> None:
+    """Start the chat the way a link such as `/?models=<id>&tools=<id>` does.
+
+    The main chat opens the link. A side chat has no address of its own, so the model is picked
+    in its model selector and each tool in its More menu."""
+    if not chat.is_side:
+        chat.page.goto(link)
+        return
+    asked = parse_qs(urlsplit(link).query)
+    model_ids = asked.pop("models", []) + asked.pop("model", [])
+    tool_ids = [tool_id for value in asked.pop("tools", []) for tool_id in value.split(",")]
+    assert not asked, f"a side chat cannot be started with {sorted(asked)} from a link"
+    if model_ids:
+        (model_id,) = model_ids
+        _pick_model(chat, _names_by_id(chat.page, "/api/models")[model_id])
+    if tool_ids:
+        tool_names = _names_by_id(chat.page, "/api/v1/tools/")
+        for tool_id in tool_ids:
+            _pick_tool(chat, tool_names[tool_id])
