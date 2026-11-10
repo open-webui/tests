@@ -29,10 +29,27 @@ form does not know is kept. On dev c15f28649 that test fails in backend copies w
 form's default for Auth is `none` (no key reaches the terminal) and where the form ignores
 unknown fields (the extra field is gone); with the address check dropped from Verify
 Connection it fails on the answer for an empty address.
+
+What the terminal fails to say never holds a turn up. A terminal that cannot name its folder
+leaves `run_command` without the folder line. Its prompt is read for the person at each turn and,
+when that read fails or is empty, taken as it was read when the connection was saved; a terminal
+that does not announce a prompt (`features.system` in `/api/config`) is not asked for one. A
+shell check that fails, answers something else than a shell's output or takes more than five
+seconds hides the shell tools. A personal terminal that is not the picked one offers none.
+
+Discriminates (dev c15f28649, each in a backend copy): the folder line added whatever the
+terminal answered turns the folder test red (and the working-directory-off test); the saved
+prompt never used, the two fallback cases of the prompt test, and the saved prompt always used,
+its first case; the `features.system` check dropped, the first two cases of the announce test,
+and the status of `/api/config` ignored, its third; any answer to the shell check taken as an
+open shell, the failed-check test (and the `auto` tests); the five second limit on the check
+removed, the slow test; the note on `read_user_terminal` dropped, the `always` test; the
+picked-terminal condition dropped, the not-picked test.
 """
 
 from __future__ import annotations
 
+import threading
 import uuid
 from contextlib import contextmanager
 from typing import Iterator
@@ -41,7 +58,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
-from harness.listener import json_answer
+from harness.listener import Answer, json_answer
 from harness.socket_client import connected
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -209,6 +226,10 @@ def test_user_shell_tools_always_offers_them_with_no_shell_open(admin, terminal,
         f"set to Always Include, yet with the shell closed the model got {sorted(offered)}"
     )
     assert "run_command" in offered
+    reading = offered["read_user_terminal"]
+    assert reading.startswith("Read the user's shell.") and "Terminal tab" in reading, (
+        f"the model is not told that read_user_terminal reads the Terminal tab: {reading!r}"
+    )
 
 
 @pytest.mark.parametrize("setting", [{}, {"user_shell_tools": "auto"}], ids=["unset", "auto"])
@@ -308,3 +329,172 @@ def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_ke
         "Terminal server URL is required",
     ), f"Verify Connection without an address answered {unverified.status_code} {unverified.text}"
     assert still_stored == stored, f"a refused save changed the connections: {still_stored}"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [json_answer({"detail": "no session"}, status=500), json_answer({"home": HOME})],
+    ids=["500", "no-folder-named"],
+)
+def test_a_terminal_that_cannot_name_its_folder_still_serves_the_turn(
+    admin, terminal, member, upstream, answer
+):
+    terminal_id = _connect(admin, terminal, member, working_directory_context=True)
+    terminal.route("GET", "/files/cwd", answer)
+
+    request = _chat_request(member, upstream, terminal_id=terminal_id)
+
+    description = _offered(request)["run_command"]
+    assert description == "Run a shell command.", (
+        f"the terminal named no folder, yet run_command reads {description!r}"
+    )
+    assert terminal.requests_to("/files/cwd"), "the terminal was not asked for its folder"
+
+
+PERSONS_PROMPT = "You work for this person only."
+
+
+def _prompt_per_caller(server: FakeTerminalServer, saved: Answer, live: Answer) -> None:
+    """The terminal's prompt as read when the connection is saved, and as read for a person."""
+    server.route(
+        "GET", "/system", lambda request: live if "x-user-id" in request.headers else saved
+    )
+
+
+@pytest.mark.parametrize(
+    ("live", "expected"),
+    [
+        (
+            json_answer({"prompt": "You work for this person only."}),
+            "You work for this person only.",
+        ),
+        (json_answer({"detail": "starting"}, status=503), TERMINAL_PROMPT),
+        (json_answer({"prompt": ""}), TERMINAL_PROMPT),
+    ],
+    ids=["read-for-the-person", "refused-for-the-person", "empty-for-the-person"],
+)
+def test_the_terminal_prompt_is_read_for_the_person_and_else_as_saved_with_the_connection(
+    admin, terminal, member, upstream, live, expected
+):
+    _prompt_per_caller(terminal, json_answer({"prompt": TERMINAL_PROMPT}), live)
+    terminal_id = _connect(admin, terminal, member)
+
+    request = _chat_request(member, upstream, terminal_id=terminal_id)
+
+    system = "\n".join(
+        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
+    )
+    assert expected in system, f"the model's system prompt lacks {expected!r}: {system!r}"
+    if expected != TERMINAL_PROMPT:
+        assert TERMINAL_PROMPT not in system, "the prompt saved with the connection came as well"
+    asked_as_the_person = [
+        entry.headers["x-user-id"]
+        for entry in terminal.requests_to("/system")
+        if "x-user-id" in entry.headers
+    ]
+    assert asked_as_the_person == [member.id], asked_as_the_person
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        json_answer({"features": {"system": False}}),
+        json_answer({"features": {}}),
+        json_answer({"features": {"system": True}}, status=500),
+    ],
+    ids=["feature-off", "feature-absent", "config-refused"],
+)
+def test_a_terminal_that_does_not_announce_a_prompt_is_not_asked_for_one(
+    admin, terminal, member, upstream, config
+):
+    terminal_id = _connect(admin, terminal, member)
+    with_prompt = _chat_request(member, upstream, terminal_id=terminal_id)
+    assert any(TERMINAL_PROMPT in text for text in _texts(with_prompt)), (
+        "the terminal's prompt did not arrive while it announced one"
+    )
+    terminal.route("GET", "/api/config", config)
+    # saved again, so the prompt kept with the connection is read anew
+    _save_again(admin)
+    terminal.clear()
+
+    request = _chat_request(member, upstream, terminal_id=terminal_id)
+
+    assert not any(TERMINAL_PROMPT in text for text in _texts(request)), (
+        "the model got the prompt of a terminal that announces none"
+    )
+    assert terminal.requests_to("/api/config"), "the terminal's features were never read"
+    assert not terminal.requests_to("/system"), "the terminal was asked for a prompt all the same"
+
+
+def _save_again(admin) -> None:
+    with admin.client() as client:
+        saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()
+        configure_terminals(client, *saved["TERMINAL_SERVER_CONNECTIONS"])
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        json_answer({"detail": "shell crashed"}, status=500),
+        json_answer({"output": None}),
+        json_answer(["$ "]),
+    ],
+    ids=["500", "no-output", "not-a-shell-state"],
+)
+def test_a_shell_check_the_terminal_fails_hides_the_shell_tools_and_the_turn_goes_on(
+    admin, terminal, member, upstream, answer
+):
+    terminal_id = _connect(admin, terminal, member, user_shell_tools="auto")
+    terminal.route("GET", USER_SHELL_PATH, answer)
+
+    failed = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    _open_shell(terminal, member)
+    opened = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+
+    assert "run_command" in failed and not SHELL_TOOLS & failed.keys(), (
+        f"with a failed shell check the model got {sorted(failed)}"
+    )
+    assert SHELL_TOOLS <= opened.keys(), f"not offered with the shell open: {sorted(opened)}"
+
+
+@pytest.mark.slow
+def test_a_shell_check_the_terminal_never_answers_does_not_hold_the_turn(
+    admin, terminal, member, upstream
+):
+    terminal_id = _connect(admin, terminal, member, user_shell_tools="auto")
+    answered = threading.Event()
+
+    def after_the_turn(_request):
+        answered.wait(30)
+        return json_answer({"output": "$ "})
+
+    terminal.route("GET", USER_SHELL_PATH, after_the_turn)
+    try:
+        offered = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    finally:
+        answered.set()
+
+    assert "run_command" in offered and not SHELL_TOOLS & offered.keys(), sorted(offered)
+
+
+def test_a_personal_terminal_that_is_not_the_picked_one_offers_no_shell_tools(
+    make_user, upstream, direct_integrations
+):
+    direct_integrations(True)
+    owner = make_user(role="admin")
+    address = f"http://127.0.0.1:9/{uuid.uuid4().hex[:6]}"
+    personal = {
+        "url": address,
+        "key": "",
+        "is_terminal": True,
+        "specs": PERSONAL_SPECS,
+        "config": {"user_shell_tools": "always"},
+    }
+
+    picked = _offered(_chat_request(owner, upstream, terminal_id=address, tool_servers=[personal]))
+    not_picked = _offered(_chat_request(owner, upstream, tool_servers=[personal]))
+
+    assert SHELL_TOOLS <= picked.keys(), f"the picked terminal offered {sorted(picked)}"
+    assert "run_command" in not_picked and not SHELL_TOOLS & not_picked.keys(), (
+        f"with no terminal picked the model got {sorted(not_picked)}"
+    )

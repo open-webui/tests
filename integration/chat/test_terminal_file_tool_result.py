@@ -18,6 +18,12 @@ image. With the model's Vision capability off it must not be (open-webui/open-we
 #33345 open): the follow-up carries no image part and the tool message notes `[image]`. That
 test is red on dev until #33345 merges.
 
+The page hears of the model's file calls on the chat's socket, so the file browser follows the
+model: `terminal:display_file` with the path the terminal resolved (and the page asked for) opens
+the viewer for a file that exists and is not shown inline, and `terminal:write_file` and
+`terminal:replace_file_content` name the file that changed. The page number of a `display_file`
+call stays with Open WebUI: the terminal is sent the path only.
+
 A connected fake terminal serves the tools; the scripted model calls them and the test reads
 the tool result Open WebUI sent back to the provider.
 
@@ -31,7 +37,11 @@ means inline: the string case sends `"false"` and only the 1 call still shows th
 passes on dev da9bca0fc. On dev
 c5981aaea, a file id call routed to the terminal instead of the built-in tool turned the chat or
 knowledge file test red. The Vision-off read passes on the #33345 branch 1a02165c1 and fails on
-dev 3b8205505 (the PNG is sent to a model that cannot read it).
+dev 3b8205505 (the PNG is sent to a model that cannot read it). On dev c15f28649, in a backend
+copy: with the page left in the call sent to the terminal the page-from-the-call case of the file
+fields test fails; with the inline and missing-file checks dropped from the event the
+two quiet cases of the event test fail, with the event sent without its path or page the opening
+case, and with the write events dropped the file change test.
 """
 
 from __future__ import annotations
@@ -46,6 +56,7 @@ from harness import upstream as reply
 from harness.chat import ask
 from harness.listener import json_answer
 from harness.model_presets import preset_with_capabilities
+from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.tool_calls import run_tool
 from harness.upstream import conversation
@@ -54,6 +65,8 @@ pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_sour
 
 REPORT = "/workspace/report.png"
 CHART = "/workspace/chart.png"
+# what the terminal resolves the relative `notes/todo.md` of a call to
+NOTES = "/workspace/notes/todo.md"
 CHART_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
@@ -79,6 +92,8 @@ SPEC = {
     "paths": {
         "/files/display": {"post": _operation("display_file")},
         "/files/view": {"post": _operation("read_file")},
+        "/files/write": {"post": _operation("write_file")},
+        "/files/replace": {"post": _operation("replace_file_content")},
     },
 }
 
@@ -99,6 +114,8 @@ def terminal(admin, preserve):
         server.answer = {"exists": True, "path": REPORT}
         server.route("POST", "/files/display", lambda _request: json_answer(server.answer))
         server.route("POST", "/files/view", _view_file)
+        server.route("POST", "/files/write", json_answer({"path": NOTES, "size": 12}))
+        server.route("POST", "/files/replace", json_answer({"path": NOTES, "replacements": 1}))
         connection = server.connection()
         with admin.client() as client:
             configure_terminals(client, connection)
@@ -167,6 +184,9 @@ def test_the_file_fields_are_resolved(terminal, admin, upstream, answer, argumen
     entry = _tool_result(terminal, admin, upstream, "display_file", {"path": REPORT, **arguments})
 
     assert {key: entry.get(key) for key in expected} == expected, entry
+    # the page is for Open WebUI's viewer; Open Terminal's display_file takes a path only
+    asked = json.loads(terminal[0].requests_to("/files/display")[-1].body)
+    assert asked == {"path": REPORT}, f"the terminal's display_file was sent {asked}"
 
 
 @pytest.mark.parametrize(
@@ -269,3 +289,63 @@ def test_with_vision_on_a_terminal_image_read_sends_the_image(terminal, admin, u
     follow_up = _read_the_chart(terminal, admin, upstream, {"vision": True})
 
     assert len(_image_parts(follow_up)) == 1, f"the PNG the terminal read was not sent: {follow_up}"
+
+
+def _events_of_a_call(terminal, admin, upstream, name: str, arguments: dict) -> list[dict]:
+    """Have the model make one terminal call; the chat's socket events once the reply ended."""
+    _, terminal_id = terminal
+    prompt = f"use {name} ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(prompt)
+    upstream.queue(
+        reply.tool_call(name, arguments, match=answering), reply.text("done", match=answering)
+    )
+    with connected(admin) as tab, admin.client() as client:
+        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        assert message["content"] == "done", f"the reply did not arrive: {message}"
+        tab.wait_for(turn.chat_id, "chat:active", active=False)
+        return tab.events_of(turn.chat_id)
+
+
+def _terminal_events(events: list[dict]) -> list[tuple[str, dict]]:
+    return [
+        (event["type"], event.get("data"))
+        for event in events
+        if str(event.get("type", "")).startswith("terminal:")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "arguments", "expected"),
+    [
+        (
+            {"exists": True, "path": REPORT},
+            {"path": "report.png", "page": 3},
+            [("terminal:display_file", {"path": REPORT, "page": 3})],
+        ),
+        ({"exists": True, "path": REPORT}, {"path": REPORT, "inline": True}, []),
+        ({"exists": False, "path": REPORT}, {"path": REPORT}, []),
+    ],
+    ids=["opens-the-viewer", "shown-inline", "missing-file"],
+)
+def test_a_display_file_call_tells_the_page_to_open_the_file_unless_it_is_inline_or_missing(
+    terminal, admin, upstream, answer, arguments, expected
+):
+    terminal[0].answer = answer
+
+    events = _events_of_a_call(terminal, admin, upstream, "display_file", arguments)
+
+    assert len(terminal[0].requests_to("/files/display")) == 1, "the terminal was never called"
+    assert _terminal_events(events) == expected, (
+        f"the page was told {_terminal_events(events)} about the display_file call {arguments}"
+    )
+
+
+@pytest.mark.parametrize("name", ["write_file", "replace_file_content"])
+def test_a_file_the_model_changes_is_named_to_the_page_as_the_terminal_resolved_it(
+    terminal, admin, upstream, name
+):
+    events = _events_of_a_call(terminal, admin, upstream, name, {"path": "notes/todo.md"})
+
+    assert _terminal_events(events) == [(f"terminal:{name}", {"path": NOTES})], (
+        f"after {name} the page was told {_terminal_events(events)}"
+    )

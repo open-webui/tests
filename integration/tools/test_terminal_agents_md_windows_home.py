@@ -6,12 +6,22 @@ model. The home was only accepted as a POSIX absolute path, so a drive-letter or
 as `C:\\ProgramData\\OpenTerminal\\inst` was treated as invalid and the file was never read.
 Windows absolute paths are accepted now; relative and drive-relative homes are still skipped.
 
+The file is handed over only when it has text and is at most 32 KiB: an empty or blank file, a
+larger one, one the terminal does not have or refuses (404, 401, 403, 500) and one the terminal
+takes more than five seconds to answer are left out, and the reply arrives without it.
+
 Discriminates: passes on dev efe63bd34; with 3f5881c52 reverted in a backend copy every Windows
 home case fails (the terminal is never asked for the file). The POSIX and skipped-home cases
-pass on both.
+pass on both. On dev c15f28649, in a backend copy: with the size check dropped the over-32-KiB
+case fails, with the limit lowered by one byte the exactly-32-KiB test, with the blank check
+dropped the empty and blank cases, with any answer read as the file whatever its status the 500
+case, and with the five second limit removed the slow test (the reply waits for the terminal).
 """
 
 from __future__ import annotations
+
+import threading
+import uuid
 
 import pytest
 
@@ -85,3 +95,76 @@ def test_a_home_that_is_not_absolute_is_skipped(terminal, make_user, upstream, h
 
     assert not _model_is_sent_agents_md(terminal, make_user, upstream, home)
     assert server.requests_to("/files/read") == [], "a file was read from a relative home"
+
+
+# The largest AGENTS.md handed to the model, in bytes
+AGENTS_MD_LIMIT = 32 * 1024
+
+
+def _turn_on_a_terminal_whose_file_read_answers(terminal, make_user, upstream, answer) -> list:
+    """One turn with the home's AGENTS.md read answered by `answer`; the texts the model got."""
+    server, terminal_id = terminal
+    server.route("GET", "/files/cwd", json_answer({"cwd": "/home/ada", "home": "/home/ada"}))
+    server.route("GET", "/files/read", answer)
+    server.clear()
+    prompt = f"tidy up the docs {uuid.uuid4().hex[:8]}"
+    upstream.queue(reply.text("ready", match=reply.answering(prompt)))
+    with make_user(role="admin").client() as client:
+        _, message = ask(client, prompt, terminal_id=terminal_id)
+    assert message["content"] == "ready", f"the reply did not arrive: {message}"
+    [request] = [entry for entry in upstream.chat_requests() if reply.answering(prompt)(entry)]
+    assert len(server.requests_to("/files/read")) == 1, "the terminal was not asked for the file"
+    return [str(entry["content"]) for entry in request["messages"]]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        json_answer({"content": ""}),
+        json_answer({"content": " \n\t\n"}),
+        json_answer({"content": "a" * (AGENTS_MD_LIMIT + 1)}),
+        json_answer({"content": {"lines": ["Answer in British English."]}}),
+        json_answer({"detail": "File not found"}, status=404),
+        json_answer({"detail": "Not authenticated"}, status=401),
+        json_answer({"detail": "Forbidden"}, status=403),
+        json_answer({"content": AGENTS_MD}, status=500),
+    ],
+    ids=["empty", "blank", "over-32-kib", "not-text", "missing", "401", "403", "500"],
+)
+def test_an_agents_md_that_is_empty_too_large_or_not_readable_is_left_out(
+    terminal, make_user, upstream, answer
+):
+    texts = _turn_on_a_terminal_whose_file_read_answers(terminal, make_user, upstream, answer)
+
+    handed = [text[:80] for text in texts if text.startswith("# AGENTS.md")]
+    assert not handed, f"the model was handed an AGENTS.md all the same: {handed}"
+
+
+def test_an_agents_md_of_exactly_32_kib_is_handed_to_the_model(terminal, make_user, upstream):
+    content = "b" * AGENTS_MD_LIMIT
+
+    texts = _turn_on_a_terminal_whose_file_read_answers(
+        terminal, make_user, upstream, json_answer({"content": content})
+    )
+
+    assert f"# AGENTS.md\n\n{content}" in texts, "an AGENTS.md at the size limit was left out"
+
+
+@pytest.mark.slow
+def test_a_terminal_too_slow_with_its_agents_md_does_not_hold_the_reply(
+    terminal, make_user, upstream
+):
+    answered = threading.Event()
+
+    def after_the_reply(_request):
+        answered.wait(30)
+        return json_answer({"content": AGENTS_MD})
+
+    try:
+        texts = _turn_on_a_terminal_whose_file_read_answers(
+            terminal, make_user, upstream, after_the_reply
+        )
+    finally:
+        answered.set()
+
+    assert not [text for text in texts if text.startswith("# AGENTS.md")]

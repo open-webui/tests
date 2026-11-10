@@ -29,7 +29,9 @@ the personal-terminal test; `upload_files_to_terminal` running without a selecte
 fails the no-terminal test. The terminal path tests pass on dev e8c0ad85e and all fail with
 2a0e0100b's `edit_image` change undone (the path is looked up as a stored file: 404); BMP added
 to the accepted formats fails the BMP test, the pixel limit raised to 26 million the
-over-25-megapixels test.
+over-25-megapixels test. A terminal file is read up to 50 MB: one byte more is refused with
+"File exceeds the 52428800-byte limit." On dev c15f28649 in a backend copy, with the limit
+raised by a byte the one-byte-over case fails, and lowered by a byte both cases.
 """
 
 from __future__ import annotations
@@ -414,3 +416,31 @@ def test_a_path_without_a_terminal_reads_nothing(painter, upstream, image_engine
     assert told.get("error") == NO_REACHABLE_TERMINAL, f"the model was told {told}"
     assert server.requests_to("/files/view") == [], "a chat without a terminal read from one"
     assert edits == []
+
+
+# the largest terminal file edit_image reads, in bytes
+FILE_LIMIT = 50 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    ("size", "expected_error"),
+    [
+        (FILE_LIMIT + 1, f"File exceeds the {FILE_LIMIT}-byte limit."),
+        (FILE_LIMIT, "cannot identify image file"),
+    ],
+    ids=["one-byte-over", "at-the-limit"],
+)
+def test_a_terminal_file_over_50_megabytes_is_not_read_as_a_picture(
+    painter, upstream, image_engine, terminal, size, expected_error
+):
+    server, terminal_id = terminal
+    path = f"{SOURCE_FOLDER}/scan.png"
+    # no picture at either size, so a file within the limit fails later, on its content
+    _serve_file(server, path, b"\0" * size)
+
+    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+
+    assert expected_error in (told.get("error") or ""), (
+        f"for a terminal file of {size} bytes the model was told {told}"
+    )
+    assert edits == [], "the oversized file still reached the image engine"
