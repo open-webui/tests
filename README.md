@@ -92,7 +92,7 @@ pytest unit                              # set DATA_DIR and STATIC_DIR to scratc
 pytest -k collection_access              # name filter
 pytest -m regression                     # only issue/PR-pinned regressions
 pytest -m "not slow"                     # skip the modules that boot extra instances
-pytest -m terminal                       # every terminal test, wherever it lives
+pytest -m terminal                       # every terminal module, wherever it lives
 ```
 
 A run against the latest `dev` is expected to show **red for any regression whose fix isn't merged yet**. Each failing test names the issue or PR that turns it green. Failures that stop before any assertion (an import, a renamed attribute, a changed signature) are listed apart as likely upstream drift.
@@ -136,7 +136,7 @@ On Linux every scratch instance after the first is forked from a process that ha
 
 The integration and browser suites run in parallel shards, split by `pytest-split` along the timings CI measured for each mode: `durations/integration.json`, `durations/integration-postgres-redis.json` and `durations/e2e.json`. After a green run of `main` dispatched in this repository, the run's timings are folded into these files and committed back to `main`. A test missing from a file still runs and counts at the average. To split a local run the same way, pass the mode's file: `pytest integration --splits 10 --group 1 --splitting-algorithm duration_based_chunks --durations-path durations/integration.json`.
 
-`.github/workflows/terminals.yml` runs every terminal test (`-m terminal`) of the integration and browser suites on demand, with the real Terminals orchestrator: `gh workflow run terminals.yml -f open-webui-ref=dev`. It builds the orchestrator from `terminals-ref` and the Open Terminal image from `open-terminal-ref` (a PyPI version or a ref; both default to the latest release), builds Open WebUI the way the regression workflow does and writes the same summaries and reports. Other workflows can call it.
+`.github/workflows/terminals.yml` runs every terminal module (`-m terminal`) of the integration and browser suites on demand, with the real Terminals orchestrator, the integration ones on SQLite and again on Postgres and Redis: `gh workflow run terminals.yml -f open-webui-ref=dev`. It builds the orchestrator from `terminals-ref` and the Open Terminal image from `open-terminal-ref` (a PyPI version or a ref; both default to the latest release), builds Open WebUI the way the regression workflow does and writes the same summaries and reports. Other workflows can call it.
 
 ---
 
@@ -155,7 +155,7 @@ Registered in `pyproject.toml` (`--strict-markers` is on). Combine with `-m "<ex
 | `requires_postgres` | needs `pgserver` |
 | `public` / `auth_required` / `admin_required` | page-access scope in the browser suite |
 | `depcheck` | dependency contract test under `unit/deps/`, or its feature smoke test under `integration/deps/` |
-| `terminal` | a terminal test; set at collection for every test under a `terminals/` directory or with `terminal` or `tether` in its file name |
+| `terminal` | a test of a terminal module; set at collection for every test under a `terminals/` directory or with `terminal` or `tether` in its file name. A test that connects a terminal in a module named for something else does not carry it |
 
 Tests skip when what they need is absent, so the whole suite runs anywhere and only the runnable part executes.
 
@@ -179,6 +179,7 @@ Tests skip when what they need is absent, so the whole suite runs anywhere and o
 | `terminal_orchestrator` | a Terminals orchestrator stand-in that gives each terminal context (the shared one, `chat:<id>` per chat) a real Open Terminal of its own |
 | `terminals` | the real Terminals orchestrator on Docker (`TERMINALS_SERVICE_IMAGE`, `OPEN_TERMINAL_IMAGE`), one for the session; the templates and containers a test made are removed after it. Skipped without the images or Docker |
 | `connect_terminals(*grants)` | the admin connects that orchestrator and gives the connection those grants; returns the connection, for `create_template` and the other helpers in `harness.terminals` |
+| `shared_terminal(*people, **data)` | the same, plus a terminal the admin creates on the connection and shares with those people; returns the terminal's id |
 
 `harness.chat.ask(client, "text")` sends a message the way the web client does and returns the stored reply.
 

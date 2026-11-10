@@ -1,4 +1,4 @@
-# Runs every terminal test (pytest -m terminal) against a given Open WebUI ref, with the real
+# Runs every terminal module (pytest -m terminal) against a given Open WebUI ref, with the real
 # Terminals orchestrator and real Open Terminal containers on the runner's Docker.
 name: Terminal suite
 
@@ -25,11 +25,6 @@ on:
         required: false
         type: string
         default: ''
-      oix-ref:
-        description: Ref of open-webui/oix the reference app is built from
-        required: false
-        type: string
-        default: main
   workflow_dispatch:
     inputs:
       open-webui-ref:
@@ -52,11 +47,6 @@ on:
         required: false
         type: string
         default: ''
-      oix-ref:
-        description: Ref of open-webui/oix the reference app is built from
-        required: false
-        type: string
-        default: main
 
 permissions:
   contents: read
@@ -235,32 +225,6 @@ jobs:
       - name: Install the browser
         run: python -m playwright install --with-deps chromium
 
-      - name: Check out oix
-        uses: actions/checkout@v5
-        with:
-          repository: open-webui/oix
-          ref: ${{ inputs.oix-ref }}
-          path: oix
-
-      # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
-      # environment of its own and checked here: it must serve its manifest with every scope.
-      - name: Build the reference app
-        run: |
-          uv venv "$RUNNER_TEMP/oix-env"
-          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
-          echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
-          openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
-          export API_KEY=$(openssl rand -hex 32)
-          APP_PRIVATE_KEY_FILE="$RUNNER_TEMP/app-key.pem" APP_PORT=8765 \
-            APP_RECORD_FILE="$RUNNER_TEMP/app-records.jsonl" \
-            "$RUNNER_TEMP/oix-env/bin/python" tests/harness/reference_app/app.py &
-          for attempt in $(seq 30); do
-            curl -sf -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/events > "$RUNNER_TEMP/manifest.json" && break
-            sleep 1
-          done
-          kill %1
-          python -c "import json, sys; assert len(json.load(open(sys.argv[1]))['requested_scopes']) == 4" "$RUNNER_TEMP/manifest.json"
-
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4
         with:
@@ -298,10 +262,146 @@ jobs:
           path: tests/test-results
           if-no-files-found: ignore
 
+  # The same tests again with every instance on Postgres and Redis.
+  integration-postgres-redis:
+    needs: stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+
+      - name: Check out Open WebUI
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/open-webui
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
+      - name: Install uv
+        run: pip install uv
+
+      # The instances run offline, so the default embedding model is fetched up front.
+      - name: Cache the embedding model
+        id: embedding-model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
+
+      # The suite starts a redis-server of its own per instance and Postgres through pgserver.
+      - name: Install dependencies
+        env:
+          OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --system -r open-webui/backend/requirements.txt
+          uv pip install --system -e "./tests[postgres]"
+          uv venv "$RUNNER_TEMP/open-terminal"
+          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
+
+      # The Playwright web loader's spaCy model is installed up front; an instance behind the
+      # suite's proxy cannot download it.
+      - name: Name the spaCy model
+        id: spacy-model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          minor=$(python -c 'import spacy; from spacy.util import get_minor_version; print(get_minor_version(spacy.__version__))')
+          version=$(gh api repos/explosion/spacy-models/contents/compatibility.json -H 'Accept: application/vnd.github.raw' --jq ".spacy[\"$minor\"].en_core_web_sm[0]")
+          echo "release=en_core_web_sm-$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the spaCy model
+        id: spacy-model-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/spacy-model
+          key: spacy-model-${{ steps.spacy-model.outputs.release }}
+
+      # Through the API with the job's token; anonymous release downloads can fail with a 504.
+      - name: Download the spaCy model
+        if: steps.spacy-model-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+
+      - name: Install the spaCy model
+        run: uv pip install --system ~/.cache/spacy-model/*.whl
+
+      - name: Download the embedding model
+        if: steps.embedding-model.outputs.cache-hit != 'true'
+        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+
+      - name: Name the Playwright build
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ steps.playwright.outputs.version }}
+
+      # With the browser restored from the cache, this only installs its system libraries.
+      - name: Install the browser
+        run: python -m playwright install --with-deps chromium
+
+      - name: Restore the Terminals images
+        uses: actions/cache/restore@v4
+        with:
+          path: terminals-stack.tar
+          key: ${{ needs.stack.outputs.cache-key }}
+          fail-on-cache-miss: true
+
+      # The tests that need the stack fail here where they would skip in the regression suite.
+      - name: Load the Terminals images
+        run: |
+          docker load -i terminals-stack.tar
+          {
+            echo "TERMINALS_SERVICE_IMAGE=owui-tests/terminals:ci"
+            echo "OPEN_TERMINAL_IMAGE=owui-tests/open-terminal:ci"
+            echo "OWUI_TEST_REQUIRE_TERMINALS=1"
+          } >> "$GITHUB_ENV"
+
+      - name: Run the terminal tests of the integration suite on Postgres and Redis
+        working-directory: tests
+        env:
+          OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
+          OPEN_WEBUI_LOG_DIR: test-results/server-logs
+          OWUI_TEST_DATABASE: postgres
+          OWUI_TEST_REDIS: '1'
+        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+
+      - name: Summarise the results
+        if: always()
+        working-directory: tests
+        run: python scripts/junit_summary.py test-results/junit.xml "Terminal tests, integration suite on Postgres and Redis" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report and server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminals-integration-postgres-redis-report-${{ inputs.open-webui-ref }}
+          path: tests/test-results
+          if-no-files-found: ignore
+
   # Built once for the browser shards, which restore it from the cache the regression workflow
   # shares.
   e2e-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
     steps:
@@ -445,32 +545,6 @@ jobs:
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
         run: python -m playwright install --with-deps chromium
-
-      - name: Check out oix
-        uses: actions/checkout@v5
-        with:
-          repository: open-webui/oix
-          ref: ${{ inputs.oix-ref }}
-          path: oix
-
-      # The Apps tests drive the reference app in harness/reference_app, built on the oix SDK in an
-      # environment of its own and checked here: it must serve its manifest with every scope.
-      - name: Build the reference app
-        run: |
-          uv venv "$RUNNER_TEMP/oix-env"
-          uv pip install --python "$RUNNER_TEMP/oix-env" "./oix[fastapi,redis]" uvicorn
-          echo "OIX_PYTHON=$RUNNER_TEMP/oix-env/bin/python" >> "$GITHUB_ENV"
-          openssl genpkey -algorithm ED25519 > "$RUNNER_TEMP/app-key.pem"
-          export API_KEY=$(openssl rand -hex 32)
-          APP_PRIVATE_KEY_FILE="$RUNNER_TEMP/app-key.pem" APP_PORT=8765 \
-            APP_RECORD_FILE="$RUNNER_TEMP/app-records.jsonl" \
-            "$RUNNER_TEMP/oix-env/bin/python" tests/harness/reference_app/app.py &
-          for attempt in $(seq 30); do
-            curl -sf -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8765/events > "$RUNNER_TEMP/manifest.json" && break
-            sleep 1
-          done
-          kill %1
-          python -c "import json, sys; assert len(json.load(open(sys.argv[1]))['requested_scopes']) == 4" "$RUNNER_TEMP/manifest.json"
 
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4

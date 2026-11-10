@@ -340,7 +340,7 @@ def _is_terminal_test(path: Path) -> bool:
 
 
 def pytest_collection_modifyitems(config, items) -> None:
-    # `-m terminal` is every terminal test, with no marker in the files themselves
+    # `-m terminal` is every test of a terminal module, with no marker in the files themselves
     for item in items:
         if _is_terminal_test(item.path.relative_to(config.rootpath)):
             item.add_marker(pytest.mark.terminal)
