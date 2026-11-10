@@ -11,7 +11,6 @@ from playwright.sync_api import Locator, Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from utils.tool_servers import connection_row
-from utils.tooltips import tooltip_button
 from utils.user_menu import open_settings
 
 ADMIN_INTEGRATIONS = "/admin/settings/integrations"
@@ -19,15 +18,9 @@ ADMIN_CONNECTIONS = "/api/v1/configs/terminal_servers"
 PERSONAL_SETTINGS = "/api/v1/users/user/settings/update"
 
 
-def admin_terminal_section(page: Page) -> Locator:
-    """Admin Settings > Integrations, opened afresh; returns its Terminal section."""
-    page.goto(ADMIN_INTEGRATIONS)
-    return shown_admin_terminal_section(page)
-
-
 def shown_admin_terminal_section(page: Page) -> Locator:
-    """The Terminal section of the Admin Settings > Integrations the page is on, as it stands;
-    for a page opened there with `page_for(account, path=ADMIN_INTEGRATIONS)`."""
+    """The Terminal section of Admin Settings > Integrations on a page opened there with
+    `page_for(account, path=ADMIN_INTEGRATIONS)`, as it stands."""
     heading = page.get_by_role("dialog").get_by_text("Open Terminal", exact=True)
     expect(heading).to_be_visible()
     return heading.locator("xpath=../..")
@@ -37,12 +30,6 @@ def terminal_dialog(page: Page, title: str = "Add Terminal Connection") -> Locat
     dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=title))
     expect(dialog).to_be_visible()
     return dialog
-
-
-def add_admin_terminal(page: Page) -> Locator:
-    """Open Add Terminal Connection from the admin's Terminal section; returns the dialog."""
-    tooltip_button(admin_terminal_section(page), "Add Connection").click()
-    return terminal_dialog(page)
 
 
 def personal_terminal_section(page: Page) -> Locator:

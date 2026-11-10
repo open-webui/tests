@@ -50,16 +50,15 @@ from harness.terminal_server import (
 )
 from harness.terminals import create_template
 from utils.terminal_connections import (
-    add_admin_terminal,
-    admin_terminal_section,
+    ADMIN_INTEGRATIONS,
+    add_terminal,
     choose_terminal_auth,
+    edit_terminal,
     fill_terminal,
     save_terminal,
     show_advanced,
-    terminal_dialog,
+    shown_admin_terminal_section,
 )
-from utils.tool_servers import connection_row
-from utils.tooltips import tooltip_button
 from utils.user_terminals import open_terminal_settings, save_terminal_settings
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -99,9 +98,9 @@ def stored_connection(admin_account, name: str) -> dict:
 
 
 def test_both_settings_are_saved_and_shown_again(page_for, admin_account, terminal):
-    page = page_for(admin_account)
+    page = page_for(admin_account, path=ADMIN_INTEGRATIONS)
     name = f"Build box {secrets.token_hex(3)}"
-    dialog = add_admin_terminal(page)
+    dialog = add_terminal(shown_admin_terminal_section(page))
     show_advanced(dialog)
     working_directory = dialog.get_by_role("switch", name="Working Directory Context")
     expect(working_directory).to_be_checked()
@@ -117,18 +116,18 @@ def test_both_settings_are_saved_and_shown_again(page_for, admin_account, termin
     assert config.get("working_directory_context") is False, config
     assert config.get("user_shell_tools") == "always", config
 
-    section = admin_terminal_section(page)
-    tooltip_button(connection_row(section, name), "Configure").click()
-    reopened = terminal_dialog(page, "Edit Terminal Connection")
+    # a page of its own reads the connection from the instance again
+    again = page_for(admin_account, path=ADMIN_INTEGRATIONS)
+    reopened = edit_terminal(shown_admin_terminal_section(again), name)
     show_advanced(reopened)
     expect(reopened.get_by_role("switch", name="Working Directory Context")).not_to_be_checked()
     expect(reopened.get_by_label("User Shell Tools")).to_have_value("always")
 
 
 def test_a_connection_saved_untouched_stores_the_defaults(page_for, admin_account, terminal):
-    page = page_for(admin_account)
+    page = page_for(admin_account, path=ADMIN_INTEGRATIONS)
     name = f"Build box {secrets.token_hex(3)}"
-    dialog = add_admin_terminal(page)
+    dialog = add_terminal(shown_admin_terminal_section(page))
     show_advanced(dialog)
     expect(dialog.get_by_role("switch", name="Working Directory Context")).to_be_checked()
     expect(dialog.get_by_label("User Shell Tools")).to_have_value("auto")
@@ -147,9 +146,9 @@ def test_a_terminal_without_authentication_is_saved_without_a_key(
     """Red on dev c15f28649, where the API Key field must be filled in whatever Auth is set to:
     `issue: [regression] [dev] A terminal connection with Auth set to None cannot be saved
     without an API key`."""
-    page = page_for(admin_account)
+    page = page_for(admin_account, path=ADMIN_INTEGRATIONS)
     name = f"Open box {secrets.token_hex(3)}"
-    dialog = add_admin_terminal(page)
+    dialog = add_terminal(shown_admin_terminal_section(page))
     choose_terminal_auth(dialog, "None")
     expect(dialog.get_by_text("No authentication", exact=True)).to_be_visible()
 
@@ -182,9 +181,8 @@ def test_saving_a_stored_connection_untouched_keeps_everything_stored(
     )
     with admin_account.client() as client:
         configure_terminals(client, stored)
-    page = page_for(admin_account)
-    tooltip_button(connection_row(admin_terminal_section(page), name), "Configure").click()
-    dialog = terminal_dialog(page, "Edit Terminal Connection")
+    page = page_for(admin_account, path=ADMIN_INTEGRATIONS)
+    dialog = edit_terminal(shown_admin_terminal_section(page), name)
     expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
 
     save_terminal(page, dialog)
