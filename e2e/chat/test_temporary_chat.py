@@ -27,6 +27,11 @@ The Notes and folder tests pass with the #34071 fix and fail on dev c15f28649 (a
 in the folder after the second one, the Temporary Chat label is gone and the message is saved).
 On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
 Temporary Chat on (no toggle on a new chat).
+
+The fork test and the storage test also run in a side chat, made temporary with `/temporary` as
+it has no header of its own (`utils/chat_surface.py`), in every way a side chat starts empty. The
+other tests pin the header's toggle and Save Chat, the address a reload goes by, folders, the
+Notes tab and new chats of the page, which a side chat does not have.
 """
 
 from __future__ import annotations
@@ -39,7 +44,8 @@ from playwright.sync_api import Page, expect
 from conftest import AppConfig
 from e2e.conftest import APP_LOADED
 from harness import upstream as reply
-from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.chat_surface import EMPTY_SIDE_CONDITIONS, MAIN_CHAT, TEMPORARY_SIDE
+from utils.chat_ui import chat_input, conversation, expect_reply, send, turn_temporary
 from utils.search_dialog import no_matches, open_search_from_sidebar, search
 from utils.user_menu import open_settings
 
@@ -253,21 +259,46 @@ def test_temporary_chat_by_default_starts_new_chats_temporary(page_for, make_use
     assert stored_chats(account, "Carinthia") == []
 
 
+# only a chat without messages can turn temporary; the temporary side chat already is
+TURNED_TEMPORARY = (
+    MAIN_CHAT,
+    *(place for place in EMPTY_SIDE_CONDITIONS if place != TEMPORARY_SIDE),
+)
+
+
+@pytest.mark.chat_surfaces(*TURNED_TEMPORARY)
+def test_a_temporary_chat_is_answered_and_never_stored(chat_for, make_user, upstream):
+    account = make_user()
+    chat = chat_for(account)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
+    expect(chat_input(chat)).to_be_visible()
+
+    turn_temporary(chat)
+    send(chat, PROMPT)
+
+    expect_reply(chat, ANSWER)
+    dialog = open_search_from_sidebar(chat.page)
+    search(dialog, "Carinthia")
+    expect(no_matches(dialog)).to_be_visible()
+    assert stored_chats(account, "Carinthia") == []
+
+
 @pytest.mark.regression
-def test_a_temporary_chat_offers_no_fork(page_for, make_user, upstream):
+@pytest.mark.chat_surfaces(*TURNED_TEMPORARY)
+def test_a_temporary_chat_offers_no_fork(chat_for, make_user, upstream):
     """#32833: a temporary chat is never stored, so forking it could only fail."""
-    page = page_for(make_user())
+    chat = chat_for(make_user())
+    page = chat.page
     upstream.queue(reply.text(ANSWER_THREE, match=reply.answering(PROMPT_THREE)))
-    expect(chat_input(page)).to_be_visible()
+    expect(chat_input(chat)).to_be_visible()
 
-    temporary_toggle(page).click()
-    expect(temporary_label(page)).to_be_visible()
-    send(page, PROMPT_THREE)
-    expect_reply(page, ANSWER_THREE)
+    turn_temporary(chat)
+    send(chat, PROMPT_THREE)
+    expect_reply(chat, ANSWER_THREE)
 
-    expect(conversation(page).get_by_role("button", name="Copy").last).to_be_visible()
-    expect(conversation(page).get_by_role("button", name="Fork chat")).to_have_count(0)
-    chat_input(page).click()
+    expect(conversation(chat).get_by_role("button", name="Copy").last).to_be_visible()
+    expect(conversation(chat).get_by_role("button", name="Fork chat")).to_have_count(0)
+    chat_input(chat).click()
     page.keyboard.type("/")
     menu = page.get_by_role("tooltip")
     expect(menu.get_by_role("button", name=re.compile(r"^Status:"))).to_be_visible()
