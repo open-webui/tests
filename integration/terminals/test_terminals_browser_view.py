@@ -10,6 +10,11 @@ made for, never writes, opens no socket, and fits neither another terminal nor a
 path. Both stop answering when the terminal is no longer shared with the person (403) and when
 the account is deleted or set to pending (401).
 
+The Ports list and the port preview follow the same machines: a web server a person starts is
+listed with its process for that person and its pages come through `proxy/<port>/` with their
+root links kept inside the preview, while a second person of the same terminal, who has a
+machine of their own, neither sees the port nor reaches the page.
+
 The terminal is a real Open Terminal container started by the real Terminals service
 (`terminals`, `shared_terminal`).
 
@@ -20,6 +25,8 @@ all but the per-model case); letting a preview link write fails the read-only te
 answers the write, not Open WebUI), as does refusing its HEAD and letting it open a socket;
 dropping the session check of a token fails the fits-nothing-else test and so does dropping the
 server check; a token whose account is not checked for its role fails the account test.
+For the ports test: sending every person to one machine shows the neighbour the server, and a
+preview that leaves the page as the terminal sent it fails on the page's link.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ from websockets.sync.client import connect
 from harness.chat_history import MOCK_MODEL_ID, seed_chat
 from harness.terminal_server import close_of, read_grant
 from harness.terminals import create_template, share_template
+from utils.browser_tab import serve_site
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -317,4 +325,54 @@ def test_a_preview_link_stops_once_its_person_is_deleted_or_set_to_pending(
     )
     assert after == {"kept": (200, f"kept {tag}"), "deleted": EXPIRED, "pending": EXPIRED}, (
         f"the links answered {after} after one account was deleted and one set to pending"
+    )
+
+
+def test_a_machines_web_server_is_listed_and_previewed_for_its_own_person_only(
+    make_user, shared_terminal
+):
+    owner, neighbour = make_user(), make_user()
+    terminal_id = shared_terminal(owner, neighbour)
+    tag = uuid.uuid4().hex[:8]
+    port = 20000 + uuid.uuid4().int % 20000
+    prefix = f"/api/v1/terminals/{terminal_id}/proxy/{port}/"
+    with owner.client() as client:
+        serve_site(
+            client,
+            terminal_id,
+            f"site-{tag}",
+            port,
+            {
+                "index.html": f'<h1>Harbour {tag}</h1><a href="/quay.html">to the quay</a>',
+                "quay.html": f"<h1>Quay {tag}</h1>",
+            },
+        )
+    _run(neighbour, terminal_id, "true")
+
+    def seen_by(person) -> tuple[list[dict], httpx.Response, httpx.Response]:
+        with person.client() as client:
+            listed = client.get(f"/api/v1/terminals/{terminal_id}/ports")
+            assert listed.status_code == 200, f"listing the ports failed: {listed.text}"
+            servers = [entry for entry in listed.json()["ports"] if entry["port"] == port]
+            return servers, client.get(prefix), client.get(f"{prefix}quay.html")
+
+    servers, page, linked = seen_by(owner)
+    hidden, missing, _ = seen_by(neighbour)
+
+    assert [entry["process"] for entry in servers] == ["python3"], (
+        f"the person's own server is listed as {servers}"
+    )
+    assert page.status_code == 200 and f"<h1>Harbour {tag}</h1>" in page.text, (
+        f"the port's page came back as {page.status_code}: {page.text[-300:]}"
+    )
+    assert f'href="{prefix}quay.html"' in page.text, (
+        f"the page's root link does not stay inside the preview: {page.text[-300:]}"
+    )
+    assert linked.status_code == 200 and f"<h1>Quay {tag}</h1>" in linked.text, (
+        f"the linked page came back as {linked.status_code}: {linked.text[-300:]}"
+    )
+    assert hidden == [], f"the neighbour's machine lists the other person's server: {hidden}"
+    assert _answer(missing) == (404, "Port not found"), (
+        f"the neighbour reached the other person's server: {missing.status_code} "
+        f"{missing.text[-300:]}"
     )
