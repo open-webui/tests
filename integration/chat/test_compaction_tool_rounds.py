@@ -37,6 +37,19 @@ test fails, in its plain-prompt case.
 Since dev a8b478ed7 the summary request replays the run's own request with the summary
 instructions appended, so the calls reach it as they are; the plain prompt, which must name each
 call, is sent when the provider refuses the replay or the summary goes to another model.
+
+Two gaps between turn summaries and summaries made inside a reply. A turn that started from a
+summary and then compacted between tool rounds wrote the new summary without the old one whenever
+the plain prompt was used, a filter on the model or a refused replay
+(open-webui/open-webui#34141), so the next turns lost what the old summary held. And a summary
+made inside a reply may keep rounds of earlier replies; a turn summary saved inside those rounds
+was ignored on the next message, which went back to the older run summary and resent turns the
+newer one covered (open-webui/open-webui#34140).
+
+Discriminates: on dev 262a8c6f7 the filter and refused-replay cases of the previous-summary test
+fail (the run's summary request does not hold the turn's summary) and pass with the #34141 fix;
+its replayed case passes on both. The turn-summary test fails on dev 262a8c6f7 (the next message
+resumes from the run summary) and passes with the #34140 fix.
 """
 
 from __future__ import annotations
@@ -45,12 +58,14 @@ import itertools
 import json
 import time
 import uuid
+from contextlib import ExitStack
 
 import httpx
 import pytest
 
 from harness import upstream as reply
 from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, ask
+from harness.plugins import installed_function
 from harness.prompt_caching import prefix_break
 from harness.python_tools import python_tool
 from harness.tool_calls import without_hidden_calls
@@ -88,10 +103,11 @@ def log_tool(admin):
 
 @pytest.fixture
 def compaction(admin, preserve):
-    """`compaction(enable, threshold)`: the chat settings, keeping 10% so a cut lands mid-round."""
+    """`compaction(enable, threshold, retention)`: the chat settings, by default keeping 10% so a
+    cut lands mid-round."""
     preserve(CHAT_CONFIG)
 
-    def configure(enable: bool = True, threshold: int = THRESHOLD) -> None:
+    def configure(enable: bool = True, threshold: int = THRESHOLD, retention: int = 10) -> None:
         with admin.client() as client:
             current = client.get(CHAT_CONFIG[0]).json()
             updated = client.post(
@@ -101,7 +117,7 @@ def compaction(admin, preserve):
                     "ENABLE_CONTEXT_COMPACTION": enable,
                     "CONTEXT_COMPACTION_TOKEN_THRESHOLD": threshold,
                     "CONTEXT_COMPACTION_TOKEN_CAP": threshold,
-                    "CONTEXT_COMPACTION_RETENTION_PERCENTAGE": 10,
+                    "CONTEXT_COMPACTION_RETENTION_PERCENTAGE": retention,
                 },
             )
         assert updated.status_code == 200, updated.text
@@ -454,3 +470,121 @@ def test_the_next_message_resumes_from_the_runs_last_summary(user, upstream, com
     for kind in ("function_call", "function_call_output"):
         items = [item for item in without_hidden_calls(shown["output"]) if item["type"] == kind]
         assert len(items) == 2 * ROUNDS, f"the saved run lost {kind} items"
+
+
+PASS_THROUGH_FILTER = """
+class Filter:
+    def inlet(self, body: dict) -> dict:
+        return body
+"""
+EARLIER_SUMMARY = "SUMMARY OF THE FIRST TURNS"
+RUN_SUMMARY = "SUMMARY OF THE RUN SO FAR"
+TURN_SUMMARY = "SUMMARY UP TO THE FIFTH QUESTION"
+UNDER = 1_000
+OVER = 110_000
+
+
+def counted_turn(
+    client: httpx.Client,
+    upstream,
+    tool_id: str,
+    number: int,
+    counts: tuple[int, ...],
+    previous: ChatTurn | None = None,
+) -> ChatTurn:
+    """Turn `number` reads one page per round, a round per count but the last, which answers.
+
+    Each reply carries its count as the provider's usage."""
+    prompt = f"question {number} [{uuid.uuid4().hex[:6]}]"
+    rounds = [
+        reply.tool_call(
+            "read_log", {"page": page_name(100 * number + page)}, call_id=f"call_{next(CALL_IDS)}"
+        )
+        for page in range(len(counts) - 1)
+    ]
+    for scripted, prompt_tokens in zip([*rounds, reply.text(f"answer {number}")], counts):
+        scripted.match = answering(prompt)
+        upstream.queue(counted(scripted, prompt_tokens, "usage"))
+    options = (
+        {"chat_id": previous.chat_id, "parent_id": previous.assistant_message_id}
+        if previous
+        else {}
+    )
+    turn, _ = ask(client, prompt, tool_ids=[tool_id], timeout=60, **options)
+    return turn
+
+
+@pytest.mark.parametrize("route", ["replayed", "filter", "replay-refused"])
+def test_a_summary_inside_a_reply_keeps_the_summary_the_turn_started_from(
+    admin, user, upstream, compaction, log_tool, route
+):
+    """open-webui/open-webui#34141: with the plain summary prompt, a summary made between tool
+    rounds was not given the summary its turn started from, so the next turns lost it."""
+    compaction(threshold=COUNTED_THRESHOLD)
+    if route == "replay-refused":
+        upstream.queue(
+            *(
+                reply.error(400, "context length exceeded", match=is_replayed_summary_request)
+                for _ in range(2)
+            )
+        )
+    upstream.queue(
+        *(
+            reply.text(summary, match=is_summary_request)
+            for summary in (EARLIER_SUMMARY, RUN_SUMMARY)
+        )
+    )
+    with ExitStack() as stack:
+        if route == "filter":
+            stack.enter_context(installed_function(admin, PASS_THROUGH_FILTER, is_global=True))
+        with user.client() as client:
+            turn = None
+            for number, counts in ((1, (UNDER, UNDER)), (2, (UNDER, UNDER)), (3, (UNDER, OVER))):
+                turn = counted_turn(client, upstream, log_tool, number, counts, turn)
+            # the fourth turn starts compacted, then its run passes the threshold after round two
+            counted_turn(client, upstream, log_tool, 4, (UNDER, OVER, UNDER, UNDER), turn)
+
+    answered = [
+        body
+        for body in summary_requests(upstream)
+        if not (route == "replay-refused" and is_replayed_summary_request(body))
+    ]
+    assert len(answered) == 2, f"{len(answered)} summary requests were answered"
+    assert EARLIER_SUMMARY not in json.dumps(answered[0])
+    assert EARLIER_SUMMARY in json.dumps(answered[1]), (
+        "the summary made inside the run was not given the summary its turn started from"
+    )
+
+
+def test_the_next_message_resumes_from_a_turn_summary_made_after_a_run_summary(
+    user, upstream, compaction, log_tool
+):
+    """open-webui/open-webui#34140: a run summary whose kept rounds reach back into earlier
+    replies was resumed from even after a newer turn summary was saved inside those rounds."""
+    compaction(threshold=COUNTED_THRESHOLD, retention=40)
+    upstream.queue(
+        *(reply.text(summary, match=is_summary_request) for summary in (RUN_SUMMARY, TURN_SUMMARY))
+    )
+    with user.client() as client:
+        turn = None
+        for number in (1, 2, 3, 4):
+            turn = counted_turn(client, upstream, log_tool, number, (UNDER, UNDER), turn)
+        # the fifth run is summarized after its first round and ends over the threshold
+        turn = counted_turn(client, upstream, log_tool, 5, (OVER, UNDER, OVER), turn)
+        turn = counted_turn(client, upstream, log_tool, 6, (UNDER,), turn)
+        assert len(summary_requests(upstream)) == 2, "control: the chat was not compacted twice"
+        compacted = last_chat_request(upstream)
+        upstream.reset()
+        counted_turn(client, upstream, log_tool, 7, (UNDER,), turn)
+
+    sent = last_chat_request(upstream)
+    system = [entry["content"] for entry in conversation(sent) if entry["role"] == "system"]
+    assert f"[CONVERSATION SUMMARY]\n{TURN_SUMMARY}" in system, (
+        f"the turn summary is missing: {system}"
+    )
+    assert RUN_SUMMARY not in json.dumps(sent), "the older run summary came back"
+    pages = called_pages(conversation(sent))
+    assert pages == called_pages(conversation(compacted)), (
+        f"rounds before the turn summary came back: {pages}"
+    )
+    assert unpaired(conversation(sent)) == []

@@ -41,6 +41,10 @@ turns.
    summary request replays the chat request with the summary instructions appended, so the
    provider reads the history from its prompt cache. A refused or empty replay falls back to the
    plain summary prompt, and an empty answer to that to the older turns' own text.
+11. Saved tool calls (open-webui/open-webui#34139): the plain summary prompt, used with a filter on
+   the model or when the provider refuses the replay, named the tool calls only of messages that
+   carried them in provider form. A saved reply keeps its calls as output items, so the summary
+   never learned which tools ran with which arguments. It now names them; their results stay out.
 
 Twin of unit/chat/test_context_compaction.py.
 
@@ -64,6 +68,9 @@ Dev e8c0ad85e copied every message before compaction dropped the summarized ones
 compacting turn sent the whole chat plus the summary (open-webui/open-webui#33915): the
 user-boundary, one-exchange, retention and temporary-chat cases fail on dev 97ca2144b and pass
 with the fix.
+
+The saved-tool-call cases fail on dev 262a8c6f7 (the plain prompt has no read_log) and pass with
+the #34139 fix.
 """
 
 from __future__ import annotations
@@ -72,7 +79,7 @@ import json
 import sqlite3
 import time
 import uuid
-from contextlib import closing
+from contextlib import ExitStack, closing
 from pathlib import Path
 
 import httpx
@@ -82,6 +89,7 @@ from harness import backends
 from harness import upstream as reply
 from harness.chat import ChatTurn, ask, send_message
 from harness.chat_history import seed_chat
+from harness.plugins import installed_function
 from harness.prepared_data import serving, snapshot_database
 from harness.socket_client import connected
 from harness.upstream import MOCK_MODEL_ID, conversation
@@ -384,6 +392,65 @@ def test_one_long_exchange_is_summarized_before_the_follow_up(
             f"the plain summary prompt carries the tool output ({len(answered)} characters)"
         )
     assert TOOL_RESULT_ROW not in json.dumps(sent), "the follow-up was sent with the tool output"
+
+
+PASS_THROUGH_FILTER = """
+class Filter:
+    def inlet(self, body: dict) -> dict:
+        return body
+"""
+SAVED_CALL_PAGE = "harbour-page-7"
+
+
+def one_question_and_a_saved_tool_call() -> list[dict]:
+    """A reply that read one log page, its call stored only in the output items."""
+    output = [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read_log",
+            "arguments": json.dumps({"page": SAVED_CALL_PAGE}),
+            "status": "completed",
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [{"type": "input_text", "text": TOOL_RESULT_ROW * 20}],
+            "status": "completed",
+        },
+        {"type": "message", "content": [{"type": "output_text", "text": TOOL_ANSWER}]},
+    ]
+    return [
+        {"role": "user", "content": "read me page 7 of the harbour log"},
+        {"role": "assistant", "content": TOOL_ANSWER, "output": output},
+    ]
+
+
+@pytest.mark.parametrize("route", ["filter", "replay-refused"])
+def test_the_plain_summary_prompt_names_saved_tool_calls(admin, user, upstream, compaction, route):
+    """open-webui/open-webui#34139: the plain prompt left out the calls of a saved reply."""
+    compaction()
+    if route == "replay-refused":
+        upstream.queue(
+            reply.error(400, "context length exceeded", match=is_replayed_summary_request)
+        )
+    upstream.queue(reply.text(SUMMARY, match=is_summary_request), reply.text("answer 2"))
+    with ExitStack() as stack:
+        if route == "filter":
+            stack.enter_context(installed_function(admin, PASS_THROUGH_FILTER, is_global=True))
+        with user.client() as client:
+            chat_id, last_id = seed_chat(client, one_question_and_a_saved_tool_call())
+            next_turn(client, chat_id, last_id, FOLLOW_UP)
+
+    answered = [
+        body for body in summary_requests(upstream) if not is_replayed_summary_request(body)
+    ]
+    assert len(answered) == 1, f"{len(answered)} plain summary requests"
+    instructions = str(answered[0]["messages"][-1]["content"])
+    assert "read_log" in instructions, "the summary prompt left out the saved tool call"
+    assert SAVED_CALL_PAGE in instructions, "the summary prompt left out the call's arguments"
+    assert TOOL_ANSWER in instructions
+    assert TOOL_RESULT_ROW not in instructions, "the plain summary prompt quotes the tool output"
 
 
 @pytest.mark.parametrize(
