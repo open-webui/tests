@@ -308,3 +308,18 @@ def start_on_default_models(chat: ChatSurface) -> None:
         _compare_with(chat, first, others)
     shown = f"Selected model: {first} +{len(others)}" if others else f"Selected model: {first}"
     expect(chat.button(shown)).to_be_visible()
+
+
+def turn_temporary(chat: Chat) -> None:
+    """Make a chat without messages temporary: the main chat with the Temporary Chat toggle in
+    its header, a side chat, which has no header of its own, with `/temporary`."""
+    page = _page(chat)
+    if not isinstance(chat, ChatSurface) or not chat.is_side:
+        page.get_by_role("button", name="Temporary Chat").click()
+        expect(page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)).to_be_visible()
+        return
+    chat.input.click()
+    page.keyboard.type("/temporary")
+    # the / menu's entry; a new main chat beside has a Temporary Chat toggle as well
+    page.get_by_role("tooltip").get_by_role("button", name=re.compile(r"^Temporary")).click()
+    expect(chat.input).to_have_text("")
