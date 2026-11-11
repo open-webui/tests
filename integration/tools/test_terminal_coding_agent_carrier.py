@@ -18,7 +18,18 @@ error; a socket that stays away for a minute ends it with "Agent environment dis
 chat shared for replies a collaborator's message goes on in the owner's agent session on the
 owner's terminal, which the collaborator has no access to alone.
 
-Discriminates: passes on dev c15f28649. Mutations in a backend copy, each turning only the named
+Regression (open-webui#34062): while an agent streamed its reply, the whole chat was saved again
+about once a second, so a reply wrote more the longer it ran and the longer the chat already was.
+Each command the agent was allowed without asking saved it once more. Two tests count how often
+the stored chat changes while a scripted agent streams for about one and a half and for about
+four and a half seconds, and while it runs three and twelve commands it need not ask for: the two
+counts are equal when saving follows neither the length of the reply nor what the agent does in
+it. A page opening the chat mid-reply is still given what has streamed, and the reply's own
+stored message holds it, so a restart mid-reply keeps it. Both red on dev c15f28649
+(the longer reply and the one with more commands saved the chat more often), green on the fix
+branch `fix-agent-reply-saves`.
+
+Discriminates: others pass on c15f28649. Mutations in a backend copy, each turning only the named
 test red: `available` no longer checked in discovery (the available test); the protocol version
 check dropped (the version test); `cwd` not passed on by `/api/models` (the folder listing test);
 the discovery error not caught in `/api/models` (the failing terminal test); the provider check
@@ -37,6 +48,7 @@ replaced by the sender (the collaborator test).
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from typing import Iterator
@@ -56,6 +68,7 @@ from harness.agent_carrier import (
     heard,
     serving_agents,
 )
+from harness.backends import read_rows
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import model_id
 from harness.listener import json_answer
@@ -581,6 +594,141 @@ def test_agent_output_lost_on_the_way_ends_the_reply_with_an_error(make_user, ag
     assert "Three." not in broken.get("content", ""), (
         f"the reply went on past the missing piece: {broken['content']!r}"
     )
+
+
+def _stored_chat(instance, chat_id: str):
+    return read_rows(instance, "SELECT chat FROM chat WHERE id = :id", {"id": chat_id})[0]["chat"]
+
+
+def _saves_while(
+    client: httpx.Client, instance, agents: ScriptedAgents, terminal_id: str, work
+) -> tuple[int, str, str, dict]:
+    """One agent turn doing `work(run)`: how often the stored chat changed meanwhile, what a page
+    opening the chat right after is given of the reply, what its stored message holds by then
+    (all a restart would keep) and the finished reply."""
+    working, worked, release = threading.Event(), threading.Event(), threading.Event()
+
+    def turn(run: AgentRun, params: dict) -> None:
+        working.set()
+        work(run)
+        run.wait_until_read()
+        worked.set()
+        release.wait(REPLY_TIMEOUT)
+
+    agents.turn = turn
+    sent = send_message(
+        client, "go on", model=model_id(terminal_id, MODEL), terminal_id=terminal_id
+    )
+    try:
+        assert working.wait(REPLY_TIMEOUT), "the agent was never asked"
+        stored = _stored_chat(instance, sent.chat_id)
+        saves = 0
+        deadline = time.monotonic() + REPLY_TIMEOUT
+        while not worked.is_set():
+            assert time.monotonic() < deadline, "the agent never finished its work"
+            latest = _stored_chat(instance, sent.chat_id)
+            saves += latest != stored
+            stored = latest
+        opened = client.get(f"/api/v1/chats/{sent.chat_id}")
+        assert opened.status_code == 200, opened.text
+        shown = opened.json()["chat"]["history"]["messages"][sent.assistant_message_id]
+        kept = read_rows(
+            instance,
+            "SELECT CAST(content AS TEXT) AS content FROM chat_message WHERE id = :id",
+            {"id": f"{sent.chat_id}-{sent.assistant_message_id}"},
+        )[0]["content"]
+    finally:
+        release.set()
+    return (
+        saves,
+        shown.get("content") or "",
+        json.loads(kept or "null") or "",
+        wait_for_reply(client, sent, REPLY_TIMEOUT),
+    )
+
+
+def _streaming(pieces: int):
+    def work(run: AgentRun) -> None:
+        for number in range(pieces):
+            run.say(f"piece {number} ")
+            # the agent's own pace: the bug saved the chat once for every second the reply ran
+            time.sleep(0.1)
+
+    return work
+
+
+def _running_commands(commands: int):
+    def work(run: AgentRun) -> None:
+        for number in range(commands):
+            request = {
+                "sessionId": SESSION,
+                "toolCall": {"toolCallId": f"shell-{number}", "title": "List the folder"},
+                "options": [{"optionId": "allow-it", "name": "Allow", "kind": "allow_once"}],
+            }
+            allowed = run.ask("session/request_permission", request)["result"]["outcome"]
+            assert allowed.get("optionId") == "allow-it", f"the command was not allowed: {allowed}"
+            # a command takes its time; the sampling between two of them sees each save
+            time.sleep(0.1)
+
+    return work
+
+
+def test_an_agent_reply_saves_the_chat_no_more_often_the_longer_it_streams(
+    make_user, agents, connect, instance
+):
+    """open-webui#34062: the chat was saved again for every second an agent's reply streamed."""
+    person = make_user()
+    terminal_id = connect(person)
+
+    with person.client() as client:
+        short_saves, short_shown, short_kept, short = _saves_while(
+            client, instance, agents, terminal_id, _streaming(15)
+        )
+        long_saves, long_shown, long_kept, long = _saves_while(
+            client, instance, agents, terminal_id, _streaming(45)
+        )
+
+    assert long_saves == short_saves, (
+        f"a reply three times as long saved the whole chat {long_saves} times while it streamed, "
+        f"the short one {short_saves} times"
+    )
+    for shown in (short_shown, long_shown):
+        assert shown.startswith("piece 0 "), (
+            f"a page opening the chat mid-reply was not given what had streamed: {shown!r}"
+        )
+    for kept in (short_kept, long_kept):
+        assert kept.startswith("piece 0 "), (
+            f"mid-reply the stored reply lacked what had streamed, a restart loses it: {kept!r}"
+        )
+    for reply, pieces in ((short, 15), (long, 45)):
+        whole = "".join(f"piece {number} " for number in range(pieces))
+        assert reply.get("content") == whole, f"the finished reply is not whole: {reply}"
+        assert not _error(reply), f"the reply failed: {reply}"
+
+
+def test_an_agent_allowed_its_commands_without_asking_saves_the_chat_no_more_often_the_more_it_runs(
+    make_user, agents, connect, instance
+):
+    """open-webui#34062: each command an agent was allowed unasked saved the whole chat again."""
+    person = make_user()
+    terminal_id = connect(person)
+
+    with person.client() as client:
+        few_saves, _, _, few = _saves_while(
+            client, instance, agents, terminal_id, _running_commands(3)
+        )
+        many_saves, _, _, many = _saves_while(
+            client, instance, agents, terminal_id, _running_commands(12)
+        )
+
+    assert many_saves == few_saves, (
+        f"twelve commands allowed without asking saved the whole chat {many_saves} times, "
+        f"three of them {few_saves} times"
+    )
+    for reply, commands in ((few, 3), (many, 12)):
+        calls = [item for item in reply.get("output") or [] if item.get("type") == "function_call"]
+        assert len(calls) == commands, f"the reply does not hold its {commands} commands: {reply}"
+        assert not _error(reply), f"the reply failed: {reply}"
 
 
 @pytest.mark.slow
