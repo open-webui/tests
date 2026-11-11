@@ -6,6 +6,8 @@ the saved chat showed the first call with the second call's input and result. Ea
 its own. Twin of integration/chat/test_reused_tool_call_ids.py.
 
 Discriminates: passes on dev b859124f9, fails with 88720c692 reverted (both calls read "second").
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -61,22 +63,22 @@ def shout(text: str) -> reply.Reply:
 
 
 def test_each_call_shows_its_own_input_and_result_after_a_reload(
-    page_for, make_user, upstream, shouter
+    chat_for, make_user, upstream, shouter
 ):
     upstream.queue(
         shout("first"), shout("second"), reply.text("all shouted", match=reply.answering(PROMPT))
     )
-    page = page_for(make_user())
-    select_model(page, shouter)
-    send(page, PROMPT)
-    expect_reply(page, "all shouted")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    send(chat, PROMPT)
+    expect_reply(chat, "all shouted")
 
-    page.reload()
-    last_reply(page).get_by_text("Explored 2 shout").click()
-    calls = last_reply(page).get_by_text("View Result from shout")
+    chat = chat.reload()
+    last_reply(chat).get_by_text("Explored 2 shout").click()
+    calls = last_reply(chat).get_by_text("View Result from shout")
     expect(calls).to_have_count(2)
     calls.first.click()
     calls.last.click()
 
     in_order = re.compile(r"first[\s\S]*FIRST[\s\S]*second[\s\S]*SECOND")
-    expect(last_reply(page)).to_contain_text(in_order)
+    expect(last_reply(chat)).to_contain_text(in_order)
