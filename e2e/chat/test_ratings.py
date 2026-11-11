@@ -21,6 +21,12 @@ dev 623257af7 build, where Save stores no reason or comment while the tags are p
 A thumb pressed from the keyboard keeps the focus while its rating saves (f36807a55, PR
 open-webui/open-webui#33673: the thumb was disabled while saving, which threw the focus to the
 page). Passes on dev e8c0ad85e, fails on that build with the thumbs disabled again.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the thumbs up test
+in every way a side chat starts and every state it can be in. A side chat reply had no thumbs
+(open-webui/open-webui#34014, fix PR open-webui/open-webui#34064): on dev c15f28649 every side
+chat variant is red and passes on the PR's build. A temporary side chat is left out, as a
+temporary chat offers no rating in the main chat either.
 """
 
 from __future__ import annotations
@@ -31,10 +37,11 @@ import time
 from typing import Callable
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
 from utils.chat_ui import conversation, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -45,24 +52,24 @@ TAGS = ["Food", "Hiking"]
 
 
 @pytest.fixture
-def rater(make_user, page_for, upstream):
-    """A fresh account and its page, on a chat holding one scripted reply."""
+def rater(make_user, chat_for, upstream):
+    """A fresh account and its chat, holding one scripted reply."""
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
-    send(page, QUESTION)
-    expect_reply(page, ANSWER)
-    return account, page
+    send(chat, QUESTION)
+    expect_reply(chat, ANSWER)
+    return account, chat
 
 
 def _is_new_feedback(response) -> bool:
     return response.request.method == "POST" and response.url.endswith("/evaluations/feedback")
 
 
-def _rate(page: Page, verdict: str) -> None:
-    last_reply(page).hover()
-    with page.expect_response(_is_new_feedback):
-        conversation(page).get_by_role("button", name=verdict).last.click()
+def _rate(chat: ChatSurface, verdict: str) -> None:
+    last_reply(chat).hover()
+    with chat.page.expect_response(_is_new_feedback):
+        conversation(chat).get_by_role("button", name=verdict).last.click()
 
 
 def _tags_arrive_late(admin, preserve, upstream) -> None:
@@ -111,15 +118,16 @@ def _feedback_rows(page_for, admin, account, result: str):
 def test_a_thumbs_down_with_a_reason_shows_in_the_feedback_details(
     rater, page_for, admin, admin_token, upstream, preserve
 ):
-    account, page = rater
+    """In a side chat: open-webui/open-webui#34014."""
+    account, chat = rater
     _tags_arrive_late(admin, preserve, upstream)
-    _rate(page, "Bad Response")
-    chat = conversation(page)
-    chat.get_by_role("button", name="Rate 2 out of 10").click()
-    chat.get_by_role("button", name="Not helpful").click()
-    chat.get_by_role("textbox", name="Additional feedback comments").fill("too sugary for me")
-    chat.get_by_role("button", name="Save").click()
-    expect(page.get_by_text("Thanks for your feedback!")).to_be_visible()
+    _rate(chat, "Bad Response")
+    form = conversation(chat)
+    form.get_by_role("button", name="Rate 2 out of 10").click()
+    form.get_by_role("button", name="Not helpful").click()
+    form.get_by_role("textbox", name="Additional feedback comments").fill("too sugary for me")
+    form.get_by_role("button", name="Save").click()
+    expect(chat.page.get_by_text("Thanks for your feedback!")).to_be_visible()
     saved = _stored_rating_once(account, lambda data: data.get("comment"))
     assert not saved.get("tags"), "the tags arrived before the reason was saved"
 
@@ -138,19 +146,25 @@ def test_a_thumbs_down_with_a_reason_shows_in_the_feedback_details(
         expect(details).to_contain_text(shown)
 
 
+# a temporary chat offers no rating, in the main chat either; the model count cannot matter, as
+# each reply carries its own thumbs
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
 def test_a_thumbs_up_is_listed_as_a_win(rater, page_for, admin, admin_token):
-    account, page = rater
-    _rate(page, "Good Response")
+    """In a side chat: open-webui/open-webui#34014."""
+    account, chat = rater
+    _rate(chat, "Good Response")
     expect(_feedback_rows(page_for, admin, account, "Won")).to_have_count(1)
 
 
 def test_a_thumb_pressed_from_the_keyboard_keeps_focus_while_the_rating_saves(rater):
+    """In a side chat: open-webui/open-webui#34014."""
     # the thumb was disabled while it saved, which threw keyboard focus to the page (#33673)
-    _, page = rater
+    _, chat = rater
+    page = chat.page
     held: list = []
     page.route("**/api/v1/evaluations/feedback", lambda route: held.append(route))
-    thumb = conversation(page).get_by_role("button", name="Good Response").last
-    last_reply(page).hover()
+    thumb = conversation(chat).get_by_role("button", name="Good Response").last
+    last_reply(chat).hover()
     thumb.focus()
     expect(thumb).to_be_focused()
 
@@ -158,6 +172,6 @@ def test_a_thumb_pressed_from_the_keyboard_keeps_focus_while_the_rating_saves(ra
         page.keyboard.press("Enter")
 
     expect(thumb, "keyboard focus left the thumb while its rating was saving").to_be_focused()
-    page.unroute("**/api/v1/evaluations/feedback")
     for route in held:
         route.continue_()
+    page.unroute("**/api/v1/evaluations/feedback")
