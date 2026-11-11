@@ -11,6 +11,8 @@ shows the finished tool call and the open thinking block together.
 
 Discriminates: passes on the dev bc2416c5d build; with the group's active check back to tool
 calls only, the header reads "Explored" throughout the thinking and never "Exploring".
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -30,8 +32,8 @@ ANSWER = "It is now, having thought about it."
 THINKING_SECONDS = 4.0
 
 
-def steps_header(page, text: str):
-    return last_reply(page).get_by_text(text, exact=True)
+def steps_header(chat, text: str):
+    return last_reply(chat).get_by_text(text, exact=True)
 
 
 def wait_for_the_tool_result_to_be_sent(upstream, timeout: float = 30.0) -> None:
@@ -48,9 +50,9 @@ def wait_for_the_tool_result_to_be_sent(upstream, timeout: float = 30.0) -> None
 
 
 def test_the_steps_read_exploring_while_the_model_thinks_after_a_tool(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     upstream.queue(
         reply.tool_call("get_current_timestamp", {}, match=reply.answering(PROMPT)),
         reply.text(
@@ -61,25 +63,25 @@ def test_the_steps_read_exploring_while_the_model_thinks_after_a_tool(
         ),
     )
 
-    send(page, PROMPT)
+    send(chat, PROMPT)
     wait_for_the_tool_result_to_be_sent(upstream)
 
     # the group forms once the thinking starts and stays open THINKING_SECONDS
-    expect(steps_header(page, "Exploring")).to_be_visible(timeout=THINKING_SECONDS * 2 * 1000)
-    expect_reply(page, ANSWER)
-    expect(steps_header(page, "Explored")).to_be_visible()
-    expect(steps_header(page, "Exploring")).to_have_count(0)
+    expect(steps_header(chat, "Exploring")).to_be_visible(timeout=THINKING_SECONDS * 2 * 1000)
+    expect_reply(chat, ANSWER)
+    expect(steps_header(chat, "Explored")).to_be_visible()
+    expect(steps_header(chat, "Exploring")).to_have_count(0)
 
 
-def test_the_steps_of_a_finished_reply_read_explored(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_the_steps_of_a_finished_reply_read_explored(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     upstream.queue(
         reply.tool_call("get_current_timestamp", {}, match=reply.answering(PROMPT)),
         reply.text(ANSWER, reasoning="weighing the timestamp", match=reply.answering(PROMPT)),
     )
 
-    send(page, PROMPT)
+    send(chat, PROMPT)
 
-    expect_reply(page, ANSWER)
-    expect(steps_header(page, "Explored")).to_be_visible()
-    expect(steps_header(page, "Exploring")).to_have_count(0)
+    expect_reply(chat, ANSWER)
+    expect(steps_header(chat, "Explored")).to_be_visible()
+    expect(steps_header(chat, "Exploring")).to_have_count(0)
