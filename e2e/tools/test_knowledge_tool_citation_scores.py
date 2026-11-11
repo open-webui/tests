@@ -8,6 +8,10 @@ base. A person reads the badge in the citation dialog.
 
 Twin of integration/tools/test_knowledge_tool_citation_scores.py.
 
+The test runs in the main chat and in every way a side chat starts and every state it can be in
+(`utils/chat_surface.py`); a knowledge tool's source shows on a side chat answer on dev c15f28649
+and on dev e791cbdde alike.
+
 Discriminates: passes on dev bc2416c5d; with the fix reverted in a backend copy and the dev
 build unchanged, the citation dialog shows the text with no relevance percentage.
 """
@@ -22,6 +26,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
+from utils.chat_surface import EVERYWHERE
 from utils.chat_ui import conversation, expect_reply, listed_source, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -43,21 +48,24 @@ def shared_notes(admin, make_user):
         yield reader, knowledge_id, filename
 
 
-def test_a_knowledge_tool_citation_shows_its_relevance(page_for, shared_notes, upstream):
+# several models: each answer's sources come with that answer, as with one model
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_a_knowledge_tool_citation_shows_its_relevance(chat_for, shared_notes, upstream):
     reader, knowledge_id, filename = shared_notes
     arguments = {"query": "heron", "knowledge_ids": [knowledge_id]}
     upstream.queue(
         reply.tool_call("query_knowledge_files", arguments, match=reply.answering(PROMPT)),
         reply.text("Herons nest in colonies.", match=reply.answering(PROMPT)),
     )
-    page = page_for(reader)
+    chat = chat_for(reader)
 
-    send(page, PROMPT)
-    expect_reply(page, "Herons nest in colonies.")
+    send(chat, PROMPT)
+    expect_reply(chat, "Herons nest in colonies.")
 
-    chat = conversation(page)
-    chat.get_by_role("button", name="Toggle 1 source").click()
-    listed_source(page, filename).click()
-    citation = page.get_by_role("dialog")
+    sources = conversation(chat).get_by_role("button", name="Toggle 1 source")
+    expect(sources, f"the reply in the {chat.place} lists no source").to_be_visible()
+    sources.click()
+    listed_source(chat, filename).click()
+    citation = chat.page.get_by_role("dialog")
     expect(citation).to_contain_text(NOTES)
     expect(citation.get_by_text(PERCENTAGE)).to_be_visible()
