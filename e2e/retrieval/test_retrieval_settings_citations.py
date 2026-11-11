@@ -19,10 +19,16 @@ is off.
 
 Discriminates: passes on dev ebc6add67; in a frontend build whose Documents form sends the
 retrieval settings it loaded in place of the edited ones, every test fails.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the Top K test in
+every way a side chat starts and every state it can be in but temporary: a side chat answer listed
+no sources from an attached file until a reload (open-webui/open-webui#34017, fix PR
+open-webui/open-webui#34064).
 """
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import uuid
 
@@ -35,12 +41,14 @@ from harness.file_context import file_context_ticked
 from harness.keyword_embeddings import keyword_embedding_env, serve_keyword_embeddings
 from harness.listener import ReceivedRequest, json_answer, listening
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.chat_surface import EVERYWHERE, MAIN_CHAT, TEMPORARY_SIDE, ChatOpener, ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
     conversation,
     expect_reply,
     listed_source,
+    open_input_menu,
     send,
 )
 
@@ -129,6 +137,20 @@ def reader(ranked) -> Actor:
     return create_user(ranked)
 
 
+@pytest.fixture
+def ranked_chat_for(chat_for, ranked, preserve) -> ChatOpener:
+    """`chat_for` on the keyword-embedding instance, with side chats allowed there."""
+    admin = admin_of(ranked)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=ranked)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    return dataclasses.replace(chat_for, upstream=ranked.upstream, admin=admin)
+
+
 def field(settings: Locator, label: str, kind: str = "input") -> Locator:
     return settings.get_by_text(label, exact=True).locator(f"xpath=following-sibling::div//{kind}")
 
@@ -145,27 +167,28 @@ def save(settings: Locator) -> None:
     expect(settings.page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
-def ask_about_the_notes(page_for, ranked, reader: Actor, question: str) -> Page:
+def ask_about_the_notes(chat_for, ranked, reader: Actor, question: str) -> ChatSurface:
     """Attach the field notes in a new chat, ask `question` and wait for the reply."""
-    page = page_for(reader)
-    expect(chat_input(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    page.get_by_role("main").get_by_label("More").click()
+    chat = chat_for(reader)
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    menu = open_input_menu(chat)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
+        menu.get_by_role("menuitem", name="Upload Files").click()
     name, text = NOTES
     chooser.value.set_files({"name": name, "mimeType": "text/plain", "buffer": text.encode()})
-    expect(page.get_by_role("button", name=name)).to_be_visible()
+    expect(chat.panel.get_by_role("button", name=name)).to_be_visible()
     ranked.upstream.queue(reply.text("Noted.", match=reply.answering(question)))
-    send(page, question)
+    send(chat, question)
     try:
-        expect_reply(page, "Noted.")
+        expect_reply(chat, "Noted.")
     except AssertionError:
         # a reply that finishes before the chat page settles can stay blank until a reload
         expect(page).to_have_url(re.compile("/c/"))
         assert "Noted." in _stored_reply(reader, page.url.rsplit("/c/", 1)[1])
-        page.reload()
-        expect_reply(page, "Noted.")
-    return page
+        chat = chat.reload()
+        expect_reply(chat, "Noted.")
+    return chat
 
 
 def _stored_reply(reader: Actor, chat_id: str) -> str:
@@ -180,12 +203,11 @@ def sent_to_the_model(ranked, question: str) -> str:
     return "\n".join(str(message.get("content")) for message in request["messages"])
 
 
-def cited_passages(page: Page) -> Locator:
+def cited_passages(chat: ChatSurface) -> Locator:
     """Open the reply's one source; returns the dialog listing its passages."""
-    chat = conversation(page)
-    chat.get_by_role("button", name="Toggle 1 source").click()
-    listed_source(page, NOTES[0]).click()
-    citation = page.get_by_role("dialog")
+    conversation(chat).get_by_role("button", name="Toggle 1 source").click()
+    listed_source(chat, NOTES[0]).click()
+    citation = chat.page.get_by_role("dialog")
     expect(citation.get_by_role("link", name=NOTES[0])).to_be_visible()
     return citation
 
@@ -199,13 +221,19 @@ def unique_question(text: str) -> str:
     return f"{text} {uuid.uuid4().hex[:6]}"
 
 
-def test_top_k_decides_how_many_passages_are_cited(documents, page_for, ranked, reader):
+# one model: the sources belong to the reply the file was retrieved for; a temporary chat sends
+# the whole file without retrieving passages, the main chat alike
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
+def test_top_k_decides_how_many_passages_are_cited(documents, ranked_chat_for, ranked, reader):
+    """In a side chat: open-webui/open-webui#34017."""
     field(documents, "Top K").fill("2")
     save(documents)
 
-    page = ask_about_the_notes(page_for, ranked, reader, unique_question("Where do herons hunt?"))
+    chat = ask_about_the_notes(
+        ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
+    )
 
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     expect(passage_count(citation)).to_have_count(2)
     for heron in HERONS:
         expect(citation.get_by_text(heron, exact=True)).to_be_visible()
@@ -213,7 +241,7 @@ def test_top_k_decides_how_many_passages_are_cited(documents, page_for, ranked, 
 
 
 def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
-    documents, page_for, ranked, reader
+    documents, ranked_chat_for, ranked, reader
 ):
     field(documents, "Top K").fill("6")
     set_switch(documents, "Hybrid Search", turn_on=True)
@@ -222,9 +250,9 @@ def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
     save(documents)
 
     question = unique_question("Where do herons hunt?")
-    page = ask_about_the_notes(page_for, ranked, reader, question)
+    chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     expect(passage_count(citation)).to_have_count(2)
     for heron in HERONS:
         expect(citation.get_by_text(heron, exact=True)).to_be_visible()
@@ -234,8 +262,10 @@ def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
     documents = open_documents(documents.page)
     set_switch(documents, "Hybrid Search", turn_on=False)
     save(documents)
-    page = ask_about_the_notes(page_for, ranked, reader, unique_question("Where do herons hunt?"))
-    expect(passage_count(cited_passages(page))).to_have_count(6)
+    chat = ask_about_the_notes(
+        ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
+    )
+    expect(passage_count(cited_passages(chat))).to_have_count(6)
 
 
 @pytest.fixture
@@ -254,7 +284,7 @@ def reranker():
 
 
 def test_an_external_reranker_picks_the_cited_passage(
-    documents, page_for, ranked, reader, reranker
+    documents, ranked_chat_for, ranked, reader, reranker
 ):
     field(documents, "Top K").fill("6")
     set_switch(documents, "Hybrid Search", turn_on=True)
@@ -267,9 +297,9 @@ def test_an_external_reranker_picks_the_cited_passage(
     save(documents)
 
     question = unique_question("Where do herons hunt?")
-    page = ask_about_the_notes(page_for, ranked, reader, question)
+    chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     expect(passage_count(citation)).to_have_count(1)
     expect(citation.get_by_text(GREBES, exact=True)).to_be_visible()
     expect(citation.get_by_text("90.00%")).to_be_visible()
@@ -279,56 +309,64 @@ def test_an_external_reranker_picks_the_cited_passage(
     assert asked[-1].json()["model"] == "grebe-ranker"
 
 
-def test_chunk_size_decides_how_much_each_cited_passage_holds(documents, page_for, ranked, reader):
+def test_chunk_size_decides_how_much_each_cited_passage_holds(
+    documents, ranked_chat_for, ranked, reader
+):
     field(documents, "Chunk Size").fill("1000")
     save(documents)
 
-    page = ask_about_the_notes(page_for, ranked, reader, unique_question("Where do herons hunt?"))
+    chat = ask_about_the_notes(
+        ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
+    )
 
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     expect(passage_count(citation)).to_have_count(1)
     for paragraph in PARAGRAPHS:
         expect(citation.get_by_text(paragraph, exact=True)).to_be_visible()
 
 
 def test_chunk_overlap_repeats_a_sentence_in_neighbouring_passages(
-    documents, page_for, ranked, reader
+    documents, ranked_chat_for, ranked, reader
 ):
     field(documents, "Top K").fill("2")
     field(documents, "Chunk Size").fill("100")
     field(documents, "Chunk Overlap").fill("50")
     save(documents)
 
-    page = ask_about_the_notes(page_for, ranked, reader, unique_question("Where do otters play?"))
+    chat = ask_about_the_notes(
+        ranked_chat_for, ranked, reader, unique_question("Where do otters play?")
+    )
 
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     expect(passage_count(citation)).to_have_count(2)
     # with two paragraphs to a chunk, only the overlap puts the otters in a second one
     expect(citation.get_by_text(OTTERS, exact=True)).to_have_count(2)
 
 
-def test_full_context_mode_gives_the_model_the_whole_file(documents, page_for, ranked, reader):
+def test_full_context_mode_gives_the_model_the_whole_file(
+    documents, ranked_chat_for, ranked, reader
+):
     set_switch(documents, "Always Use Full Text", turn_on=True)
     expect(documents.get_by_text("Top K", exact=True)).to_have_count(0)
     save(documents)
 
     question = unique_question("Where do herons hunt?")
-    page = ask_about_the_notes(page_for, ranked, reader, question)
+    chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
     sent = sent_to_the_model(ranked, question)
     assert [paragraph for paragraph in PARAGRAPHS if paragraph in sent] == PARAGRAPHS, sent
-    citation = cited_passages(page)
+    citation = cited_passages(chat)
     for paragraph in PARAGRAPHS:
         expect(citation.get_by_text(re.compile(re.escape(paragraph))).first).to_be_visible()
 
 
-def test_a_rag_template_frames_what_the_model_is_sent(documents, page_for, ranked, reader):
+def test_a_rag_template_frames_what_the_model_is_sent(documents, ranked_chat_for, ranked, reader):
     template = "Answer only from these notes:\n{{CONTEXT}}\nThe question was: {{QUERY}}"
     field(documents, "RAG Template", kind="textarea").fill(template)
     save(documents)
 
     question = unique_question("Which grebe dances?")
-    ask_about_the_notes(page_for, ranked, reader, question)
+    ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
     sent = sent_to_the_model(ranked, question)
     assert "Answer only from these notes:" in sent, sent
@@ -337,7 +375,7 @@ def test_a_rag_template_frames_what_the_model_is_sent(documents, page_for, ranke
 
 
 def test_a_template_placing_the_context_twice_is_flagged_and_sends_it_twice(
-    documents, page_for, ranked, reader
+    documents, ranked_chat_for, ranked, reader
 ):
     template = "Notes:\n{{CONTEXT}}\nQuestion: {{QUERY}}\nNotes again:\n{{CONTEXT}}"
     field(documents, "RAG Template", kind="textarea").fill(template)
@@ -347,7 +385,7 @@ def test_a_template_placing_the_context_twice_is_flagged_and_sends_it_twice(
     save(documents)
 
     question = unique_question("Which grebe dances?")
-    ask_about_the_notes(page_for, ranked, reader, question)
+    ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
     sent = sent_to_the_model(ranked, question)
     assert sent.count(GREBES) == 2, sent
