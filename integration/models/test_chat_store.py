@@ -28,6 +28,9 @@
 * #34143 creating a tag read the account's tags and then inserted the missing ones, so requests
   adding the same new tag at the same moment collided on the insert: all but one tag request
   failed with a 500 and left its chat untagged, and all but one import answered 400.
+* #34126 a full save from a window that missed a turn stored that window's older position as the
+  chat's open position, while reading the chat back already moved the history to the newest
+  turn. The chat page opens on the stored position, so it reopened on the older turn.
 
 Twin of unit/models/test_chat_store.py.
 
@@ -43,6 +46,9 @@ the same-time test alone; the route does not exist before b4a58be19.
 On dev 262a8c6f7 the two #34143 same-time tag tests fail on SQLite and Postgres (statuses such as
 [200, 200, 500, 500] and [200, 400, 200, 400]) and pass with the fix 9523b3a1b on branch
 fix-concurrent-new-tag; the existing-tag test passes on both.
+On dev eecba38c5 the #34126 out-of-date edit test fails (the chat opens on `a1`) and passes with
+the fix 967471e29 on branch fix/stale-save-reopens-older-turn; the up-to-date and older-branch
+saves pass on both.
 """
 
 from __future__ import annotations
@@ -431,6 +437,74 @@ def test_a_stale_writer_keeps_a_message_saved_since_its_read(client):
 
     assert set(read_chat(client, chat_id)["history"]["messages"]) == {"m1", "m2"}, (
         "a writer holding an older copy deleted the message saved since (#28742)"
+    )
+
+
+# --- #34126: a stale save keeps the chat open on its newest turn ---------------------------
+
+
+def two_turns(current_id: str, first_question: str = "user q1") -> dict:
+    return history(
+        current_id,
+        {**message("q1", None, ["a1"], "user"), "content": first_question},
+        message("a1", "q1", ["q2"], "assistant"),
+        message("q2", "a1", ["a2"], "user"),
+        message("a2", "q2", [], "assistant"),
+    )
+
+
+def one_turn(first_question: str = "user q1") -> dict:
+    return history(
+        "a1",
+        {**message("q1", None, ["a1"], "user"), "content": first_question},
+        message("a1", "q1", [], "assistant"),
+    )
+
+
+def open_position(client: httpx.Client, chat_id: str) -> tuple[str, str]:
+    """The position the chat page opens on and the one the stored history shows."""
+    response = client.get(f"/api/v1/chats/{chat_id}")
+    assert response.status_code == 200, response.text
+    return response.json()["current_message_id"], response.json()["chat"]["history"]["currentId"]
+
+
+def save_history(client: httpx.Client, chat_id: str, saved: dict) -> None:
+    response = client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"history": saved}})
+    assert response.status_code == 200, response.text
+
+
+def test_an_edit_saved_from_an_out_of_date_window_reopens_on_the_newest_turn(client):
+    chat_id = create_chat(client, {"history": one_turn()})
+    save_history(client, chat_id, two_turns("a2"))
+
+    save_history(client, chat_id, one_turn("user q1, typo fixed"))
+
+    stored = read_chat(client, chat_id)["history"]
+    assert stored["messages"]["q1"]["content"] == "user q1, typo fixed"
+    assert open_position(client, chat_id) == ("a2", "a2"), (
+        "an edit saved from a window that missed a turn reopened the chat on an older turn (#34126)"
+    )
+
+
+def test_a_save_from_an_up_to_date_window_opens_where_it_left_the_chat(client):
+    chat_id = create_chat(client, {"history": one_turn()})
+
+    save_history(client, chat_id, two_turns("a2", "user q1, edited"))
+
+    assert read_chat(client, chat_id)["history"]["messages"]["q1"]["content"] == "user q1, edited"
+    assert open_position(client, chat_id) == ("a2", "a2")
+
+
+def test_a_save_from_a_window_on_an_older_branch_stays_on_that_branch(client):
+    branched = two_turns("a2")
+    branched["messages"]["q1"]["childrenIds"] = ["a1", "a1b"]
+    branched["messages"]["a1b"] = message("a1b", "q1", [], "assistant")
+    chat_id = create_chat(client, {"history": branched})
+
+    save_history(client, chat_id, {**branched, "currentId": "a1b"})
+
+    assert open_position(client, chat_id) == ("a1b", "a1b"), (
+        "a save from a window on an older branch was moved off that branch"
     )
 
 
