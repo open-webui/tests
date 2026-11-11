@@ -12,6 +12,11 @@ Twin of integration/chat/test_compaction_tool_rounds.py.
 
 Discriminates: passes on dev 436f06ca5; with 67cfa917c reverted in a backend copy the long run is
 never compacted, no Context compacted notice appears and the test fails.
+
+The test runs in the main chat and in a side chat. On dev c15f28649 the side chat variant is red
+and green on head e791cbdde (fix PR open-webui/open-webui#34064): a New Chat tab beside an empty
+chat sent the side conversation instruction ahead of the summary, as open-webui/open-webui#34029
+describes for a tab opened from a pinned model.
 """
 
 from __future__ import annotations
@@ -94,14 +99,14 @@ def tool_round(number: int) -> Reply:
     return Reply(tool_calls=calls)
 
 
-def start_long_tool_run(page, upstream) -> None:
+def start_long_tool_run(chat, upstream) -> None:
     prompt = f"read the whole harbour log [{uuid.uuid4().hex[:6]}]"
     for scripted in [*(tool_round(number) for number in range(1, ROUNDS + 1)), reply.text(ANSWER)]:
         scripted.match = answering(prompt)
         upstream.queue(scripted)
     upstream.queue(*(reply.text(summary, match=is_summary_request) for summary in SUMMARIES))
-    turn_on_tool(page, "Harbour log")
-    send(page, prompt)
+    turn_on_tool(chat, "Harbour log")
+    send(chat, prompt)
 
 
 def provider_rounds(upstream) -> list[tuple[dict, bool]]:
@@ -138,13 +143,14 @@ def assert_append_only_between_summaries(rounds: list[tuple[dict, bool]]) -> Non
 
 
 def test_a_long_tool_run_is_compacted_mid_reply_and_the_chat_carries_on(
-    page_for, make_user, upstream, compaction, log_tool
+    chat_for, make_user, upstream, compaction, log_tool
 ):
+    """In a side chat: open-webui/open-webui#34029."""
     compaction()
-    page = page_for(make_user())
-    start_long_tool_run(page, upstream)
-    expect(page.get_by_text("Context compacted").first).to_be_visible(timeout=30_000)
-    expect_reply(page, ANSWER)
+    chat = chat_for(make_user())
+    start_long_tool_run(chat, upstream)
+    expect(chat.page.get_by_text("Context compacted").first).to_be_visible(timeout=30_000)
+    expect_reply(chat, ANSWER)
 
     rounds = provider_rounds(upstream)
     assert [summarized for _, summarized in rounds] == [
@@ -163,23 +169,23 @@ def test_a_long_tool_run_is_compacted_mid_reply_and_the_chat_carries_on(
         assert unpaired(body["messages"]) == [], f"request {number}"
     assert_append_only_between_summaries(rounds)
 
-    page.reload()
-    expect_reply(page, ANSWER)
+    chat = chat.reload()
+    expect_reply(chat, ANSWER)
     # consecutive calls are grouped under one line that counts them, and each compaction stays
     # in the reply between the rounds it summarized: three rounds, two, then the last one
-    chat = conversation(page)
+    messages = conversation(chat)
     for calls in (6, 4, 2):
-        expect(chat.get_by_text(f"Explored {calls} read_log")).to_be_visible()
-    expect(chat.get_by_role("button", name="Context compacted")).to_have_count(2)
+        expect(messages.get_by_text(f"Explored {calls} read_log")).to_be_visible()
+    expect(messages.get_by_role("button", name="Context compacted")).to_have_count(2)
 
     follow_up = f"which page was longest? [{uuid.uuid4().hex[:6]}]"
     upstream.queue(reply.text("They were all the same.", match=answering(follow_up)))
-    send(page, follow_up)
-    expect_reply(page, "They were all the same.")
+    send(chat, follow_up)
+    expect_reply(chat, "They were all the same.")
     sent = provider_rounds(upstream)[-1][0]
     assert reply.conversation(sent)[-1]["content"] == follow_up
     assert unpaired(sent["messages"]) == []
 
-    page.reload()
-    expect_reply(page, "They were all the same.")
-    expect(conversation(page).get_by_text(ANSWER)).to_be_visible()
+    chat = chat.reload()
+    expect_reply(chat, "They were all the same.")
+    expect(conversation(chat).get_by_text(ANSWER)).to_be_visible()
