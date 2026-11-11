@@ -6,7 +6,8 @@ message and went back to the provider on every later turn; a provider that refus
 messages then failed each new message in that chat. Here the provider answers only a request
 without an empty assistant message and fails every other one.
 
-Twin of integration/chat/test_empty_reply_replay.py.
+Twin of integration/chat/test_empty_reply_replay.py. Runs in the main chat and in a side chat
+(`utils/chat_surface.py`).
 
 `test_a_chat_answers_again_after_a_reply_stopped_before_any_text` is red on dev 62f70a844: since
 de73bb830 a reply stopped with Stop never ends on the page, the Stop button stays and the next
@@ -40,18 +41,18 @@ def answering_without_empty_replies(prompt: str):
     return lambda body: answering(body) and has_no_empty_assistant_message(body)
 
 
-def test_a_chat_answers_again_after_a_reply_stopped_before_any_text(page_for, make_user, upstream):
+def test_a_chat_answers_again_after_a_reply_stopped_before_any_text(chat_for, make_user, upstream):
     upstream.reset("error")
     upstream.queue(
         reply.text("too late", delay=10, match=reply.answering("first question")),
         reply.text("here you go", match=answering_without_empty_replies("second question")),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    send(page, "first question")
-    expect(stop_button(page)).to_be_visible()
-    stop_button(page).click()
-    expect(stop_button(page)).to_be_hidden()
-    send(page, "second question")
+    send(chat, "first question")
+    expect(stop_button(chat)).to_be_visible()
+    stop_button(chat).click()
+    expect(stop_button(chat)).to_be_hidden()
+    send(chat, "second question")
 
-    expect_reply(page, "here you go")
+    expect_reply(chat, "here you go")
