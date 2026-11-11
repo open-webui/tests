@@ -154,6 +154,7 @@ def test_a_server_started_in_the_terminal_shows_under_ports_and_opens_in_the_tab
 
 
 def test_a_port_opens_in_a_new_browser_tab_from_the_start_page(workbench):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34108)."""
     page, person, terminal_id, tag = workbench
     # a signed-in browser carries the session as a cookie too, which a new tab's request needs
     page.context.add_cookies([{"name": "token", "value": person.token, "url": person.base_url}])

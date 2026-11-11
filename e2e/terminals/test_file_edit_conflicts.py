@@ -219,6 +219,7 @@ def test_a_save_the_terminal_refuses_keeps_the_text_and_says_so(page, folder):
 
 
 def test_a_file_opened_before_the_first_message_is_saved_after_it(page, folder, upstream):
+    """Red on dev c15f28649, green on v0.13.3 (open-webui/open-webui#34106)."""
     log = folder / "log.txt"
     open_file(file_browser(page), "log.txt")
     _say(page, upstream, "Noted.")
@@ -255,6 +256,7 @@ def test_an_unsaved_edit_is_still_there_after_looking_at_another_tab(page, folde
 
 
 def test_an_unsaved_edit_is_still_there_after_visiting_another_chat(page, person, folder, upstream):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34107)."""
     log = folder / "log.txt"
     with person.client() as client:
         seed_chat(
