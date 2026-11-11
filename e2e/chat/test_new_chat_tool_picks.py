@@ -12,7 +12,8 @@ tool) and pass with the picks saved for the chat once its first message creates 
 A tool picked in an opened saved chat stays after a reload, in the main chat and dragged into a
 tab beside a new chat or a saved one (`utils/chat_surface.py`). A chat dragged into a tab dropped
 what was picked there (open-webui/open-webui#34034, fix PR open-webui/open-webui#34064): those tab
-variants are red on dev c15f28649.
+variants are red on dev c15f28649. In the same places a saved chat on a model with a default
+tool offers that tool with its next message, as the issue expects of a chat opened in a tab.
 """
 
 from __future__ import annotations
@@ -25,7 +26,8 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
-from harness.python_tools import python_tool
+from harness.python_tools import EVERYONE_READS, python_tool
+from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import turn_on_tool
 from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT
 from utils.chat_ui import chat_input, expect_picked, expect_reply, send
@@ -142,3 +144,47 @@ def test_a_tool_picked_in_an_opened_saved_chat_stays_after_a_reload(
     expect_picked(chat, "Tools", 1)
     follow_up = ask(chat, upstream, f"after the reload {uuid.uuid4().hex[:6]}")
     assert "count_puffins" in offered_tools(follow_up), "the tool picked in a tab was dropped"
+
+
+@pytest.fixture
+def puffin_model(admin) -> str:
+    """A model every account may use whose default tool counts puffins; its id."""
+    with python_tool(admin, PUFFIN_TOOL, name=f"Puffin default {uuid.uuid4().hex[:8]}") as tool_id:
+        model_id = f"puffin-model-{uuid.uuid4().hex[:8]}"
+        form = {
+            "id": model_id,
+            "base_model_id": MOCK_MODEL_ID,
+            "name": model_id,
+            "meta": {"toolIds": [tool_id]},
+            "params": {},
+            "access_grants": [EVERYONE_READS],
+        }
+        with admin.client() as client:
+            created = client.post("/api/v1/models/create", json=form)
+            assert created.status_code == 200, created.text
+            yield model_id
+            client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
+def test_a_saved_chat_opened_in_a_tab_offers_its_models_default_tool(
+    chat_for, make_user, upstream, puffin_model
+):
+    """In a tab: open-webui/open-webui#34034."""
+    account = make_user()
+    with account.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": "Which cliff has the most puffins?"},
+                {"role": "assistant", "content": "The north cliff."},
+            ],
+            model=puffin_model,
+        )
+    chat = chat_for(account, chat_id=chat_id)
+
+    asked = ask(chat, upstream, f"count them {uuid.uuid4().hex[:6]}")
+
+    assert "count_puffins" in offered_tools(asked), (
+        f"the {chat.place} sent without its model's default tool"
+    )
