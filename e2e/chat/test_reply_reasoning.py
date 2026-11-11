@@ -20,6 +20,11 @@ the `rendering-front3` copy (artifacts read from every output item, thoughts inc
 streamed case goes red. On dev f659c0d12 both cases of the reasoning artifact test go red: the
 Artifacts view the answer's HTML block opened took the chat's place and hid the reply
 (open-webui/open-webui#33878).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`; the stored reply
+dragged into a tab beside a new chat). The page has one artifacts pane, which shows the main
+chat's artifacts, so the reasoning artifact test is red in a side chat on dev c15f28649 and on
+dev e791cbdde (open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is).
 """
 
 from __future__ import annotations
@@ -27,10 +32,11 @@ from __future__ import annotations
 import re
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import REPLY_TIMEOUT_MS, conversation, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -40,27 +46,27 @@ THOUGHTS = "Checking **two** things:\n\n- the tide table\n- the wind forecast"
 THINKING_SECONDS = 2.2
 
 
-def thought_label(page: Page) -> Locator:
-    return last_reply(page).get_by_text(re.compile(r"^Thought for"))
+def thought_label(chat: ChatSurface) -> Locator:
+    return last_reply(chat).get_by_text(re.compile(r"^Thought for"))
 
 
-def expect_folded_then_drawn(page: Page) -> None:
-    expect(thought_label(page)).to_have_text(re.compile(r"^Thought for [23] seconds$"))
-    tide = conversation(page).get_by_text("the tide table")
+def expect_folded_then_drawn(chat: ChatSurface) -> None:
+    expect(thought_label(chat)).to_have_text(re.compile(r"^Thought for [23] seconds$"))
+    tide = conversation(chat).get_by_text("the tide table")
     expect(tide).to_be_hidden()
 
-    thought_label(page).click()
+    thought_label(chat).click()
 
-    thoughts = last_reply(page).get_by_role("listitem")
+    thoughts = last_reply(chat).get_by_role("listitem")
     expect(thoughts).to_have_text(["the tide table", "the wind forecast"])
-    expect(last_reply(page).get_by_role("strong")).to_have_text("two")
-    expect(last_reply(page)).not_to_contain_text("**")
+    expect(last_reply(chat).get_by_role("strong")).to_have_text("two")
+    expect(last_reply(chat)).not_to_contain_text("**")
 
 
 def test_the_reasoning_is_folded_under_how_long_it_took_and_again_after_a_reload(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     prompt = "should we sail today?"
     upstream.queue(
         reply.text(
@@ -70,13 +76,13 @@ def test_the_reasoning_is_folded_under_how_long_it_took_and_again_after_a_reload
             match=reply.answering(prompt),
         )
     )
-    send(page, prompt)
-    expect(last_reply(page)).to_contain_text("Yes, sail before noon.", timeout=REPLY_TIMEOUT_MS)
+    send(chat, prompt)
+    expect(last_reply(chat)).to_contain_text("Yes, sail before noon.", timeout=REPLY_TIMEOUT_MS)
 
-    expect_folded_then_drawn(page)
-    page.reload()
-    expect_reply(page, "Yes, sail before noon.")
-    expect_folded_then_drawn(page)
+    expect_folded_then_drawn(chat)
+    chat = chat.reload()
+    expect_reply(chat, "Yes, sail before noon.")
+    expect_folded_then_drawn(chat)
 
 
 DRAFT_THOUGHT = "Maybe a page like this:\n\n```html\n<h1>draft in thought</h1>\n```"
@@ -89,15 +95,15 @@ STORED_WITH_DETAILS = (
 )
 
 
-def reply_streamed_now(page_for, account, upstream) -> Page:
-    page = page_for(account)
+def reply_streamed_now(chat_for, account, upstream) -> ChatSurface:
+    chat = chat_for(account)
     prompt = "think about a page first"
     upstream.queue(reply.text(FINAL_ANSWER, reasoning=DRAFT_THOUGHT, match=reply.answering(prompt)))
-    send(page, prompt)
-    return page
+    send(chat, prompt)
+    return chat
 
 
-def reply_stored_earlier(page_for, account, upstream) -> Page:
+def reply_stored_earlier(chat_for, account, upstream) -> ChatSurface:
     with account.client() as client:
         chat_id, _ = seed_chat(
             client,
@@ -106,20 +112,20 @@ def reply_stored_earlier(page_for, account, upstream) -> Page:
                 {"role": "assistant", "content": STORED_WITH_DETAILS},
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    return page
+    chat = chat_for(account, chat_id=chat_id)
+    return chat
 
 
 @pytest.mark.parametrize("open_reply", [reply_streamed_now, reply_stored_earlier])
 def test_an_html_block_in_the_reasoning_is_no_artifact_of_its_own(
-    page_for, make_user, upstream, open_reply
+    chat_for, make_user, upstream, open_reply
 ):
-    page = open_reply(page_for, make_user(), upstream)
+    chat = open_reply(chat_for, make_user(), upstream)
 
-    expect_reply(page, "Page done.")
-    pane = page.locator("#artifacts-container")
+    expect_reply(chat, "Page done.")
+    pane = chat.page.locator("#artifacts-container")
     expect(pane.frame_locator("iframe").locator("h1")).to_have_text("final page")
     expect(pane).to_contain_text("Version 1 of 1")
-    last_reply(page).get_by_text(re.compile(r"^Thought")).click()
-    expect(last_reply(page).get_by_text("draft in thought")).to_be_visible()
+    last_reply(chat).get_by_text(re.compile(r"^Thought")).click()
+    expect(last_reply(chat).get_by_text("draft in thought")).to_be_visible()
     expect(pane).to_contain_text("Version 1 of 1")
