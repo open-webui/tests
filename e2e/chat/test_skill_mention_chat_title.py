@@ -10,6 +10,9 @@ the mention is only resolved where the message itself is drawn. That test is red
 Discriminates: the plain message test passes on the dev ebc6add67 build and turns red in a
 backend copy whose fallback title is a fixed "Untitled"; the mention test fails on that build
 (the sidebar entry reads `<$tides-...|Tides ...> when is high tide ...`).
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`); a saved side chat
+is listed in the sidebar under its own title.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -43,26 +47,26 @@ def _sidebar_titles(page: Page) -> Locator:
     return page.locator("#sidebar-chat-item div[dir='auto']")
 
 
-def _start_chat(page: Page, upstream, question: str) -> None:
+def _start_chat(chat: ChatSurface, upstream, question: str) -> None:
     upstream.queue(reply.text("Noted.", match=reply.answering(question)))
-    page.keyboard.type(question)
-    page.keyboard.press("Enter")
-    expect_reply(page, "Noted.")
+    chat.page.keyboard.type(question)
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Noted.")
 
 
-def test_a_plain_first_message_becomes_the_chat_title(page_for, writer, upstream):
+def test_a_plain_first_message_becomes_the_chat_title(chat_for, writer, upstream):
     question = f"when is high tide {uuid.uuid4().hex[:6]}"
-    page = page_for(writer)
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+    chat = chat_for(writer)
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
 
-    _start_chat(page, upstream, question)
+    _start_chat(chat, upstream, question)
 
-    expect(_sidebar_titles(page).filter(has_text=question)).to_have_text(question)
+    expect(_sidebar_titles(chat.page).filter(has_text=question)).to_have_text(question)
 
 
 def test_a_first_message_with_a_skill_mention_is_titled_without_its_markup(
-    page_for, writer, upstream
+    chat_for, writer, upstream
 ):
     suffix = uuid.uuid4().hex[:6]
     name = f"Tides {suffix}"
@@ -73,15 +77,15 @@ def test_a_first_message_with_a_skill_mention_is_titled_without_its_markup(
         )
     assert created.status_code == 200, created.text
     question = f"when is high tide {suffix}"
-    page = page_for(writer)
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
-    page.keyboard.type(f"${suffix}")
-    page.get_by_role("button").filter(has_text=name).click()
+    chat = chat_for(writer)
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
+    chat.page.keyboard.type(f"${suffix}")
+    chat.page.get_by_role("button").filter(has_text=name).click()
 
-    _start_chat(page, upstream, question)
+    _start_chat(chat, upstream, question)
 
-    title = _sidebar_titles(page).filter(has_text=question)
+    title = _sidebar_titles(chat.page).filter(has_text=question)
     expect(title).to_have_count(1)
     raw_markup = "the chat title shows the mention's raw markup (open-webui/open-webui#32019)"
     expect(title, raw_markup).not_to_contain_text("<$")
