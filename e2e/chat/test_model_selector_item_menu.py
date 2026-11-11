@@ -14,6 +14,12 @@ Discriminates: passes on the ef67cc3fa build with #31503 applied, fails on ef67c
 click closes the selector and nothing else happens); with only the child-menu mark applied, the
 Edit and Delete tests still fail (the first click in the opened window is swallowed); selecting a
 model by its row passes on all three.
+
+Every test runs in the main chat and in a side chat. The workspace model editor test is red in
+both on dev c15f28649 and on the side chat rework build: after Save & Update the editor asks
+"Discard unsaved changes?" and stays on its address instead of going back to the model list
+(open-webui/open-webui#34087, fix PR open-webui/open-webui#34110, not caused by the side chat);
+every other test is green in both.
 """
 
 from __future__ import annotations
@@ -23,11 +29,12 @@ import uuid
 from typing import Iterator
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness.actors import Actor
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input
 from utils.clipboard import read_text
 from utils.model_selector import model_search
@@ -104,27 +111,27 @@ def ollama_model(owner, preserve, listener) -> Iterator[tuple[str, object]]:
     yield model_id, server
 
 
-def open_selector(page: Page) -> Locator:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name=re.compile("^Selected model")).click()
-    models = page.get_by_role("listbox", name="Available models")
+def open_selector(chat: ChatSurface) -> Locator:
+    expect(chat_input(chat)).to_be_visible()
+    chat.panel.get_by_role("button", name=re.compile("^Selected model")).click()
+    models = chat.page.get_by_role("listbox", name="Available models")
     expect(models).to_be_visible()
     return models
 
 
-def model_row(page: Page, name: str) -> Locator:
-    models = open_selector(page)
-    model_search(page).fill(name)
+def model_row(chat: ChatSurface, name: str) -> Locator:
+    models = open_selector(chat)
+    model_search(chat).fill(name)
     row = models.get_by_role("option", name=f"Select {name} model")
     expect(row).to_be_visible()
     return row
 
 
-def click_menu_item(page: Page, name: str, item: str) -> None:
-    row = model_row(page, name)
+def click_menu_item(chat: ChatSurface, name: str, item: str) -> None:
+    row = model_row(chat, name)
     row.hover()
     row.get_by_label("More Options", exact=True).click()
-    menu = page.get_by_role("menu")
+    menu = chat.page.get_by_role("menu")
     expect(menu).to_be_visible()
     menu.get_by_role("menuitem", name=item, exact=True).click()
 
@@ -144,17 +151,17 @@ def edit_and_save(editor: Locator) -> None:
 
 
 @pytest.fixture
-def page(page_for, owner) -> Page:
-    return page_for(owner)
+def chat(chat_for, owner) -> ChatSurface:
+    return chat_for(owner)
 
 
-def test_edit_opens_the_settings_of_a_provider_model(page, owner, provider_model):
+def test_edit_opens_the_settings_of_a_provider_model(chat, owner, provider_model):
     """Red on dev 3dd1db147: the editor of a never-customised provider model stayed blank
     (open-webui/open-webui#32143). Fixed by fdb8cb749: passes on dev 0401b7522 (3 of 3) and
     fails on that build with fdb8cb749 reverted."""
-    click_menu_item(page, provider_model, "Edit")
+    click_menu_item(chat, provider_model, "Edit")
 
-    settings = page.get_by_role("dialog")
+    settings = chat.page.get_by_role("dialog")
     expect(settings.get_by_role("button", name="Save & Update")).to_be_visible()
     edit_and_save(settings)
 
@@ -162,59 +169,59 @@ def test_edit_opens_the_settings_of_a_provider_model(page, owner, provider_model
     assert _stored_model(owner, provider_model)["meta"]["description"] == NEW_DESCRIPTION
 
 
-def test_edit_opens_the_editor_of_a_workspace_model(page, owner, workspace_model):
-    click_menu_item(page, workspace_model, "Edit")
+def test_edit_opens_the_editor_of_a_workspace_model(chat, owner, workspace_model):
+    click_menu_item(chat, workspace_model, "Edit")
 
-    expect(page).to_have_url(f"/workspace/models/edit?id={workspace_model}")
-    edit_and_save(page.get_by_role("main"))
+    expect(chat.page).to_have_url(f"/workspace/models/edit?id={workspace_model}")
+    edit_and_save(chat.page.get_by_role("main"))
 
-    expect(page).to_have_url("/workspace/models")
+    expect(chat.page).to_have_url("/workspace/models")
     assert _stored_model(owner, workspace_model)["meta"]["description"] == NEW_DESCRIPTION
 
 
-def test_keep_in_sidebar_pins_the_model(page, owner, provider_model):
-    click_menu_item(page, provider_model, "Keep in Sidebar")
-    expect(page.get_by_role("menu")).to_be_hidden()
-    page.keyboard.press("Escape")
-    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+def test_keep_in_sidebar_pins_the_model(chat, owner, provider_model):
+    click_menu_item(chat, provider_model, "Keep in Sidebar")
+    expect(chat.page.get_by_role("menu")).to_be_hidden()
+    chat.page.keyboard.press("Escape")
+    chat.page.get_by_role("button", name="Open Sidebar", exact=True).click()
 
-    sidebar = page.get_by_role("navigation", name="Chat history")
+    sidebar = chat.page.get_by_role("navigation", name="Chat history")
     expect(sidebar.get_by_role("link", name=provider_model)).to_be_visible()
     with owner.client() as client:
         stored = client.get("/api/v1/users/user/settings").json()
     assert provider_model in stored["ui"]["pinnedModels"]
 
 
-def test_copy_link_puts_the_model_link_on_the_clipboard(page, provider_model):
-    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
-    click_menu_item(page, provider_model, "Copy Link")
+def test_copy_link_puts_the_model_link_on_the_clipboard(chat, provider_model):
+    chat.page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    click_menu_item(chat, provider_model, "Copy Link")
 
-    expect(page.get_by_text("Copied link to clipboard")).to_be_visible()
-    copied = read_text(page)
-    origin = page.evaluate("location.origin")
+    expect(chat.page.get_by_text("Copied link to clipboard")).to_be_visible()
+    copied = read_text(chat.page)
+    origin = chat.page.evaluate("location.origin")
     assert copied == f"{origin}/?model={provider_model}"
 
 
-def test_community_reviews_opens_the_model_on_the_community_site(page, provider_model):
-    page.context.route("https://openwebui.com/**", lambda route: route.fulfill(body="reviews"))
-    with page.expect_popup() as opened:
-        click_menu_item(page, provider_model, "Community Reviews")
+def test_community_reviews_opens_the_model_on_the_community_site(chat, provider_model):
+    chat.page.context.route("https://openwebui.com/**", lambda route: route.fulfill(body="reviews"))
+    with chat.page.expect_popup() as opened:
+        click_menu_item(chat, provider_model, "Community Reviews")
 
     popup = opened.value
     popup.wait_for_load_state()
     assert popup.url == f"https://openwebui.com/models?q={provider_model}"
 
 
-def test_delete_asks_first_and_the_first_click_confirms(page, owner, ollama_model):
+def test_delete_asks_first_and_the_first_click_confirms(chat, owner, ollama_model):
     model_id, server = ollama_model
-    click_menu_item(page, model_id, "Delete")
+    click_menu_item(chat, model_id, "Delete")
 
-    confirm = page.get_by_role("dialog", name="Delete Model")
+    confirm = chat.page.get_by_role("dialog", name="Delete Model")
     expect(confirm).to_be_visible()
     confirm.get_by_role("button", name="Confirm").click()
 
     expect(confirm).to_be_hidden()
-    expect(page.get_by_text(f"Model {model_id} deleted successfully")).to_be_visible()
+    expect(chat.page.get_by_text(f"Model {model_id} deleted successfully")).to_be_visible()
     assert model_id not in server.models
     assert model_id not in _refreshed_model_ids(owner)
 
@@ -222,8 +229,10 @@ def test_delete_asks_first_and_the_first_click_confirms(page, owner, ollama_mode
 # ---------------------------------------------------------------- nearby
 
 
-def test_clicking_a_model_row_selects_it_and_closes_the_selector(page, provider_model):
-    model_row(page, provider_model).click()
+def test_clicking_a_model_row_selects_it_and_closes_the_selector(chat, provider_model):
+    model_row(chat, provider_model).click()
 
-    expect(page.get_by_role("listbox", name="Available models")).to_be_hidden()
-    expect(page.get_by_role("button", name=f"Selected model: {provider_model}")).to_be_visible()
+    expect(chat.page.get_by_role("listbox", name="Available models")).to_be_hidden()
+    expect(
+        chat.panel.get_by_role("button", name=f"Selected model: {provider_model}")
+    ).to_be_visible()
