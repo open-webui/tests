@@ -11,6 +11,8 @@ Discriminates: passes on dev bbfa876af; reverting both fixes in the backend fail
 model is sent the text with the look-alike stripped), and a build with the `0edd731c7` renderer
 change reverted fails both (the message shows a mention chip where `<$HOME>` was typed), while an
 unrelated chat journey passes on that build.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -27,14 +29,14 @@ pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.
 # No quotes or `>>`: the input's typography turns those into curly quotes and guillemets.
 @pytest.mark.parametrize("typed", ["print <$HOME> twice", "while (<$fh>) { print }"])
 def test_typed_look_alike_mentions_are_sent_and_shown_verbatim(
-    page_for, make_user, upstream, typed
+    chat_for, make_user, upstream, typed
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     upstream.queue(reply.text("noted"))
 
-    send(page, typed)
-    expect_reply(page, "noted")
+    send(chat, typed)
+    expect_reply(chat, "noted")
 
     assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == typed
-    user_message = conversation(page).locator(".chat-user").last
+    user_message = conversation(chat).locator(".chat-user").last
     expect(user_message).to_contain_text(typed)
