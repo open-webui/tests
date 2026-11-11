@@ -11,6 +11,9 @@ Discriminates: passes on dev ebc6add67; in a frontend build where the image fail
 nothing, every source is passed through unchecked and Escape does not close the preview, seven
 tests go red (both placeholder tests, the preview test, the three scheme cases and the reload
 test) and the data URI and http image tests stay green.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a stored chat
+dragged into a tab beside a new chat.
 """
 
 from __future__ import annotations
@@ -20,10 +23,11 @@ import struct
 import zlib
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -51,11 +55,11 @@ DATA_URI = "data:image/png;base64," + base64.b64encode(PNG).decode()
 NOT_AN_IMAGE = "data:text/plain;base64," + base64.b64encode(b"just words").decode()
 
 
-def ask_for(page: Page, upstream, answer: str) -> Locator:
+def ask_for(chat: ChatSurface, upstream, answer: str) -> Locator:
     upstream.queue(reply.text(answer, match=reply.answering("show me a picture")))
-    send(page, "show me a picture")
-    expect_reply(page, "That is all.")
-    return last_reply(page)
+    send(chat, "show me a picture")
+    expect_reply(chat, "That is all.")
+    return last_reply(chat)
 
 
 def serve_png(listener, path: str = "/tide.png") -> str:
@@ -68,32 +72,32 @@ def expect_loaded(image: Locator) -> None:
     image.page.wait_for_function(LOADED, arg=image.element_handle())
 
 
-def test_a_data_uri_image_is_shown_with_its_alt_text(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_data_uri_image_is_shown_with_its_alt_text(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
 
-    box = ask_for(page, upstream, f"Here it is.\n\n![Harbour chart]({DATA_URI})\n\nThat is all.")
+    box = ask_for(chat, upstream, f"Here it is.\n\n![Harbour chart]({DATA_URI})\n\nThat is all.")
 
     expect_loaded(box.get_by_alt_text("Harbour chart"))
 
 
-def test_an_http_image_is_loaded_from_its_server(page_for, make_user, upstream, listener):
+def test_an_http_image_is_loaded_from_its_server(chat_for, make_user, upstream, listener):
     url = serve_png(listener)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    box = ask_for(page, upstream, f"Here it is.\n\n![Tide chart]({url})\n\nThat is all.")
+    box = ask_for(chat, upstream, f"Here it is.\n\n![Tide chart]({url})\n\nThat is all.")
 
     expect_loaded(box.get_by_alt_text("Tide chart"))
     assert [request.method for request in listener.requests_to("/tide.png")] == ["GET"]
 
 
 def test_an_image_the_server_cannot_find_shows_the_placeholder(
-    page_for, make_user, upstream, listener
+    chat_for, make_user, upstream, listener
 ):
     listener.route("GET", "/gone.png", (404, {"Content-Type": "text/plain"}, b""))
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
     box = ask_for(
-        page,
+        chat,
         upstream,
         f"Before.\n\n![Missing chart]({listener.base_url}/gone.png)\n\nThat is all.",
     )
@@ -105,30 +109,30 @@ def test_an_image_the_server_cannot_find_shows_the_placeholder(
     assert listener.requests_to("/gone.png")
 
 
-def test_a_data_uri_that_is_not_an_image_shows_the_placeholder(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_data_uri_that_is_not_an_image_shows_the_placeholder(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
 
-    box = ask_for(page, upstream, f"Before.\n\n![Words]({NOT_AN_IMAGE})\n\nThat is all.")
+    box = ask_for(chat, upstream, f"Before.\n\n![Words]({NOT_AN_IMAGE})\n\nThat is all.")
 
     expect(box.get_by_text("Image unavailable")).to_be_visible()
     expect(box.get_by_alt_text("Words")).to_have_count(0)
     expect(box).to_contain_text("Before.")
 
 
-def test_clicking_an_image_opens_a_preview_that_escape_closes(page_for, make_user, upstream):
-    page = page_for(make_user())
-    box = ask_for(page, upstream, f"Here it is.\n\n![Harbour chart]({DATA_URI})\n\nThat is all.")
+def test_clicking_an_image_opens_a_preview_that_escape_closes(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    box = ask_for(chat, upstream, f"Here it is.\n\n![Harbour chart]({DATA_URI})\n\nThat is all.")
     expect_loaded(box.get_by_alt_text("Harbour chart"))
 
     box.get_by_role("button", name="Show image preview").click()
 
-    preview = page.locator("body > div.modal").get_by_alt_text("Harbour chart")
+    preview = chat.page.locator("body > div.modal").get_by_alt_text("Harbour chart")
     expect(preview).to_be_visible()
     assert preview.get_attribute("src") == DATA_URI
 
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
 
-    expect(page.locator("body > div.modal")).to_have_count(0)
+    expect(chat.page.locator("body > div.modal")).to_have_count(0)
     expect(box.get_by_alt_text("Harbour chart")).to_be_visible()
 
 
@@ -137,18 +141,18 @@ def test_clicking_an_image_opens_a_preview_that_escape_closes(page_for, make_use
     ["javascript:alert(1)", "file:///etc/hostname", "ftp://example.invalid/chart.png"],
 )
 def test_an_image_with_another_scheme_falls_back_to_the_placeholder(
-    page_for, make_user, upstream, source
+    chat_for, make_user, upstream, source
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    box = ask_for(page, upstream, f"Before.\n\n![Odd chart]({source})\n\nThat is all.")
+    box = ask_for(chat, upstream, f"Before.\n\n![Odd chart]({source})\n\nThat is all.")
 
     image = box.get_by_alt_text("Odd chart")
     expect(image).to_have_attribute("src", "/favicon.png")
     expect_loaded(image)
 
 
-def test_the_images_are_shown_again_after_a_reload(page_for, make_user, listener):
+def test_the_images_are_shown_again_after_a_reload(chat_for, make_user, listener):
     url = serve_png(listener)
     listener.route("GET", "/gone.png", (404, {"Content-Type": "text/plain"}, b""))
     account = make_user()
@@ -164,13 +168,13 @@ def test_the_images_are_shown_again_after_a_reload(page_for, make_user, listener
                 {"role": "assistant", "content": answer},
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, "That is all.")
-    expect_loaded(last_reply(page).get_by_alt_text("Harbour chart"))
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, "That is all.")
+    expect_loaded(last_reply(chat).get_by_alt_text("Harbour chart"))
 
-    page.reload()
+    chat = chat.reload()
 
-    box = last_reply(page)
+    box = last_reply(chat)
     expect_loaded(box.get_by_alt_text("Harbour chart"))
     expect_loaded(box.get_by_alt_text("Tide chart"))
     expect(box.get_by_text("Image unavailable")).to_have_count(1)
