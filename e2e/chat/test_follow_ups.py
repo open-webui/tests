@@ -15,6 +15,14 @@ A follow-up clicked while no model is selected shows "Model not selected" and se
 open-webui/open-webui#33838, fix b7abeb4e2, issue #33837); it was sent with no model to answer
 it. The chat's model is gone and the only other one hidden, so the chat opens on no model. The
 test passes on dev e8c0ad85e and fails in a frontend copy with b7abeb4e2 reverted.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the ones about
+generated follow-ups in every way a side chat starts and every state it can be in, and the one on
+a saved chat also with that chat dragged into a tab. A side chat showed no follow-ups, neither
+generated ones nor those the chat already had (open-webui/open-webui#34015, fix PR
+open-webui/open-webui#34064): on dev c15f28649 those side chat variants are red. The follow-up
+task is matched by the test's question, so a task for a chat's earlier turn cannot take the
+follow-ups scripted for this one.
 """
 
 from __future__ import annotations
@@ -23,13 +31,21 @@ import json
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.backends import wait_until
 from harness.chat_history import seed_chat
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
+from utils.chat_surface import (
+    DRAGGED_TAB,
+    EVERYWHERE,
+    MAIN_CHAT,
+    SIDE_CHAT,
+    TEMPORARY_SIDE,
+    ChatSurface,
+)
+from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -38,6 +54,9 @@ FOLLOW_UP_TASK = '"follow_ups"'
 QUESTION = "Which grapes grow in the Douro valley?"
 ANSWER = "Touriga Nacional leads the reds."
 FOLLOW_UPS = ["What does Touriga Nacional taste like?", "When is the harvest?"]
+# the model count cannot matter: the follow-ups are asked for once per turn
+# a temporary chat is gone after a reload
+EVERY_LASTING_PLACE = tuple(place for place in EVERYWHERE if place != TEMPORARY_SIDE)
 
 
 @pytest.fixture
@@ -60,69 +79,90 @@ def _account_with(make_user, **ui_settings):
     return account
 
 
+def _is_follow_up_task(body: dict) -> bool:
+    """A follow-up task for this test's question, never one for a turn the chat had before."""
+    return reply.answering(FOLLOW_UP_TASK)(body) and QUESTION in json.dumps(body.get("messages"))
+
+
 def _offer_follow_ups(upstream) -> None:
     # queued first, so the follow-up task, which quotes the question, cannot take the chat's reply
     upstream.queue(
-        reply.text(json.dumps({"follow_ups": FOLLOW_UPS}), match=reply.answering(FOLLOW_UP_TASK)),
+        reply.text(json.dumps({"follow_ups": FOLLOW_UPS}), match=_is_follow_up_task),
         reply.text(ANSWER, match=reply.answering(QUESTION)),
     )
 
 
-def _follow_up(page: Page, text: str) -> Locator:
-    return conversation(page).get_by_role("button", name=f"Follow up: {text}")
+def _follow_up(chat: ChatSurface, text: str) -> Locator:
+    return conversation(chat).get_by_role("button", name=f"Follow up: {text}")
 
 
 def _follow_up_requests(upstream) -> int:
-    return len([body for body in upstream.chat_requests() if reply.answering(FOLLOW_UP_TASK)(body)])
+    return len([body for body in upstream.chat_requests() if _is_follow_up_task(body)])
 
 
-def _asked_answered(page: Page, upstream) -> None:
+def _replies_from_the_question(chat: ChatSurface) -> Locator:
+    """The replies from this test's question on; a side chat can hold earlier turns."""
+    question = conversation(chat).locator(".chat-user").filter(has_text=QUESTION)
+    return question.locator("xpath=following::*[contains(@class, 'chat-assistant')]")
+
+
+def _asked_answered(chat: ChatSurface, upstream) -> None:
     _offer_follow_ups(upstream)
-    send(page, QUESTION)
-    expect_reply(page, ANSWER)
+    send(chat, QUESTION)
+    expect_reply(chat, ANSWER)
 
 
+@pytest.mark.chat_surfaces(*EVERY_LASTING_PLACE)
 def test_generated_follow_ups_are_listed_under_the_reply_and_kept(
-    page_for, make_user, upstream, follow_up_generation_on
+    chat_for, make_user, upstream, follow_up_generation_on
 ):
-    page = page_for(make_user())
-    _asked_answered(page, upstream)
+    """In a side chat: open-webui/open-webui#34015."""
+    chat = chat_for(make_user())
+    _asked_answered(chat, upstream)
 
     for text in FOLLOW_UPS:
-        expect(_follow_up(page, text)).to_be_visible()
-    page.reload()
-    expect_reply(page, ANSWER)
+        expect(_follow_up(chat, text)).to_be_visible()
+    chat = chat.reload()
+    expect_reply(chat, ANSWER)
     for text in FOLLOW_UPS:
-        expect(_follow_up(page, text)).to_be_visible()
+        expect(_follow_up(chat, text)).to_be_visible()
 
 
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_a_clicked_follow_up_is_sent_and_answered(
-    page_for, make_user, upstream, follow_up_generation_on
+    chat_for, make_user, upstream, follow_up_generation_on
 ):
-    page = page_for(make_user())
-    _asked_answered(page, upstream)
+    """In a side chat: open-webui/open-webui#34015."""
+    chat = chat_for(make_user())
+    _asked_answered(chat, upstream)
     upstream.queue(reply.text("Dark berries and violets.", match=reply.answering(FOLLOW_UPS[0])))
 
-    _follow_up(page, FOLLOW_UPS[0]).click()
+    _follow_up(chat, FOLLOW_UPS[0]).click()
 
-    expect_reply(page, "Dark berries and violets.")
-    expect(conversation(page).locator(".chat-user").last).to_contain_text(FOLLOW_UPS[0])
-    expect(replies(page)).to_have_count(2)
+    expect_reply(chat, "Dark berries and violets.")
+    expect(conversation(chat).locator(".chat-user").last).to_contain_text(FOLLOW_UPS[0])
+    expect(_replies_from_the_question(chat)).to_have_count(2)
+    panel_id = chat.panel.get_attribute("id")
+    other_chats = chat.page.locator(f"[role='tabpanel']:not([id='{panel_id}'])")
+    asked_elsewhere = other_chats.locator(".chat-user").filter(has_text=FOLLOW_UPS[0])
+    expect(asked_elsewhere, "the follow-up was asked in another chat").to_have_count(0)
 
 
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_only_the_last_reply_lists_follow_ups_unless_the_account_keeps_them(
-    page_for, make_user, upstream, follow_up_generation_on
+    chat_for, make_user, upstream, follow_up_generation_on
 ):
-    plain = page_for(make_user())
-    keeping = page_for(_account_with(make_user, keepFollowUpPrompts=True))
-    for page in (plain, keeping):
-        _asked_answered(page, upstream)
+    """In a side chat: open-webui/open-webui#34015."""
+    plain = chat_for(make_user())
+    keeping = chat_for(_account_with(make_user, keepFollowUpPrompts=True))
+    for chat in (plain, keeping):
+        _asked_answered(chat, upstream)
         # the next turn would otherwise take the follow-ups queued for this one
-        expect(_follow_up(page, FOLLOW_UPS[0])).to_be_visible()
+        expect(_follow_up(chat, FOLLOW_UPS[0])).to_be_visible()
         asked = _follow_up_requests(upstream)
         upstream.queue(reply.text("In late September.", match=reply.answering("next question")))
-        send(page, "next question")
-        expect_reply(page, "In late September.")
+        send(chat, "next question")
+        expect_reply(chat, "In late September.")
         # nor may this turn's follow-up task take those queued for the next account
         assert wait_until(lambda: _follow_up_requests(upstream) > asked, 15)
 
@@ -130,33 +170,35 @@ def test_only_the_last_reply_lists_follow_ups_unless_the_account_keeps_them(
     expect(_follow_up(keeping, FOLLOW_UPS[0])).to_be_visible()
 
 
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_with_insert_to_input_a_click_fills_the_message_box_without_sending(
-    page_for, make_user, upstream, follow_up_generation_on
+    chat_for, make_user, upstream, follow_up_generation_on
 ):
-    page = page_for(_account_with(make_user, insertFollowUpPrompt=True))
-    _asked_answered(page, upstream)
-    expect(_follow_up(page, FOLLOW_UPS[1])).to_be_visible()
+    """In a side chat: open-webui/open-webui#34015."""
+    chat = chat_for(_account_with(make_user, insertFollowUpPrompt=True))
+    _asked_answered(chat, upstream)
+    expect(_follow_up(chat, FOLLOW_UPS[1])).to_be_visible()
     requests_before = len(upstream.chat_requests())
 
-    _follow_up(page, FOLLOW_UPS[1]).click()
+    _follow_up(chat, FOLLOW_UPS[1]).click()
 
-    expect(chat_input(page)).to_have_text(FOLLOW_UPS[1])
-    expect(replies(page)).to_have_count(1)
+    expect(chat_input(chat)).to_have_text(FOLLOW_UPS[1])
+    expect(_replies_from_the_question(chat)).to_have_count(1)
     assert len(upstream.chat_requests()) == requests_before
 
 
 def test_an_account_with_follow_ups_off_is_offered_none(
-    page_for, make_user, upstream, follow_up_generation_on
+    chat_for, make_user, upstream, follow_up_generation_on
 ):
-    page = page_for(_account_with(make_user, autoFollowUps=False))
+    chat = chat_for(_account_with(make_user, autoFollowUps=False))
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
-    send(page, QUESTION)
-    expect_reply(page, ANSWER)
+    send(chat, QUESTION)
+    expect_reply(chat, ANSWER)
 
-    page.reload()
-    expect_reply(page, ANSWER)
-    expect(last_reply(page)).to_be_visible()
-    expect(conversation(page).get_by_text("Follow up", exact=True)).to_have_count(0)
+    chat = chat.reload()
+    expect_reply(chat, ANSWER)
+    expect(last_reply(chat)).to_be_visible()
+    expect(conversation(chat).get_by_text("Follow up", exact=True)).to_have_count(0)
     follow_up_requests = [
         body for body in upstream.chat_requests() if reply.answering(FOLLOW_UP_TASK)(body)
     ]
@@ -180,10 +222,14 @@ def every_model_hidden(admin):
         assert restored.status_code == 200, restored.text
 
 
+# a saved chat opens in the main view or is dragged into a tab, the only places it can be opened
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
 def test_a_follow_up_with_no_model_selected_says_so_and_sends_nothing(
-    page_for, make_user, upstream, every_model_hidden
+    chat_for, make_user, upstream, every_model_hidden
 ):
-    """#33838: a clicked follow-up was sent with no model selected, and nothing answered it."""
+    """#33838: a clicked follow-up was sent with no model selected, and nothing answered it.
+
+    In a side chat: open-webui/open-webui#34015."""
     account = make_user()
     with account.client() as client:
         chat_id, _ = seed_chat(
@@ -194,15 +240,15 @@ def test_a_follow_up_with_no_model_selected_says_so_and_sends_nothing(
             ],
             model=f"retired-model-{uuid.uuid4().hex[:6]}",
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, ANSWER)
-    expect(page.get_by_role("button", name="Select a model")).to_be_visible()
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, ANSWER)
+    expect(chat.button("Select a model")).to_be_visible()
     requests_before = len(upstream.chat_requests())
 
-    _follow_up(page, FOLLOW_UPS[0]).click()
+    _follow_up(chat, FOLLOW_UPS[0]).click()
 
-    expect(page.get_by_text("Model not selected")).to_be_visible()
-    expect(conversation(page).locator(".chat-user")).to_have_count(1)
+    expect(chat.page.get_by_text("Model not selected")).to_be_visible()
+    expect(conversation(chat).locator(".chat-user")).to_have_count(1)
     with account.client() as client:
         stored = client.get(f"/api/v1/chats/{chat_id}")
     assert stored.status_code == 200, stored.text
