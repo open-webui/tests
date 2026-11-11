@@ -8,6 +8,9 @@ and after a delimiter (spaces, commas, brackets) and left both dashes out, for `
 
 Discriminates: passes on the dev b859124f9 build, fails on that build with 8e03389de reverted
 (the formulas touching a dash show as plain text, so fewer rendered formulas than written).
+
+Every case runs in the main chat and in a side chat, the saved chat dragged into a tab beside a
+new chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ FORMS = {
 
 @pytest.mark.parametrize("form", FORMS)
 @pytest.mark.parametrize("dash", DASHES)
-def test_three_formulas_touching_dashes_all_render(page_for, make_user, form, dash):
+def test_three_formulas_touching_dashes_all_render(chat_for, make_user, form, dash):
     written = FORMS[form].format(d=DASHES[dash])
     owner = make_user()
     with owner.client() as client:
@@ -37,9 +40,9 @@ def test_three_formulas_touching_dashes_all_render(page_for, make_user, form, da
             client,
             [{"role": "user", "content": "Euler?"}, {"role": "assistant", "content": written}],
         )
-    page = page_for(owner, path=f"/c/{chat_id}")
+    chat = chat_for(owner, chat_id=chat_id)
 
-    reply = last_reply(page)
+    reply = last_reply(chat)
     expect(reply).to_contain_text("in one equation")
     expect(reply.locator(".katex")).to_have_count(3)
     expect(reply).not_to_contain_text("\\(")
