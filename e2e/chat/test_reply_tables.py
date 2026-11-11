@@ -11,14 +11,17 @@ Discriminates: passes on dev 30f3f6a8f; in a frontend build whose table copy and
 nothing the copy and export tests fail. On dev ebc6add67, in its mutation build (the
 `rendering-front` copy: the table's box no longer scrolling) the wide table test goes red and
 the cell test stays green.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 from utils.clipboard import wait_for_text
 from utils.tooltips import tooltip_button
@@ -35,20 +38,20 @@ ANSWER = f"Here are the tides.\n\n{TABLE}\n\nSafe sailing."
 
 
 @pytest.fixture
-def table_reply(page_for, make_user, upstream) -> Page:
-    page = page_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
+def table_reply(chat_for, make_user, upstream) -> ChatSurface:
+    chat = chat_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
     upstream.queue(reply.text(ANSWER, match=reply.answering("tide table")))
-    send(page, "give me a tide table")
-    expect_reply(page, "Safe sailing.")
-    return page
+    send(chat, "give me a tide table")
+    expect_reply(chat, "Safe sailing.")
+    return chat
 
 
-def _table(page: Page) -> Locator:
-    return last_reply(page).get_by_role("table")
+def _table(chat: ChatSurface) -> Locator:
+    return last_reply(chat).get_by_role("table")
 
 
-def _table_buttons(page: Page) -> Locator:
-    table = _table(page)
+def _table_buttons(chat: ChatSurface) -> Locator:
+    table = _table(chat)
     table.hover()
     return table.locator("xpath=ancestor::div[contains(@class, 'group')][1]")
 
@@ -61,11 +64,11 @@ def test_the_table_is_drawn_and_copies_as_its_markdown(table_reply):
 
     tooltip_button(_table_buttons(table_reply), "Copy").click()
 
-    assert wait_for_text(table_reply) == TABLE
+    assert wait_for_text(table_reply.page) == TABLE
 
 
 def test_export_to_csv_downloads_the_rows_with_cells_quoted(table_reply):
-    with table_reply.expect_download() as download_info:
+    with table_reply.page.expect_download() as download_info:
         tooltip_button(_table_buttons(table_reply), "Export to CSV").click()
     download = download_info.value
 
@@ -90,18 +93,18 @@ SCROLLED_SIDEWAYS = "table => table.parentElement.scrollLeft"
 
 
 def test_a_table_wider_than_the_reply_scrolls_sideways_inside_its_own_box(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     upstream.queue(reply.text(f"{WIDE_TABLE}\n\nWide enough.", match=reply.answering("wide table")))
-    send(page, "give me a wide table")
-    expect_reply(page, "Wide enough.")
-    table = _table(page)
+    send(chat, "give me a wide table")
+    expect_reply(chat, "Wide enough.")
+    table = _table(chat)
     last_heading = table.get_by_role("columnheader").last
     expect(table.get_by_role("columnheader")).to_have_text(WIDE_HEADERS)
 
-    closing_words = last_reply(page).get_by_text("Wide enough.")
-    reply_edge = last_reply(page).evaluate("box => box.getBoundingClientRect().right")
+    closing_words = last_reply(chat).get_by_text("Wide enough.")
+    reply_edge = last_reply(chat).evaluate("box => box.getBoundingClientRect().right")
     heading_edge = last_heading.evaluate("cell => cell.getBoundingClientRect().left")
     assert heading_edge > reply_edge, "the last column already fits inside the reply"
     words_edge = left_edge(closing_words)
@@ -111,7 +114,7 @@ def test_a_table_wider_than_the_reply_scrolls_sideways_inside_its_own_box(
     expect(last_heading).to_be_in_viewport()
     assert table.evaluate(SCROLLED_SIDEWAYS) > 0, "the table did not scroll inside its box"
     assert left_edge(closing_words) == words_edge, "the reply around the table moved sideways"
-    page_width = page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
+    page_width = chat.page.evaluate("[document.documentElement.scrollWidth, innerWidth]")
     assert page_width[0] <= page_width[1], f"the page itself scrolls sideways: {page_width}"
 
 
@@ -119,21 +122,21 @@ def left_edge(element: Locator) -> float:
     return element.evaluate("element => element.getBoundingClientRect().left")
 
 
-def test_inline_markdown_inside_cells_is_drawn(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_inline_markdown_inside_cells_is_drawn(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     table = (
         "| Item | Detail |\n| :--- | ---: |\n"
         "| **Kettle** | `220 V` and [manual](https://example.com/manual) |"
     )
     upstream.queue(reply.text(f"{table}\n\nCells done.", match=reply.answering("cell table")))
-    send(page, "give me a cell table")
-    expect_reply(page, "Cells done.")
+    send(chat, "give me a cell table")
+    expect_reply(chat, "Cells done.")
 
-    cells = _table(page).get_by_role("cell")
+    cells = _table(chat).get_by_role("cell")
     expect(cells.first.get_by_role("strong")).to_have_text("Kettle")
     expect(cells.last.get_by_role("code")).to_have_text("220 V")
     expect(cells.last.get_by_role("link", name="manual")).to_have_attribute(
         "href", "https://example.com/manual"
     )
     assert cells.last.evaluate("cell => getComputedStyle(cell).textAlign") == "right"
-    expect(_table(page)).not_to_contain_text("**")
+    expect(_table(chat)).not_to_contain_text("**")
