@@ -13,6 +13,7 @@ dependencies = [
     "playwright==1.49.1",
     "pytest-html>=4.0.0",
     "pytest-split>=0.11.0",
+    "pytest-timeout>=2.3.1",
     "allure-pytest>=2.13.0",
     "httpx==0.28.1",
     "python-dotenv>=1.0.0",
@@ -112,6 +113,8 @@ markers = [
     "requires_browser: needs Playwright browsers (e2e)",
     "requires_postgres: needs the pgserver package (embedded PostgreSQL)",
 ]
+# a stuck test fails with its name and stack before the CI job's limit; the slowest takes about 4 min
+timeout = 600
 addopts = [
     "--tb=short",
     "--strict-markers",
