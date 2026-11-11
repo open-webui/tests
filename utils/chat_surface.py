@@ -139,9 +139,15 @@ def _held(page: Page, panel: Locator, place: str = SIDE_CHAT) -> ChatSurface:
     return surface
 
 
+def side_tab_name(title: str) -> re.Pattern:
+    """The name of the side tab of the chat titled `title`; while it answers, a spinner on the tab
+    reads out "Generating..." before the title."""
+    return re.compile(rf"^(?:Generating\.\.\. )?{re.escape(title)}$")
+
+
 def side_chat_titled(page: Page, title: str, place: str = SIDE_CHAT) -> ChatSurface:
     """The side tab whose chat is titled `title`: a side chat takes its first question as title."""
-    return _held(page, page.get_by_role("tabpanel", name=title, exact=True), place)
+    return _held(page, page.get_by_role("tabpanel", name=side_tab_name(title)), place)
 
 
 def _panels(page: Page) -> Locator:
@@ -241,7 +247,7 @@ def reload_beside_the_chat(side: ChatSurface, title: str) -> ChatSurface:
     page = side.page
     main_chat(page).show()
     page.reload()
-    tab = page.get_by_role("tab", name=title, exact=True)
+    tab = page.get_by_role("tab", name=side_tab_name(title))
     expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     tab.click()
     return side_chat_titled(page, title, side.place)
@@ -424,7 +430,7 @@ def _after_switching(opener: ChatOpener, actor, chat_id, context_options) -> Cha
     ).click()
     expect(main.last_reply).to_contain_text(PARENT_CHAT[1]["content"], timeout=REPLY_TIMEOUT_MS)
     close_sidebar(page)
-    tab = page.get_by_role("tab", name=title, exact=True)
+    tab = page.get_by_role("tab", name=side_tab_name(title))
     expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     tab.click()
     return side_chat_titled(page, title, opener.place)

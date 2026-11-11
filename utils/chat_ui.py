@@ -14,7 +14,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from harness.plain_http import loopback_url
 from utils.chat_surface import REPLY_TIMEOUT_MS as REPLY_TIMEOUT_MS
-from utils.chat_surface import ChatSurface, main_chat, open_new_chat_tab
+from utils.chat_surface import ChatSurface, main_chat, open_new_chat_tab, side_tab_name
 
 Chat = Page | ChatSurface
 
@@ -79,11 +79,11 @@ def expect_reply(chat: Chat, text: str) -> None:
 
 def side_chat_tab(page: Page, question: str) -> Locator:
     """The tab of the side chat opened with `question`, which it takes as its title once saved."""
-    return page.get_by_role("tab", name=question, exact=True)
+    return page.get_by_role("tab", name=side_tab_name(question))
 
 
 def side_chat_panel(page: Page, question: str) -> Locator:
-    return page.get_by_role("tabpanel", name=question, exact=True)
+    return page.get_by_role("tabpanel", name=side_tab_name(question))
 
 
 def chat_tab_bar(page: Page) -> Locator:
