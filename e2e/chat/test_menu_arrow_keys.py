@@ -11,6 +11,9 @@ skipped them (#33359) (open-webui/open-webui#33374, fixed by 05e115366, #33375).
 
 Discriminates: passes on the build of fix PR #33375 (636d8ec2a), fails on dev 311be1757 (ArrowDown
 from the first entry never reaches the upload or the chip).
+
+The Attach Files test also runs in a side chat (`utils/chat_surface.py`); the Chat actions menu
+belongs to the page's header.
 """
 
 from __future__ import annotations
@@ -79,12 +82,13 @@ def tagged_chat(account: Actor, tag: str) -> str:
     return chat_id
 
 
-def test_arrow_down_reaches_an_earlier_upload_in_attach_files(page_for, make_user):
+def test_arrow_down_reaches_an_earlier_upload_in_attach_files(chat_for, make_user):
     account = make_user()
     name = f"tide-table-{uuid.uuid4().hex[:6]}.txt"
     upload(account, name)
-    page = page_for(account)
-    menu = open_add_context(page)
+    chat = chat_for(account)
+    page = chat.page
+    menu = open_add_context(chat)
     menu.get_by_role("menuitem", name="Attach Files").click()
     entry = late_menu_entry(menu, name, exact=True)
     expect(entry).to_be_visible()
