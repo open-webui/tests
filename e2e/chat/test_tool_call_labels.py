@@ -18,20 +18,24 @@ model for labels the admin test fails at the tools the model is offered, the lab
 the unusable label control passes on both. The unlabelled call test fails on the dev 3c400952c
 build (the running summary reads "Exploring 3 read_tide_gauge") and passes with the group summary
 falling back to the tool name per unlabelled call.
+
+The label tests run in the main chat and in a side chat, and the side variants are green on dev
+c15f28649 and on the side chat rework build (open-webui/open-webui#34064). The admin settings
+test stays on a page of its own: it is about the settings dialog.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from urllib.parse import urlparse
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.python_tools import python_tool
 from utils.cached_chat import turn_on_tool
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -75,7 +79,7 @@ def labels_switch(admin, preserve):
     return switch
 
 
-def ask_for_the_time(page: Page, upstream, *labels, answer: str = "It is noon.") -> str:
+def ask_for_the_time(chat: ChatSurface, upstream, *labels, answer: str = "It is noon.") -> str:
     """The model checks the time once per entry of `labels`, each call labelled with it."""
     question = f"what time is it? {uuid.uuid4().hex[:6]}"
     answering = reply.answering(question)
@@ -93,8 +97,8 @@ def ask_for_the_time(page: Page, upstream, *labels, answer: str = "It is noon.")
     upstream.queue(
         reply.Reply(tool_calls=calls, match=answering), reply.text(answer, match=answering)
     )
-    send(page, question)
-    expect_reply(page, answer)
+    send(chat, question)
+    expect_reply(chat, answer)
     return question
 
 
@@ -129,35 +133,35 @@ def test_an_admin_switches_tool_call_labels_on_and_it_is_kept(
 
 
 def test_a_labelled_call_shows_its_label_also_after_the_chat_is_opened_again(
-    labels_switch, page_for, make_user, upstream
+    labels_switch, chat_for, make_user, upstream
 ):
     labels_switch(True)
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
 
-    ask_for_the_time(page, upstream, CHECKED)
+    ask_for_the_time(chat, upstream, CHECKED)
 
-    shown = conversation(page).get_by_title("get_current_timestamp").locator("visible=true")
+    shown = conversation(chat).get_by_title("get_current_timestamp").locator("visible=true")
     expect(shown).to_have_text(CHECKED["completed"])
-    expect(conversation(page).get_by_text("View Result from get_current_timestamp")).to_have_count(
+    expect(conversation(chat).get_by_text("View Result from get_current_timestamp")).to_have_count(
         0
     )
 
-    reopened = page_for(account, path=urlparse(page.url).path)
+    reopened = chat.reload()
     reopened_label = conversation(reopened).get_by_title("get_current_timestamp")
     expect(reopened_label.locator("visible=true")).to_have_text(CHECKED["completed"])
 
 
 def test_two_labelled_calls_in_a_row_show_both_labels_in_the_summary(
-    labels_switch, page_for, make_user, upstream
+    labels_switch, chat_for, make_user, upstream
 ):
     labels_switch(True)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    ask_for_the_time(page, upstream, CHECKED, LOOKED)
+    ask_for_the_time(chat, upstream, CHECKED, LOOKED)
 
     summary = f"{CHECKED['completed']}, {LOOKED['completed']}"
-    expect(conversation(page).get_by_text(summary, exact=True)).to_be_visible()
+    expect(conversation(chat).get_by_text(summary, exact=True)).to_be_visible()
 
 
 @pytest.fixture
@@ -181,12 +185,12 @@ def gauge_call(gauge: str, labels: dict | None) -> dict:
 
 @pytest.mark.regression
 def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
-    labels_switch, page_for, make_user, upstream, held_gauges
+    labels_switch, chat_for, make_user, upstream, held_gauges
 ):
     tool_name, release = held_gauges
     labels_switch(True)
-    page = page_for(make_user())
-    turn_on_tool(page, tool_name)
+    chat = chat_for(make_user())
+    turn_on_tool(chat, tool_name)
     question = f"read the tide gauges {uuid.uuid4().hex[:6]}"
     answering = reply.answering(question)
     calls = [gauge_call("north", NORTH), gauge_call("harbour", None), gauge_call("south", SOUTH)]
@@ -194,9 +198,9 @@ def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
         reply.Reply(tool_calls=calls, match=answering),
         reply.text("The tide is rising.", match=answering),
     )
-    send(page, question)
+    send(chat, question)
 
-    summary = conversation(page).get_by_role("button", name="Toggle details")
+    summary = conversation(chat).get_by_role("button", name="Toggle details")
     try:
         expect(summary).to_contain_text(NORTH["running"])
         expect(summary).to_contain_text(SOUTH["running"])
@@ -204,7 +208,7 @@ def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
     finally:
         release.touch()
 
-    expect_reply(page, "The tide is rising.")
+    expect_reply(chat, "The tide is rising.")
     expect(summary).to_have_count(1)
     expect(summary).to_contain_text(NORTH["completed"])
     expect(summary).to_contain_text(SOUTH["completed"])
@@ -212,11 +216,11 @@ def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
 
 
 def test_a_call_with_an_unusable_label_shows_as_before(
-    labels_switch, page_for, make_user, upstream
+    labels_switch, chat_for, make_user, upstream
 ):
     labels_switch(True)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    ask_for_the_time(page, upstream, {"running": "", "completed": "x" * 121})
+    ask_for_the_time(chat, upstream, {"running": "", "completed": "x" * 121})
 
-    expect(conversation(page).get_by_text("View Result from get_current_timestamp")).to_be_visible()
+    expect(conversation(chat).get_by_text("View Result from get_current_timestamp")).to_be_visible()
