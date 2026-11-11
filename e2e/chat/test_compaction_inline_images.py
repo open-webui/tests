@@ -14,6 +14,11 @@
 Discriminates: the inline-image test passes on the dev b859124f9 build and fails on a build with
 95dd3321a reverted (the panel reads "500% 100k/20k"). The model-threshold test passes on dev
 f844f6e89 and fails on c9415a688^ (the panel reads against the chat's 900).
+
+Both tests run in the main chat and in a side chat, a saved chat dragged into a tab. On dev
+c15f28649 both side chat variants are red and green on head e791cbdde (fix PR
+open-webui/open-webui#34064): `/status` did nothing in a side chat, so the Status panel never
+opened (open-webui/open-webui#34018).
 """
 
 from __future__ import annotations
@@ -54,7 +59,8 @@ def compaction(admin, preserve):
     assert updated.status_code == 200, updated.text
 
 
-def test_the_status_panel_does_not_count_an_inline_image_as_text(page_for, make_user, compaction):
+def test_the_status_panel_does_not_count_an_inline_image_as_text(chat_for, make_user, compaction):
+    """In a side chat: open-webui/open-webui#34018."""
     account = make_user()
     image = {"type": "image", "id": str(uuid.uuid4()), "url": INLINE_IMAGE}
     with account.client() as client:
@@ -65,22 +71,23 @@ def test_the_status_panel_does_not_count_an_inline_image_as_text(page_for, make_
                 {"role": "assistant", "content": "a blank square"},
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, "a blank square")
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, "a blank square")
 
-    expect(status_panel_usage(page)).to_have_text(re.compile(r"^\d% \d+/20k$"))
+    expect(status_panel_usage(chat)).to_have_text(re.compile(r"^\d% \d+/20k$"))
 
 
-def status_panel_usage(page):
-    chat_input(page).click()
-    page.keyboard.type("/status")
-    page.keyboard.press("Enter")
-    return page.get_by_text("Context usage").locator("xpath=following-sibling::span")
+def status_panel_usage(chat):
+    chat_input(chat).click()
+    chat.page.keyboard.type("/status")
+    chat.page.keyboard.press("Enter")
+    return chat.page.get_by_text("Context usage").locator("xpath=following-sibling::span")
 
 
 def test_the_status_panel_measures_against_the_models_own_threshold(
-    page_for, admin, make_user, compaction
+    chat_for, admin, make_user, compaction
 ):
+    """In a side chat: open-webui/open-webui#34018."""
     account = make_user()
     model_id = f"small-window-{uuid.uuid4().hex[:8]}"
     with admin.client() as client:
@@ -113,10 +120,10 @@ def test_the_status_panel_measures_against_the_models_own_threshold(
                 json={"chat": {"params": {"compact_token_threshold": 900}}},
             )
             assert saved.status_code == 200, saved.text
-        page = page_for(account, path=f"/c/{chat_id}")
-        expect_reply(page, "hi there")
+        chat = chat_for(account, chat_id=chat_id)
+        expect_reply(chat, "hi there")
 
-        expect(status_panel_usage(page)).to_have_text(re.compile(r"^\d+% \d+/500$"))
+        expect(status_panel_usage(chat)).to_have_text(re.compile(r"^\d+% \d+/500$"))
     finally:
         with admin.client() as client:
             client.post("/api/v1/models/model/delete", json={"id": model_id})
