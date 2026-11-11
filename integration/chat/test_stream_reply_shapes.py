@@ -23,6 +23,11 @@ repetition check answering None fails the failed-twice test, the check counting 
 too fails the repeat-success test, the token limit not marking the calls incomplete fails the
 token limit and still-calls tests, and no final answer request without tools fails the
 failed-twice, token limit and still-calls tests, and the tool call limit test as well.
+
+The final answer request sent `"tools": []`, which vLLM 0.33 refuses with a 400, so the reply
+ended in that error instead of the answer (open-webui/open-webui#34169). It now keeps the
+request's tools and turns calls off with `tool_choice` "none". Discriminates: the failed-twice
+test fails on dev 782f4b705 (the final request carries the empty list) and passes with the fix.
 """
 
 from __future__ import annotations
@@ -208,10 +213,8 @@ def _asks_for_a_final_answer(request: dict) -> bool:
     instructions = [
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
     ]
-    return (
-        not request.get("tools")
-        and request.get("tool_choice") == "none"
-        and any(FINAL_ANSWER_PROMPT in text for text in instructions)
+    return request.get("tool_choice") == "none" and any(
+        FINAL_ANSWER_PROMPT in text for text in instructions
     )
 
 
@@ -235,6 +238,12 @@ def test_a_call_that_failed_twice_unchanged_is_not_run_again_and_the_model_answe
         False,
         True,
     ], "only the request after the refused repeat should ask for a final answer without tools"
+    offered, final_request = requests[0]["tools"], requests[-1]
+    assert offered, "the first request offered no tools"
+    assert final_request.get("tools") == offered, (
+        "the final answer request dropped or emptied the tools, which vLLM refuses with a 400: "
+        f"{final_request.get('tools')!r}"
+    )
     assert message["content"] == "The north berth gate is jammed."
     assert not message.get("error"), message.get("error")
 
