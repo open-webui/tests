@@ -74,6 +74,7 @@ from utils.chat_ui import (
     close_menu,
     open_integrations_menu,
     show_input_selections,
+    skill_group_of,
     split_screen,
 )
 from utils.model_editor import section
@@ -354,8 +355,7 @@ def test_the_terminal_picked_for_a_new_chat_is_still_picked_after_a_reload(
 ):
     """Red on dev c15f28649 for a person who cannot add terminals of their own, an admin with
     Direct Integrations off and a user without the Direct Tool Servers permission: the pick is
-    dropped while the page loads (finding "The terminal picked for a new chat is dropped when the
-    page is reloaded")."""
+    dropped while the page loads (open-webui/open-webui#34089)."""
     preserve("permissions")
     direct_integrations(direct_integrations_on)
     allow_direct_tool_servers(admin, direct_tool_servers)
@@ -635,8 +635,8 @@ def test_changing_the_terminal_drops_the_skills_picked_from_the_one_before(
         choose_terminal(page, WORKBENCH)
         menu = open_integrations_menu(page)
         menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
-        entry = menu.get_by_role("menuitemcheckbox", name=re.compile(skill))
-        expect(entry).to_contain_text("Terminal")
+        entry = menu.get_by_role("menuitemcheckbox", name=skill, exact=True)
+        expect(skill_group_of(entry)).to_have_text(WORKBENCH)
         entry.click()
         expect(entry).to_have_attribute("aria-checked", "true")
         close_menu(page)

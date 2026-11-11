@@ -9,8 +9,9 @@ is stored with the message; clicking it in the sent message opens the file in a 
 Typing `$` or `/` lists the terminal's skills beside the workspace's, each terminal skill
 labelled Terminal where a workspace skill shows its id. A picked terminal skill is a mention in
 the message, the model reads it from the terminal, and the sent message shows the mention. The
-Skills list of the message box's More menu marks a terminal skill the same way, and a skill
-switched on there is listed, as Terminal, under Available Skills.
+Skills list of the message box's More menu lists a terminal skill under the terminal's name and
+a workspace skill under Workspace (grouped by source since dev cdbe9788c), and a skill switched
+on there is listed, as Terminal, under Available Skills.
 
 The page learns a terminal's skills only when one of these lists opens. Until then it knows
 none: after a reload the sent mention reads as its raw markup, and with no workspace skill the
@@ -22,10 +23,10 @@ e2e/chat/test_prompt_prefix_caching.py.
 
 Discriminates: the other tests pass on the dev c15f28649 build. In frontend copies, `@`
 listing nothing of the terminal turns the `@` test red; terminal skills listed by their id
-turn the list tests and the mention test red; Available Skills or the Skills menu not marking
-a terminal skill turns the Available Skills test red. In a copy that reads the terminal's
-skills as soon as the chat's terminal is known, the reload test passes and the More menu
-shows the Skills entry.
+turn the list tests and the mention test red; Available Skills not marking a terminal skill or
+the Skills menu not listing it under the terminal turns the Available Skills test red. In a
+copy that reads the terminal's skills as soon as the chat's terminal is known, the reload test
+passes and the More menu shows the Skills entry.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from utils.chat_ui import (
     expect_reply,
     open_integrations_menu,
     show_input_selections,
+    skill_group_of,
 )
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -263,10 +265,10 @@ def test_a_terminal_skill_switched_on_in_the_skills_menu_is_listed_under_availab
     menu = open_integrations_menu(page)
     menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
     workspace_row = menu.get_by_role("menuitemcheckbox", name=cellar.workspace_skill, exact=True)
-    terminal_row = menu.get_by_role(
-        "menuitemcheckbox", name=_terminal_skill_row(cellar), exact=True
-    )
+    terminal_row = menu.get_by_role("menuitemcheckbox", name=cellar.terminal_skill, exact=True)
     expect(workspace_row).to_be_visible()
+    expect(skill_group_of(workspace_row)).to_have_text("Workspace")
+    expect(skill_group_of(terminal_row)).to_have_text(terminal_name)
     terminal_row.click()
     expect(terminal_row).to_have_attribute("aria-checked", "true")
     workspace_row.click()
@@ -318,6 +320,6 @@ def test_the_more_menu_offers_a_terminals_skills_before_anything_is_typed(
     # red on dev c15f28649: with no workspace skill the entry only shows once `$` or `/` listed
     # the terminal's skills (finding open-webui-terminal-skills-unknown-until-listed)
     menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click(timeout=10_000)
-    expect(
-        menu.get_by_role("menuitemcheckbox", name=_terminal_skill_row(cellar), exact=True)
-    ).to_be_visible()
+    terminal_row = menu.get_by_role("menuitemcheckbox", name=cellar.terminal_skill, exact=True)
+    expect(terminal_row).to_be_visible()
+    expect(skill_group_of(terminal_row)).to_have_text(terminal_name)

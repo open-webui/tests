@@ -167,6 +167,12 @@ def open_integrations_menu(chat: Chat) -> Locator:
     return _open_composer_menu(chat, "More")
 
 
+def skill_group_of(entry: Locator) -> Locator:
+    """The heading a skill of the integrations menu's Skills list is listed under: since dev
+    cdbe9788c the list is grouped by source, a terminal's skills under the terminal's name."""
+    return entry.locator("xpath=preceding-sibling::div[1]")
+
+
 def expect_picked(chat: Chat, entry: str, count: int) -> None:
     """Check that the integrations' `entry` row (Tools, Skills) counts `count` picks, then close."""
     row = open_integrations_menu(chat).get_by_role("menuitem", name=re.compile(rf"^{entry}"))
