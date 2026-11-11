@@ -24,22 +24,41 @@ Since 07029af63 a chat whose messages are kept in their own rows is searched the
 result shows the matching excerpt and links to that message; before, only the copy in the chat
 record was searched. The test empties the record's copy to reach that state. It passes on dev
 e8c0ad85e and fails on a backend copy with 07029af63 reverted (the chat is not found).
+
+#34162: since 07029af63 (v0.13.1) the search reads those rows, and a chat started, imported or
+continued with a null byte in a message kept it in the message's row. PostgreSQL cannot read
+JSON holding one, so one such row made the search and the chat list search answer 500. Messages
+are now cleaned when they are saved, and migration 5d2b7e9c4a10 removes the null bytes already
+stored in message rows, chat records and shared copies on PostgreSQL, leaving a message that
+quotes the six characters of the escape alone. The cleanup tests store such data on an instance
+of their own, run the migration again by hand and then use every reader: the search, the chat
+list search, the inbox and a message update. The chat list search also stops hiding chats
+that quote the escape's text or carry "x00" in their title, which a 2025 workaround for the
+same bug filtered out on PostgreSQL. Discriminates: on dev 782f4b705 the three save tests
+fail on both databases (the row keeps the byte), the quoting and "x00" tests fail on PostgreSQL
+and the cleanup tests fail (no such migration); with a cleanup that does nothing
+the cleanup tests fail with 500s, and with one that drops the quoted escape's text as well the
+migration breaks the JSON and fails. All pass with the fix, f3d995ff4.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 
 import pytest
 
 from harness import upstream as reply
 from harness.access import grant
+from harness.actors import Actor, admin_of, create_user
 from harness.backends import on_postgres, read_rows, write_rows
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask
+from harness.prepared_data import manual_alembic
 from harness.workspace_search import (
     PAGE_SIZE,
+    conversation,
     create_folder,
     create_note,
     found,
@@ -386,3 +405,202 @@ def test_tag_none_finds_untagged_chats_and_an_unmet_filter_finds_nothing(workspa
 
     assert found(account, f"tag:none {word}") == {result_ids["own chat"]}
     assert found(account, f"pinned:true {word}") == set()
+
+
+# --- #34162: a null byte in a message -----------------------------------------------------
+
+
+def _imported(client, upstream, text: str) -> str:
+    return import_chat(client, "Imported", question=text)
+
+
+def _created(client, upstream, text: str) -> str:
+    chat = {"title": "Created", "models": [], "history": conversation(text, "hi there")}
+    return post(client, "/api/v1/chats/new", chat=chat)["id"]
+
+
+def _sent(client, upstream, text: str) -> str:
+    upstream.queue(reply.text("noted", match=reply.answering(text.split()[0])))
+    turn, _ = ask(client, text)
+    return turn.chat_id
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    "store", [_imported, _created, _sent], ids=lambda store: store.__name__[1:]
+)
+def test_a_null_byte_in_a_message_is_dropped_and_the_chat_is_still_found(
+    admin, make_user, upstream, store
+):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = store(client, upstream, f"{word} a\x00b")
+    with admin.client() as admin_client:
+        records = admin_client.get("/api/v1/analytics/messages", params={"chat_id": chat_id})
+    assert records.status_code == 200, records.text
+
+    assert f"{word} ab" in [record["content"] for record in records.json()], (
+        "the message's own record kept the null byte, which breaks the search on PostgreSQL"
+    )
+    assert found(account, word) == {f"chat:{chat_id}"}
+    assert _chat_list_search(account, word) == [chat_id]
+
+
+NULL_BYTE_MIGRATION = "5d2b7e9c4a10"
+NULL_BYTE_ENV = {"REGRESSION_THROWAWAY_INSTANCE": "null-byte-cleanup"}
+
+
+@dataclass
+class Cleaned:
+    instance: object
+    account: Actor
+    word: str
+    chats: dict[str, str]
+    share_id: str
+
+
+def _store_json(instance, table: str, column: str, key: str, value, key_value: str) -> None:
+    write_rows(
+        instance,
+        f"UPDATE {table} SET {column} = CAST(:value AS JSON) WHERE {key} = :key",
+        [{"value": json.dumps(value), "key": key_value}],
+    )
+
+
+def _share(client, chat_id: str, reader: Actor, share_mode: str | None) -> str:
+    share_id = post(client, f"/api/v1/chats/{chat_id}/share")["share_id"]
+    post(
+        client,
+        f"/api/v1/chats/shared/{chat_id}/access/update",
+        access_grants=[grant("user", reader.id, "read")],
+        share_mode=share_mode,
+    )
+    return share_id
+
+
+@pytest.fixture(scope="module")
+def cleaned(instance_with, tmp_path_factory) -> Cleaned:
+    """Chats an earlier version stored with null bytes on PostgreSQL, after the cleanup ran."""
+    instance = instance_with(NULL_BYTE_ENV)
+    if not on_postgres(instance):
+        pytest.skip("only PostgreSQL fails to read a stored null byte")
+    admin = admin_of(instance)
+    with admin.client() as client:
+        config = client.get("/api/v1/auths/admin/config").json()
+        post(client, "/api/v1/auths/admin/config", **{**config, "ENABLE_NOTIFICATIONS": True})
+    account, other = create_user(instance), create_user(instance)
+    word = unique_word()
+    stored = f"{word} a\x00b"
+    with account.client() as client:
+        chats = {
+            name: import_chat(client, name, question="hello")
+            for name in ("row", "record", "quoted")
+        }
+    with other.client() as client:
+        chats["snapshot"] = import_chat(client, "Snapshot", question="hello")
+        chats["replies"] = import_chat(client, "Replies", question=f"{word} live")
+        share_id = _share(client, chats["snapshot"], account, None)
+        _share(client, chats["replies"], account, "continue")
+
+    _store_json(instance, "chat_message", "content", "id", stored, f"{chats['row']}-q")
+    usage = {"input_tokens": 3, "output_tokens": 5, "model": "tiny\x00model"}
+    _store_json(instance, "chat_message", "usage", "id", usage, f"{chats['row']}-a")
+    _store_json(
+        instance, "chat_message", "content", "id", f"{word} prints \\u0000", f"{chats['quoted']}-q"
+    )
+    write_rows(instance, "DELETE FROM chat_message WHERE chat_id = :id", [{"id": chats["record"]}])
+    record = {"title": "record", "models": [], "history": conversation(stored, "hi there")}
+    _store_json(instance, "chat", "chat", "id", record, chats["record"])
+    for name, share_mode in (("snapshot", None), ("replies", "continue")):
+        snapshot = {"title": name, "share_mode": share_mode, "history": conversation(stored, "hi")}
+        _store_json(instance, "shared_chat", "chat", "chat_id", snapshot, chats[name])
+
+    data_dir = tmp_path_factory.mktemp("null-byte-cleanup")
+    for arguments in (("downgrade", f"{NULL_BYTE_MIGRATION}-1"), ("upgrade", "head")):
+        finished = manual_alembic(data_dir, *arguments, database_url=instance.database_url)
+        assert finished.returncode == 0, f"alembic {' '.join(arguments)}: {finished.stderr[-3000:]}"
+    return Cleaned(instance, account, word, chats, share_id)
+
+
+def _stored_text(instance, statement: str, key: str) -> str:
+    [row] = read_rows(instance, statement, {"key": key})
+    return row["text"]
+
+
+@pytest.mark.regression
+def test_the_cleanup_removes_only_the_null_bytes(cleaned):
+    instance, chats, word = cleaned.instance, cleaned.chats, cleaned.word
+    message = "SELECT content #>> '{}' AS text FROM chat_message WHERE id = :key"
+    in_chat = "SELECT chat #>> '{history,messages,q,content}' AS text FROM chat WHERE id = :key"
+    in_share = (
+        "SELECT chat #>> '{history,messages,q,content}' AS text "
+        "FROM shared_chat WHERE chat_id = :key"
+    )
+
+    assert _stored_text(instance, message, f"{chats['row']}-q") == f"{word} ab"
+    usage = "SELECT usage ->> 'model' AS text FROM chat_message WHERE id = :key"
+    assert _stored_text(instance, usage, f"{chats['row']}-a") == "tinymodel"
+    assert _stored_text(instance, in_chat, chats["record"]) == f"{word} ab"
+    assert _stored_text(instance, in_share, chats["snapshot"]) == f"{word} ab"
+    assert _stored_text(instance, message, f"{chats['quoted']}-q") == f"{word} prints \\u0000", (
+        "the cleanup changed a message that only quotes the text of the escape"
+    )
+
+
+@pytest.mark.regression
+def test_after_the_cleanup_the_search_dialog_finds_every_chat(cleaned):
+    chats = cleaned.chats
+    expected = {f"chat:{chats[name]}" for name in ("row", "record", "quoted", "replies")}
+
+    assert found(cleaned.account, cleaned.word) == expected | {f"shared:{cleaned.share_id}"}
+
+
+@pytest.mark.regression
+def test_after_the_cleanup_the_chat_list_search_finds_every_chat(cleaned):
+    expected = {cleaned.chats[name] for name in ("row", "record", "quoted")}
+    assert expected <= set(_chat_list_search(cleaned.account, cleaned.word))
+
+
+@pytest.mark.regression
+def test_after_the_cleanup_the_inbox_and_message_updates_answer(cleaned):
+    with cleaned.account.client() as client:
+        inbox = client.get("/api/v1/notifications/inbox")
+        voiced = client.post(
+            f"/api/v1/chats/{cleaned.chats['record']}/messages/q", json={"voice": {"name": "alloy"}}
+        )
+
+    assert inbox.status_code == 200, inbox.text
+    assert voiced.status_code == 200, voiced.text
+
+
+@pytest.mark.regression
+def test_a_message_quoting_the_escape_text_is_still_found(instance, make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = import_chat(client, "Escapes", question=f"{word} prints \\u0000 as text")
+
+    assert f"chat:{chat_id}" in found(account, word), (
+        "a message that only quotes the text of the escape was left out of the search"
+    )
+    assert chat_id in _chat_list_search(account, word), (
+        "the chat list search hid a chat that only quotes the text of the escape"
+    )
+
+
+@pytest.mark.regression
+def test_a_title_holding_x00_is_found_by_the_chat_list_search(make_user):
+    account = make_user()
+    word = unique_word()
+    with account.client() as client:
+        chat_id = import_chat(client, f"{word} 0x00 opcode")
+
+    assert chat_id in _chat_list_search(account, word)
+
+
+def _chat_list_search(actor: Actor, text: str) -> list[str]:
+    with actor.client() as client:
+        listed = client.get("/api/v1/chats/search", params={"text": text})
+    assert listed.status_code == 200, listed.text
+    return [chat["id"] for chat in listed.json()]
