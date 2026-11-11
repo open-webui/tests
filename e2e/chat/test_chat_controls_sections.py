@@ -20,6 +20,10 @@ section the offered, admin and listed tests fail.
 A file opened from Files stays open when clicked inside (PR open-webui/open-webui#33831, fix
 d8dcb82cd, issue #33828): every click in its window counted as a click outside the menu and closed
 both. The test passes on dev e8c0ad85e and fails in a frontend copy with d8dcb82cd reverted.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649 a
+side chat's Controls had no Files section, so the file tests are red there in a side chat (no
+filed issue); every variant passes on dev e791cbdde.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from playwright.sync_api import Locator, Page, Response, expect
 from harness import upstream as reply
 from utils.cached_chat import attach, this_turns_tool_results
 from utils.chat_controls import control_button, open_chat_controls
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import close_menu, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -79,7 +84,7 @@ def chat_saved(page: Page) -> Callable[[Response], bool]:
     return lambda response: response.request.method == "POST" and response.url == chat_url
 
 
-def ask(page: Page, upstream) -> str:
+def ask(chat: ChatSurface, upstream) -> str:
     """Sends a fresh question; what the model found searching the chat's files for the notes."""
     question = f"what do my notes say? {uuid.uuid4().hex[:6]}"
     answering = reply.answering(question)
@@ -87,8 +92,8 @@ def ask(page: Page, upstream) -> str:
         reply.tool_call("grep_chat_files", {"pattern": "harbour notes"}, match=answering),
         reply.text("Noted.", match=answering),
     )
-    send(page, question)
-    expect_reply(page, "Noted.")
+    send(chat, question)
+    expect_reply(chat, "Noted.")
     *_, answered = [body for body in upstream.chat_requests() if answering(body)]
     return str(this_turns_tool_results(answered))
 
@@ -97,12 +102,13 @@ def ask(page: Page, upstream) -> str:
 
 
 @pytest.fixture
-def chat_with_a_file(page_for, make_user, upstream) -> Page:
+def chat_with_a_file(chat_for, make_user, upstream) -> ChatSurface:
     account = make_user()
-    page = page_for(account)
-    attach(page, "harbour.txt", "The harbour notes mention cormorants.")
-    expect(page.locator("form").get_by_text("harbour.txt")).to_be_visible()
-    assert "cormorants" in ask(page, upstream)
+    chat = chat_for(account)
+    page = chat.page
+    attach(chat, "harbour.txt", "The harbour notes mention cormorants.")
+    expect(chat.panel.locator("form").get_by_text("harbour.txt")).to_be_visible()
+    assert "cormorants" in ask(chat, upstream)
     expect(page).to_have_url(CHAT_URL)
     # the new chat stores its files with the first message or saves them right after (skipped
     # when already stored); a removal must come after that, not race it
@@ -110,28 +116,32 @@ def chat_with_a_file(page_for, make_user, upstream) -> Page:
     while "harbour.txt" not in (stored := stored_file_names(account, page)):
         assert time.monotonic() < deadline, f"the new chat never stored its file: {stored}"
         time.sleep(0.25)
-    return page
+    return chat
 
 
 def test_a_file_attached_earlier_is_sent_again_and_listed_under_files(chat_with_a_file, upstream):
-    page = chat_with_a_file
-    assert "cormorants" in ask(page, upstream)
+    """Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
+    chat = chat_with_a_file
+    assert "cormorants" in ask(chat, upstream)
 
-    panel = open_chat_controls(page)
+    panel = open_chat_controls(chat)
 
     expect(section(panel, "Files")).to_be_visible()
     expect(listed_file(panel, "harbour.txt")).to_be_visible()
 
 
-def test_a_file_opened_under_files_stays_open_when_clicked_inside(page_for, make_user, upstream):
-    """#33828: any click inside the file's window closed it together with the menu."""
-    page = page_for(make_user())
-    attach(page, "harbour.md", "# Harbour notes\n\nThe **cormorants** are back.")
-    expect(page.locator("form").get_by_text("harbour.md")).to_be_visible()
+def test_a_file_opened_under_files_stays_open_when_clicked_inside(chat_for, make_user, upstream):
+    """#33828: any click inside the file's window closed it together with the menu.
+
+    Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
+    chat = chat_for(make_user())
+    page = chat.page
+    attach(chat, "harbour.md", "# Harbour notes\n\nThe **cormorants** are back.")
+    expect(chat.panel.locator("form").get_by_text("harbour.md")).to_be_visible()
     upstream.queue(reply.text("Read it.", match=reply.answering("read my notes")))
-    send(page, "read my notes")
-    expect_reply(page, "Read it.")
-    panel = open_chat_controls(page)
+    send(chat, "read my notes")
+    expect_reply(chat, "Read it.")
+    panel = open_chat_controls(chat)
     listed_file(panel, "harbour.md").get_by_text("harbour.md").click()
     preview = page.get_by_role("dialog").filter(has=page.get_by_role("button", name="Preview"))
     expect(preview).to_be_visible()
@@ -143,28 +153,31 @@ def test_a_file_opened_under_files_stays_open_when_clicked_inside(page_for, make
 
 
 def test_a_file_removed_under_files_is_no_longer_sent(chat_with_a_file, upstream):
-    page = chat_with_a_file
-    panel = open_chat_controls(page)
+    """Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
+    chat = chat_with_a_file
+    panel = open_chat_controls(chat)
     remove_listed_file(panel, "harbour.txt")
     expect(section(panel, "Files")).to_have_count(0)
-    close_menu(page)
+    close_menu(chat)
 
-    assert "cormorants" not in ask(page, upstream)
+    assert "cormorants" not in ask(chat, upstream)
 
 
 def test_a_file_removed_under_files_stays_removed_after_a_reload(chat_with_a_file, upstream):
-    page = chat_with_a_file
-    panel = open_chat_controls(page)
+    """Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
+    chat = chat_with_a_file
+    page = chat.page
+    panel = open_chat_controls(chat)
     with page.expect_response(chat_saved(page)):
         remove_listed_file(panel, "harbour.txt")
 
-    page.reload()
-    expect_reply(page, "Noted.")
-    panel = open_chat_controls(page)
+    chat = chat.reload()
+    expect_reply(chat, "Noted.")
+    panel = open_chat_controls(chat)
     expect(section(panel, "Advanced Params")).to_be_visible()
     expect(section(panel, "Files")).to_have_count(0)
-    close_menu(page)
-    assert "cormorants" not in ask(page, upstream)
+    close_menu(chat)
+    assert "cormorants" not in ask(chat, upstream)
 
 
 # --------------------------------------------------------------------------- permissions
@@ -182,8 +195,8 @@ def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
     expect(page.get_by_text("Default permissions updated successfully")).to_be_visible()
 
 
-def test_every_section_is_offered_by_default(page_for, make_user):
-    panel = open_chat_controls(page_for(make_user()))
+def test_every_section_is_offered_by_default(chat_for, make_user):
+    panel = open_chat_controls(chat_for(make_user()))
 
     for title in SECTIONS:
         expect(section(panel, title)).to_be_visible()
@@ -191,12 +204,12 @@ def test_every_section_is_offered_by_default(page_for, make_user):
 
 @pytest.mark.parametrize("withdrawn", SECTIONS)
 def test_a_section_is_withdrawn_once_its_switch_is_off(
-    withdrawn, page_for, admin, make_user, preserve
+    withdrawn, page_for, chat_for, admin, make_user, preserve
 ):
     preserve("permissions")
     save_default_permission(page_for(admin), SWITCHES[withdrawn], turn_on=False)
 
-    panel = open_chat_controls(page_for(make_user()))
+    panel = open_chat_controls(chat_for(make_user()))
 
     for title in SECTIONS:
         expected = expect(section(panel, title))
@@ -206,13 +219,15 @@ def test_a_section_is_withdrawn_once_its_switch_is_off(
             expected.to_be_visible()
 
 
-def test_an_admin_keeps_every_section_when_they_are_switched_off(page_for, admin, preserve):
+def test_an_admin_keeps_every_section_when_they_are_switched_off(
+    page_for, chat_for, admin, preserve
+):
     preserve("permissions")
     admin_page = page_for(admin)
     for switch in SWITCHES.values():
         save_default_permission(admin_page, switch, turn_on=False)
 
-    panel = open_chat_controls(page_for(admin))
+    panel = open_chat_controls(chat_for(admin))
 
     for title in SECTIONS:
         expect(section(panel, title)).to_be_visible()
