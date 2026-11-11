@@ -318,7 +318,7 @@ def test_each_model_keeps_its_own_pick_when_switching(chat_for, make_user, admin
 
 
 def test_two_models_in_one_chat_are_each_sent_their_own_pick(chat_for, make_user, admin, upstream):
-    """In a side chat on dev: no Compare (no issue filed; fix open-webui/open-webui#34064)."""
+    """In a side chat on dev: no Compare (open-webui/open-webui#34030, fix PR #34064)."""
     pilot_prompt, keeper_prompt = "You steer ships.", "You tend the light."
     controls = {"thinking": THINKING}
     with (
