@@ -14,6 +14,11 @@ A search in Shared Chats (Settings > Data Controls) and in an account's chats (A
 Users) showed only its first sixty results: the dialog decided there was nothing more to load
 before the search had answered (open-webui/open-webui#32675, fix 0f2d1af1c). Both search tests
 fail in the pre-fix build of the 0.12.4 changes, which has that commit reverted.
+
+Opening a chat in another tab sent a folder's chat list back to page 1
+(open-webui/open-webui#34142): every tab took the chat being marked as read as a reason to reload
+the list from its first page. Discriminates: red on upstream dev `262a8c6f7` (the first tab ends
+on page 1), green with the fix on branch `fix/folder-page-kept-when-chat-opens-elsewhere`.
 """
 
 from __future__ import annotations
@@ -140,3 +145,41 @@ def test_a_search_in_a_users_chats_reaches_every_match(page_for, make_user):
     expect(
         matches, "a search in an account's chats in Admin Settings stopped at its first page"
     ).to_have_count(SEARCHED_SIZE)
+
+
+def test_opening_a_chat_in_another_tab_keeps_the_folder_page(page_for, make_user):
+    # open-webui/open-webui#34142
+    owner = make_user()
+    chat_ids: dict[str, str] = {}
+    with owner.client() as client:
+        folder = client.post("/api/v1/folders/", json={"name": f"Pages {uuid.uuid4().hex[:6]}"})
+        assert folder.status_code == 200, folder.text
+        folder_id = folder.json()["id"]
+        for index in range(25):
+            title = f"Paged {index:03d}"
+            created = client.post(
+                "/api/v1/chats/new", json={"chat": {"title": title}, "folder_id": folder_id}
+            )
+            assert created.status_code == 200, created.text
+            chat_ids[title] = created.json()["id"]
+            # unread, so the first tab shows the moment the second one reads it
+            unread = client.post(f"/api/v1/chats/{chat_ids[title]}/unread")
+            assert unread.status_code == 200, unread.text
+
+    page = page_for(owner, path=f"/folders/{folder_id}")
+    second_page = page.get_by_role("button", name="Page 2", exact=True)
+    second_page.click()
+    expect(second_page).to_have_attribute("aria-current", "page")
+    row = page.get_by_role("link").filter(has_text=re.compile(r"Paged \d{3}")).first
+    expect(row).to_be_visible()
+    title = re.search(r"Paged \d{3}", row.inner_text()).group(0)
+    unread_dot = page.get_by_role("link").filter(has_text=title).locator(".bg-sky-500")
+    expect(unread_dot).to_have_count(1)
+
+    page_for(owner, path=f"/c/{chat_ids[title]}")
+
+    expect(unread_dot, "the first tab never saw the chat being read").to_have_count(0)
+    expect(
+        second_page, "opening a chat in another tab sent the folder back to page 1 (#34142)"
+    ).to_have_attribute("aria-current", "page")
+    expect(page.get_by_role("link").filter(has_text=title)).to_be_visible()
