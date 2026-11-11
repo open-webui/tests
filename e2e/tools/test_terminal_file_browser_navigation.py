@@ -215,12 +215,14 @@ def test_the_sort_menu_orders_the_list_and_a_second_pick_turns_the_order_around(
 
 
 def _wait_for_the_disks_clock() -> None:
-    """Return once the clock the disk dates new files by has moved on."""
-    # two files made within one tick of that clock carry the same date
-    tick = time.clock_gettime_ns(DISK_CLOCK)
+    """Return once the clock the disk dates new files by has moved on to its next second."""
+    # two files made within one tick of that clock carry the same date, and on a CI runner the
+    # terminal reports that date in whole seconds
+    second = int(time.clock_gettime(DISK_CLOCK))
     deadline = time.monotonic() + 5
-    while time.clock_gettime_ns(DISK_CLOCK) == tick:
+    while int(time.clock_gettime(DISK_CLOCK)) == second:
         assert time.monotonic() < deadline, "the disk's clock stands still"
+        time.sleep(0.01)
 
 
 def _terminal_id(client) -> str:
