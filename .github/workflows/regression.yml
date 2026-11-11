@@ -124,9 +124,10 @@ jobs:
           DATA_DIR: ${{ runner.temp }}/owui-data
           STATIC_DIR: ${{ runner.temp }}/owui-static
           WEBUI_SECRET_KEY: ci-regression-key
+        shell: bash
         run: |
           mkdir -p "$DATA_DIR" "$STATIC_DIR"
-          pytest ${{ inputs.suite }} -q --html=report.html --self-contained-html
+          pytest ${{ inputs.suite }} -q --html=report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Upload report
         if: always()
@@ -257,12 +258,14 @@ jobs:
           kill %1
           python -c "import json, sys; assert len(json.load(open(sys.argv[1]))['requested_scopes']) == 4" "$RUNNER_TEMP/manifest.json"
 
+      # Log lines are cut at 10 000 characters: the runner's log masking hangs on a line of megabytes.
       - name: Run the integration suite
         working-directory: tests
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest integration -q --splits 10 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        shell: bash
+        run: pytest integration -q --splits 10 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -408,7 +411,8 @@ jobs:
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
           OWUI_TEST_DATABASE: postgres
           OWUI_TEST_REDIS: '1'
-        run: pytest integration -q --splits 11 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration-postgres-redis.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        shell: bash
+        run: pytest integration -q --splits 11 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration-postgres-redis.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -639,7 +643,8 @@ jobs:
           LC_ALL: en_US.UTF-8
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest e2e -q --splits 36 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
+        shell: bash
+        run: pytest e2e -q --splits 36 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
