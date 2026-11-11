@@ -13,6 +13,8 @@ answered (open-webui/open-webui#32081, fixed by d12bf062b).
 Discriminates: passes on dev ebc6add67; the waiting test fails on a build that only shows the
 cursor once there are words, and the stop tests fail on a backend copy whose stop endpoint
 leaves the reply running (the late answer shows and the stopped reply keeps growing).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -39,8 +41,8 @@ FIRST_WORD_DELAY = 4
 
 
 @pytest.fixture
-def chat_page(page_for, make_user):
-    return page_for(make_user())
+def chat_page(chat_for, make_user):
+    return chat_for(make_user())
 
 
 def test_the_reply_shows_as_loading_until_a_slow_providers_first_word(chat_page, upstream):
@@ -76,16 +78,16 @@ def test_a_reply_stopped_before_its_first_word_stays_empty(chat_page, upstream):
     send(chat_page, next_prompt)
     expect_reply(chat_page, "It is noon.")
 
-    chat_page.wait_for_timeout(FIRST_WORD_DELAY * 1000)  # past the moment the late answer starts
+    chat_page.page.wait_for_timeout(FIRST_WORD_DELAY * 1000)  # past when the late answer starts
     expect(conversation(chat_page).get_by_text("A late poem.")).to_have_count(0)
-    chat_page.reload()
+    chat_page = chat_page.reload()
     expect(replies(chat_page)).to_have_count(2)
     expect(conversation(chat_page).get_by_text("A late poem.")).to_have_count(0)
 
 
-def test_a_reply_stopped_halfway_reads_the_same_after_a_reload(page_for, make_user, upstream):
+def test_a_reply_stopped_halfway_reads_the_same_after_a_reload(chat_for, make_user, upstream):
     account = make_user()
-    chat_page = page_for(account)
+    chat_page = chat_for(account)
     prompt = "tell me a long story"
     upstream.queue(reply.text(SLOW_PIECES, chunk_delay=0.3, match=reply.answering(prompt)))
 
@@ -93,13 +95,13 @@ def test_a_reply_stopped_halfway_reads_the_same_after_a_reload(page_for, make_us
     expect(last_reply(chat_page)).to_contain_text("part-2")
     stop_button(chat_page).click()
     expect(stop_button(chat_page)).to_be_hidden()
-    chat_page.wait_for_timeout(1500)  # five more piece intervals
+    chat_page.page.wait_for_timeout(1500)  # five more piece intervals
     stopped_text = last_reply(chat_page).inner_text()
     assert LAST_PIECE not in stopped_text
 
     next_piece = SLOW_PIECES[stopped_text.count("part-")].strip()
     with account.client() as client:
-        wait_until_no_reply_runs(client, chat_page.url.rsplit("/", 1)[1])
-    chat_page.reload()
+        wait_until_no_reply_runs(client, chat_page.page.url.rsplit("/", 1)[1])
+    chat_page = chat_page.reload()
     expect(last_reply(chat_page)).to_contain_text(stopped_text.strip())
     expect(last_reply(chat_page)).not_to_contain_text(next_piece)
