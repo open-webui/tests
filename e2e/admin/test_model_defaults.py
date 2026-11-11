@@ -7,7 +7,9 @@ from the model, so an image attached to a chat with it is refused where it attac
 A tool picked under Tools there (#33749) stays picked after a reload and is on in a user's new
 chat, so the provider is offered it; a model whose own tool list is empty does not take it, a
 default tool the user may not use is left out of their chat while one they may use is kept, and
-a new model in the workspace editor starts with the default tools ticked (#33787).
+a new model in the workspace editor starts with the default tools ticked (#33787). A terminal
+picked as Default terminal there stays picked after a reload, and a new model in the editor starts
+with it and keeps it when saved; with no default terminal a new model starts with none.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Model Defaults save sends the
 stored defaults back in place of the edited ones, every test but the untouched attach fails.
@@ -18,12 +20,16 @@ The default tool tests pass on dev f659c0d12; in a build of it whose Model Defau
 leaves out the tools the picked tool test fails, and in one whose new model form starts with no
 tools the new model test fails. In a build whose rows show no picked count and whose new chat
 picks every default tool, the test of the default tool the user may not use fails on the count.
+The default terminal tests pass on a build of the branch adding the Default terminal to Model
+Defaults and fail on dev 782f4b705, whose Model Defaults has no Default terminal and whose new
+model starts with none; the test with no default terminal passes on both.
 The Skills test marks a gap with a strict xfail: Model Defaults has no default skills.
 """
 
 from __future__ import annotations
 
 import contextlib
+import re
 import uuid
 from typing import Iterator
 
@@ -32,9 +38,11 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
+from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_picked, expect_reply, send
 from utils.model_editor import pick, section, selector_row
+from utils.model_selector import model_search
 from utils.setting_rows import setting_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -305,6 +313,109 @@ def test_a_new_model_starts_with_the_default_tools_ticked(page_for, admin, defau
         page = page_for(admin, path="/workspace/models/create")
         editor = page.get_by_role("main")
         expect(selector_row(editor, "Tools")).to_contain_text(name)
+
+
+# --------------------------------------------------------------------------- default terminal
+
+TERMINAL_NAME = "Harbour shell"
+
+
+@pytest.fixture
+def terminal(admin, preserve) -> Iterator[dict]:
+    """A terminal connection every account may use, to a fake terminal server."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    with serving_terminal() as server:
+        connection = server.connection(
+            name=TERMINAL_NAME, config={"access_grants": [EVERYONE_READS]}
+        )
+        with admin.client() as client:
+            configure_terminals(client, connection)
+        yield connection
+
+
+@pytest.fixture
+def builder(make_user):
+    """A fresh admin; the models it made are deleted afterwards."""
+    account = make_user(role="admin")
+    yield account
+    with account.client() as client:
+        for model in client.get("/api/v1/models/list").json().get("items", []):
+            if model["user_id"] == account.id:
+                client.post("/api/v1/models/model/delete", json={"id": model["id"]})
+
+
+def default_terminal(scope: Locator) -> Locator:
+    return scope.get_by_role("button", name=re.compile(r"^Default terminal: "))
+
+
+def is_model_create(response) -> bool:
+    return response.request.method == "POST" and "/api/v1/models/create" in response.url
+
+
+def set_default_terminal(admin, terminal_id: str | None) -> None:
+    with admin.client() as client:
+        current = client.get(MODELS_CONFIG[0]).json()
+        metadata = dict(current.get("DEFAULT_MODEL_METADATA") or {})
+        metadata.pop("terminalId", None)
+        if terminal_id:
+            metadata["terminalId"] = terminal_id
+        saved = client.post(MODELS_CONFIG[1], json={**current, "DEFAULT_MODEL_METADATA": metadata})
+    assert saved.status_code == 200, saved.text
+
+
+def test_a_default_terminal_picked_in_model_defaults_stays_picked_after_a_reload(
+    page_for, admin, defaults_restored, terminal
+):
+    page = page_for(admin)
+    settings = open_model_defaults(page)
+    default_terminal(settings).click()
+    page.get_by_role("button", name=TERMINAL_NAME, exact=True).click()
+    expect(default_terminal(settings)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+    save(page, settings)
+
+    page.reload()
+    settings = open_model_defaults(page)
+    expect(default_terminal(settings)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+    with admin.client() as client:
+        stored = client.get(MODELS_CONFIG[0]).json().get("DEFAULT_MODEL_METADATA") or {}
+    assert stored.get("terminalId") == terminal["id"], f"stored defaults: {stored}"
+
+
+def test_a_new_model_starts_with_the_default_terminal_and_keeps_it_when_saved(
+    page_for, admin, builder, defaults_restored, terminal
+):
+    set_default_terminal(admin, terminal["id"])
+    model_id = f"shell-{uuid.uuid4().hex[:8]}"
+    page = page_for(builder, path="/workspace/models/create")
+    editor = page.get_by_role("main")
+    expect(default_terminal(editor)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+
+    editor.get_by_placeholder("Model Name").fill(model_id)
+    editor.get_by_placeholder("Model ID").fill(model_id)
+    editor.get_by_role("button", name="Select a base model", exact=True).click()
+    model_search(page).fill(MOCK_MODEL_ID)
+    page.get_by_role("listbox", name="Available models").get_by_role(
+        "option", name=f"Select {MOCK_MODEL_ID} model"
+    ).click()
+    # wait for the stored model, not the page: after a save the editor asks to discard (#34087)
+    with page.expect_response(is_model_create) as created:
+        editor.get_by_role("button", name="Save & Create").click()
+    assert created.value.status == 200, created.value.text()
+
+    with builder.client() as client:
+        saved = client.get("/api/v1/models/model", params={"id": model_id})
+    assert saved.status_code == 200, saved.text
+    meta = saved.json()["meta"]
+    assert meta.get("terminalId") == terminal["id"], f"the new model was saved with {meta}"
+
+
+def test_a_new_model_starts_with_no_terminal_while_model_defaults_has_none(
+    page_for, admin, builder, defaults_restored, terminal
+):
+    set_default_terminal(admin, None)
+    page = page_for(builder, path="/workspace/models/create")
+    editor = page.get_by_role("main")
+    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
 
 
 @pytest.mark.xfail(
