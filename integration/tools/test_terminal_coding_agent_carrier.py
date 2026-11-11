@@ -307,6 +307,50 @@ def test_a_session_the_terminal_refuses_to_start_ends_the_reply_with_its_reason(
     )
 
 
+def test_a_start_the_terminal_rejects_as_invalid_ends_the_reply_without_the_rejected_request(
+    make_user, agents, connect
+):
+    """Regression (open-webui#34172): the reply showed the terminal's validation answer, the whole
+    system prompt included. Red on dev 782f4b705."""
+    person = make_user()
+    terminal_id = connect(person)
+    system_prompt = "Answer in the voice of the release notes. " * 1700
+    agents.refuse_start = (
+        422,
+        {
+            "detail": [
+                {
+                    "type": "string_too_long",
+                    "loc": ["body", "instructions"],
+                    "msg": "String should have at most 65536 characters",
+                    "input": system_prompt,
+                    "ctx": {"max_length": 65536},
+                }
+            ]
+        },
+    )
+
+    with person.client() as client:
+        turn, refused = _ask(
+            client,
+            terminal_id,
+            "start with a long system prompt",
+            history=[{"role": "system", "content": system_prompt}],
+        )
+        refused = _with_error(client, turn, refused)
+
+    started = agents.terminal.requests_to("/agents/opencode/sessions")
+    assert started and json.loads(started[-1].body)["instructions"] == system_prompt, (
+        "the system prompt did not reach the terminal as the agent's instructions"
+    )
+    error = _error(refused)
+    assert error, f"the refused start left no error on the reply: {refused}"
+    assert system_prompt[:60] not in error and "string_too_long" not in error, (
+        f"the reply shows the terminal's validation answer: {error[:300]}"
+    )
+    assert len(error) < 200, f"the reply's error is not a short message: {error[:300]}"
+
+
 def test_an_agent_works_in_the_folder_its_chat_started_in(make_user, agents, connect):
     person = make_user()
     terminal_id = connect(person)
