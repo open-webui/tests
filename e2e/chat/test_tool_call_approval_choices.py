@@ -15,6 +15,11 @@ a reload. A side chat asks
 before a tool call the same way its chat does. Expected but missing on f659c0d12 (strict xfail):
 an Always allow choice on the approval card that lets the same tool run without asking next time.
 
+The deny, allow, shortcut, full access, kept mode and both Auto tests run in the main chat and in a
+side chat (`utils/chat_surface.py`) with the same assertions; the mode picked in a side chat is
+kept for the account's next chats as the one picked in the main chat is. PR
+open-webui/open-webui#34064 says the approval shortcuts still act on the last answer on the page.
+
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose allow and deny actions are swapped
 the deny, allow and shortcut tests fail, in one that asks whatever the composer says the full
 access test fails, and in a frontend build that ignores the allow and deny shortcuts the shortcut
@@ -43,8 +48,10 @@ from harness import upstream as reply
 from harness.backends import wait_until
 from harness.listener import ReceivedRequest, json_answer
 from harness.plain_http import loopback_url
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
+    Chat,
     chat_input,
     conversation,
     expect_reply,
@@ -101,7 +108,7 @@ def auto_permissions_on(admin, preserve, listener):
     return listener
 
 
-def _ask_for_the_time(page: Page, upstream, answer: str, prompt: str = "what time is it?") -> str:
+def _ask_for_the_time(page: Chat, upstream, answer: str, prompt: str = "what time is it?") -> str:
     question = f"{prompt} {uuid.uuid4().hex[:6]}"
     upstream.queue(
         reply.tool_call("get_current_timestamp", {}, match=reply.answering(question)),
@@ -116,11 +123,11 @@ def _tool_results(upstream, question: str) -> list[str]:
     return [str(entry["content"]) for entry in reply.conversation(final) if entry["role"] == "tool"]
 
 
-def _approval_button(page: Page, name: str):
+def _approval_button(chat: Chat, name: str):
     """The card's `name` button, once the server holds the call as waiting for approval."""
-    button = conversation(page).get_by_role("button", name=name, exact=True)
+    button = conversation(chat).get_by_role("button", name=name, exact=True)
     expect(button).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
-    _wait_until_the_server_asks(page)
+    _wait_until_the_server_asks(chat.page if isinstance(chat, ChatSurface) else chat)
     return button
 
 
@@ -145,61 +152,61 @@ def _wait_until_the_server_asks(page: Page) -> None:
 
 
 def test_a_denied_call_never_runs_and_the_model_is_told(
-    tool_approval_on, page_for, make_user, upstream
+    tool_approval_on, chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
-    set_tool_approval_mode(page, "Ask for approval")
-    question = _ask_for_the_time(page, upstream, "I was not allowed to check.")
+    chat = chat_for(make_user())
+    set_tool_approval_mode(chat, "Ask for approval")
+    question = _ask_for_the_time(chat, upstream, "I was not allowed to check.")
 
-    _approval_button(page, "Deny").click()
+    _approval_button(chat, "Deny").click()
 
-    expect_reply(page, "I was not allowed to check.")
+    expect_reply(chat, "I was not allowed to check.")
     assert _tool_results(upstream, question) == [REJECTED]
 
 
-def test_an_allowed_call_runs(tool_approval_on, page_for, make_user, upstream):
-    page = page_for(make_user())
-    set_tool_approval_mode(page, "Ask for approval")
-    question = _ask_for_the_time(page, upstream, "Checked the clock.")
+def test_an_allowed_call_runs(tool_approval_on, chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    set_tool_approval_mode(chat, "Ask for approval")
+    question = _ask_for_the_time(chat, upstream, "Checked the clock.")
 
-    _approval_button(page, "Allow").click()
+    _approval_button(chat, "Allow").click()
 
-    expect_reply(page, "Checked the clock.")
+    expect_reply(chat, "Checked the clock.")
     [result] = _tool_results(upstream, question)
     assert result != REJECTED
     assert result.strip()
 
 
 def test_the_shortcuts_allow_and_deny_the_call_on_screen(
-    tool_approval_on, page_for, make_user, upstream
+    tool_approval_on, chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
-    set_tool_approval_mode(page, "Ask for approval")
-    allowed = _ask_for_the_time(page, upstream, "Allowed by keyboard.")
-    _approval_button(page, "Allow")
-    page.keyboard.press("Control+Alt+Enter")
-    expect_reply(page, "Allowed by keyboard.")
+    chat = chat_for(make_user())
+    set_tool_approval_mode(chat, "Ask for approval")
+    allowed = _ask_for_the_time(chat, upstream, "Allowed by keyboard.")
+    _approval_button(chat, "Allow")
+    chat.page.keyboard.press("Control+Alt+Enter")
+    expect_reply(chat, "Allowed by keyboard.")
     assert _tool_results(upstream, allowed) != [REJECTED]
 
-    denied = _ask_for_the_time(page, upstream, "Denied by keyboard.")
-    _approval_button(page, "Deny")
-    page.keyboard.press("Control+Alt+Backspace")
-    expect_reply(page, "Denied by keyboard.")
+    denied = _ask_for_the_time(chat, upstream, "Denied by keyboard.")
+    _approval_button(chat, "Deny")
+    chat.page.keyboard.press("Control+Alt+Backspace")
+    expect_reply(chat, "Denied by keyboard.")
     assert _tool_results(upstream, denied)[-1:] == [REJECTED]
 
 
-def test_full_access_runs_the_call_without_asking(tool_approval_on, page_for, make_user, upstream):
-    page = page_for(make_user())
-    expect(chat_input(page)).to_be_visible()
-    question = _ask_for_the_time(page, upstream, "Checked without asking.")
+def test_full_access_runs_the_call_without_asking(tool_approval_on, chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    expect(chat_input(chat)).to_be_visible()
+    question = _ask_for_the_time(chat, upstream, "Checked without asking.")
 
-    expect_reply(page, "Checked without asking.")
-    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
+    expect_reply(chat, "Checked without asking.")
+    expect(conversation(chat).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
     [result] = _tool_results(upstream, question)
     assert result != REJECTED
 
 
-def _picked_mode(page: Page) -> Locator:
+def _picked_mode(page: Chat) -> Locator:
     """The Tool Permissions entry of the More menu, which reads out the picked mode."""
     return open_input_menu(page).get_by_role("menuitem", name="Tool Permissions")
 
@@ -216,15 +223,16 @@ def _waiting_marker(sidebar: Locator) -> Locator:
 
 
 def test_the_picked_mode_is_kept_for_new_chats_of_that_account_only(
-    tool_approval_on, page_for, make_user, upstream
+    tool_approval_on, page_for, chat_for, make_user, upstream
 ):
     account = make_user()
-    set_tool_approval_mode(page_for(account), "Ask for approval")
+    set_tool_approval_mode(chat_for(account), "Ask for approval")
     with account.client() as client:
         assert wait_until(
             lambda: (
                 client.get("/api/v1/users/user/settings")
-                .json()["ui"]["params"]
+                .json()["ui"]
+                .get("params", {})
                 .get("tool_approval_mode")
                 == "ask"
             ),
@@ -265,18 +273,18 @@ def test_a_call_waiting_for_approval_is_marked_and_still_waits_after_a_reload(
 
 
 def test_auto_runs_a_safe_call_and_stops_a_risky_one_for_approval(
-    auto_permissions_on, page_for, make_user, upstream
+    auto_permissions_on, chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    safe = _ask_for_the_time(page, upstream, "Checked without asking.")
-    expect_reply(page, "Checked without asking.")
-    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
+    safe = _ask_for_the_time(chat, upstream, "Checked without asking.")
+    expect_reply(chat, "Checked without asking.")
+    expect(conversation(chat).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
     assert _tool_results(upstream, safe) != [REJECTED]
 
-    risky = _ask_for_the_time(page, upstream, "Checked once allowed.", prompt="risky: what time?")
-    _approval_button(page, "Allow").click()
-    expect_reply(page, "Checked once allowed.")
+    risky = _ask_for_the_time(chat, upstream, "Checked once allowed.", prompt="risky: what time?")
+    _approval_button(chat, "Allow").click()
+    expect_reply(chat, "Checked once allowed.")
     # the chat's earlier call and its result are sent again ahead of this one
     assert _tool_results(upstream, risky)[-1] != REJECTED
     reviewed = [
@@ -284,7 +292,7 @@ def test_auto_runs_a_safe_call_and_stops_a_risky_one_for_approval(
     ]
     assert len(reviewed) == 2, f"the reviewer was not asked once per call: {reviewed}"
     assert safe in reviewed[0] and risky in reviewed[1], reviewed
-    expect(_picked_mode(page)).to_contain_text("Auto")
+    expect(_picked_mode(chat)).to_contain_text("Auto")
 
 
 @pytest.fixture
@@ -305,7 +313,7 @@ def model_review_on(admin, preserve) -> None:
     assert saved.status_code == 200, saved.text
 
 
-def _ask_for_the_time_marked(page: Page, upstream, required: bool, answer: str) -> str:
+def _ask_for_the_time_marked(page: Chat, upstream, required: bool, answer: str) -> str:
     question = f"what time is it? {uuid.uuid4().hex[:6]}"
     marked = {"__approval__": {"required": required}}
     upstream.queue(
@@ -317,19 +325,19 @@ def _ask_for_the_time_marked(page: Page, upstream, required: bool, answer: str) 
 
 
 def test_auto_with_the_chat_models_review_runs_a_call_it_marks_safe_and_asks_for_one_it_marks_risky(
-    model_review_on, page_for, make_user, upstream
+    model_review_on, chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    _ask_for_the_time_marked(page, upstream, required=False, answer="Checked without asking.")
-    expect_reply(page, "Checked without asking.")
-    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
+    _ask_for_the_time_marked(chat, upstream, required=False, answer="Checked without asking.")
+    expect_reply(chat, "Checked without asking.")
+    expect(conversation(chat).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
 
-    risky = _ask_for_the_time_marked(page, upstream, required=True, answer="Checked once allowed.")
-    _approval_button(page, "Allow").click()
-    expect_reply(page, "Checked once allowed.")
+    risky = _ask_for_the_time_marked(chat, upstream, required=True, answer="Checked once allowed.")
+    _approval_button(chat, "Allow").click()
+    expect_reply(chat, "Checked once allowed.")
     assert _tool_results(upstream, risky)[-1] != REJECTED
-    expect(_picked_mode(page)).to_contain_text("Auto")
+    expect(_picked_mode(chat)).to_contain_text("Auto")
 
 
 def test_an_admin_picks_the_auto_review_engine_and_its_settings_are_kept(
