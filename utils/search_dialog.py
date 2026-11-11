@@ -14,7 +14,8 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Locator, Page, expect
 
-from utils.chat_ui import chat_input
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import Chat, chat_input
 
 SEARCH_PATH = "/api/v1/search"
 RESULT_LIST_NAMES = re.compile(r"^(Pinned & recent|Results)$")
@@ -28,9 +29,11 @@ def search_box(dialog: Locator) -> Locator:
     return dialog.get_by_role("combobox", name="Search your workspace")
 
 
-def open_search(page: Page) -> Locator:
-    """Opens the dialog with the shortcut, which binds once the chat input renders."""
-    expect(chat_input(page)).to_be_visible()
+def open_search(chat: Chat) -> Locator:
+    """Opens the dialog with the shortcut, which binds once the chat input renders; from a side
+    chat's own input when given its surface."""
+    expect(chat_input(chat)).to_be_visible()
+    page = chat.page if isinstance(chat, ChatSurface) else chat
     page.keyboard.press("Control+K")
     dialog = search_dialog(page)
     expect(search_box(dialog)).to_be_visible()
