@@ -20,6 +20,10 @@ pick, the arrows test fails; with Save As taking a name with a slash, the save t
 Save As skipping the existing-file check, the replace test fails as the file is overwritten
 unasked; with the saved view keeping Untitled tabs, the reload test fails; with leaving the page
 never asking about unsaved tabs, the leaving test fails.
+On copies of the dev c15f28649 build: Save As writing over a file open in a tab, into a folder
+that cannot be written or over a read-only file fails the refusals test; no pattern matching
+where the terminal has no file search, a failed search read as no files or files of hidden
+folders listed fails the pattern test.
 """
 
 from __future__ import annotations
@@ -27,13 +31,20 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import unquote
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from e2e.conftest import APP_LOADED
 from harness import upstream as reply
-from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
+from harness.listener import json_answer
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from utils.cached_chat import ask, choose_terminal
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
 
@@ -292,3 +303,141 @@ def test_an_empty_quick_open_offers_the_files_opened_recently(chat, folder):
     expect(
         dialog.get_by_role("listbox", name="Search Files").get_by_role("option")
     ).to_contain_text(["tide-notes.txt"])
+
+
+def _this_folder(folder: Path) -> re.Pattern:
+    """The folder as the Save As dialog names the one it shows, with or without a last slash."""
+    return re.compile(rf"^{re.escape(str(folder))}/?$")
+
+
+def test_a_new_file_is_not_saved_over_an_open_tab_a_read_only_file_or_into_a_sealed_folder(
+    chat, folder
+):
+    (folder / ".drafts").mkdir()
+    sealed = folder / "sealed"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    locked = folder / "harbour-rules.md"
+    locked.write_text("No wake past the breakwater.\n")
+    locked.chmod(0o444)
+    try:
+        _open_by_name(chat, folder, "tide-table.md")
+        panel = _untitled(chat)
+        _type_into(panel, "Neap tide on Thursday.")
+        # Save As starts in the folder of the file that was in front
+        panel.get_by_role("button", name="Save", exact=True).click()
+        dialog = chat.get_by_role("dialog", name="Save As")
+        expect(dialog.get_by_text(_this_folder(folder)).first).to_be_visible()
+        dialog.get_by_role("textbox", name="File name").fill("tide-table.md")
+        save = dialog.get_by_role("button", name="Save", exact=True)
+
+        # a file that is open in another tab is not replaced behind it
+        save.click()
+        expect(dialog.get_by_role("alert")).to_have_text(
+            "This file is already open. Close its tab or choose another name."
+        )
+        assert (folder / "tide-table.md").read_text() == "# Tides\n\nHigh water at six.\n"
+
+        dialog.get_by_role("textbox", name="File name").fill("harbour-rules.md")
+        save.click()
+        expect(dialog.get_by_role("alert")).to_have_text("File is not writable.")
+        assert locked.read_text() == "No wake past the breakwater.\n"
+
+        # folders whose name starts with a dot show only with Hidden ticked
+        hidden_folder = dialog.get_by_role("button", name=".drafts", exact=True)
+        expect(dialog.get_by_role("button", name="sealed", exact=True)).to_be_visible()
+        expect(hidden_folder).to_have_count(0)
+        dialog.get_by_role("checkbox", name="Hidden").check()
+        expect(hidden_folder).to_be_visible()
+
+        dialog.get_by_role("textbox", name="File name").fill("next-week.md")
+        expect(save).to_be_enabled()
+        dialog.get_by_role("button", name="sealed", exact=True).click()
+        expect(dialog.get_by_text(_this_folder(sealed)).first).to_be_visible()
+        expect(save).to_be_disabled()
+        dialog.get_by_role("button", name="Parent directory").click()
+        expect(dialog.get_by_text(_this_folder(folder)).first).to_be_visible()
+        save.click()
+
+        expect(dialog).to_have_count(0)
+        expect(chat.get_by_role("tab", name="next-week.md")).to_have_attribute(
+            "aria-selected", "true"
+        )
+        assert (folder / "next-week.md").read_text() == "Neap tide on Thursday."
+        assert list(sealed.iterdir()) == [], f"the sealed folder got {list(sealed.iterdir())}"
+    finally:
+        sealed.chmod(0o755)
+        locked.chmod(0o644)
+
+
+SCRIPTED_HOME = "/home/user"
+
+
+@pytest.fixture
+def searchless_terminal(admin, make_user, preserve):
+    """A terminal from before file search, which only matches patterns, connected for a fresh
+    person; yields the server with the person as `server.person`."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    spec = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
+    with serving_terminal() as server:
+        server.route("GET", "/openapi.json", json_answer(spec))
+        server.route("GET", "/api/config", json_answer({"features": {"terminal": False}}))
+        server.route(
+            "GET", "/files/cwd", json_answer({"cwd": SCRIPTED_HOME, "home": SCRIPTED_HOME})
+        )
+        server.route(
+            "GET",
+            "/files/list",
+            json_answer({"dir": SCRIPTED_HOME, "entries": [], "writable": True}),
+        )
+        server.route("GET", "/files/read", json_answer({"content": "High water at six."}))
+        connection = server.connection(
+            name="Old shell", config={"access_grants": [read_grant(person.id)]}
+        )
+        with admin.client() as client:
+            configure_terminals(client, connection)
+        server.person = person
+        yield server
+
+
+def test_quick_open_matches_patterns_on_a_terminal_without_file_search_and_says_when_it_fails(
+    page_for, searchless_terminal
+):
+    matches = [
+        {"path": "charts/tide-table.md", "type": "file", "size": 30},
+        {"path": ".cache/tide-old.md", "type": "file", "size": 30},
+        {"path": "tide-charts", "type": "directory"},
+    ]
+    searchless_terminal.route(
+        "GET", "/files/glob", json_answer({"path": SCRIPTED_HOME, "matches": matches})
+    )
+    page = page_for(searchless_terminal.person)
+    choose_terminal(page, "Old shell")
+    dialog = _quick_open(page)
+
+    results = _search(dialog, "tide")
+
+    # files alone, and none from a hidden folder
+    expect(results).to_have_count(1)
+    expect(results.first).to_contain_text("tide-table.md")
+    expect(results.first).to_contain_text(f"{SCRIPTED_HOME}/charts/tide-table.md")
+    asked = searchless_terminal.requests_to("/files/glob")[-1].path
+    assert "pattern=*tide*" in unquote(asked) and "type=file" in asked, (
+        f"the terminal was asked to match {asked}"
+    )
+    assert searchless_terminal.requests_to("/files/search"), "file search was never tried first"
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("tab", name="tide-table.md")).to_have_attribute("aria-selected", "true")
+
+    searchless_terminal.route(
+        "GET", "/files/glob", json_answer({"path": SCRIPTED_HOME, "matches": []})
+    )
+    dialog = _quick_open(page)
+    _search(dialog, "moon")
+    expect(dialog.get_by_role("status")).to_have_text("No files found")
+
+    searchless_terminal.route("GET", "/files/glob", json_answer({"detail": "disk gone"}, 500))
+    _search(dialog, "tide")
+    expect(dialog.get_by_role("status")).to_have_text("Failed to search files")
+    expect(results).to_have_count(0)

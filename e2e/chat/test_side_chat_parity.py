@@ -30,6 +30,10 @@ offers a New Chat tab only on a saved chat, as before 3b1a95383.
 A question still waiting in a side chat shows again after a reload and can be dismissed, and
 the reply then carries on (5cbd9bc5c, PR open-webui/open-webui#33901). Passes on dev e8c0ad85e
 and fails on that build with 5cbd9bc5c reverted (the question never shows).
+
+A command the model runs from a side chat runs on the terminal picked for the chat, and with the
+terminal taken off the side chat's model gets no terminal tools. Fails on a copy of the dev
+c15f28649 build whose side chat leaves the picked terminal out of its request.
 """
 
 from __future__ import annotations
@@ -46,8 +50,10 @@ from harness import upstream as reply
 from harness.chat_history import seed_chat
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.python_tools import EVERYONE_READS
+from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.cached_chat import calling, choose_terminal, offered_tools
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -812,4 +818,46 @@ def test_without_side_chat_neither_the_command_nor_the_shortcut_opens_one(
     later = upstream.chat_requests()[asked_before:]
     assert not any(reply.answering(question)(body) for body in later), (
         "the refused side question was still sent to the model"
+    )
+
+
+def test_a_command_the_model_runs_from_a_side_chat_runs_on_the_terminal_picked_for_the_chat(
+    page_for, make_user, admin, preserve, upstream, side_chat_allowed, open_terminal
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    connection = open_terminal.connection(config={"access_grants": [read_grant(person.id)]})
+    with admin.client() as client:
+        configure_terminals(client, connection)
+    page = open_chat(page_for, person)
+    choose_terminal(page, connection["name"])
+    marker = f"berth-{uuid.uuid4().hex[:8]}.txt"
+
+    question = tagged("By the way, note the berth for me.")
+    panel = open_side_chat(
+        page,
+        upstream,
+        question,
+        calling("run_command", {"command": f"echo four > {marker}", "wait": 10}),
+        reply.text("Noted in the terminal."),
+    )
+
+    assert "run_command" in offered_tools(sent_for(upstream, question)), (
+        "the side chat's model was not offered the picked terminal's tools"
+    )
+    written = open_terminal.home / marker
+    assert written.exists() and written.read_text() == "four\n", (
+        f"the side chat's command did not run on the picked terminal: {marker} is missing there"
+    )
+
+    # with the terminal taken off the chat, the side chat's model has no terminal either
+    composer = page.get_by_role("main")
+    composer.get_by_role("button", name=connection["name"], exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=connection["name"]).click()
+    expect(composer.get_by_role("button", name=connection["name"], exact=True)).to_have_count(0)
+    close_menu(page)
+    again = tagged("And which berth was it?")
+    side_ask(panel, upstream, again, reply.text("I cannot look without a terminal."))
+    assert "run_command" not in offered_tools(sent_for(upstream, again)), (
+        "the side chat's model was offered terminal tools with no terminal picked"
     )

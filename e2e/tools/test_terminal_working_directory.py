@@ -42,6 +42,9 @@ through turn the per-person and not-HTTP tests red.
 
 On dev c15f28649 the recent-folder test passes again and fails on a backend copy whose terminal
 proxy refuses to write files (no picked folder is kept).
+On copies of the dev c15f28649 build: an address with a space let through turns the
+space-in-address case red, one without a repository name the no-repository-name case, and a
+Cancel that leaves the clone form open the Cancel test.
 
 `test_a_models_default_terminal_is_picked_for_its_new_chats` is red on dev c15f28649: the model is
 saved, then the editor asks "Discard unsaved changes?" and stays open (finding "issue: [dev]
@@ -659,9 +662,11 @@ def test_a_repository_cloned_in_the_picker_becomes_the_working_directory(
     "address, reason",
     [
         ("file:///srv/lighthouse.git", "Enter an HTTP(S) or SSH repository URL"),
+        ("https://git.invalid/light house.git", "Enter an HTTP(S) or SSH repository URL"),
+        ("https://git.invalid/harbour/..", "Repository URL must include a valid repository name"),
         ("{git_server}/missing.git", "not found"),
     ],
-    ids=["not-http-or-ssh", "missing-repository"],
+    ids=["not-http-or-ssh", "space-in-address", "no-repository-name", "missing-repository"],
 )
 def test_a_repository_that_cannot_be_cloned_says_why(
     page_for, make_user, terminal, open_terminal, git_server, address, reason
@@ -678,3 +683,42 @@ def test_a_repository_that_cannot_be_cloned_says_why(
     assert sorted(entry.name for entry in folder.iterdir()) == ["charts"], (
         f"a failed clone left something in the folder: {list(folder.iterdir())}"
     )
+
+
+def test_cloning_is_called_off_with_cancel_and_not_offered_in_a_folder_that_cannot_be_written(
+    page_for, make_user, terminal, open_terminal, git_server
+):
+    page = page_for(make_user())
+    pick_terminal(page, TERMINAL)
+    folder = _directory(open_terminal, "clones")
+    sealed = folder / "sealed"
+    sealed.mkdir()
+    sealed.chmod(0o555)
+    try:
+        dialog = open_picker_in(page, folder)
+        clone = dialog.get_by_role("button", name="Clone repository")
+        use = dialog.get_by_role("button", name="Use this directory")
+        clone.click()
+        address = dialog.get_by_label("Repository URL")
+        expect(
+            dialog.get_by_text(re.compile(rf"^Clone into {re.escape(str(folder))}/?$"))
+        ).to_be_visible()
+        # the folder cannot be used while a clone into it is being set up
+        expect(use).to_have_count(0)
+        expect(clone).to_be_disabled()
+        address.fill(f"{git_server}/lighthouse.git")
+        expect(clone).to_be_enabled()
+
+        dialog.get_by_role("button", name="Cancel").click()
+        expect(address).to_have_count(0)
+        expect(use).to_be_enabled()
+        assert sorted(entry.name for entry in folder.iterdir()) == ["charts", "sealed"], (
+            f"a clone that was called off left something behind: {list(folder.iterdir())}"
+        )
+
+        dialog.get_by_text("sealed", exact=True).click()
+        expect(dialog.get_by_text("charts", exact=True)).to_have_count(0)
+        expect(use).to_be_enabled()
+        expect(clone).to_be_disabled()
+    finally:
+        sealed.chmod(0o755)
