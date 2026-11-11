@@ -12,6 +12,11 @@ Discriminates: passes on dev 30f3f6a8f; in a backend copy whose settings update 
 models both tests fail, and in a frontend build whose Compare button does nothing the Compare test
 fails with one model answering. In the pre-fix build of 0.12.4 (5d75c1905 reverted) the
 Multiple Models test fails with the permission withheld: the new chat opens on both models.
+
+A saved chat that two models answered shows both answers side by side in the main chat and when
+dragged into a tab beside another chat (`utils/chat_surface.py`). Opened in a tab it showed one
+answer (open-webui/open-webui#34030, fix PR open-webui/open-webui#34064), so the tab variants are
+red on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -26,7 +31,8 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, replies, send
+from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, conversation, expect_reply, replies, send
 from utils.model_selector import SELECTOR_BUTTON, select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -197,3 +203,55 @@ def test_a_new_chat_keeps_both_saved_models_only_with_multiple_models(
     assert len(asked_second) == (1 if allowed else 0), (
         f"the second saved model was asked {len(asked_second)} times"
     )
+
+
+def _seed_answered_by_both(account: Actor, first: str, second: str) -> str:
+    """A saved chat whose one question both presets answered; returns its id."""
+    question_id, first_id, second_id = (str(uuid.uuid4()) for _ in range(3))
+    stored = {"done": True, "timestamp": 1_700_000_000}
+    question = {
+        **stored,
+        "id": question_id,
+        "parentId": None,
+        "childrenIds": [first_id, second_id],
+        "role": "user",
+        "content": "which of you answers?",
+        "models": [first, second],
+    }
+    answers = {
+        answer_id: {
+            **stored,
+            "id": answer_id,
+            "parentId": question_id,
+            "childrenIds": [],
+            "role": "assistant",
+            "content": f"{model} here",
+            "model": model,
+            "modelIdx": index,
+        }
+        for index, (answer_id, model) in enumerate(((first_id, first), (second_id, second)))
+    }
+    chat = {
+        "title": f"Both presets {uuid.uuid4().hex[:8]}",
+        "models": [first, second],
+        "history": {"currentId": second_id, "messages": {question_id: question, **answers}},
+    }
+    with account.client() as client:
+        created = client.post("/api/v1/chats/new", json={"chat": chat})
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
+# a saved chat opens in the main view or is dragged into a tab, the only places it can be opened
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
+def test_a_saved_chat_two_models_answered_shows_both_answers(chat_for, two_presets):
+    """In a side chat: open-webui/open-webui#34030."""
+    admin, first, second = two_presets
+    chat = chat_for(admin, chat_id=_seed_answered_by_both(admin, first, second))
+
+    expect(conversation(chat).get_by_text(f"{first} here")).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    expect(
+        conversation(chat).get_by_text(f"{second} here"),
+        f"the {chat.place} shows one model's answer only",
+    ).to_be_visible()
+    expect(replies(chat)).to_have_count(2)
