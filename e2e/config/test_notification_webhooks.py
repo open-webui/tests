@@ -16,6 +16,10 @@ when a reply fails, as the notifications docs promise; on dev a provider error t
 announces nothing, so that test stays red until the failure is published
 (open-webui/open-webui#32003, fixed by 0a5095409).
 
+The finished reply tests also run in a side chat (`utils/chat_surface.py`), opened on the
+fetching instance with side chats allowed there; the other tests are about the address, the
+target list and the admin settings and stay in the main chat.
+
 Discriminates: passes on dev a5bc78300, and the chat link test fails on dev 176d31d1d, before PR
 #31572; in frontend copies of 176d31d1d, with the target save sending no URL the save test fails,
 with the Send Test call removed the test-button test fails, with the row switch saving nothing the
@@ -31,6 +35,7 @@ Make Default calling nothing the default test fails; in a backend copy that publ
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 import pytest
@@ -40,7 +45,8 @@ from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
 from harness.listener import Listener, json_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
-from utils.chat_ui import expect_reply, send
+from utils.chat_surface import MAIN_CHAT, ChatOpener
+from utils.chat_ui import Chat, expect_reply, send
 from utils.tooltips import tooltip_button
 from utils.user_menu import open_settings
 
@@ -63,6 +69,20 @@ def _save_config(client, path: str, **changes) -> None:
     current.raise_for_status()
     saved = client.post(path, json={**current.json(), **changes})
     assert saved.status_code == 200, saved.text
+
+
+@pytest.fixture
+def fetching_chat_for(chat_for: ChatOpener, fetching_instance, preserve) -> ChatOpener:
+    """`chat_for` on the fetching instance: its provider answers and side chats are allowed."""
+    admin = admin_of(fetching_instance)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=fetching_instance)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    return dataclasses.replace(chat_for, upstream=fetching_instance.upstream, admin=admin)
 
 
 @pytest.fixture
@@ -132,7 +152,7 @@ def _open_notifications(page: Page):
     return settings
 
 
-def _reply_to(page: Page, instance, prompt: str, answer: str) -> None:
+def _reply_to(page: Chat, instance, prompt: str, answer: str) -> None:
     instance.upstream.queue(reply.text(answer, match=reply.answering(prompt)))
     send(page, prompt)
     expect_reply(page, answer)
@@ -177,13 +197,13 @@ def test_the_test_button_calls_the_saved_url(fetching_instance, user_webhooks, h
 
 
 def test_a_finished_reply_calls_an_always_target_with_the_reply(
-    fetching_instance, user_webhooks, hook, page_for
+    fetching_instance, user_webhooks, hook, fetching_chat_for
 ):
     account = create_user(fetching_instance)
     _add_target(account, "ops", f"{hook.base_url}/hook", delivery="always")
-    page = page_for(account)
+    chat = fetching_chat_for(account)
 
-    _reply_to(page, fetching_instance, "say the codeword", "the codeword is pelican")
+    _reply_to(chat, fetching_instance, "say the codeword", "the codeword is pelican")
 
     assert _wait_for(lambda: hook.requests_to("/hook")), "the finished reply called nothing"
     [delivered] = hook.requests_to("/hook")
@@ -207,14 +227,14 @@ def test_the_chat_link_in_a_finished_reply_notification_opens_the_chat(
 
 
 def test_an_away_target_stays_quiet_while_the_user_is_on_the_page(
-    fetching_instance, user_webhooks, hook, page_for
+    fetching_instance, user_webhooks, hook, fetching_chat_for
 ):
     account = create_user(fetching_instance)
     _add_target(account, "away", f"{hook.base_url}/away", delivery="away")
     _add_target(account, "always", f"{hook.base_url}/always", delivery="always")
-    page = page_for(account)
+    chat = fetching_chat_for(account)
 
-    _reply_to(page, fetching_instance, "say the codeword", "the codeword is heron")
+    _reply_to(chat, fetching_instance, "say the codeword", "the codeword is heron")
 
     # targets are tried in order, so the away one has been decided when the last one is called
     assert _wait_for(lambda: hook.requests_to("/always")), "the always target was not called"
