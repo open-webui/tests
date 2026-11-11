@@ -19,6 +19,12 @@ copy the filter test goes red (the pane closed while the model's words streamed 
 back). The `f45332499` race depends on timing inside the page: with it reverted (the 015dbc861
 mutation build) the plain reply test failed 3 of 16 runs and never on the clean build, so it
 guards the pane staying open without reliably discriminating that fix.
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the plain reply test
+in every way a side chat starts and every state it can be in. The page has one artifacts pane,
+which shows the main chat's artifacts (open-webui/open-webui#34026; PR open-webui/open-webui#34064
+leaves it as it is): the side chat variants are red on dev c15f28649 and on dev e791cbdde. The
+pane watcher starts in the open page, so a side chat keeps the tab it was opened in.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.plugins import installed_function
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -58,10 +65,9 @@ new MutationObserver(() => {
 """
 
 
-def watching_the_pane(page: Page) -> Page:
-    page.add_init_script(PANE_CLOSINGS)
-    page.reload()
-    return page
+def watching_the_pane(chat: ChatSurface) -> ChatSurface:
+    chat.page.evaluate(PANE_CLOSINGS)
+    return chat
 
 
 def artifacts_pane(page: Page):
@@ -73,16 +79,18 @@ def shown_artifact(page: Page):
 
 
 def test_the_pane_a_filter_written_html_block_opens_stays_open(
-    page_for, admin, make_user, upstream
+    chat_for, admin, make_user, upstream
 ):
+    """In a side chat: open-webui/open-webui#34026."""
     prompt = "build the page behind a filter"
     # a slow stream gives the page time to redraw between the model's pieces
     words = ["The model's ", "own words ", "follow."]
     upstream.queue(reply.text(words, chunk_delay=0.5, match=reply.answering(prompt)))
     with installed_function(admin, PREVIEW_FILTER, is_global=True):
-        page = watching_the_pane(page_for(make_user()))
-        send(page, prompt)
-        expect_reply(page, "The model's own words follow.")
+        chat = watching_the_pane(chat_for(make_user()))
+        page = chat.page
+        send(chat, prompt)
+        expect_reply(chat, "The model's own words follow.")
 
         expect(
             artifacts_pane(page), "the pane closed once the model answered (#31652)"
@@ -91,14 +99,18 @@ def test_the_pane_a_filter_written_html_block_opens_stays_open(
         assert page.evaluate("window.paneClosings") == 0, "the pane closed after opening (#31652)"
 
 
-def test_the_pane_a_reply_html_block_opens_stays_open(page_for, make_user, upstream):
+# the model count cannot matter: the pane shows the blocks of the reply that holds them
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_the_pane_a_reply_html_block_opens_stays_open(chat_for, make_user, upstream):
+    """In a side chat: open-webui/open-webui#34026."""
     prompt = "build the page directly"
     answer = "Here it is.\n\n```html\n<h1>reply card</h1>\n```\n\nThat is the page."
     upstream.queue(reply.text(answer, match=reply.answering(prompt)))
-    page = watching_the_pane(page_for(make_user()))
+    chat = watching_the_pane(chat_for(make_user()))
+    page = chat.page
 
-    send(page, prompt)
-    expect_reply(page, "That is the page.")
+    send(chat, prompt)
+    expect_reply(chat, "That is the page.")
 
     expect(artifacts_pane(page)).to_be_visible()
     expect(shown_artifact(page)).to_have_text("reply card")
