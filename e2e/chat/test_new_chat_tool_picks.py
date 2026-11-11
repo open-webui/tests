@@ -8,6 +8,11 @@ Tools entry counts the picks.
 
 Discriminates: both tests fail on the dev ee1d9255f build (the next message carries no picked
 tool) and pass with the picks saved for the chat once its first message creates it.
+
+A tool picked in an opened saved chat stays after a reload, in the main chat and dragged into a
+tab beside a new chat or a saved one (`utils/chat_surface.py`). A chat dragged into a tab dropped
+what was picked there (open-webui/open-webui#34034, fix PR open-webui/open-webui#34064): those tab
+variants are red on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -19,8 +24,10 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.chat_history import seed_chat
 from harness.python_tools import python_tool
 from utils.cached_chat import turn_on_tool
+from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT
 from utils.chat_ui import chat_input, expect_picked, expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -103,3 +110,35 @@ def test_a_tool_picked_in_a_new_chat_stays_after_a_reload(page_for, user, upstre
     expect_picked(page, "Tools", 1)
     follow_up = ask(page, upstream, f"follow-up {uuid.uuid4().hex[:6]}")
     assert "count_puffins" in offered_tools(follow_up)
+
+
+def _saved_chat(account) -> str:
+    """A saved chat of `account` with one answered question and no tool picked; its id."""
+    with account.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": "How many puffins nest here?"},
+                {"role": "assistant", "content": "Quite a few."},
+            ],
+        )
+    return chat_id
+
+
+# a saved chat opens in the main view or is dragged into a tab, the only places it can be opened
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
+def test_a_tool_picked_in_an_opened_saved_chat_stays_after_a_reload(
+    chat_for, make_user, upstream, puffin_tool
+):
+    """In a tab: open-webui/open-webui#34034."""
+    account = make_user()
+    chat = chat_for(account, chat_id=_saved_chat(account))
+    pick_tool(chat, puffin_tool)
+    first = ask(chat, upstream, f"with the tool {uuid.uuid4().hex[:6]}")
+    assert "count_puffins" in offered_tools(first), f"the {chat.place} sent without the tool"
+
+    chat = chat.reload()
+
+    expect_picked(chat, "Tools", 1)
+    follow_up = ask(chat, upstream, f"after the reload {uuid.uuid4().hex[:6]}")
+    assert "count_puffins" in offered_tools(follow_up), "the tool picked in a tab was dropped"
