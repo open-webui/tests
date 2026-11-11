@@ -17,6 +17,8 @@ Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `re
 copy: the characters allowed around a delimiter cut to spaces only and display math drawn
 inline) the punctuation cases, the display test and its reload twin go red; the prices test, the
 broken formula test (no punctuation next to its formulas) and the copy test stay green there.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -24,20 +26,21 @@ from __future__ import annotations
 import re
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 
-def ask(page: Page, upstream, answer: str, prompt: str) -> Locator:
+def ask(chat: ChatSurface, upstream, answer: str, prompt: str) -> Locator:
     upstream.queue(reply.text(answer + "\n\nEnd of maths.", match=reply.answering(prompt)))
-    send(page, prompt)
-    expect_reply(page, "End of maths.")
-    return last_reply(page)
+    send(chat, prompt)
+    expect_reply(chat, "End of maths.")
+    return last_reply(chat)
 
 
 def typeset_sources(box: Locator) -> Locator:
@@ -78,23 +81,23 @@ def expect_inline_and_display_math(box: Locator) -> None:
 
 
 def test_inline_formulas_stay_in_their_line_and_display_formulas_get_their_own(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    box = ask(page, upstream, INLINE_AND_DISPLAY, "show me some formulas")
+    box = ask(chat, upstream, INLINE_AND_DISPLAY, "show me some formulas")
 
     expect_inline_and_display_math(box)
 
 
-def test_the_typeset_formulas_are_the_same_after_a_reload(page_for, make_user, upstream):
-    page = page_for(make_user())
-    ask(page, upstream, INLINE_AND_DISPLAY, "show me the formulas again")
+def test_the_typeset_formulas_are_the_same_after_a_reload(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    ask(chat, upstream, INLINE_AND_DISPLAY, "show me the formulas again")
 
-    page.reload()
+    chat = chat.reload()
 
-    expect_reply(page, "End of maths.")
-    expect_inline_and_display_math(last_reply(page))
+    expect_reply(chat, "End of maths.")
+    expect_inline_and_display_math(last_reply(chat))
 
 
 PUNCTUATION = {
@@ -111,11 +114,11 @@ PUNCTUATION = {
 
 
 @pytest.mark.parametrize("case", PUNCTUATION)
-def test_a_formula_touching_punctuation_is_still_typeset(page_for, make_user, upstream, case):
-    page = page_for(make_user())
+def test_a_formula_touching_punctuation_is_still_typeset(chat_for, make_user, upstream, case):
+    chat = chat_for(make_user())
     written = PUNCTUATION[case]
 
-    box = ask(page, upstream, written, f"punctuation case {case}")
+    box = ask(chat, upstream, written, f"punctuation case {case}")
 
     expected = ["x_1", "x_2"] if "x_2" in written else ["x_1"]
     expect(typeset_sources(box)).to_have_text(expected)
@@ -123,11 +126,11 @@ def test_a_formula_touching_punctuation_is_still_typeset(page_for, make_user, up
     assert "$" not in shown and "\\(" not in shown, f"a delimiter is left on screen: {shown!r}"
 
 
-def test_prices_dollars_in_words_and_code_spans_stay_as_written(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_prices_dollars_in_words_and_code_spans_stay_as_written(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     answer = "The ticket costs $5 and the meal $10 today.\n\nA var$name$here and `$x$` in code."
 
-    box = ask(page, upstream, answer, "how much is it")
+    box = ask(chat, upstream, answer, "how much is it")
 
     expect(box).to_contain_text("The ticket costs $5 and the meal $10 today.")
     expect(box).to_contain_text("A var$name$here and")
@@ -136,12 +139,12 @@ def test_prices_dollars_in_words_and_code_spans_stay_as_written(page_for, make_u
 
 
 def test_a_formula_that_does_not_parse_shows_its_source_and_the_others_still_render(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     answer = r"Good $y^2$ then broken $\frac{1}$ and good again $w_3$ here"
 
-    box = ask(page, upstream, answer, "show me a broken formula")
+    box = ask(chat, upstream, answer, "show me a broken formula")
 
     expect(typeset_sources(box)).to_have_text(["y^2", "w_3"])
     broken = box.locator(".katex-error")
@@ -149,11 +152,11 @@ def test_a_formula_that_does_not_parse_shows_its_source_and_the_others_still_ren
     expect(broken).to_have_attribute("title", re.compile("^ParseError"))
 
 
-def test_clicking_a_formula_copies_its_source(page_for, make_user, upstream):
-    page = page_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
-    box = ask(page, upstream, r"The area is $\pi r^2$ exactly.", "what is the area")
+def test_clicking_a_formula_copies_its_source(chat_for, make_user, upstream):
+    chat = chat_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
+    box = ask(chat, upstream, r"The area is $\pi r^2$ exactly.", "what is the area")
 
     box.locator(".katex").click()
 
-    expect(page.get_by_text("Copied to clipboard")).to_be_visible()
-    assert read_text(page) == r"\pi r^2"
+    expect(chat.page.get_by_text("Copied to clipboard")).to_be_visible()
+    assert read_text(chat.page) == r"\pi r^2"
