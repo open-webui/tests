@@ -110,7 +110,10 @@ class ChatSurface:
 
         A side tab is the selected one while a person works in it, so the reload opens its chat
         as the page's chat."""
-        if self.is_side:
+        if self.is_side and self.panel.is_visible():
+            # pressing on the panel focuses its chat as a click into it does, also under a dialog
+            self.panel.dispatch_event("pointerdown")
+        elif self.is_side:
             self.show()
         self.page.reload()
         return main_chat(self.page)
