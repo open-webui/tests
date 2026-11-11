@@ -16,6 +16,11 @@ each of those three tests goes red; in a frontend build whose insertion leaves t
 placeholders unfilled the Create dialog test goes red; the chat journeys pass on those copies.
 Retargeted for 37138282f, where the rewritten prompt editor names its fields Prompt Name and
 Prompt Content: the tests that fill the Create Prompt dialog pass on that build.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`); the Create dialog
+test makes its prompt in a page of its own and picks it in the chat. The prompt is filled in the
+message box, so a side chat fills it as the main chat does, also on dev c15f28649, unlike the
+system prompt variables of open-webui/open-webui#34032.
 """
 
 from __future__ import annotations
@@ -25,9 +30,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -56,10 +62,11 @@ def prompt_with(make_user):
     return account, save
 
 
-def _pick_prompt(page: Page, command: str) -> Locator:
+def _pick_prompt(chat: ChatSurface, command: str) -> Locator:
     """Pick `/command` in the chat input; returns the variables form it opens."""
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
     page.keyboard.type(f"/{command}")
     page.get_by_role("tooltip").get_by_role("button", name=command).click()
     form = page.get_by_role("dialog").filter(has_text="Input Variables")
@@ -67,22 +74,22 @@ def _pick_prompt(page: Page, command: str) -> Locator:
     return form
 
 
-def _send_and_read(page: Page, upstream, expected: str) -> str:
+def _send_and_read(chat: ChatSurface, upstream, expected: str) -> str:
     upstream.queue(reply.text("Planned.", match=reply.answering(expected)))
-    page.keyboard.press("Enter")
-    expect_reply(page, "Planned.")
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Planned.")
     sent = next(filter(reply.answering(expected), upstream.chat_requests()))
     return reply.conversation(sent)[-1]["content"]
 
 
 def test_each_kind_of_variable_is_asked_for_and_the_filled_text_is_sent(
-    page_for, prompt_with, upstream
+    chat_for, prompt_with, upstream
 ):
     account, save = prompt_with
     command = save(EVERY_KIND)
-    page = page_for(account)
+    chat = chat_for(account)
 
-    form = _pick_prompt(page, command)
+    form = _pick_prompt(chat, command)
     form.get_by_placeholder("Topic").fill("a harbour walk")
     form.get_by_role("combobox").select_option("Adults")
     form.get_by_placeholder("How many").fill("4")
@@ -92,16 +99,16 @@ def test_each_kind_of_variable_is_asked_for_and_the_filled_text_is_sent(
     expect(form).to_be_hidden()
 
     filled = "Plan a harbour walk for Adults, 4 stops, on 2026-10-03, notes true."
-    expect(chat_input(page)).to_have_text(filled)
-    assert _send_and_read(page, upstream, filled) == filled
+    expect(chat_input(chat)).to_have_text(filled)
+    assert _send_and_read(chat, upstream, filled) == filled
 
 
-def test_a_required_variable_holds_the_form_until_it_is_filled(page_for, prompt_with):
+def test_a_required_variable_holds_the_form_until_it_is_filled(chat_for, prompt_with):
     account, save = prompt_with
     command = save('Review {{title | text:placeholder="Title":required}} today.')
-    page = page_for(account)
+    chat = chat_for(account)
 
-    form = _pick_prompt(page, command)
+    form = _pick_prompt(chat, command)
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_visible()
     assert form.get_by_placeholder("Title").evaluate("field => field.validity.valueMissing")
@@ -109,30 +116,30 @@ def test_a_required_variable_holds_the_form_until_it_is_filled(page_for, prompt_
     form.get_by_placeholder("Title").fill("the launch notes")
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_hidden()
-    expect(chat_input(page)).to_have_text("Review the launch notes today.")
+    expect(chat_input(chat)).to_have_text("Review the launch notes today.")
 
 
-def test_a_variable_left_alone_keeps_its_default(page_for, prompt_with, upstream):
+def test_a_variable_left_alone_keeps_its_default(chat_for, prompt_with, upstream):
     account, save = prompt_with
     command = save(
         'Pack {{count | number:placeholder="How many":default=3}} bags for'
         ' {{trip | select:options=["Hiking","Sailing"]:default="Sailing"}}.'
     )
-    page = page_for(account)
+    chat = chat_for(account)
 
-    form = _pick_prompt(page, command)
+    form = _pick_prompt(chat, command)
     expect(form.get_by_placeholder("How many")).to_have_value("3")
     expect(form.get_by_role("combobox")).to_have_value("Sailing")
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_hidden()
 
     filled = "Pack 3 bags for Sailing."
-    expect(chat_input(page)).to_have_text(filled)
-    assert _send_and_read(page, upstream, filled) == filled
+    expect(chat_input(chat)).to_have_text(filled)
+    assert _send_and_read(chat, upstream, filled) == filled
 
 
 def test_a_prompt_made_in_the_create_dialog_fills_its_built_in_placeholders(
-    page_for, make_user, upstream
+    page_for, chat_for, make_user, upstream
 ):
     account = make_user(role="admin")
     zone = "Pacific/Auckland"
@@ -150,14 +157,14 @@ def test_a_prompt_made_in_the_create_dialog_fills_its_built_in_placeholders(
     creating.get_by_role("button", name="Save & Create").click()
     expect(page.get_by_role("main").get_by_text(name)).to_be_visible()
 
-    page.goto("/")
-    form = _pick_prompt(page, f"itinerary-{suffix}")
+    chat = chat_for(account, timezone_id=zone)
+    form = _pick_prompt(chat, f"itinerary-{suffix}")
     form.get_by_placeholder("Place").fill("Wellington")
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_hidden()
 
-    language = page.evaluate("localStorage.getItem('locale') || 'en-US'")
+    language = chat.page.evaluate("localStorage.getItem('locale') || 'en-US'")
     weekday = datetime.now(ZoneInfo(zone)).strftime("%A")
     filled = f"{account.name} ({language}, {zone}, {weekday}) plans Wellington."
-    expect(chat_input(page)).to_have_text(filled)
-    assert _send_and_read(page, upstream, filled) == filled
+    expect(chat_input(chat)).to_have_text(filled)
+    assert _send_and_read(chat, upstream, filled) == filled
