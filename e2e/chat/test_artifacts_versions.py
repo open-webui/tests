@@ -11,7 +11,7 @@ whose version arrows stay put and whose full screen does nothing, every test fai
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the first in every
 way a side chat starts and every state it can be in. The page has one artifacts pane, which shows
 the main chat's artifacts, so a side chat answer's blocks never reach it
-(open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
+(open-webui/open-webui#34026, fix PR open-webui/open-webui#34166): the side chat
 variants are red on dev c15f28649 and on dev e791cbdde.
 """
 
@@ -59,7 +59,7 @@ def two_artifacts(chat_for, make_user, upstream):
 # the model count cannot matter: the pane shows the blocks of the replies that hold them
 @pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_the_pane_opens_on_the_newest_version_labelled_as_the_last_of_two(two_artifacts):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR #34166."""
     page = two_artifacts
 
     expect(artifacts_pane(page)).to_contain_text("Version 2 of 2")
@@ -67,7 +67,7 @@ def test_the_pane_opens_on_the_newest_version_labelled_as_the_last_of_two(two_ar
 
 
 def test_previous_version_shows_the_first_block_and_next_version_the_newest_again(two_artifacts):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR #34166."""
     page = two_artifacts
     expect(shown_artifact(page)).to_have_text("second card")
 
@@ -83,7 +83,7 @@ def test_previous_version_shows_the_first_block_and_next_version_the_newest_agai
 def test_full_screen_makes_the_artifact_fill_the_window_and_leaving_it_brings_the_pane_back(
     two_artifacts,
 ):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR #34166."""
     page = two_artifacts
     expect(shown_artifact(page)).to_have_text("second card")
     frame = artifacts_pane(page).locator("iframe")

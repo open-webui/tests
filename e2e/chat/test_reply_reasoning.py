@@ -24,7 +24,7 @@ Artifacts view the answer's HTML block opened took the chat's place and hid the 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`; the stored reply
 dragged into a tab beside a new chat). The page has one artifacts pane, which shows the main
 chat's artifacts, so the reasoning artifact test is red in a side chat on dev c15f28649 and on
-dev e791cbdde (open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is).
+dev e791cbdde (open-webui/open-webui#34026, fix PR open-webui/open-webui#34166).
 """
 
 from __future__ import annotations

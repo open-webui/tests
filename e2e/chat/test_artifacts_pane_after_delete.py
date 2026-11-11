@@ -16,7 +16,7 @@ update removed, the header keeps reading "Version 2 of 2" after the deletion.
 Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the first in every
 way a side chat starts and every state it can be in. The page has one artifacts pane, which shows
 the main chat's artifacts, so a side chat answer's blocks never reach it
-(open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
+(open-webui/open-webui#34026, fix PR open-webui/open-webui#34166): the side chat
 variants are red on dev c15f28649 and on dev e791cbdde.
 """
 
@@ -76,7 +76,7 @@ def delete_last_turn(chat: ChatSurface) -> None:
 # the model count cannot matter: the pane shows the blocks of the replies that hold them
 @pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_deleting_the_newest_artifact_moves_the_pane_to_the_last_one_left(two_artifacts):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR #34166."""
     chat = two_artifacts
     page = chat.page
 
@@ -88,7 +88,7 @@ def test_deleting_the_newest_artifact_moves_the_pane_to_the_last_one_left(two_ar
 
 
 def test_the_pane_keeps_a_selection_that_still_exists(two_artifacts):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR #34166."""
     chat = two_artifacts
     page = chat.page
     artifacts_pane(page).get_by_role("button", name="Previous version").click()
