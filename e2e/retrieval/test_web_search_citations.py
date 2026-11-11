@@ -7,6 +7,10 @@ text with a link to the page. The search hits the model never opened are not off
 (open-webui/open-webui#29631). The search engine and the page are a local service, so the
 instance runs with local fetching allowed.
 
+The test runs in the main chat and in every way a side chat starts and every state it can be in
+(`utils/chat_surface.py`), opened on the searching instance with side chats allowed there; the
+sources show on a side chat answer on dev c15f28649 and on dev e791cbdde alike.
+
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the source dialog taking marker `[n]`
 as the n+1th source left the marker opening nothing; in a backend copy, `fetch_url` left out of the
 tools whose results are cited turned the reply sourceless.
@@ -14,6 +18,7 @@ tools whose results are cited turned the reply sourceless.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
 import pytest
@@ -28,6 +33,7 @@ from harness.web_retrieval import (
     serve_search_results,
     web_settings_restored,
 )
+from utils.chat_surface import EVERYWHERE, MAIN_CHAT, ChatOpener
 from utils.chat_ui import (
     conversation,
     expect_reply,
@@ -61,7 +67,23 @@ def searcher(instance_with, listener):
         yield searching
 
 
-def test_the_page_the_model_read_is_the_reply_source(page_for, searcher, listener):
+@pytest.fixture
+def searching_chat_for(chat_for: ChatOpener, searcher, preserve) -> ChatOpener:
+    """`chat_for` on the searching instance: its provider answers and side chats are allowed."""
+    admin = admin_of(searcher)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=searcher)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    return dataclasses.replace(chat_for, upstream=searcher.upstream, admin=admin)
+
+
+# several models: each answer's sources come with that answer, as with one model
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_the_page_the_model_read_is_the_reply_source(searching_chat_for, searcher, listener):
     page_url = f"{listener.base_url}/herons"
     answering = reply.answering(QUESTION)
     searcher.upstream.queue(
@@ -69,23 +91,26 @@ def test_the_page_the_model_read_is_the_reply_source(page_for, searcher, listene
         reply.tool_call("fetch_url", {"url": page_url}, "call_fetch", match=answering),
         reply.text("Two herons [1].", match=answering),
     )
-    page = page_for(create_user(searcher))
-    turn_on_integration(page, "Web Search")
-    send(page, QUESTION)
-    expect_reply(page, "Two herons")
+    chat = searching_chat_for(create_user(searcher))
+    turn_on_integration(chat, "Web Search")
+    send(chat, QUESTION)
+    expect_reply(chat, "Two herons")
 
     assert listener.requests_to("/search"), "the model's search never reached the engine"
-    chat = conversation(page)
-    expect(chat.get_by_role("button", name="Toggle 1 source")).to_be_visible()
+    shown = conversation(chat)
+    expect(
+        shown.get_by_role("button", name="Toggle 1 source"),
+        f"the reply in the {chat.place} lists no source",
+    ).to_be_visible()
     site = page_url.split("/")[2]
-    marker = last_reply(page).get_by_role("button", name=f"View source: {site}")
+    marker = last_reply(chat).get_by_role("button", name=f"View source: {site}")
     marker.click()
-    citation = page.get_by_role("dialog")
+    citation = chat.page.get_by_role("dialog")
     expect(citation.get_by_role("link", name=page_url, exact=True)).to_be_visible()
     expect(citation).to_contain_text(PAGE_TEXT)
     citation.get_by_role("button", name="Close citation modal").click()
 
-    chat.get_by_role("button", name="Toggle 1 source").click()
-    listed = chat.get_by_role("button", name=re.compile(r"^View source: \d+ http"))
+    shown.get_by_role("button", name="Toggle 1 source").click()
+    listed = shown.get_by_role("button", name=re.compile(r"^View source: \d+ http"))
     expect(listed).to_have_count(1)
     expect(listed).to_have_accessible_name(f"View source: 1 {page_url}")
