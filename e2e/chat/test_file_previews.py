@@ -15,6 +15,10 @@ bd6fc15be a model in native function calling reads attached files through its to
 Context is ticked. A file under the threshold, or any file with Always Use Full Text on, shows
 Using Entire Document with no switch and says why on hover (c81aca931).
 
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649
+the Entire Document test is red in a side chat: the further New Chat tab it opens never appears,
+as the main chat's message box stays hidden after its tab is selected; it passes on dev e791cbdde.
+
 Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows
 "No content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never
 loads a Word document, shows Markdown as plain text and ignores the Using Entire Document switch,
@@ -47,7 +51,8 @@ from integration.retrieval.test_document_loaders import (
     pdf_bytes,
 )
 from utils.cached_chat import attach
-from utils.chat_ui import conversation, expect_reply, send
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import chat_scope, conversation, expect_reply, send, start_another_chat
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -66,48 +71,48 @@ def open_file(page: Page, chip: Locator, name: str) -> Locator:
     return dialog
 
 
-def attach_and_open(page: Page, name: str, content: str | bytes, mime_type: str) -> Locator:
-    attach(page, name, content, mime_type)
-    chip = file_chip(page.locator("form"), name)
+def attach_and_open(chat: ChatSurface, name: str, content: str | bytes, mime_type: str) -> Locator:
+    attach(chat, name, content, mime_type)
+    chip = file_chip(chat_scope(chat).locator("form"), name)
     expect(chip).to_be_visible()
     # the chip spins until the server has read the file; its dialog loads the text only once
     expect(chip.locator(".spinner_ajPY")).to_have_count(0, timeout=PROCESSING_TIMEOUT_MS)
-    return open_file(page, chip, name)
+    return open_file(chat.page, chip, name)
 
 
 def show_preview(dialog: Locator) -> None:
     dialog.get_by_role("button", name="Preview", exact=True).click()
 
 
-def ask_with_attachments(page: Page, upstream, question: str) -> None:
+def ask_with_attachments(chat: ChatSurface, upstream, question: str) -> None:
     upstream.queue(reply.text("Noted.", match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, "Noted.")
+    send(chat, question)
+    expect_reply(chat, "Noted.")
 
 
 def test_a_text_file_opens_with_its_size_and_text_in_the_composer_and_the_message(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     text = "The harbour master is Ingrid.\nThe ferry leaves at seven."
 
-    dialog = attach_and_open(page, "harbour.txt", text, "text/plain")
+    dialog = attach_and_open(chat, "harbour.txt", text, "text/plain")
     expect(dialog.get_by_text(f"{len(text.encode())}.0 B")).to_be_visible()
     expect(dialog.get_by_text("2 Extracted Lines")).to_be_visible()
     expect(dialog.get_by_text("The ferry leaves at seven.")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
 
-    ask_with_attachments(page, upstream, f"who runs the harbour? {uuid.uuid4().hex[:6]}")
-    sent = open_file(page, file_chip(conversation(page), "harbour.txt"), "harbour.txt")
+    ask_with_attachments(chat, upstream, f"who runs the harbour? {uuid.uuid4().hex[:6]}")
+    sent = open_file(chat.page, file_chip(conversation(chat), "harbour.txt"), "harbour.txt")
     expect(sent.get_by_text("The harbour master is Ingrid.")).to_be_visible()
 
 
-def test_a_csv_previews_as_a_table_of_its_rows(page_for, make_user):
-    page = page_for(make_user())
+def test_a_csv_previews_as_a_table_of_its_rows(chat_for, make_user):
+    chat = chat_for(make_user())
     rows = "route,departs\nNorth pier,07:15\nSouth pier,08:40\n"
 
-    dialog = attach_and_open(page, "ferries.csv", rows, "text/csv")
+    dialog = attach_and_open(chat, "ferries.csv", rows, "text/csv")
     show_preview(dialog)
 
     expect(dialog.get_by_text("3 Rows")).to_be_visible()
@@ -115,7 +120,7 @@ def test_a_csv_previews_as_a_table_of_its_rows(page_for, make_user):
     expect(dialog.get_by_role("row").filter(has_text="North pier")).to_contain_text("07:15")
 
 
-def test_each_sheet_of_a_spreadsheet_previews_on_its_own_tab(page_for, make_user):
+def test_each_sheet_of_a_spreadsheet_previews_on_its_own_tab(chat_for, make_user):
     openpyxl = pytest.importorskip("openpyxl")
     workbook = openpyxl.Workbook()
     workbook.active.title = "Tides"
@@ -123,9 +128,9 @@ def test_each_sheet_of_a_spreadsheet_previews_on_its_own_tab(page_for, make_user
     workbook.create_sheet("Ferries").append(["North pier", "07:15"])
     buffer = io.BytesIO()
     workbook.save(buffer)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    dialog = attach_and_open(page, "harbour.xlsx", buffer.getvalue(), XLSX)
+    dialog = attach_and_open(chat, "harbour.xlsx", buffer.getvalue(), XLSX)
     show_preview(dialog)
 
     expect(dialog.get_by_role("row").filter(has_text="Monday")).to_contain_text("high at noon")
@@ -134,11 +139,11 @@ def test_each_sheet_of_a_spreadsheet_previews_on_its_own_tab(page_for, make_user
     expect(dialog.get_by_text("Monday")).to_have_count(0)
 
 
-def test_a_word_document_previews_as_its_page(page_for, make_user):
-    page = page_for(make_user())
+def test_a_word_document_previews_as_its_page(chat_for, make_user):
+    chat = chat_for(make_user())
     letter = docx_bytes("Dear harbour master,", "The buoys need paint before May.")
 
-    dialog = attach_and_open(page, "letter.docx", letter, DOCX)
+    dialog = attach_and_open(chat, "letter.docx", letter, DOCX)
     show_preview(dialog)
 
     page_view = dialog.locator("section.docx")
@@ -194,12 +199,12 @@ def title_ink(dialog: Locator, number: int) -> tuple[float, float]:
     )
 
 
-def test_a_slide_title_previews_with_the_alignment_the_file_gives_it(page_for, make_user):
+def test_a_slide_title_previews_with_the_alignment_the_file_gives_it(chat_for, make_user):
     """#32873: a title the file aligns left was drawn centred, as if it had no alignment."""
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     deck = titled_deck("LEFT", None, "RIGHT")
 
-    dialog = attach_and_open(page, "harbour.pptx", deck, PPTX)
+    dialog = attach_and_open(chat, "harbour.pptx", deck, PPTX)
     show_preview(dialog)
 
     left_start, _ = title_ink(dialog, 1)
@@ -212,11 +217,11 @@ def test_a_slide_title_previews_with_the_alignment_the_file_gives_it(page_for, m
     assert right_end > 80, f"a right-aligned title ends {right_end:.0f}% across the slide"
 
 
-def test_markdown_previews_with_its_formatting(page_for, make_user):
-    page = page_for(make_user())
+def test_markdown_previews_with_its_formatting(chat_for, make_user):
+    chat = chat_for(make_user())
     markdown = "# Tide table\n\n- **Monday**: high at noon\n- Tuesday: high at one\n"
 
-    dialog = attach_and_open(page, "tides.md", markdown, "text/markdown")
+    dialog = attach_and_open(chat, "tides.md", markdown, "text/markdown")
     show_preview(dialog)
 
     expect(dialog.get_by_role("heading", name="Tide table")).to_be_visible()
@@ -224,11 +229,11 @@ def test_markdown_previews_with_its_formatting(page_for, make_user):
     expect(dialog.locator("strong").filter(has_text="Monday")).to_be_visible()
 
 
-def test_a_pdf_shows_the_text_read_out_of_it(page_for, make_user):
-    page = page_for(make_user())
+def test_a_pdf_shows_the_text_read_out_of_it(chat_for, make_user):
+    chat = chat_for(make_user())
 
     dialog = attach_and_open(
-        page, "chart.pdf", pdf_bytes("Soundings near the reef"), "application/pdf"
+        chat, "chart.pdf", pdf_bytes("Soundings near the reef"), "application/pdf"
     )
 
     expect(dialog.get_by_text("1 Extracted Lines")).to_be_visible()
@@ -242,21 +247,21 @@ def red_buoy_png() -> bytes:
     return picture.getvalue()
 
 
-def test_a_sent_picture_opens_full_size_and_downloads_as_uploaded(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_sent_picture_opens_full_size_and_downloads_as_uploaded(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     picture = red_buoy_png()
-    attach(page, "buoy.png", picture, "image/png")
-    expect(page.get_by_role("button", name="Show image preview")).to_be_visible()
-    ask_with_attachments(page, upstream, f"what colour is the buoy? {uuid.uuid4().hex[:6]}")
+    attach(chat, "buoy.png", picture, "image/png")
+    expect(chat_scope(chat).get_by_role("button", name="Show image preview")).to_be_visible()
+    ask_with_attachments(chat, upstream, f"what colour is the buoy? {uuid.uuid4().hex[:6]}")
 
-    conversation(page).get_by_role("button", name="Show image preview").click()
-    download_button = page.get_by_role("button", name="Download", exact=True)
+    conversation(chat).get_by_role("button", name="Show image preview").click()
+    download_button = chat.page.get_by_role("button", name="Download", exact=True)
     expect(download_button).to_be_visible()
-    shown = page.locator(".modal img").last
+    shown = chat.page.locator(".modal img").last
     expect(shown).to_be_visible()
     assert shown.evaluate("image => [image.naturalWidth, image.naturalHeight]") == [40, 30]
 
-    with page.expect_download() as downloaded:
+    with chat.page.expect_download() as downloaded:
         download_button.click()
     assert Path(downloaded.value.path()).read_bytes() == picture
 
@@ -290,48 +295,50 @@ def retrieved_in_pieces(admin, preserve):
 
 
 @pytest.mark.usefixtures("retrieved_in_pieces")
-def test_a_files_mode_switch_shows_its_own_mode_after_another_file_is_removed(page_for, make_user):
+def test_a_files_mode_switch_shows_its_own_mode_after_another_file_is_removed(chat_for, make_user):
     """#32699 (fix a944564c2): the remaining file's switch showed the removed file's mode."""
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     report, _ = long_report()
-    dialog = attach_and_open(page, "castles.txt", report, "text/plain")
+    dialog = attach_and_open(chat, "castles.txt", report, "text/plain")
     dialog.get_by_role("switch").click()
     expect(dialog.get_by_text("Using Entire Document")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
-    dialog = attach_and_open(page, "rivers.txt", "The Drau flows east.", "text/plain")
+    dialog = attach_and_open(chat, "rivers.txt", "The Drau flows east.", "text/plain")
     expect(dialog.get_by_text("Using Focused Retrieval")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
 
-    removed = file_chip(page.locator("form"), "castles.txt")
+    removed = file_chip(chat_scope(chat).locator("form"), "castles.txt")
     removed.hover()
     removed.locator("xpath=..").get_by_role("button", name="Remove File").click()
-    expect(page.locator("form").get_by_text("castles.txt")).to_have_count(0)
+    expect(chat_scope(chat).locator("form").get_by_text("castles.txt")).to_have_count(0)
 
-    dialog = open_file(page, file_chip(page.locator("form"), "rivers.txt"), "rivers.txt")
+    dialog = open_file(
+        chat.page, file_chip(chat_scope(chat).locator("form"), "rivers.txt"), "rivers.txt"
+    )
     expect(dialog.get_by_text("Using Focused Retrieval")).to_be_visible()
     expect(dialog.get_by_role("switch")).to_have_attribute("aria-checked", "false")
 
 
 @pytest.mark.usefixtures("retrieved_in_pieces", "file_context_on")
-def test_using_the_entire_document_sends_the_model_all_of_it(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_using_the_entire_document_sends_the_model_all_of_it(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     report, landmarks = long_report()
-    dialog = attach_and_open(page, "castles.txt", report, "text/plain")
+    dialog = attach_and_open(chat, "castles.txt", report, "text/plain")
     expect(dialog.get_by_text("Using Focused Retrieval")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     focused_question = f"which castles? {uuid.uuid4().hex[:6]}"
-    ask_with_attachments(page, upstream, focused_question)
+    ask_with_attachments(chat, upstream, focused_question)
     assert len(landmarks_sent(upstream, focused_question, landmarks)) < len(landmarks)
 
-    page.goto("/")
-    dialog = attach_and_open(page, "castles.txt", report, "text/plain")
+    chat = start_another_chat(chat)
+    dialog = attach_and_open(chat, "castles.txt", report, "text/plain")
     dialog.get_by_role("switch").click()
     expect(dialog.get_by_text("Using Entire Document")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     whole_question = f"which castles, all of them? {uuid.uuid4().hex[:6]}"
-    ask_with_attachments(page, upstream, whole_question)
+    ask_with_attachments(chat, upstream, whole_question)
 
     assert landmarks_sent(upstream, whole_question, landmarks) == landmarks
 
@@ -352,7 +359,7 @@ def test_using_the_entire_document_sends_the_model_all_of_it(page_for, make_user
     ids=["under the threshold", "always use full text"],
 )
 def test_a_file_the_settings_send_whole_says_so_and_offers_no_switch(
-    page_for, make_user, admin, preserve, retrieval, explanation
+    chat_for, make_user, admin, preserve, retrieval, explanation
 ):
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
@@ -360,12 +367,12 @@ def test_a_file_the_settings_send_whole_says_so_and_offers_no_switch(
             RETRIEVAL_CONFIG[1], json={**retrieval, "BYPASS_EMBEDDING_AND_RETRIEVAL": False}
         )
     assert saved.status_code == 200, saved.text
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    dialog = attach_and_open(page, "ferry.txt", "The ferry leaves at seven.", "text/plain")
+    dialog = attach_and_open(chat, "ferry.txt", "The ferry leaves at seven.", "text/plain")
 
     mode = dialog.get_by_text("Using Entire Document")
     expect(mode).to_be_visible()
     expect(dialog.get_by_role("switch")).to_have_count(0)
     mode.hover()
-    expect(page.get_by_text(explanation)).to_be_visible()
+    expect(chat.page.get_by_text(explanation)).to_be_visible()
