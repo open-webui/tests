@@ -45,6 +45,12 @@ sub-agents are reported one by one, the stop of the reply reaches the background
 stop of the chat leaves the foreground one running. In a frontend copy with the dispatch row named
 as a foreground one, the report row's result left out and its count of tasks dropped, the row tests
 turn red while an unrelated journey stays green.
+
+Every test runs in the main chat and in a side chat. On dev c15f28649 seven side chat variants
+are red and green on head e791cbdde (fix PR open-webui/open-webui#34064): a side chat did not
+follow a report the server sent while the chat was open, so the report and the follow-up showed
+only after a reload. No filed issue (open-webui/open-webui#34014 to #34036) covers it. The reload
+test and the foreground stop test are green on dev: a reload makes the side chat the page's own.
 """
 
 from __future__ import annotations
@@ -55,11 +61,12 @@ import time
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
+    Chat,
     conversation,
     expect_reply,
     last_reply,
@@ -115,27 +122,27 @@ def report_of(task: str):
     return matches
 
 
-def dispatched_row(page: Page, task: str) -> Locator:
+def dispatched_row(chat: Chat, task: str) -> Locator:
     name = re.escape(f'View Result from Background sub-agent: "{task}"')
-    return conversation(page).get_by_role("button", name=re.compile(name))
+    return conversation(chat).get_by_role("button", name=re.compile(name))
 
 
-def report_row(page: Page) -> Locator:
-    return conversation(page).get_by_role(
+def report_row(chat: Chat) -> Locator:
+    return conversation(chat).get_by_role(
         "button", name=re.compile("Background sub-agent finished")
     )
 
 
-def expect_report_row(page: Page) -> None:
+def expect_report_row(chat: Chat) -> None:
     expect(
-        report_row(page),
+        report_row(chat),
         "the report never showed in the open chat (it shows only after a reload)",
     ).to_be_visible(timeout=REPLY_TIMEOUT_MS)
 
 
-def expect_in_chat(page: Page, text: str) -> None:
+def expect_in_chat(chat: Chat, text: str) -> None:
     """The text shows in the chat, whichever reply is last: a report can add one after it."""
-    expect(conversation(page)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
+    expect(conversation(chat)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
 
 
 def running_task_ids(admin) -> set[str]:
@@ -166,8 +173,9 @@ def two_dispatches(tasks: list[str], prompt: str) -> reply.Reply:
 
 
 def test_the_reply_ends_while_the_subagent_keeps_working_and_its_report_then_continues_the_chat(
-    background_on, page_for, make_user, upstream, admin
+    background_on, chat_for, make_user, upstream, admin
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompt, task = unique("hand this over"), unique("check the ledger")
     answer = unique("the ledger balances")
@@ -177,26 +185,27 @@ def test_the_reply_ends_while_the_subagent_keeps_working_and_its_report_then_con
         reply.text("It is being checked.", match=reply.answering(prompt)),
         reply.text("The ledger is fine.", match=report_of(task)),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     idle_tasks = running_task_ids(admin)
 
-    send(page, prompt)
+    send(chat, prompt)
 
-    expect_in_chat(page, "It is being checked.")
-    expect(dispatched_row(page, task)).to_be_visible()
-    expect(stop_button(page)).to_have_count(0)
-    expect(report_row(page)).to_have_count(0)
+    expect_in_chat(chat, "It is being checked.")
+    expect(dispatched_row(chat, task)).to_be_visible()
+    expect(stop_button(chat)).to_have_count(0)
+    expect(report_row(chat)).to_have_count(0)
     assert running_task_ids(admin) - idle_tasks, "the sub-agent had finished before the reply ended"
-    expect_report_row(page)
-    expect_reply(page, "The ledger is fine.")
-    report_row(page).click()
-    expect(conversation(page)).to_contain_text(answer)
+    expect_report_row(chat)
+    expect_reply(chat, "The ledger is fine.")
+    report_row(chat).click()
+    expect(conversation(chat)).to_contain_text(answer)
     assert len([r for r in upstream.chat_requests() if report_of(task)(r)]) == 1
 
 
 def test_the_report_and_the_follow_up_show_in_the_open_chat_without_a_reload(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompt, task = unique("hand this over"), unique("check the books")
     upstream.queue(
@@ -205,16 +214,16 @@ def test_the_report_and_the_follow_up_show_in_the_open_chat_without_a_reload(
         reply.text("It is being checked.", match=reply.answering(prompt)),
         reply.text("The books are fine.", match=report_of(task)),
     )
-    page = page_for(make_user())
-    send(page, prompt)
-    expect_reply(page, "It is being checked.")
+    chat = chat_for(make_user())
+    send(chat, prompt)
+    expect_reply(chat, "It is being checked.")
 
-    expect_report_row(page)
-    expect_reply(page, "The books are fine.")
+    expect_report_row(chat)
+    expect_reply(chat, "The books are fine.")
 
 
 def test_a_reload_while_the_subagent_works_keeps_the_chat_and_the_report_still_comes(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
     background_on()
     prompt, task = unique("hand this over"), unique("sum the receipts")
@@ -225,25 +234,26 @@ def test_a_reload_while_the_subagent_works_keeps_the_chat_and_the_report_still_c
         reply.text("Counting them.", match=reply.answering(prompt)),
         reply.text("Forty in all.", match=report_of(task)),
     )
-    page = page_for(make_user())
-    send(page, prompt)
-    expect_reply(page, "Counting them.")
+    chat = chat_for(make_user())
+    send(chat, prompt)
+    expect_reply(chat, "Counting them.")
 
-    page.reload()
+    chat = chat.reload()
 
-    expect_reply(page, "Counting them.")
-    expect(dispatched_row(page, task)).to_be_visible()
-    expect(report_row(page)).to_have_count(0)
-    expect(stop_button(page)).to_have_count(0)
-    expect_report_row(page)
-    expect_reply(page, "Forty in all.")
-    report_row(page).click()
-    expect(conversation(page)).to_contain_text(answer)
+    expect_reply(chat, "Counting them.")
+    expect(dispatched_row(chat, task)).to_be_visible()
+    expect(report_row(chat)).to_have_count(0)
+    expect(stop_button(chat)).to_have_count(0)
+    expect_report_row(chat)
+    expect_reply(chat, "Forty in all.")
+    report_row(chat).click()
+    expect(conversation(chat)).to_contain_text(answer)
 
 
 def test_two_accounts_at_once_each_get_only_their_own_report(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompts = [unique("hand over the north"), unique("hand over the south")]
     tasks = [unique("count north doors"), unique("count south doors")]
@@ -258,21 +268,21 @@ def test_two_accounts_at_once_each_get_only_their_own_report(
         *[reply.text("Working.", match=reply.answering(prompt)) for prompt in prompts],
         *[reply.text(text, match=report_of(task)) for task, text in zip(tasks, follow_ups)],
     )
-    pages = [page_for(make_user()), page_for(make_user())]
+    chats = [chat_for(make_user()), chat_for(make_user())]
 
-    for page, prompt in zip(pages, prompts):
-        send(page, prompt)
-    for page in pages:
-        expect_in_chat(page, "Working.")
-    for page, follow_up, answer in zip(pages, follow_ups, answers):
-        expect_report_row(page)
-        expect_reply(page, follow_up)
-        report_row(page).click()
-        expect(conversation(page)).to_contain_text(answer)
+    for chat, prompt in zip(chats, prompts):
+        send(chat, prompt)
+    for chat in chats:
+        expect_in_chat(chat, "Working.")
+    for chat, follow_up, answer in zip(chats, follow_ups, answers):
+        expect_report_row(chat)
+        expect_reply(chat, follow_up)
+        report_row(chat).click()
+        expect(conversation(chat)).to_contain_text(answer)
 
-    for page, other_task, other_answer in zip(pages, reversed(tasks), reversed(answers)):
-        expect(conversation(page)).not_to_contain_text(other_task)
-        expect(conversation(page)).not_to_contain_text(other_answer)
+    for chat, other_task, other_answer in zip(chats, reversed(tasks), reversed(answers)):
+        expect(conversation(chat)).not_to_contain_text(other_task)
+        expect(conversation(chat)).not_to_contain_text(other_answer)
     for task, answer in zip(tasks, answers):
         [report] = [r for r in upstream.chat_requests() if report_of(task)(r)]
         other_answer = answers[1 - answers.index(answer)]
@@ -282,8 +292,9 @@ def test_two_accounts_at_once_each_get_only_their_own_report(
 
 
 def test_a_background_limit_of_one_refuses_one_of_two_subagents_and_reports_the_other(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on(SUBAGENTS_MAX_ASYNC=1)
     prompt = unique("split this up")
     tasks = [unique("first errand"), unique("second errand")]
@@ -294,20 +305,20 @@ def test_a_background_limit_of_one_refuses_one_of_two_subagents_and_reports_the_
         # the two calls of one reply race for the single slot
         reply.text("One came back.", match=lambda body: any(report_of(t)(body) for t in tasks)),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    send(page, prompt)
+    send(chat, prompt)
 
-    expect_in_chat(page, "Two were asked for.")
-    replies(page).filter(has_text="Two were asked for.").get_by_text("Explored", exact=True).click()
+    expect_in_chat(chat, "Two were asked for.")
+    replies(chat).filter(has_text="Two were asked for.").get_by_text("Explored", exact=True).click()
     for task in tasks:
-        dispatched_row(page, task).click()
+        dispatched_row(chat, task).click()
     expect(
-        conversation(page).get_by_text("Async subagent capacity reached (1 running)")
+        conversation(chat).get_by_text("Async subagent capacity reached (1 running)")
     ).to_have_count(1)
-    expect(conversation(page).get_by_text('"status": "dispatched"')).to_have_count(1)
-    expect_report_row(page)
-    expect_reply(page, "One came back.")
+    expect(conversation(chat).get_by_text('"status": "dispatched"')).to_have_count(1)
+    expect_report_row(chat)
+    expect_reply(chat, "One came back.")
     started = [
         r
         for r in upstream.chat_requests()
@@ -317,8 +328,9 @@ def test_a_background_limit_of_one_refuses_one_of_two_subagents_and_reports_the_
 
 
 def test_a_failing_background_subagent_is_reported_and_the_chat_carries_on(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompt, task = unique("hand this over"), unique("call the broken model")
     upstream.queue(
@@ -327,21 +339,22 @@ def test_a_failing_background_subagent_is_reported_and_the_chat_carries_on(
         reply.text("Sent it off.", match=reply.answering(prompt)),
         reply.text("The helper failed.", match=report_of(task)),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    send(page, prompt)
+    send(chat, prompt)
 
-    expect_in_chat(page, "Sent it off.")
-    expect_report_row(page)
-    expect_reply(page, "The helper failed.")
-    report_row(page).click()
-    expect(conversation(page)).to_contain_text("The subagent did not complete successfully.")
-    expect(conversation(page)).to_contain_text("the helper model is down")
+    expect_in_chat(chat, "Sent it off.")
+    expect_report_row(chat)
+    expect_reply(chat, "The helper failed.")
+    report_row(chat).click()
+    expect(conversation(chat)).to_contain_text("The subagent did not complete successfully.")
+    expect(conversation(chat)).to_contain_text("the helper model is down")
 
 
 def test_stopping_the_reply_leaves_the_background_subagent_running_and_its_report_comes(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompt, task = unique("hand this over"), unique("watch the queue")
     answer = unique("the queue is empty")
@@ -351,23 +364,23 @@ def test_stopping_the_reply_leaves_the_background_subagent_running_and_its_repor
         reply.text("Sent it off, and more.", delay=SLOW_SECONDS, match=reply.answering(prompt)),
         reply.text("The queue is empty.", match=report_of(task)),
     )
-    page = page_for(make_user())
-    send(page, prompt)
-    expect(dispatched_row(page, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    expect(stop_button(page)).to_be_visible()
+    chat = chat_for(make_user())
+    send(chat, prompt)
+    expect(dispatched_row(chat, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    expect(stop_button(chat)).to_be_visible()
 
-    stop_button(page).click()
+    stop_button(chat).click()
 
-    expect(stop_button(page)).to_have_count(0)
-    expect_report_row(page)
-    expect_reply(page, "The queue is empty.")
-    report_row(page).click()
-    expect(conversation(page)).to_contain_text(answer)
-    expect(conversation(page)).not_to_contain_text("Sent it off, and more.")
+    expect(stop_button(chat)).to_have_count(0)
+    expect_report_row(chat)
+    expect_reply(chat, "The queue is empty.")
+    report_row(chat).click()
+    expect(conversation(chat)).to_contain_text(answer)
+    expect(conversation(chat)).not_to_contain_text("Sent it off, and more.")
 
 
 def test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_still_works(
-    background_on, page_for, make_user, upstream, admin
+    background_on, chat_for, make_user, upstream, admin
 ):
     background_on()
     prompt, task, second = unique("stop this"), unique("slow foreground job"), unique("again")
@@ -376,11 +389,11 @@ def test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_st
         reply.text("late answer", delay=STOP_SECONDS, match=reply.answering(task)),
         reply.text("Second reply.", match=reply.answering(second)),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     idle_tasks = running_task_ids(admin)
-    send(page, prompt)
+    send(chat, prompt)
     working = re.escape(f'Executing Sub-agent: "{task}"...')
-    expect(last_reply(page).get_by_role("button", name=re.compile(working))).to_be_visible(
+    expect(last_reply(chat).get_by_role("button", name=re.compile(working))).to_be_visible(
         timeout=REPLY_TIMEOUT_MS
     )
 
@@ -392,20 +405,21 @@ def test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_st
         timeout_seconds=10.0,
     )
 
-    stop_button(page).click()
+    stop_button(chat).click()
 
-    expect(stop_button(page)).to_have_count(0)
-    expect(last_reply(page).get_by_role("button", name=re.compile(working))).to_have_count(0)
+    expect(stop_button(chat)).to_have_count(0)
+    expect(last_reply(chat).get_by_role("button", name=re.compile(working))).to_have_count(0)
     wait_until(lambda: not started_tasks & running_task_ids(admin), timeout_seconds=5.0)
-    send(page, second)
-    expect_reply(page, "Second reply.")
+    send(chat, second)
+    expect_reply(chat, "Second reply.")
     assert all("late answer" not in str(r["messages"]) for r in upstream.chat_requests())
     assert len(upstream.chat_requests()) == 3
 
 
 def test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report(
-    background_on, page_for, make_user, upstream
+    background_on, chat_for, make_user, upstream
 ):
+    """In a side chat on dev: the report shows only after a reload (no issue filed)."""
     background_on()
     prompt = unique("split this up")
     tasks = [unique("count the apples"), unique("count the pears")]
@@ -415,15 +429,15 @@ def test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report(
         reply.text("Sent both off.", delay=4.0, match=reply.answering(prompt)),
         reply.text("Both reports read.", match=report_of(tasks[0])),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    send(page, prompt)
+    send(chat, prompt)
 
-    expect_in_chat(page, "Sent both off.")
-    expect_report_row(page)
-    expect(report_row(page)).to_have_count(1)
-    expect(report_row(page)).to_contain_text("2 tasks")
-    expect_reply(page, "Both reports read.")
+    expect_in_chat(chat, "Sent both off.")
+    expect_report_row(chat)
+    expect(report_row(chat)).to_have_count(1)
+    expect(report_row(chat)).to_contain_text("2 tasks")
+    expect_reply(chat, "Both reports read.")
     [report] = [r for r in upstream.chat_requests() if report_of(tasks[0])(r)]
     content = str(reply.conversation(report)[-1]["content"])
     assert all(task in content and f"answer for {task}" in content for task in tasks)
