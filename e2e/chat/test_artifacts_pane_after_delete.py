@@ -12,6 +12,12 @@ deleted from the chat.
 
 Discriminates: passes on the dev bc2416c5d build; with the shrink branch of the pane's list
 update removed, the header keeps reading "Version 2 of 2" after the deletion.
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the first in every
+way a side chat starts and every state it can be in. The page has one artifacts pane, which shows
+the main chat's artifacts, so a side chat answer's blocks never reach it
+(open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
+variants are red on dev c15f28649 and on dev e791cbdde.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import conversation, expect_reply, expect_split_screen, send
 from utils.tooltips import tooltip_button
 
@@ -39,47 +46,55 @@ def shown_artifact(page: Page):
 
 
 @pytest.fixture
-def two_artifacts(page_for, make_user, upstream):
+def two_artifacts(chat_for, make_user, upstream) -> ChatSurface:
     """A chat whose two replies each hold an artifact, the pane open on the second."""
-    page = page_for(make_user(role="admin"))  # deleting messages is an admin default
+    chat = chat_for(make_user(role="admin"))  # deleting messages is an admin default
+    page = chat.page
     upstream.queue(
         reply.text(html_reply("first card"), match=reply.answering("first page")),
         reply.text(html_reply("second card"), match=reply.answering("second page")),
     )
-    send(page, "make me the first page")
-    expect_reply(page, "Done with first card.")
+    send(chat, "make me the first page")
+    expect_reply(chat, "Done with first card.")
     expect_split_screen(page)
-    send(page, "make me the second page")
-    expect_reply(page, "Done with second card.")
+    send(chat, "make me the second page")
+    expect_reply(chat, "Done with second card.")
 
     expect(artifacts_pane(page)).to_contain_text("Version 2 of 2")
     expect(shown_artifact(page)).to_have_text("second card")
-    return page
+    return chat
 
 
-def delete_turn(page: Page, index: int) -> None:
-    question = conversation(page).locator(".chat-user").nth(index)
+def delete_last_turn(chat: ChatSurface) -> None:
+    # the last question: a side chat can hold earlier turns
+    question = conversation(chat).locator(".chat-user").last
     question.hover()
     tooltip_button(question, "Delete").click()
-    page.get_by_role("button", name="Confirm").click()
+    chat.page.get_by_role("button", name="Confirm").click()
 
 
+# the model count cannot matter: the pane shows the blocks of the replies that hold them
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_deleting_the_newest_artifact_moves_the_pane_to_the_last_one_left(two_artifacts):
-    page = two_artifacts
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = two_artifacts
+    page = chat.page
 
-    delete_turn(page, 1)
+    delete_last_turn(chat)
 
-    expect(conversation(page)).not_to_contain_text("Done with second card.")
+    expect(conversation(chat)).not_to_contain_text("Done with second card.")
     expect(artifacts_pane(page)).to_contain_text("Version 1 of 1")
     expect(shown_artifact(page)).to_have_text("first card")
 
 
 def test_the_pane_keeps_a_selection_that_still_exists(two_artifacts):
-    page = two_artifacts
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = two_artifacts
+    page = chat.page
     artifacts_pane(page).get_by_role("button", name="Previous version").click()
     expect(artifacts_pane(page)).to_contain_text("Version 1 of 2")
 
-    delete_turn(page, 1)
+    delete_last_turn(chat)
 
     expect(artifacts_pane(page)).to_contain_text("Version 1 of 1")
     expect(shown_artifact(page)).to_have_text("first card")
