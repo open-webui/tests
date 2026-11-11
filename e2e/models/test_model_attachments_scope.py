@@ -15,6 +15,14 @@ suggestions of any model that has some the suggestion test fails. In a backend c
 every active filter on every model both tool and filter tests fail, in one that lists every active
 action on every model the action test fails and in one where a model without knowledge borrows
 the last model's the knowledge test fails.
+
+The tool and filter, the action and the knowledge tests run in the main chat and in a side chat,
+where the model is picked in the side chat's own selector. The test that starts a new chat from the
+sidebar and the one on the new chat page's suggestions are about the page and stay on the main
+chat. On dev c15f28649 two side chat variants are red and green on head e791cbdde (fix PR
+open-webui/open-webui#34064): the action test, because a side chat showed no action function
+buttons (open-webui/open-webui#34014), and the tool and filter test, because a side chat switched
+to another model kept sending the first model's tool, a gap no filed issue covers.
 """
 
 from __future__ import annotations
@@ -25,14 +33,15 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import replies
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import Chat, replies
 from utils.model_editor import offered_tool_names, open_chat_on, sent_request
 from utils.model_selector import select_model
 
@@ -111,30 +120,37 @@ def harbour(admin, make_user):
         yield builder, Harbour(master, clerk, action_id)
 
 
-def switch_model(page: Page, current: dict, target: dict) -> None:
-    page.get_by_role("button", name=f"Selected model: {current['name']}").click()
-    select_model(page, target["name"])
-    expect(page.get_by_role("button", name=f"Selected model: {target['name']}")).to_be_visible()
+def _selector_button(chat: Chat, name: str) -> Locator:
+    if isinstance(chat, ChatSurface):
+        return chat.button(f"Selected model: {name}")
+    return chat.get_by_role("button", name=f"Selected model: {name}")
 
 
-def whole_reply(page: Page, index: int) -> Locator:
+def switch_model(chat: Chat, current: dict, target: dict) -> None:
+    _selector_button(chat, current["name"]).click()
+    select_model(chat, target["name"])
+    expect(_selector_button(chat, target["name"])).to_be_visible()
+
+
+def whole_reply(chat: Chat, index: int) -> Locator:
     """The reply at `index` with the buttons under it."""
-    return replies(page).nth(index).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
+    return replies(chat).nth(index).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
 
 
-def test_the_tool_and_filter_do_not_follow_the_chat_to_another_model(page_for, harbour, upstream):
+def test_the_tool_and_filter_do_not_follow_the_chat_to_another_model(chat_for, harbour, upstream):
+    """In a side chat on dev: the first model's tool stays offered (no issue filed)."""
     builder, models = harbour
-    page = page_for(builder)
-    open_chat_on(page, models.master)
-    on_master = sent_request(page, upstream, "who holds locker 7?")
+    chat = chat_for(builder)
+    open_chat_on(chat, models.master)
+    on_master = sent_request(chat, upstream, "who holds locker 7?")
     assert "lookup_locker" in offered_tool_names(on_master)
     assert (
         reply.conversation(on_master)[-1]["content"]
         == "who holds locker 7? (checked at the harbour gate)"
     )
 
-    switch_model(page, models.master, models.clerk)
-    on_clerk = sent_request(page, upstream, "who holds locker 8?")
+    switch_model(chat, models.master, models.clerk)
+    on_clerk = sent_request(chat, upstream, "who holds locker 8?")
 
     assert "lookup_locker" not in offered_tool_names(on_clerk)
     assert reply.conversation(on_clerk)[-1]["content"] == "who holds locker 8?"
@@ -158,32 +174,33 @@ def test_a_new_chat_switched_to_another_model_carries_no_tool_or_filter(
     assert "<knowledge" not in json.dumps(on_clerk["messages"]), on_clerk["messages"]
 
 
-def test_the_action_shows_only_under_the_models_own_replies(page_for, harbour, upstream):
+def test_the_action_shows_only_under_the_models_own_replies(chat_for, harbour, upstream):
+    """In a side chat: open-webui/open-webui#34014."""
     builder, models = harbour
-    page = page_for(builder)
-    open_chat_on(page, models.master)
-    sent_request(page, upstream, "log my arrival", answer="Arrival noted.")
-    master_reply = whole_reply(page, 0)
+    chat = chat_for(builder)
+    open_chat_on(chat, models.master)
+    sent_request(chat, upstream, "log my arrival", answer="Arrival noted.")
+    master_reply = whole_reply(chat, 0)
     expect(master_reply.get_by_role("button", name=models.action_id, exact=True)).to_be_visible()
 
-    switch_model(page, models.master, models.clerk)
-    sent_request(page, upstream, "log my departure", answer="Departure noted.")
+    switch_model(chat, models.master, models.clerk)
+    sent_request(chat, upstream, "log my departure", answer="Departure noted.")
 
-    expect(replies(page)).to_have_count(2)
-    expect(whole_reply(page, 1).get_by_role("button", name=models.action_id)).to_have_count(0)
+    expect(replies(chat)).to_have_count(2)
+    expect(whole_reply(chat, 1).get_by_role("button", name=models.action_id)).to_have_count(0)
     expect(master_reply.get_by_role("button", name=models.action_id, exact=True)).to_be_visible()
 
 
-def test_the_knowledge_is_offered_only_with_its_model(page_for, harbour, upstream):
+def test_the_knowledge_is_offered_only_with_its_model(chat_for, harbour, upstream):
     builder, models = harbour
-    page = page_for(builder)
-    open_chat_on(page, models.master)
-    on_master = offered_tool_names(sent_request(page, upstream, "who keeps the lighthouse?"))
+    chat = chat_for(builder)
+    open_chat_on(chat, models.master)
+    on_master = offered_tool_names(sent_request(chat, upstream, "who keeps the lighthouse?"))
     assert "list_knowledge" in on_master, sorted(on_master)
     assert "list_knowledge_bases" not in on_master, sorted(on_master)
 
-    switch_model(page, models.master, models.clerk)
-    on_clerk = offered_tool_names(sent_request(page, upstream, "who keeps the light?"))
+    switch_model(chat, models.master, models.clerk)
+    on_clerk = offered_tool_names(sent_request(chat, upstream, "who keeps the light?"))
 
     assert "list_knowledge" not in on_clerk, sorted(on_clerk)
     assert "list_knowledge_bases" in on_clerk, sorted(on_clerk)
