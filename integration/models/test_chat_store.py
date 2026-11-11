@@ -25,6 +25,9 @@
   the walk's list grew without bound. The chat stats export walks the stored history; it runs on
   an instance whose process is capped at a gigabyte more than it holds, so the runaway walk ends
   in a refused export instead of exhausting the machine.
+* #34143 creating a tag read the account's tags and then inserted the missing ones, so requests
+  adding the same new tag at the same moment collided on the insert: all but one tag request
+  failed with a 500 and left its chat untagged, and all but one import answered 400.
 
 Twin of unit/models/test_chat_store.py.
 
@@ -37,6 +40,9 @@ fails the looping walk; the content, plain-message and plain-chain tests pass on
 On dev 948432b43, a param save that replaces the stored settings with the sent ones fails the
 two merge tests and the same-time test, and a merge read and written without the row lock fails
 the same-time test alone; the route does not exist before b4a58be19.
+On dev 262a8c6f7 the two #34143 same-time tag tests fail on SQLite and Postgres (statuses such as
+[200, 200, 500, 500] and [200, 400, 200, 400]) and pass with the fix 9523b3a1b on branch
+fix-concurrent-new-tag; the existing-tag test passes on both.
 """
 
 from __future__ import annotations
@@ -319,6 +325,77 @@ def test_a_stranger_and_a_missing_chat_are_refused(make_user, tagged_chat):
     with make_user().client() as stranger_client:
         assert stranger_client.get(f"/api/v1/chats/{tagged_chat}/tags").status_code == 401
         assert stranger_client.get(f"/api/v1/chats/{uuid.uuid4()}/tags").status_code == 401
+
+
+# --- #34143: one new tag added by several requests at the same time ------------------------
+
+SAME_TIME_ROUNDS = 5
+SAME_TIME_CHATS = 4
+
+
+def add_tag(owner, chat_id: str, tag: str) -> httpx.Response:
+    # A connection of its own: the server closes one after an unhandled error.
+    with owner.client() as own_client:
+        return own_client.post(f"/api/v1/chats/{chat_id}/tags", json={"name": tag})
+
+
+def account_tag_ids(client: httpx.Client) -> list[str]:
+    listed = client.get("/api/v1/chats/all/tags")
+    assert listed.status_code == 200, listed.text
+    return [tag["id"] for tag in listed.json()]
+
+
+def test_a_new_tag_added_to_several_chats_at_the_same_time_reaches_every_chat(owner, client):
+    chat_ids = [create_chat(client, {}) for _ in range(SAME_TIME_CHATS)]
+
+    for _ in range(SAME_TIME_ROUNDS):
+        tag = f"run-{uuid.uuid4().hex[:8]}"
+        with ThreadPoolExecutor(max_workers=len(chat_ids)) as pool:
+            answers = list(pool.map(lambda chat_id: add_tag(owner, chat_id, tag), chat_ids))
+
+        statuses = [answer.status_code for answer in answers]
+        assert statuses == [200] * len(chat_ids), (
+            f"adding the new tag {tag!r} to {len(chat_ids)} chats at once failed some requests: "
+            f"{statuses} (#34143)"
+        )
+        untagged = [
+            chat_id
+            for chat_id in chat_ids
+            if tag not in tag_names(client.get(f"/api/v1/chats/{chat_id}/tags"))
+        ]
+        assert not untagged, (
+            f"{len(untagged)} of {len(chat_ids)} chats did not get {tag!r} (#34143)"
+        )
+        assert account_tag_ids(client).count(tag) == 1
+
+
+def test_imports_at_the_same_time_with_one_new_tag_all_succeed(client):
+    imports = 4
+
+    for _ in range(SAME_TIME_ROUNDS):
+        tag = f"imported-{uuid.uuid4().hex[:8]}"
+        form = {"chats": [{"chat": {"title": f"Imported {tag}"}, "meta": {"tags": [tag]}}]}
+        with ThreadPoolExecutor(max_workers=imports) as pool:
+            answers = list(
+                pool.map(lambda _: client.post("/api/v1/chats/import", json=form), range(imports))
+            )
+
+        statuses = [answer.status_code for answer in answers]
+        assert statuses == [200] * imports, (
+            f"importing {imports} chats with the new tag {tag!r} at once failed some imports: "
+            f"{statuses} (#34143)"
+        )
+        assert account_tag_ids(client).count(tag) == 1
+
+
+def test_a_tag_the_account_already_has_is_added_to_another_chat(client, tagged_chat):
+    other_chat = create_chat(client, {})
+
+    added = client.post(f"/api/v1/chats/{other_chat}/tags", json={"name": "Quarterly"})
+
+    assert added.status_code == 200, added.text
+    assert tag_names(client.get(f"/api/v1/chats/{other_chat}/tags")) == ["Quarterly"]
+    assert account_tag_ids(client).count("quarterly") == 1
 
 
 # --- 1c13fedb1: a partial save keeps what it did not name ----------------------------------
