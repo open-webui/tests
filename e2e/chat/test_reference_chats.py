@@ -9,6 +9,10 @@ to itself.
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose chat references read no messages
 the reaching test fails, and in a frontend build whose picker also lists the open chat the other
 test fails.
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the open chat
+dragged into a tab beside a new chat for the second. That side variant is red on dev c15f28649
+and on dev e791cbdde: the tab's chat is offered as a reference to itself (issue draft pending).
 """
 
 from __future__ import annotations
@@ -16,11 +20,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from utils.cached_chat import this_turns_tool_results
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
 
@@ -51,14 +56,14 @@ def referenced(account) -> tuple[str, str]:
     return chat_id, title
 
 
-def _chat_picker(page: Page) -> Locator:
-    menu = open_add_context(page)
+def _chat_picker(chat: ChatSurface) -> Locator:
+    menu = open_add_context(chat)
     menu.get_by_role("menuitem", name="Reference Chats").click()
     return menu
 
 
 def test_a_referenced_chat_reaches_the_model_with_the_message(
-    page_for, account, referenced, upstream
+    chat_for, account, referenced, upstream
 ):
     referenced_id, referenced_title = referenced
     question = f"when should I be at the pier? {uuid.uuid4().hex[:6]}"
@@ -67,31 +72,32 @@ def test_a_referenced_chat_reaches_the_model_with_the_message(
         reply.tool_call("view_chat", {"chat_id": referenced_id}, match=answering),
         reply.text("Be there by half past seven.", match=answering),
     )
-    page = page_for(account)
+    chat = chat_for(account)
 
-    picker = _chat_picker(page)
+    picker = _chat_picker(chat)
     picker.get_by_placeholder("Search Chats").fill(referenced_title)
     late_menu_entry(picker, referenced_title).click()
-    send(page, question)
+    send(chat, question)
 
-    expect_reply(page, "Be there by half past seven.")
+    expect_reply(chat, "Be there by half past seven.")
     asked, answered = [body for body in upstream.chat_requests() if answering(body)]
     question_sent = str(reply.conversation(asked)[-1]["content"])
     assert f'type="chat" id="{referenced_id}"' in question_sent, question_sent
     opened = this_turns_tool_results(answered)
     assert REFERENCED_FACT in str(opened), f"the referenced chat never reached the model: {opened}"
 
-    page.reload()
-    expect_reply(page, "Be there by half past seven.")
-    expect(conversation(page).get_by_text(referenced_title)).to_be_visible()
+    chat = chat.reload()
+    expect_reply(chat, "Be there by half past seven.")
+    expect(conversation(chat).get_by_text(referenced_title)).to_be_visible()
 
 
-def test_the_open_chat_is_not_offered_as_a_reference_to_itself(page_for, account, referenced):
+def test_the_open_chat_is_not_offered_as_a_reference_to_itself(chat_for, account, referenced):
+    """In a tab: issue draft pending (the tab's chat is offered to itself)."""
     chat_id, title = referenced
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect(conversation(page).get_by_text(REFERENCED_FACT)).to_be_visible()
+    chat = chat_for(account, chat_id=chat_id)
+    expect(conversation(chat).get_by_text(REFERENCED_FACT)).to_be_visible()
 
-    picker = _chat_picker(page)
+    picker = _chat_picker(chat)
     picker.get_by_placeholder("Search Chats").fill(title)
     expect(picker.get_by_text("No chats found")).to_be_visible()
     expect(late_menu_entry(picker, title)).to_have_count(0)
