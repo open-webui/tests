@@ -14,9 +14,10 @@ has the same menu and a pick of its own: it starts from the chat's terminal, pic
 leaves the other alone, and its pick is stored with the side chat and back after a reload.
 Each of the two offers the model only its own terminal's tool, runs the model's command and
 searches files there, with a personal terminal picked in one and one of the admin's in the other,
-also after a reload. Side chats had no menu and always used the chat's terminal, and then a
-personal terminal picked in either still reached the model in the other
-(open-webui/open-webui#34149).
+also after a reload, and its file search, `$` skills and `/` commands ask the terminal for its own
+chat. Side chats had no menu and always used the chat's terminal, then a personal terminal picked
+in either still reached the model in the other, and then the side chat's file search, skills and
+commands still asked for the chat's machine (open-webui/open-webui#34149).
 
 A local fake terminal stands for the admin's connection and for the personal terminal; the
 deleted terminal is one on the real Terminals service on Docker (`harness.terminals`), and its
@@ -37,8 +38,10 @@ deleted test); the controls never moved into the More menu (the narrow test). Th
 has no mutation of its own. The side chat tests (open-webui/open-webui#34149) fail on the dev
 262a8c6f7 build, where a side chat shows no Terminal button, and pass with the fix; the keeps its
 own terminal test also fails on the fix's first commit bdeed3736, where the chat's personal
-terminal reaches the model in the side chat too, and passes on b0e710c2a; with the @ mention's
-file search back on the page's personal terminal only, its file search check fails.
+terminal reaches the model in the side chat too; with the @ mention's file search back on the
+page's personal terminal only, its file search check fails; on b0e710c2a the side chat's file
+search, skills and commands carry the chat's id, and the check of the chat they ask for fails;
+it passes on ecdf8ecee.
 """
 
 from __future__ import annotations
@@ -433,6 +436,8 @@ def _chat_terminal_button(chat: ChatSurface, label: str) -> Locator:
 
 def _pick_in(chat: ChatSurface, name: str, picked: str | None = None) -> None:
     """Open the chat's Terminal menu, whose button reads `picked`, and click the terminal `name`."""
+    # a new chat page shows the button only once it has loaded
+    expect(_chat_terminal_button(chat, picked or "Terminal")).to_be_visible()
     tooltip_button(chat.panel, picked or "Terminal").click()
     expect(chat.page.get_by_role("menu")).to_be_visible()
     listed_terminal(chat.page, name).click()
@@ -534,6 +539,28 @@ def _calls(server, path: str) -> int:
 
 def _searched(server, query: str) -> bool:
     return any(f"query={query}" in request.path for request in server.requests_to("/files/search"))
+
+
+def _asked_for(server, path: str) -> set[str | None]:
+    """The chats the GETs of `path` asked the terminal for, by their X-Session-Id."""
+    return {
+        request.headers.get("x-session-id")
+        for request in server.requests_to(path)
+        if request.method == "GET"
+    }
+
+
+def _skills_asked_for(chat: ChatSurface, trigger: str, terminal) -> set[str | None]:
+    """Type `trigger` alone into the chat's input, which lists its terminal's skills; the chats
+    `terminal` was asked for."""
+    terminal.clear()
+    chat_input(chat).click()
+    chat.page.keyboard.press("Control+a")
+    chat.page.keyboard.press("Backspace")
+    chat.page.keyboard.type(trigger)
+    wait_until(lambda: _asked_for(terminal, "/skills"), timeout=10)
+    chat.page.keyboard.press("Escape")
+    return _asked_for(terminal, "/skills")
 
 
 def test_a_side_chat_keeps_its_own_terminal_apart_from_the_chat(
@@ -646,3 +673,19 @@ def test_a_side_chat_keeps_its_own_terminal_apart_from_the_chat(
         "side on the server": False,
         "chat on the laptop": False,
     }, f"the file searches went {searched}"
+    asked = {
+        "side's search": _asked_for(personal_terminal, "/files/search"),
+        "chat's search": _asked_for(fake_terminal, "/files/search"),
+        "side's $": _skills_asked_for(side, "$", personal_terminal),
+        "chat's $": _skills_asked_for(main, "$", fake_terminal),
+        "side's /": _skills_asked_for(side, "/", personal_terminal),
+        "chat's /": _skills_asked_for(main, "/", fake_terminal),
+    }
+    assert asked == {
+        "side's search": {side_id},
+        "chat's search": {main_id},
+        "side's $": {side_id},
+        "chat's $": {main_id},
+        "side's /": {side_id},
+        "chat's /": {main_id},
+    }, f"the terminals were asked for the chats {asked} (side chat {side_id}, chat {main_id})"
