@@ -17,6 +17,9 @@ the in-app link and HTML text tests stay green there as controls. With diagrams 
 (the `rendering-front2` copy) the table, code and diagram reload test goes red. On the 0.12.4
 pre-fix build (2bebbb44e reverted among other fixes) the structure test, its reload twin and the
 new tab test go red on the spaces added before formatted and linked words.
+
+Every test but the link to another chat runs in the main chat and in a side chat
+(`utils/chat_surface.py`); that one opens the chat by its address, which belongs to the page.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from harness.listener import text_answer
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -64,11 +68,11 @@ MARKDOWN_SIGNS = ["**", "~~", "# ", "> ", "[!WARNING]", "- [x]", "---"]
 FORMATTED_LINE = "Some bold, italic, struck and inline code words."
 
 
-def ask(page: Page, upstream, answer: str, prompt: str, last_words: str) -> Locator:
+def ask(chat: Page | ChatSurface, upstream, answer: str, prompt: str, last_words: str) -> Locator:
     upstream.queue(reply.text(answer, match=reply.answering(prompt)))
-    send(page, prompt)
-    expect_reply(page, last_words)
-    return last_reply(page)
+    send(chat, prompt)
+    expect_reply(chat, last_words)
+    return last_reply(chat)
 
 
 def new_tabs_of(page: Page) -> list[Page]:
@@ -123,22 +127,22 @@ def expect_the_plan_drawn(box: Locator) -> None:
     assert not leftovers, f"markdown signs left on screen: {leftovers}"
 
 
-def test_headings_lists_quotes_and_tasks_are_drawn_as_such(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_headings_lists_quotes_and_tasks_are_drawn_as_such(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
 
-    box = ask(page, upstream, PLAN, "plan my trip", "Done planning.")
+    box = ask(chat, upstream, PLAN, "plan my trip", "Done planning.")
 
     expect_the_plan_drawn(box)
 
 
-def test_the_drawn_markdown_is_the_same_after_a_reload(page_for, make_user, upstream):
-    page = page_for(make_user())
-    ask(page, upstream, PLAN, "plan my trip again", "Done planning.")
+def test_the_drawn_markdown_is_the_same_after_a_reload(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    ask(chat, upstream, PLAN, "plan my trip again", "Done planning.")
 
-    page.reload()
+    chat = chat.reload()
 
-    expect_reply(page, "Done planning.")
-    expect_the_plan_drawn(last_reply(page))
+    expect_reply(chat, "Done planning.")
+    expect_the_plan_drawn(last_reply(chat))
 
 
 MIXED = (
@@ -159,16 +163,16 @@ def expect_the_mixed_reply_drawn(box: Locator) -> None:
 
 
 def test_a_table_a_code_block_and_a_diagram_are_drawn_the_same_after_a_reload(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
-    box = ask(page, upstream, MIXED, "chart the harbour", "Charted in full.")
+    chat = chat_for(make_user())
+    box = ask(chat, upstream, MIXED, "chart the harbour", "Charted in full.")
     expect_the_mixed_reply_drawn(box)
 
-    page.reload()
+    chat = chat.reload()
 
-    expect_reply(page, "Charted in full.")
-    expect_the_mixed_reply_drawn(last_reply(page))
+    expect_reply(chat, "Charted in full.")
+    expect_the_mixed_reply_drawn(last_reply(chat))
 
 
 @pytest.fixture
@@ -178,11 +182,12 @@ def guide(listener) -> str:
 
 
 def test_a_web_link_opens_in_a_new_tab_and_a_mail_link_keeps_its_address(
-    page_for, make_user, upstream, guide
+    chat_for, make_user, upstream, guide
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
+    page = chat.page
     answer = f"Read [the guide]({guide}) or [mail us](mailto:team@example.com). End of links."
-    box = ask(page, upstream, answer, "where is the guide", "End of links.")
+    box = ask(chat, upstream, answer, "where is the guide", "End of links.")
     chat_url = page.url
 
     link = box.get_by_role("link", name="the guide")
@@ -232,11 +237,12 @@ UNSAFE_LINKS = {
 
 @pytest.mark.parametrize("kind", UNSAFE_LINKS)
 def test_a_link_that_would_run_code_is_plain_words_that_do_nothing(
-    page_for, make_user, upstream, kind
+    chat_for, make_user, upstream, kind
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
+    page = chat.page
     answer = f"Do not [press here]({UNSAFE_LINKS[kind]}) please. End of links."
-    box = ask(page, upstream, answer, f"show me {kind}", "End of links.")
+    box = ask(chat, upstream, answer, f"show me {kind}", "End of links.")
     chat_url = page.url
     opened_pages = new_tabs_of(page)
 
@@ -253,15 +259,16 @@ def test_a_link_that_would_run_code_is_plain_words_that_do_nothing(
     assert all(href is None for href in hrefs), f"an unsafe address is still linked: {hrefs}"
 
 
-def test_html_tags_in_a_reply_show_as_text_and_never_run(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_html_tags_in_a_reply_show_as_text_and_never_run(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    page = chat.page
     answer = (
         'An image tag <img src="missing.png" onerror="window.tagRan=true"> and a bold tag '
         '<b>not bold</b> inline.\n\n<div onmouseover="window.tagRan=true">a div</div>\n\n'
         "End of tags."
     )
 
-    box = ask(page, upstream, answer, "write some tags", "End of tags.")
+    box = ask(chat, upstream, answer, "write some tags", "End of tags.")
 
     expect(box).to_contain_text('<img src="missing.png" onerror="window.tagRan=true">')
     expect(box).to_contain_text("<b>")
