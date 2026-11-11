@@ -27,9 +27,9 @@ prompt, so the first line of the system message is read.
 
 On dev c15f28649 and e791cbdde the tests that write the prompt in the model editor are red before
 any chat opens: after Save & Update the editor asks to discard the changes it just saved and stays
-open (issue draft pending). With that dialog confirmed by hand the browser test passes in the
-main chat on both builds, its side chat variants fail on c15f28649 (the language and time zone
-stay literal) and pass on e791cbdde.
+open (open-webui/open-webui#34087, fix PR open-webui/open-webui#34110). With that dialog
+confirmed by hand the browser test passes in the main chat on both builds, its side chat variants
+fail on c15f28649 (the language and time zone stay literal) and pass on e791cbdde.
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def today_in(zone: str) -> str:
 def test_the_browser_fills_who_the_person_is_and_their_day(
     page_for, chat_for, builder, preset, upstream
 ):
-    """In a side chat: open-webui/open-webui#34032. Saving the model: issue draft pending."""
+    """In a side chat: open-webui/open-webui#34032. Saving the model: #34087."""
     write_system_prompt(
         page_for(builder),
         preset,
@@ -147,7 +147,7 @@ def group_name(admin, group_id: str) -> str:
 def test_the_groups_of_the_person_chatting_fill_the_system_prompt(
     page_for, admin, builder, preset, make_user, upstream
 ):
-    """Saving the model: issue draft pending."""
+    """Saving the model: open-webui/open-webui#34087."""
     sailor, visitor = make_user(), make_user()
     staff_id = make_group(admin, [])
     crew_id = make_group(admin, [sailor], parent_id=staff_id)
@@ -180,7 +180,7 @@ def save_user_variable(page: Page, key: str, value: str) -> None:
 def test_a_user_variable_saved_in_the_account_settings_reaches_only_that_persons_chats(
     page_for, builder, preset, make_user, upstream
 ):
-    """Saving the model: issue draft pending."""
+    """Saving the model: open-webui/open-webui#34087."""
     write_system_prompt(page_for(builder), preset, "Moor at {{user.variables.home_port}}.")
     skipper, deckhand = make_user(), make_user()
     skipper_page = page_for(skipper)
