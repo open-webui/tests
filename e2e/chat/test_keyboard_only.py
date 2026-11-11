@@ -27,6 +27,14 @@ The skip link test was red from b29f7781a: the skip link reset the new chat, whi
 text and put the focus back in the message box (open-webui/open-webui#33396, fixed on dev by
 3814b7b2f; the page needs open-webui/open-webui#33459 to set itself up on a fresh load).
 
+The five chat tests (Enter sends, the Regenerate menu with Try Again and Escape, Copy, the model
+selector) run in the main chat and in a side chat (`utils/chat_surface.py`); the skip link,
+sign-in page, settings and search tests are about the page and stay as they were. In a side chat
+the Regenerate button is missing on dev c15f28649 (open-webui/open-webui#34014, fix PR
+open-webui/open-webui#34064). Picking a model with the keys leaves the focus off a side chat's
+message box on both builds: the selector hands the focus to the element with the id `chat-input`,
+which is the main chat's box (no filed issue).
+
 On the sign-in page, Skip to main content moves the focus off the link (421b6947b, PR
 open-webui/open-webui#33684) and the show password button is at least 24 pixels wide
 (0fd01ff24, PR #33685). Both pass on dev e8c0ad85e and fail on that build with their fix
@@ -44,6 +52,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.clipboard import wait_for_text
 from utils.model_selector import model_search
@@ -66,8 +75,11 @@ def focused(page: Page) -> str:
     return page.evaluate(FOCUSED)
 
 
-def press_until_focused(page: Page, key: str, target: Locator, limit: int = 40) -> None:
+def press_until_focused(
+    chat: Page | ChatSurface, key: str, target: Locator, limit: int = 40
+) -> None:
     """Press `key` until `target` holds the focus, as someone tabbing towards it does."""
+    page = chat.page if isinstance(chat, ChatSurface) else chat
     for _ in range(limit):
         if target.evaluate("(element) => element === document.activeElement"):
             return
@@ -82,12 +94,19 @@ def keyboard_page(page_for, make_user) -> Page:
     return page
 
 
-def ask_by_keyboard(page: Page, upstream, question: str, answer: str) -> None:
+@pytest.fixture
+def keyboard_chat(chat_for, make_user) -> ChatSurface:
+    chat = chat_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
+    expect(chat_input(chat)).to_be_focused()
+    return chat
+
+
+def ask_by_keyboard(chat: ChatSurface, upstream, question: str, answer: str) -> None:
     upstream.queue(reply.text(answer, match=reply.answering(question)))
-    expect(chat_input(page)).to_be_focused()
-    page.keyboard.type(question)
-    page.keyboard.press("Enter")
-    expect_reply(page, answer)
+    expect(chat_input(chat)).to_be_focused()
+    chat.page.keyboard.type(question)
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, answer)
 
 
 def expect_focus_inside(page: Page, menu: Locator) -> None:
@@ -95,9 +114,9 @@ def expect_focus_inside(page: Page, menu: Locator) -> None:
     expect(menu.and_(page.locator(":focus-within"))).to_be_visible()
 
 
-def reply_button(page: Page, name: str) -> Locator:
+def reply_button(chat: ChatSurface, name: str) -> Locator:
     whole_reply = (
-        conversation(page)
+        conversation(chat)
         .locator(".chat-assistant")
         .last.locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
     )
@@ -107,52 +126,54 @@ def reply_button(page: Page, name: str) -> Locator:
 # --------------------------------------------------------------------------- the chat
 
 
-def test_enter_sends_from_the_message_box_and_leaves_the_focus_there(keyboard_page, upstream):
+def test_enter_sends_from_the_message_box_and_leaves_the_focus_there(keyboard_chat, upstream):
     question = f"kb question {uuid.uuid4().hex[:6]}"
-    ask_by_keyboard(keyboard_page, upstream, question, "Answered without a mouse.")
+    ask_by_keyboard(keyboard_chat, upstream, question, "Answered without a mouse.")
 
-    expect(chat_input(keyboard_page)).to_be_focused()
-    expect(chat_input(keyboard_page)).to_be_empty()
-    expect(keyboard_page).to_have_url(re.compile(r"/c/"))
+    expect(chat_input(keyboard_chat)).to_be_focused()
+    expect(chat_input(keyboard_chat)).to_be_empty()
+    expect(keyboard_chat.page).to_have_url(re.compile(r"/c/"))
 
 
-def test_shift_tab_reaches_regenerate_and_try_again_adds_a_version(keyboard_page, upstream):
+def test_shift_tab_reaches_regenerate_and_try_again_adds_a_version(keyboard_chat, upstream):
+    """In a side chat: open-webui/open-webui#34014."""
     question = f"name a lake {uuid.uuid4().hex[:6]}"
-    ask_by_keyboard(keyboard_page, upstream, question, "Lake Baikal.")
+    ask_by_keyboard(keyboard_chat, upstream, question, "Lake Baikal.")
     upstream.queue(reply.text("Lake Titicaca.", match=reply.answering(question)))
 
-    press_until_focused(keyboard_page, "Shift+Tab", reply_button(keyboard_page, "Regenerate"))
-    keyboard_page.keyboard.press("Enter")
-    menu = keyboard_page.get_by_role("menu")
-    expect_focus_inside(keyboard_page, menu)
+    press_until_focused(keyboard_chat, "Shift+Tab", reply_button(keyboard_chat, "Regenerate"))
+    keyboard_chat.page.keyboard.press("Enter")
+    menu = keyboard_chat.page.get_by_role("menu")
+    expect_focus_inside(keyboard_chat.page, menu)
     try_again = menu.get_by_role("menuitem", name="Try Again")
-    press_until_focused(keyboard_page, "Tab", try_again, limit=5)
-    keyboard_page.keyboard.press("Enter")
+    press_until_focused(keyboard_chat, "Tab", try_again, limit=5)
+    keyboard_chat.page.keyboard.press("Enter")
 
-    expect_reply(keyboard_page, "Lake Titicaca.")
-    expect(conversation(keyboard_page).get_by_text("2/2")).to_be_visible()
+    expect_reply(keyboard_chat, "Lake Titicaca.")
+    expect(conversation(keyboard_chat).get_by_text("2/2")).to_be_visible()
 
 
-def test_escape_closes_the_regenerate_menu_and_gives_the_focus_back(keyboard_page, upstream):
-    ask_by_keyboard(keyboard_page, upstream, f"say hi {uuid.uuid4().hex[:6]}", "Hi.")
-    regenerate = reply_button(keyboard_page, "Regenerate")
-    press_until_focused(keyboard_page, "Shift+Tab", regenerate)
-    keyboard_page.keyboard.press("Enter")
-    expect_focus_inside(keyboard_page, keyboard_page.get_by_role("menu"))
+def test_escape_closes_the_regenerate_menu_and_gives_the_focus_back(keyboard_chat, upstream):
+    """In a side chat: open-webui/open-webui#34014."""
+    ask_by_keyboard(keyboard_chat, upstream, f"say hi {uuid.uuid4().hex[:6]}", "Hi.")
+    regenerate = reply_button(keyboard_chat, "Regenerate")
+    press_until_focused(keyboard_chat, "Shift+Tab", regenerate)
+    keyboard_chat.page.keyboard.press("Enter")
+    expect_focus_inside(keyboard_chat.page, keyboard_chat.page.get_by_role("menu"))
 
-    keyboard_page.keyboard.press("Escape")
+    keyboard_chat.page.keyboard.press("Escape")
 
-    expect(keyboard_page.get_by_role("menu")).to_have_count(0)
+    expect(keyboard_chat.page.get_by_role("menu")).to_have_count(0)
     expect(regenerate).to_be_focused()
 
 
-def test_enter_on_copy_puts_the_reply_on_the_clipboard(keyboard_page, upstream):
-    ask_by_keyboard(keyboard_page, upstream, f"a motto {uuid.uuid4().hex[:6]}", "Slow and steady.")
+def test_enter_on_copy_puts_the_reply_on_the_clipboard(keyboard_chat, upstream):
+    ask_by_keyboard(keyboard_chat, upstream, f"a motto {uuid.uuid4().hex[:6]}", "Slow and steady.")
 
-    press_until_focused(keyboard_page, "Shift+Tab", reply_button(keyboard_page, "Copy"))
-    keyboard_page.keyboard.press("Enter")
+    press_until_focused(keyboard_chat, "Shift+Tab", reply_button(keyboard_chat, "Copy"))
+    keyboard_chat.page.keyboard.press("Enter")
 
-    assert wait_for_text(keyboard_page) == "Slow and steady."
+    assert wait_for_text(keyboard_chat.page) == "Slow and steady."
 
 
 @pytest.fixture
@@ -173,25 +194,25 @@ def preset(admin) -> str:
 
 
 def test_the_model_selector_is_reached_with_tab_and_a_model_picked_with_the_keys(
-    keyboard_page, preset
+    preset, keyboard_chat
 ):
-    keyboard_page.reload()
-    expect(chat_input(keyboard_page)).to_be_focused()
-    selector = keyboard_page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID}")
-    press_until_focused(keyboard_page, "Tab", selector)
-    keyboard_page.keyboard.press("Enter")
-    search = model_search(keyboard_page)
+    """In a side chat: no issue filed, the picked model gives the focus to the main chat's box."""
+    expect(chat_input(keyboard_chat)).to_be_focused()
+    selector = keyboard_chat.button(f"Selected model: {MOCK_MODEL_ID}")
+    press_until_focused(keyboard_chat, "Tab", selector)
+    keyboard_chat.page.keyboard.press("Enter")
+    search = model_search(keyboard_chat.page)
     expect(search).to_be_focused()
 
-    keyboard_page.keyboard.type(preset)
-    option = keyboard_page.get_by_role("option", name=f"Select {preset} model")
+    keyboard_chat.page.keyboard.type(preset)
+    option = keyboard_chat.page.get_by_role("option", name=f"Select {preset} model")
     expect(option).to_be_visible()
-    keyboard_page.keyboard.press("ArrowDown")
-    keyboard_page.keyboard.press("ArrowUp")
-    keyboard_page.keyboard.press("Enter")
+    keyboard_chat.page.keyboard.press("ArrowDown")
+    keyboard_chat.page.keyboard.press("ArrowUp")
+    keyboard_chat.page.keyboard.press("Enter")
 
-    expect(keyboard_page.get_by_role("button", name=f"Selected model: {preset}")).to_be_visible()
-    expect(chat_input(keyboard_page)).to_be_focused()
+    expect(keyboard_chat.button(f"Selected model: {preset}")).to_be_visible()
+    expect(chat_input(keyboard_chat)).to_be_focused()
 
 
 def test_skip_to_main_content_leads_to_the_main_content(page_for, make_user):
