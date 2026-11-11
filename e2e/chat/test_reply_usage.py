@@ -12,14 +12,21 @@ sometimes stays blank until a reload although the server saved it whole
 
 Discriminates: passes on dev 30f3f6a8f and, grouped, on a072aaf31; in a backend copy that stores
 and sends no usage the first test fails.
+
+Both tests run in the main chat and in every way a side chat starts and every state it can be in
+(`utils/chat_surface.py`). In a side chat the info button showed only after a reload
+(open-webui/open-webui#34016, fix PR open-webui/open-webui#34064): on dev c15f28649 the first
+test is red in every side chat and passes on the PR's build. A temporary side chat is left out of
+it, as the chat is gone after the reload the test makes.
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -27,40 +34,43 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 USAGE = {"prompt_tokens": 1234, "completion_tokens": 56, "total_tokens": 1290}
 
 
-def _info_button(page: Page) -> Locator:
-    whole_reply = last_reply(page).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
+def _info_button(chat: ChatSurface) -> Locator:
+    whole_reply = last_reply(chat).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]")
     return whole_reply.locator("[id^='info-']")
 
 
-def _usage_tooltip(page: Page) -> Locator:
-    info = _info_button(page)
-    expect(info, "the reply shows no usage").to_have_count(1)
+def _usage_tooltip(chat: ChatSurface) -> Locator:
+    info = _info_button(chat)
+    expect(info, f"the reply in the {chat.place} shows no usage").to_have_count(1)
     info.hover()
-    return page.get_by_role("tooltip")
+    # the tooltip of a button the pointer crossed can still be fading out
+    return chat.page.get_by_role("tooltip").filter(has_text="total_tokens")
 
 
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
 def test_the_reported_usage_shows_in_the_reply_info_and_after_a_reload(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user(), locale="en-US")
+    """In a side chat: open-webui/open-webui#34016."""
+    chat = chat_for(make_user(), locale="en-US")
     upstream.queue(reply.text("Counted.", usage=USAGE, match=reply.answering("count my tokens")))
-    send(page, "count my tokens")
-    expect_reply(page, "Counted.")
+    send(chat, "count my tokens")
+    expect_reply(chat, "Counted.")
 
-    tooltip = _usage_tooltip(page)
+    tooltip = _usage_tooltip(chat)
     expect(tooltip).to_contain_text("prompt_tokens: 1,234")
     expect(tooltip).to_contain_text("completion_tokens: 56")
 
-    page.reload()
-    expect_reply(page, "Counted.")
-    tooltip = _usage_tooltip(page)
+    chat = chat.reload()
+    expect_reply(chat, "Counted.")
+    tooltip = _usage_tooltip(chat)
     expect(tooltip).to_contain_text("total_tokens: 1,290")
 
 
-def test_a_reply_without_usage_has_no_info_button(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_reply_without_usage_has_no_info_button(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     upstream.queue(reply.text("Not counted.", match=reply.answering("no counting")))
-    send(page, "no counting")
-    expect_reply(page, "Not counted.")
+    send(chat, "no counting")
+    expect_reply(chat, "Not counted.")
 
-    expect(_info_button(page)).to_have_count(0)
+    expect(_info_button(chat)).to_have_count(0)
