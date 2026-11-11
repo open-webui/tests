@@ -8,6 +8,8 @@ the chat ended in `'NoneType' object has no attribute 'get'`. The fix reads it w
 Twin of unit/chat/test_model_null_capabilities.py.
 
 Discriminates: passes on bbfa876af, fails with 0016266c0 reverted (the reply never appears).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -50,14 +52,14 @@ def account(admin, make_user):
         client.post("/api/v1/models/model/delete", json={"id": model_id})
 
 
-def test_a_chat_with_the_model_gets_its_reply(page_for, account, upstream):
+def test_a_chat_with_the_model_gets_its_reply(chat_for, account, upstream):
     upstream.queue(reply.text("the report is ready"))
-    page = page_for(account)
+    chat = chat_for(account)
 
-    page.get_by_role("button", name=re.compile("^Selected model")).first.click()
-    page.get_by_role("option", name=f"Select {MODEL_NAME} model").click()
-    expect(page.get_by_role("button", name=f"Selected model: {MODEL_NAME}").first).to_be_visible()
-    send(page, "is the report ready?")
+    chat.panel.get_by_role("button", name=re.compile("^Selected model")).first.click()
+    chat.page.get_by_role("option", name=f"Select {MODEL_NAME} model").click()
+    expect(chat.button(f"Selected model: {MODEL_NAME}").first).to_be_visible()
+    send(chat, "is the report ready?")
 
-    expect_reply(page, "the report is ready")
+    expect_reply(chat, "the report is ready")
     assert upstream.chat_requests()[-1]["model"] == MOCK_MODEL_ID
