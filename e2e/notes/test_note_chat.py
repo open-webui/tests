@@ -22,11 +22,22 @@ notification. The module passes five runs in a row on dev c15f28649. In a copy o
 each test fails when its behaviour is cut: the two suggested prompts renamed, the selected text
 left out of the message and "Insert into note" inserting nothing. In a backend copy, the picked
 model's system prompt left out of the request turns the model test red.
+
+The page's own chat keeps working next to a note chat. Text typed into a second, new chat next to
+the note leaves a new chat's unsent text alone, and the regenerate shortcut in the chat's message
+box regenerates the chat's reply. Both are red on dev c15f28649 (the note chat's text shows in
+the new chat, the shortcut leaves the chat's reply as it was) and pass on the build of
+3cab22263, fix PR open-webui/open-webui#34064, and on dev e791cbdde, which has it. A question
+the model asks with Ask User is answered in its own chat with the other one on the page, in both
+directions; it passes on both.
+The input request that fix also covers (an MCP elicitation) has no test: the MCP server of the
+harness refuses to ask on the connection Open WebUI opens.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 
@@ -35,8 +46,10 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from harness.chat_history import seed_chat
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import expect_reply
+from utils.chat_surface import ChatSurface, main_chat
+from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply
 from utils.model_selector import select_model
 from utils.note_chat import open_note_chat, send_in_note_chat
 
@@ -254,3 +267,183 @@ def test_insert_into_note_puts_the_answer_into_the_note(page_for, make_user, ups
     expect(editor).to_contain_text(text)
     _wait_until_stored(author, note_id, answer)
     assert text in _stored_markdown(author, note_id)
+
+
+# ---------------------------------------------------------------- next to the page's own chat
+
+
+def _note_tab_chat(page: Page) -> ChatSurface:
+    """The chat beside the open note, held as a chat of its own."""
+    # the note chat's pane has no role or name, only an id of its own
+    panel = page.locator("[id^='note-chat-container-']")
+    expect(panel).to_have_count(1)
+    return ChatSurface(page, panel, "note chat")
+
+
+def _note_opened_from_a_chat(page_for, author: Actor, note_id: str, text: str) -> Page:
+    """The note opened in a page that showed a saved chat of `author` before."""
+    with author.client() as client:
+        chat_id, _ = seed_chat(
+            client, [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+        )
+    page = page_for(author, path=f"/c/{chat_id}")
+    expect_reply(page, "hi")
+    page.goto(f"/notes/{note_id}")
+    expect(_note_editor(page)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
+    return page
+
+
+def _wait_until_draft_stored(page: Page, draft: str) -> None:
+    """Unsent text is stored in the tab's session a moment after the last key."""
+    page.wait_for_function(
+        "draft => Object.values(sessionStorage).some((value) => value.includes(draft))",
+        arg=draft,
+    )
+
+
+def test_text_typed_into_a_new_note_chat_leaves_a_new_chats_unsent_text_alone(
+    page_for, make_user, upstream
+):
+    """Red on dev c15f28649; fix PR open-webui/open-webui#34064 (3cab22263)."""
+    author = make_user()
+    first_question = _unique("what else should I pack?")
+    upstream.queue(reply.text("Gloves and a hat.", match=reply.answering(first_question)))
+    text = "Packing list for the hut."
+    note_id = _create_note(author, _unique("Hut"), text)
+    main_draft = _unique("Ask about the hut opening hours")
+    note_draft = _unique("Add a head torch")
+    page = page_for(author)
+    main_chat(page).input.click()
+    page.keyboard.type(main_draft)
+    _wait_until_draft_stored(page, main_draft)
+
+    page.goto(f"/notes/{note_id}")
+    expect(_note_editor(page)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
+    open_note_chat(page)
+    send_in_note_chat(page, first_question)
+    note_chat = _note_tab_chat(page)
+    note_chat.expect_reply("Gloves and a hat.")
+    # a second, new chat next to the note; the answer's notification can cover the button
+    note_chat.button("Chat history").press("Enter")
+    page.get_by_role("menu").get_by_text("New chat", exact=True).click()
+    expect(note_chat.replies).to_have_count(0)
+    note_chat.input.click()
+    page.keyboard.type(note_draft)
+    _wait_until_draft_stored(page, note_draft)
+    page.goto("/")
+
+    expect(main_chat(page).input, "the note chat's text replaced the new chat's").to_have_text(
+        main_draft, timeout=REPLY_TIMEOUT_MS
+    )
+
+
+PLAN_QUESTION = {
+    "id": "plan",
+    "header": "Plan",
+    "question": "Which plan fits you best?",
+    "options": [
+        {"label": "Basic", "description": "The cheapest one"},
+        {"label": "Pro", "description": "The fastest one"},
+    ],
+}
+
+
+def _queue_plan_question(upstream, prompt: str) -> None:
+    upstream.queue(
+        reply.tool_call("ask_user", {"questions": [PLAN_QUESTION]}, match=reply.answering(prompt)),
+        reply.text("Pro it is.", match=reply.answering(prompt)),
+    )
+
+
+def _answer_pro(chat: ChatSurface) -> None:
+    """Pick Pro on the model's question once it shows in `chat`."""
+    question = chat.panel.get_by_text("Which plan fits you best?")
+    expect(question, f"the {chat.place} never showed the model's question").to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
+    card = chat.panel.locator("section", has=chat.page.get_by_text("Which plan fits you best?"))
+    card.get_by_role("button", name=re.compile(r"^Pro\b")).click()
+
+
+def _expect_pro_reached_the_model(upstream, prompt: str) -> None:
+    final = _requests_answering(upstream, prompt)[-1]
+    conversation = reply.conversation(final)
+    results = [str(entry["content"]) for entry in conversation if entry["role"] == "tool"]
+    assert len(results) == 1, f"expected one answer to the question, the model got {results}"
+    answered = json.loads(results[0])
+    assert answered.get("answers", {}).get("plan", {}).get("label") == "Pro", (
+        f"the model got another answer than the picked one: {answered}"
+    )
+
+
+def test_a_question_the_model_asks_in_the_chat_is_answered_next_to_an_open_note_chat(
+    page_for, make_user, upstream
+):
+    author = make_user()
+    text = "Guest list for Saturday."
+    note_id = _create_note(author, _unique("Guests"), text)
+    prompt = _unique("help me choose a plan")
+    _queue_plan_question(upstream, prompt)
+    page, _ = _open_note(page_for, author, note_id, text)
+    open_note_chat(page)
+    main = main_chat(page)
+    main.show()
+
+    main.send(prompt)
+
+    _answer_pro(main)
+    main.expect_reply("Pro it is.")
+    _expect_pro_reached_the_model(upstream, prompt)
+
+
+def test_a_question_the_model_asks_in_a_note_chat_is_answered_next_to_the_chat(
+    page_for, make_user, upstream
+):
+    author = make_user()
+    text = "Guest list for Sunday."
+    note_id = _create_note(author, _unique("Guests"), text)
+    prompt = _unique("help me choose a plan")
+    _queue_plan_question(upstream, prompt)
+    page = _note_opened_from_a_chat(page_for, author, note_id, text)
+    open_note_chat(page)
+
+    send_in_note_chat(page, prompt)
+
+    note_chat = _note_tab_chat(page)
+    _answer_pro(note_chat)
+    note_chat.expect_reply("Pro it is.")
+    _expect_pro_reached_the_model(upstream, prompt)
+
+
+def test_the_regenerate_shortcut_in_the_chat_regenerates_the_chats_reply_not_the_note_chats(
+    page_for, make_user, upstream
+):
+    """Red on dev c15f28649; fix PR open-webui/open-webui#34064 (3cab22263)."""
+    author = make_user()
+    text = "Route ideas for the weekend."
+    note_id = _create_note(author, _unique("Routes"), text)
+    main_question, note_question = _unique("Name a lake"), _unique("Name a pass")
+    upstream.queue(
+        reply.text("Lake Constance.", match=reply.answering(main_question)),
+        reply.text("Lake Geneva.", match=reply.answering(main_question)),
+        reply.text("The Brenner Pass.", match=reply.answering(note_question)),
+    )
+    page, _ = _open_note(page_for, author, note_id, text)
+    open_note_chat(page)
+    send_in_note_chat(page, note_question)
+    note_chat = _note_tab_chat(page)
+    note_chat.expect_reply("The Brenner Pass.")
+    main = main_chat(page)
+    main.show()
+    main.send(main_question)
+    main.expect_reply("Lake Constance.")
+
+    main.input.click()
+    page.keyboard.press("Control+R")
+
+    main.expect_reply("Lake Geneva.")
+    expect(main.conversation.get_by_text("2/2")).to_be_visible()
+    asked_again = [
+        body for body in upstream.chat_requests() if reply.answering(note_question)(body)
+    ]
+    assert len(asked_again) == 1, "the shortcut regenerated the note chat's reply"
