@@ -44,6 +44,14 @@ after the 429).
 The quiet listing test pins PR open-webui/open-webui#33663 (fix 8957ac139): every time a user
 loaded Open WebUI, each OAuth MCP server they had not connected yet logged a warning. Passes on
 dev e8c0ad85e, fails on a backend copy with 8957ac139 reverted (the warning is in the log).
+
+The large headers test pins issue open-webui/open-webui#34078: an authorization server that sends
+a header line over 8190 bytes (monday.com sends an 11 KB Content-Security-Policy on every OAuth
+endpoint) failed the connection check and the registration with "Got more than 8190 bytes", and
+the refresh the same way. Red on dev c15f28649 until the fix (fix branch
+fix/mcp-oauth-large-headers) merges: there the connection check answers 400. Passes on the fix
+branch, and fails on a backend copy of it with only the refresh left at the default limit (the
+tool is gone after the failed refresh).
 """
 
 from __future__ import annotations
@@ -302,3 +310,40 @@ def test_a_forgotten_client_registers_again_and_connects(instance, mcp, person, 
     [replacement] = auth_server.clients
     authorize = auth_server.requests_to("/authorize")[-1]
     assert authorize.query["client_id"] == replacement
+
+
+@pytest.mark.regression
+def test_an_authorization_server_with_large_headers_registers_connects_and_refreshes(
+    instance, admin, preserve, upstream, mcp, person
+):
+    auth_server = mcp.auth_server
+    auth_server.large_headers = True
+    auth_server.access_token_lifetime = EXPIRING_SOON
+    preserve(TOOL_SERVERS)
+    server_id = f"oauth_mcp_{secrets.token_hex(4)}"
+
+    with admin.client() as client:
+        verified = client.post(
+            "/api/v1/configs/tool_servers/verify",
+            json={
+                "url": mcp.url,
+                "path": "",
+                "type": "mcp",
+                "auth_type": "oauth_2.1",
+                "key": "",
+                "config": {},
+            },
+        )
+    assert verified.status_code == 200, (
+        f"the connection check failed on a large response header (#34078): {verified.text}"
+    )
+    register(admin, mcp, person, server_id)
+    connect(instance, person, server_id)
+    connected = auth_server.issued[-1]
+
+    assert echo_through_chat(person, upstream, server_id) == PHRASE
+    refreshes = auth_server.token_grants("refresh_token")
+    assert refreshes and refreshes[0]["refresh_token"] == connected["refresh_token"]
+    assert mcp.presented[-1] == auth_server.issued[-1]["access_token"], (
+        "the refresh failed on a large response header (#34078)"
+    )

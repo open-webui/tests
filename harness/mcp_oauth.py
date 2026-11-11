@@ -19,8 +19,9 @@ answers Open WebUI's own server-side requests the way Cloudflare's bot protectio
 with `cf-mitigated: challenge` and an HTML page that repeats the requested URL, while a browser
 passes as before. With `refresh_outage` set to a status (503, 429) every refresh grant answers
 it without spending the refresh token, as a provider does during an outage or under a rate
-limit. `revoke_refresh_tokens()` withdraws the live refresh tokens, `forget_clients()`
-drops every registered client so the authorize answers `invalid_client`, and
+limit. With `large_headers` every answer carries an 11 KB `Content-Security-Policy` header,
+as monday.com's does. `revoke_refresh_tokens()` withdraws the live refresh tokens,
+`forget_clients()` drops every registered client so the authorize answers `invalid_client`, and
 `ProtectedMcp.presented` lists every bearer token the MCP server was shown.
 `register_oauth_mcp()` registers the server as the admin panel does and saves the connection (after
 `preserve(TOOL_SERVERS)`). `scopes` is what the MCP server's protected-resource metadata asks for
@@ -53,6 +54,9 @@ from harness.listener import IPv6HTTPServer
 from harness.mcp_server import TOOL_SERVERS, serving_mcp
 
 SCOPE = "mcp:tools"
+LARGE_POLICY = "frame-ancestors " + " ".join(
+    f"https://tenant{index}.example.com" for index in range(370)
+)  # one header line of about 11 KB
 GOOGLE_ACCOUNTS = "https://accounts.google.com"
 GOOGLE_WORKSPACE_SCOPES = [
     f"https://www.googleapis.com/auth/{service}{kind}"
@@ -125,6 +129,7 @@ class McpAuthorizationServer:
     offline_access_only: bool = False
     bot_challenge: bool = False
     refresh_outage: int | None = None  # the status every refresh grant answers while set
+    large_headers: bool = False
 
     @property
     def issuer(self) -> str:
@@ -311,6 +316,8 @@ def serve_authorization_server(
             self.send_response(status)
             for name, value in {"Content-Type": "application/json", **(headers or {})}.items():
                 self.send_header(name, value)
+            if server.large_headers:
+                self.send_header("Content-Security-Policy", LARGE_POLICY)
             self.send_header("Content-Length", str(len(encoded)))
             self.end_headers()
             self.wfile.write(encoded)
