@@ -16,8 +16,9 @@ lands: Regenerate, Edit, Continue Response and rating under its messages
 (open-webui/open-webui#34014) and follow-up suggestions (open-webui/open-webui#34015), which pass
 on the build of fix PR open-webui/open-webui#34064; an HTML block opening as an artifact
 (open-webui/open-webui#34026, red on that build too, the PR leaves it out); and its tab taking
-the new title when the chat is renamed in the sidebar, which no filed issue covers and which is
-red on that build too.
+the new title when the chat is renamed in the sidebar, checked in the main chat and in every way
+a side chat starts and every state it can be in: no filed issue covers it (draft pending) and it
+is red in every side chat on that build too.
 
 Discriminates: passes on dev f659c0d12 apart from those gaps. In a backend copy whose chat Stop
 stops nothing, that never offers the web tools, never names attached knowledge to the model, whose
@@ -58,7 +59,8 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.cached_chat import calling, choose_terminal, offered_tools
-from utils.chat_surface import main_chat
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, main_chat
+from utils.chat_surface import open_sidebar as open_sidebar_once
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -678,24 +680,38 @@ def open_sidebar(page: Page) -> Locator:
     return sidebar
 
 
-def test_a_side_chat_renamed_in_the_sidebar_shows_its_new_name_on_its_tab(
-    page_for, make_user, upstream, side_chat_allowed
-):
-    """Red: the tab of an open side chat keeps its old title; no issue filed yet."""
-    page = open_chat(page_for, make_user())
-    question = tagged("By the way, how long is that tunnel?")
-    open_side_chat(page, upstream, question, reply.text(SIDE_ANSWER))
-    sidebar = open_sidebar(page)
+# a temporary side chat is not in the sidebar
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
+def test_a_chat_renamed_in_the_sidebar_shows_its_new_name_on_its_tab(chat_for, make_user, upstream):
+    """In a side chat: red on dev c15f28649 and on the build of PR open-webui/open-webui#34064,
+    no issue filed yet (draft pending)."""
+    account = make_user()
+    chat = chat_for(account)
+    page = chat.page
+    question = tagged("How long is the tunnel?")
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+    chat.send(question)
+    chat.expect_reply(SIDE_ANSWER)
+    # the address follows the selected tab
+    chat.show()
+    expect(page).to_have_url(re.compile(r"/c/[^/?#]+$"))
+    with account.client() as client:
+        stored = client.get(f"/api/v1/chats/{page.url.rsplit('/', 1)[-1]}")
+    assert stored.status_code == 200, stored.text
+    title = stored.json()["title"]
+    sidebar = open_sidebar_once(page)
     renamed = tagged("Tunnel length")
 
-    chat_menu(sidebar, question).get_by_role("menuitem", name="Rename").click()
+    chat_menu(sidebar, title).get_by_role("menuitem", name="Rename").click()
     page.keyboard.press("Control+A")
     page.keyboard.type(renamed)
     page.keyboard.press("Enter")
     expect(chat_row(sidebar, renamed)).to_be_visible()
 
-    expect(page.get_by_role("tab", name=renamed, exact=True)).to_be_visible()
-    expect(side_chat_panel(page, renamed)).to_contain_text(SIDE_ANSWER)
+    expect(chat.tab, f"the tab of the {chat.place} kept its old title").to_have_accessible_name(
+        renamed
+    )
+    expect(chat.panel).to_contain_text(SIDE_ANSWER)
 
 
 def test_a_side_chat_shared_from_the_sidebar_shows_its_exchange(
