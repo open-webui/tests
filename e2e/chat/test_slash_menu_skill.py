@@ -14,6 +14,10 @@ Discriminates: passes on the efe63bd34 build; on a build with c402acb40 reverted
 fails (no skill loaded for the reply, the raw tag in the user message). The $ menu test passes on
 both, and an unrelated chat journey passes on the reverted build. In the pre-fix build of 0.12.4
 (14956af03 reverted) the restored draft test fails: the user message reads both skills' names.
+
+The / and $ menu tests run in the main chat and in a side chat (`utils/chat_surface.py`). The
+restored draft test stays in the main chat: it is about the new chat's draft kept in the browser
+tab while the page goes to the workspace and back.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -48,20 +53,21 @@ def skill(make_user):
         client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
 
-def _pick_skill(page: Page, trigger: str, name: str) -> None:
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+def _pick_skill(chat: Page | ChatSurface, trigger: str, name: str) -> None:
+    page = chat.page if isinstance(chat, ChatSurface) else chat
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
     page.keyboard.type(f"{trigger}{name.split()[0]}")
     page.get_by_role("button", name=re.compile(re.escape(name))).click()
 
 
-def _send_after_pick(page: Page, upstream, trigger: str, name: str) -> dict:
+def _send_after_pick(chat: ChatSurface, upstream, trigger: str, name: str) -> dict:
     question = f"what is rain? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Soft grey threads fall", match=reply.answering(question)))
-    _pick_skill(page, trigger, name)
-    page.keyboard.type(question)
-    page.keyboard.press("Enter")
-    expect_reply(page, "Soft grey threads fall")
+    _pick_skill(chat, trigger, name)
+    chat.page.keyboard.type(question)
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Soft grey threads fall")
     return next(filter(reply.answering(question), upstream.chat_requests()))
 
 
@@ -75,11 +81,11 @@ def _skill_text(request: dict) -> str:
     return "\n".join(reply.context_results(request, "view_skill"))
 
 
-def test_a_skill_picked_from_the_slash_menu_reaches_the_model(page_for, skill, upstream):
+def test_a_skill_picked_from_the_slash_menu_reaches_the_model(chat_for, skill, upstream):
     account, name = skill
-    page = page_for(account)
+    chat = chat_for(account)
 
-    request = _send_after_pick(page, upstream, "/", name)
+    request = _send_after_pick(chat, upstream, "/", name)
 
     user_text = _question_sent(request)
     assert SKILL_BODY in _skill_text(request), (
@@ -88,11 +94,11 @@ def test_a_skill_picked_from_the_slash_menu_reaches_the_model(page_for, skill, u
     assert "<@" not in user_text, f"the skill went out as a raw @ mention: {user_text!r}"
 
 
-def test_a_skill_picked_from_the_dollar_menu_reaches_the_model(page_for, skill, upstream):
+def test_a_skill_picked_from_the_dollar_menu_reaches_the_model(chat_for, skill, upstream):
     account, name = skill
-    page = page_for(account)
+    chat = chat_for(account)
 
-    request = _send_after_pick(page, upstream, "$", name)
+    request = _send_after_pick(chat, upstream, "$", name)
 
     assert SKILL_BODY in _skill_text(request)
 
