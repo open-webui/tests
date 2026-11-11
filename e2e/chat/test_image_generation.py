@@ -26,6 +26,10 @@ builtin tools the edit test fails (no edited picture) and with `generate_image` 
 empty success on errors the failing engine test fails. In a frontend build, with the composer
 ignoring the admin switch and the user permission the two toggle tests fail, and with the model's
 default features ignored the default feature test fails (no Image chip).
+
+Every test but the admin's engine setup runs in the main chat and in a side chat (that one is about
+Admin Settings > Images and stays on a page of its own); the side variants are green on dev
+c15f28649 and on the side chat rework build (open-webui/open-webui#34064).
 """
 
 from __future__ import annotations
@@ -41,8 +45,10 @@ from harness import upstream as reply
 from harness.channel_chat import drawing_model, serve_openai_images
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.listener import json_answer
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
+    Chat,
     chat_input,
     conversation,
     expect_reply,
@@ -51,6 +57,7 @@ from utils.chat_ui import (
     replies,
     send,
     show_input_selections,
+    start_from_link,
     turn_on_integration,
 )
 from utils.tooltips import tooltip_button
@@ -97,26 +104,28 @@ def image_settings(page: Page) -> Locator:
     return settings
 
 
-def open_chat(page: Page) -> Page:
-    expect(chat_input(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    return page
+def open_chat(chat: Chat) -> Chat:
+    expect(chat_input(chat)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    return chat
 
 
-def turn_on_image(page: Page) -> None:
-    turn_on_integration(page, "Image")
+def turn_on_image(chat: Chat) -> None:
+    turn_on_integration(chat, "Image")
 
 
-def image_chip(page: Page) -> Locator:
+def image_chip(chat: ChatSurface) -> Locator:
     """The lit Image chip beside the chat input."""
-    page.wait_for_function(
-        "() => [...document.querySelectorAll('form button')]"
-        ".some((button) => button.parentElement?._tippy?.props.content === 'Image')"
+    form = chat.panel.locator("form")
+    chat.page.wait_for_function(
+        "(form) => [...form.querySelectorAll('button')]"
+        ".some((button) => button.parentElement?._tippy?.props.content === 'Image')",
+        arg=form.element_handle(),
     )
-    return tooltip_button(page.locator("form"), "Image")
+    return tooltip_button(form, "Image")
 
 
-def reply_image(page: Page, reply_index: int = -1) -> Locator:
-    return replies(page).nth(reply_index).get_by_role("img")
+def reply_image(chat: Chat, reply_index: int = -1) -> Locator:
+    return replies(chat).nth(reply_index).get_by_role("img")
 
 
 def stored_picture(actor, url: str) -> bytes:
@@ -133,13 +142,13 @@ def tool_results(upstream, prompt: str) -> list[str]:
     ]
 
 
-def draw(page: Page, upstream, prompt: str, answer: str) -> None:
+def draw(chat: Chat, upstream, prompt: str, answer: str) -> None:
     upstream.queue(
         reply.tool_call("generate_image", {"prompt": prompt}, match=reply.answering(prompt)),
         reply.text(answer, match=reply.answering(prompt)),
     )
-    send(page, prompt)
-    expect_reply(page, answer)
+    send(chat, prompt)
+    expect_reply(chat, answer)
 
 
 def test_an_admin_sets_up_the_openai_engine_and_it_draws(
@@ -177,66 +186,66 @@ def test_an_admin_sets_up_the_openai_engine_and_it_draws(
     assert generation.json()["prompt"] == "draw a lighthouse"
 
 
-def test_the_image_switch_follows_the_admin_setting(page_for, make_user, image_engine):
+def test_the_image_switch_follows_the_admin_setting(chat_for, make_user, image_engine):
     image_engine(ENABLE_IMAGE_GENERATION=False, ENABLE_IMAGE_EDIT=False)
-    page = open_chat(page_for(make_user()))
-    image_switch = open_integrations_menu(page).get_by_role(
+    chat = open_chat(chat_for(make_user()))
+    image_switch = open_integrations_menu(chat).get_by_role(
         "menuitemcheckbox", name="Image", exact=True
     )
     expect(image_switch).to_have_count(0)
 
     image_engine()
-    page.reload()
+    chat = chat.reload()
     expect(
-        open_integrations_menu(open_chat(page)).get_by_role(
+        open_integrations_menu(open_chat(chat)).get_by_role(
             "menuitemcheckbox", name="Image", exact=True
         )
     ).to_be_visible()
 
 
 def test_a_user_without_the_permission_gets_no_image_switch(
-    page_for, make_user, image_engine, denied_image_generation
+    chat_for, make_user, image_engine, denied_image_generation
 ):
     image_engine()
-    page = open_chat(page_for(make_user()))
-    image_switch = open_integrations_menu(page).get_by_role(
+    chat = open_chat(chat_for(make_user()))
+    image_switch = open_integrations_menu(chat).get_by_role(
         "menuitemcheckbox", name="Image", exact=True
     )
     expect(image_switch).to_have_count(0)
 
 
 def test_a_drawn_picture_is_stored_and_shows_after_a_reload(
-    page_for, make_user, image_engine, listener, upstream
+    chat_for, make_user, image_engine, listener, upstream
 ):
     image_engine()
     person = make_user()
     show_input_selections(person)
-    page = open_chat(page_for(person))
-    turn_on_image(page)
-    expect(image_chip(page)).to_be_visible()
-    draw(page, upstream, "draw a red square", "Here is your red square.")
-    expect(reply_image(page)).to_be_visible()
-    source = reply_image(page).get_attribute("src")
+    chat = open_chat(chat_for(person))
+    turn_on_image(chat)
+    expect(image_chip(chat)).to_be_visible()
+    draw(chat, upstream, "draw a red square", "Here is your red square.")
+    expect(reply_image(chat)).to_be_visible()
+    source = reply_image(chat).get_attribute("src")
     assert FILE_CONTENT_URL.search(source), f"the picture is not a stored file: {source}"
     assert listener.requests_to("/images/generations"), "the engine was never asked"
 
-    expect(page).to_have_url(re.compile(r"/c/"))
-    page.reload()
-    expect_reply(page, "Here is your red square.")
-    expect(reply_image(page)).to_be_visible()
-    expect(reply_image(page)).to_have_attribute("src", source)
+    expect(chat.page).to_have_url(re.compile(r"/c/"))
+    chat = chat.reload()
+    expect_reply(chat, "Here is your red square.")
+    expect(reply_image(chat)).to_be_visible()
+    expect(reply_image(chat)).to_have_attribute("src", source)
     assert stored_picture(person, source) == DRAWN_PNG
 
 
-def test_the_model_edits_the_picture_it_drew(page_for, make_user, image_engine, listener, upstream):
+def test_the_model_edits_the_picture_it_drew(chat_for, make_user, image_engine, listener, upstream):
     image_engine()
     listener.route(
         "POST", "/images/edits", json_answer({"data": [{"b64_json": EDITED_PNG_BASE64}]})
     )
     person = make_user()
-    page = open_chat(page_for(person))
-    turn_on_image(page)
-    draw(page, upstream, "draw a red square", "Here is your red square.")
+    chat = open_chat(chat_for(person))
+    turn_on_image(chat)
+    draw(chat, upstream, "draw a red square", "Here is your red square.")
     [drawn] = json.loads(tool_results(upstream, "draw a red square")[0])["images"]
 
     change = "now make it green"
@@ -248,42 +257,43 @@ def test_the_model_edits_the_picture_it_drew(page_for, make_user, image_engine, 
         ),
         reply.text("Now it is green.", match=reply.answering(change)),
     )
-    send(page, change)
-    expect_reply(page, "Now it is green.")
-    expect(reply_image(page)).to_be_visible()
-    edited_source = reply_image(page).get_attribute("src")
-    assert edited_source != reply_image(page, 0).get_attribute("src")
+    send(chat, change)
+    expect_reply(chat, "Now it is green.")
+    expect(reply_image(chat)).to_be_visible()
+    edited_source = reply_image(chat).get_attribute("src")
+    assert edited_source != reply_image(chat, 0).get_attribute("src")
     assert stored_picture(person, edited_source) == base64.b64decode(EDITED_PNG_BASE64)
     [edit] = listener.requests_to("/images/edits")
     assert DRAWN_PNG in edit.body, "the edit engine never got the drawn picture"
 
 
 def test_a_model_with_image_generation_by_default_starts_with_the_chip_on(
-    page_for, make_user, admin, image_engine, listener, upstream
+    chat_for, make_user, admin, image_engine, listener, upstream
 ):
     image_engine()
     with admin.client() as client, drawing_model(client) as model_id:
         person = make_user(role="admin")
         show_input_selections(person)
-        page = page_for(person, path=f"/?models={model_id}")
-        open_chat(page)
-        expect(image_chip(page)).to_be_visible()
-        draw(page, upstream, "draw a blue circle", "Here is your blue circle.")
-        expect(reply_image(page)).to_be_visible()
+        chat = chat_for(person)
+        start_from_link(chat, f"/?models={model_id}")
+        open_chat(chat)
+        expect(image_chip(chat)).to_be_visible()
+        draw(chat, upstream, "draw a blue circle", "Here is your blue circle.")
+        expect(reply_image(chat)).to_be_visible()
     assert listener.requests_to("/images/generations"), "the engine was never asked"
 
 
 def test_a_failing_engine_shows_its_error_and_no_picture(
-    page_for, make_user, image_engine, listener, upstream
+    chat_for, make_user, image_engine, listener, upstream
 ):
     image_engine()
     listener.route("POST", "/images/generations", json_answer({"error": "engine down"}, 500))
-    page = open_chat(page_for(make_user()))
-    turn_on_image(page)
-    draw(page, upstream, "draw a red square", "I could not draw that.")
+    chat = open_chat(chat_for(make_user()))
+    turn_on_image(chat)
+    draw(chat, upstream, "draw a red square", "I could not draw that.")
 
     [result] = tool_results(upstream, "draw a red square")
     assert "error" in json.loads(result), f"the model was not told the engine failed: {result}"
-    expect(reply_image(page)).to_have_count(0)
-    conversation(page).get_by_text("View Result from generate_image").click()
-    expect(last_reply(page).get_by_text(re.compile("Internal Server Error"))).to_be_visible()
+    expect(reply_image(chat)).to_have_count(0)
+    conversation(chat).get_by_text("View Result from generate_image").click()
+    expect(last_reply(chat).get_by_text(re.compile("Internal Server Error"))).to_be_visible()
