@@ -6,8 +6,9 @@ copies it, Ctrl+Shift+Backspace deletes the chat after its confirm dialog, Ctrl+
 model selector, Ctrl+. the settings, Ctrl+/ the shortcut list and Ctrl+Shift+' a temporary chat.
 With a second chat answered later in a tab beside it, Ctrl+Shift+C in a chat's message box copies
 that chat's reply, in the main chat and in a side chat (`utils/chat_surface.py`); red on dev
-c15f28649 and e791cbdde, where it copies the other tab's (issue draft pending). Shift+Escape puts
-the focus back in the message box, Escape there stops a reply still streaming
+c15f28649, e791cbdde and 782f4b705, where it copies the other tab's
+(open-webui/open-webui#34186), as Ctrl+Shift+; does with the other tab's code block.
+Shift+Escape puts the focus back in the message box, Escape there stops a reply still streaming
 and keeps what came so far, and ArrowUp in the empty message box opens the last question for
 editing. Bound to keys of the account's choosing, the unassigned Navigate to previous and next
 chat step through the sidebar's chats and Toggle Controls opens and closes the side panel.
@@ -59,6 +60,9 @@ QUESTION = "Name a mountain in Peru"
 ANSWER = "Huascaran is the highest."
 LATER_QUESTION = "Name a lake in Peru"
 LATER_ANSWER = "Titicaca is the largest."
+CODE = "height = 6768"
+CODE_ANSWER = f"In metres:\n\n```python\n{CODE}\n```\n\nThat is the height."
+LATER_CODE_ANSWER = "In metres:\n\n```python\ndepth = 281\n```\n\nThat is the depth."
 NARROW_WINDOW = {"width": 700, "height": 900}
 
 
@@ -132,7 +136,7 @@ def test_ctrl_shift_c_in_a_message_box_copies_that_chats_reply_not_a_later_one_b
     chat_for, account, upstream, side_chats_allowed
 ):
     """Red on dev c15f28649 and e791cbdde in both places: the shortcut copies the last answer on
-    the page, the other tab's (issue draft pending; PR open-webui/open-webui#34064 names it)."""
+    the page, the other tab's (open-webui/open-webui#34186)."""
     chat = chat_for(account, permissions=["clipboard-read", "clipboard-write"])
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
     send(chat, QUESTION)
@@ -149,6 +153,31 @@ def test_ctrl_shift_c_in_a_message_box_copies_that_chats_reply_not_a_later_one_b
 
     copied = wait_for_text(chat.page)
     assert copied == ANSWER, f"the shortcut in the {chat.place}'s box copied {copied!r}"
+
+
+# a tab answered later is the other chat: next to the main chat, or next to a side chat
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT)
+def test_ctrl_shift_semicolon_in_a_message_box_copies_that_chats_code_not_a_later_one_beside_it(
+    chat_for, account, upstream, side_chats_allowed
+):
+    """Red on dev 782f4b705 in both places: the shortcut copies the last code block on the page,
+    the other tab's (open-webui/open-webui#34186)."""
+    chat = chat_for(account, permissions=["clipboard-read", "clipboard-write"])
+    upstream.queue(reply.text(CODE_ANSWER, match=reply.answering(QUESTION)))
+    send(chat, QUESTION)
+    expect_reply(chat, "That is the height.")
+    main_chat(chat.page).show()
+    other = open_new_chat_tab(chat.page)
+    upstream.queue(reply.text(LATER_CODE_ANSWER, match=reply.answering(LATER_QUESTION)))
+    send(other, LATER_QUESTION)
+    expect_reply(other, "That is the depth.")
+
+    chat.show()
+    chat_input(chat).click()
+    chat.page.keyboard.press("Control+Shift+;")
+
+    copied = wait_for_text(chat.page)
+    assert copied == CODE, f"the shortcut in the {chat.place}'s box copied {copied!r}"
 
 
 def test_ctrl_shift_backspace_deletes_the_chat_after_confirming(answered, account):

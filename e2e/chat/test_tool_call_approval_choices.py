@@ -18,7 +18,9 @@ an Always allow choice on the approval card that lets the same tool run without 
 The deny, allow, shortcut, full access, kept mode and both Auto tests run in the main chat and in a
 side chat (`utils/chat_surface.py`) with the same assertions; the mode picked in a side chat is
 kept for the account's next chats as the one picked in the main chat is. PR
-open-webui/open-webui#34064 says the approval shortcuts still act on the last answer on the page.
+open-webui/open-webui#34064 says the approval shortcuts still act on the last answer on the page;
+with a call waiting in a tab beside the chat as well, the shortcuts in the chat's message box
+answer the other tab's call on dev 782f4b705 (open-webui/open-webui#34186).
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy whose allow and deny actions are swapped
 the deny, allow and shortcut tests fail, in one that asks whatever the composer says the full
@@ -48,7 +50,7 @@ from harness import upstream as reply
 from harness.backends import wait_until
 from harness.listener import ReceivedRequest, json_answer
 from harness.plain_http import loopback_url
-from utils.chat_surface import ChatSurface
+from utils.chat_surface import MAIN_CHAT, SIDE_CHAT, ChatSurface, main_chat, open_new_chat_tab
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     Chat,
@@ -193,6 +195,39 @@ def test_the_shortcuts_allow_and_deny_the_call_on_screen(
     chat.page.keyboard.press("Control+Alt+Backspace")
     expect_reply(chat, "Denied by keyboard.")
     assert _tool_results(upstream, denied)[-1:] == [REJECTED]
+
+
+# a tab asked later is the other chat: next to the main chat, or next to a side chat
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT)
+def test_the_shortcuts_in_a_message_box_answer_that_chats_call_not_a_later_one_beside_it(
+    tool_approval_on, chat_for, make_user, upstream
+):
+    """Red on dev 782f4b705 in both places: the shortcuts answer the last call on the page, the
+    other tab's (open-webui/open-webui#34186)."""
+    # an admin may open a New Chat tab beside the main chat
+    chat = chat_for(make_user(role="admin"))
+    set_tool_approval_mode(chat, "Ask for approval")
+    allowed = _ask_for_the_time(chat, upstream, "Allowed in this chat.")
+    _approval_button(chat, "Allow")
+    main_chat(chat.page).show()
+    other = open_new_chat_tab(chat.page)
+    _ask_for_the_time(other, upstream, "The other chat was answered.")
+    _approval_button(other, "Allow")
+
+    chat.show()
+    chat_input(chat).click()
+    chat.page.keyboard.press("Control+Alt+Enter")
+    expect_reply(chat, "Allowed in this chat.")
+    assert _tool_results(upstream, allowed) != [REJECTED]
+
+    denied = _ask_for_the_time(chat, upstream, "Denied in this chat.")
+    _approval_button(chat, "Deny")
+    chat_input(chat).click()
+    chat.page.keyboard.press("Control+Alt+Backspace")
+    expect_reply(chat, "Denied in this chat.")
+    assert _tool_results(upstream, denied)[-1:] == [REJECTED]
+    other.show()
+    expect(conversation(other).get_by_role("button", name="Allow", exact=True)).to_have_count(1)
 
 
 def test_full_access_runs_the_call_without_asking(tool_approval_on, chat_for, make_user, upstream):
