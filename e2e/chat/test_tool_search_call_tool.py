@@ -52,11 +52,22 @@ shows the search call the display test fails; one that runs a batch as a single 
 batch tests; one whose settings read back BM25 fails the decisions and embeddings tests; one
 without the decisions check fails the refused address test; and one that names no embedding
 model fails the embeddings test.
+
+The chat tests run in the main chat and in a side chat; the settings tests and the second tab of
+the pending dispatch test stay on pages of their own. In a side chat four are red on dev
+c15f28649 and green on the side chat rework build (fix PR open-webui/open-webui#34064): the
+dispatched tool's embed (open-webui/open-webui#34015), Regenerate and Continue Response
+(open-webui/open-webui#34014), the approval dialog of a temporary chat, which a side chat shows as
+a plain Confirm and Cancel dialog (open-webui/open-webui#34035), and switching to Full access with
+a call pending, which does not run the pending call in a side chat (no issue filed). A temporary
+chat has an address of its own, `/c/temporary:...`, so the temporary chat test checks that nothing
+was stored.
 """
 
 from __future__ import annotations
 
 import base64
+import dataclasses
 import json
 import re
 import uuid
@@ -80,6 +91,7 @@ from harness.web_retrieval import (
     save_web_settings,
     serve_search_results,
 )
+from utils.chat_surface import MAIN_CHAT, ChatOpener, ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     conversation,
@@ -90,6 +102,7 @@ from utils.chat_ui import (
     send,
     set_tool_approval_mode,
     turn_on_integration,
+    turn_temporary,
 )
 from utils.model_selector import select_model
 
@@ -172,23 +185,23 @@ def tool_results(upstream, prompt: str) -> list[str]:
     return [str(entry["content"]) for entry in reply.conversation(final) if entry["role"] == "tool"]
 
 
-def expect_shout_shown(page: Page, word: str) -> None:
-    last_reply(page).get_by_text("View Result from shout").click()
+def expect_shout_shown(chat: ChatSurface, word: str) -> None:
+    last_reply(chat).get_by_text("View Result from shout").click()
     shown = re.compile(rf"Input\s*text\s*{word}\s*Output\s*{word.upper()}")
-    expect(last_reply(page)).to_contain_text(shown)
+    expect(last_reply(chat)).to_contain_text(shown)
     # since dev 003299641 the search itself is not shown, only the tool it found
-    expect(last_reply(page)).not_to_contain_text("search_tools")
-    expect(last_reply(page)).not_to_contain_text("call_tool")
+    expect(last_reply(chat)).not_to_contain_text("search_tools")
+    expect(last_reply(chat)).not_to_contain_text("call_tool")
 
 
-def approval_button(page: Page, name: str):
-    button = conversation(page).get_by_role("button", name=name, exact=True)
+def approval_button(chat: ChatSurface, name: str):
+    button = conversation(chat).get_by_role("button", name=name, exact=True)
     expect(button).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
     return button
 
 
 def test_a_dispatched_call_shows_as_its_tool_and_is_replayed_as_sent(
-    tool_search_on, page_for, make_user, upstream, shouter
+    tool_search_on, chat_for, make_user, upstream, shouter
 ):
     prompt = f"shout ahoy {uuid.uuid4().hex[:6]}"
     upstream.queue(
@@ -198,23 +211,23 @@ def test_a_dispatched_call_shows_as_its_tool_and_is_replayed_as_sent(
         call_tool("shout", {"text": "ahoy"}, prompt, "call_c"),
         reply.text("Shouted it.", match=reply.answering(prompt)),
     )
-    page = page_for(make_user())
-    select_model(page, shouter)
-    send(page, prompt)
-    expect_reply(page, "Shouted it.")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    send(chat, prompt)
+    expect_reply(chat, "Shouted it.")
 
     offered = [tool["function"]["name"] for tool in requests_for(upstream, prompt)[0]["tools"]]
     assert {"search_tools", "call_tool"} <= set(offered) and "shout" not in offered
     assert tool_results(upstream, prompt)[-1] == "AHOY"
-    expect_shout_shown(page, "ahoy")
+    expect_shout_shown(chat, "ahoy")
 
-    page.reload()
-    expect_shout_shown(page, "ahoy")
+    chat = chat.reload()
+    expect_shout_shown(chat, "ahoy")
 
     follow_up = f"and again {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Once more.", match=reply.answering(follow_up)))
-    send(page, follow_up)
-    expect_reply(page, "Once more.")
+    send(chat, follow_up)
+    expect_reply(chat, "Once more.")
     [history] = requests_for(upstream, follow_up)
     calls = [
         call["function"]
@@ -230,46 +243,46 @@ def test_a_dispatched_call_shows_as_its_tool_and_is_replayed_as_sent(
 
 
 def test_a_call_to_an_unknown_tool_stays_off_the_reply_and_the_reply_goes_on(
-    tool_search_on, page_for, make_user, upstream, shouter
+    tool_search_on, chat_for, make_user, upstream, shouter
 ):
     prompt = f"whisper hush {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("whisper", {"text": "hush"}, prompt, "call_w"),
         reply.text("No whispering here.", match=reply.answering(prompt)),
     )
-    page = page_for(make_user())
-    select_model(page, shouter)
-    send(page, prompt)
-    expect_reply(page, "No whispering here.")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    send(chat, prompt)
+    expect_reply(chat, "No whispering here.")
 
     error = 'Error: Tool "whisper" is not available. Search for an available tool.'
     assert tool_results(upstream, prompt) == [error]
     # since dev 9126f2262 a refused dispatch is kept out of view like the search
-    expect(last_reply(page)).not_to_contain_text("call_tool")
+    expect(last_reply(chat)).not_to_contain_text("call_tool")
 
-    page.reload()
-    expect_reply(page, "No whispering here.")
-    expect(last_reply(page)).not_to_contain_text("call_tool")
+    chat = chat.reload()
+    expect_reply(chat, "No whispering here.")
+    expect(last_reply(chat)).not_to_contain_text("call_tool")
 
 
 def test_an_approval_prompt_names_the_dispatched_tool(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
 
     allowed = f"shout yes {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("shout", {"text": "granted"}, allowed, "call_a"),
         reply.text("Allowed and shouted.", match=reply.answering(allowed)),
     )
-    send(page, allowed)
-    approval_button(page, "Allow")
-    last_reply(page).get_by_text("Allow shout?").click()
-    expect(last_reply(page)).to_contain_text(re.compile(r"Input\s*text\s*granted"))
-    approval_button(page, "Allow").click()
-    expect_reply(page, "Allowed and shouted.")
+    send(chat, allowed)
+    approval_button(chat, "Allow")
+    last_reply(chat).get_by_text("Allow shout?").click()
+    expect(last_reply(chat)).to_contain_text(re.compile(r"Input\s*text\s*granted"))
+    approval_button(chat, "Allow").click()
+    expect_reply(chat, "Allowed and shouted.")
     assert tool_results(upstream, allowed) == ["GRANTED"]
 
     denied = f"shout no {uuid.uuid4().hex[:6]}"
@@ -277,12 +290,12 @@ def test_an_approval_prompt_names_the_dispatched_tool(
         call_tool("shout", {"text": "refused"}, denied, "call_d"),
         reply.text("Not shouted.", match=reply.answering(denied)),
     )
-    send(page, denied)
-    approval_button(page, "Deny")
-    expect(last_reply(page)).to_contain_text("Allow shout?")
-    approval_button(page, "Deny").click()
-    expect_reply(page, "Not shouted.")
-    expect(last_reply(page)).to_contain_text("Denied shout")
+    send(chat, denied)
+    approval_button(chat, "Deny")
+    expect(last_reply(chat)).to_contain_text("Allow shout?")
+    approval_button(chat, "Deny").click()
+    expect_reply(chat, "Not shouted.")
+    expect(last_reply(chat)).to_contain_text("Denied shout")
     assert tool_results(upstream, denied)[-1:] == [REJECTED]
 
 
@@ -362,22 +375,24 @@ def library(admin, make_user):
         yield reader, knowledge_id, names
 
 
-def expect_markers_open_their_sources(page: Page, source_ids: dict[str, str], texts: dict) -> None:
-    expect(conversation(page).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
-    markers = last_reply(page).get_by_role("button", name=re.compile(r"^View source: "))
+def expect_markers_open_their_sources(
+    chat: ChatSurface, source_ids: dict[str, str], texts: dict
+) -> None:
+    expect(conversation(chat).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
+    markers = last_reply(chat).get_by_role("button", name=re.compile(r"^View source: "))
     expect(markers).to_have_count(2)
     for position in (1, 2):
         name = source_ids[str(position)]
         expect(markers.nth(position - 1)).to_have_accessible_name(f"View source: {name}")
         markers.nth(position - 1).click()
-        citation = page.get_by_role("dialog")
+        citation = chat.page.get_by_role("dialog")
         expect(citation).to_contain_text(texts[name])
         citation.get_by_role("button", name="Close citation modal").click()
         expect(citation).to_be_hidden()
 
 
 def test_knowledge_sources_from_a_dispatched_search_are_listed_and_cited(
-    builtins_deferred, page_for, library, upstream
+    builtins_deferred, chat_for, library, upstream
 ):
     reader, knowledge_id, texts = library
     prompt = f"what do my notes say? {uuid.uuid4().hex[:6]}"
@@ -386,59 +401,63 @@ def test_knowledge_sources_from_a_dispatched_search_are_listed_and_cited(
         call_tool("query_knowledge_files", arguments, prompt, "call_k"),
         reply.text("Herons nest [1] and the budget is set [2].", match=reply.answering(prompt)),
     )
-    page = page_for(reader)
-    send(page, prompt)
-    expect_reply(page, "Herons nest")
+    chat = chat_for(reader)
+    send(chat, prompt)
+    expect_reply(chat, "Herons nest")
 
     final = requests_for(upstream, prompt)[-1]
     source_ids = dict(SOURCE_TAG.findall(json.dumps(final["messages"]).replace('\\"', '"')))
     assert set(source_ids.values()) == set(texts), source_ids
-    expect_markers_open_their_sources(page, source_ids, texts)
+    expect_markers_open_their_sources(chat, source_ids, texts)
 
-    expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
-    page.reload()
-    expect_reply(page, "Herons nest")
-    expect_markers_open_their_sources(page, source_ids, texts)
+    expect(chat.page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
+    chat = chat.reload()
+    expect_reply(chat, "Herons nest")
+    expect_markers_open_their_sources(chat, source_ids, texts)
 
 
 def test_a_citation_a_dispatched_tool_emits_is_listed(
-    tool_search_on, page_for, make_user, upstream, reporter
+    tool_search_on, chat_for, make_user, upstream, reporter
 ):
     prompt = f"report on Pula {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("harbour_report", {"harbour": "Pula"}, prompt, "call_r"),
         reply.text("Reported.", match=reply.answering(prompt)),
     )
-    page = page_for(make_user())
-    select_model(page, reporter)
-    send(page, prompt)
-    expect_reply(page, "Reported.")
+    chat = chat_for(make_user())
+    select_model(chat, reporter)
+    send(chat, prompt)
+    expect_reply(chat, "Reported.")
 
     assert tool_results(upstream, prompt) == ["report for Pula"]
-    conversation(page).get_by_role("button", name="Toggle 1 source").click()
-    listed_source(page, "Harbour log").click()
-    expect(page.get_by_role("dialog")).to_contain_text("The lights of Pula were lit at dusk.")
+    conversation(chat).get_by_role("button", name="Toggle 1 source").click()
+    listed_source(chat, "Harbour log").click()
+    expect(chat.page.get_by_role("dialog")).to_contain_text("The lights of Pula were lit at dusk.")
 
 
 def test_an_embed_a_dispatched_tool_returns_is_shown(
-    tool_search_on, page_for, make_user, upstream, reporter
+    tool_search_on, chat_for, make_user, upstream, reporter
 ):
+    """In a side chat: red on dev, open-webui/open-webui#34015.
+
+    Fix PR open-webui/open-webui#34064.
+    """
     prompt = f"chart Pula {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("harbour_chart", {"harbour": "Pula"}, prompt, "call_e"),
         reply.text("Charted.", match=reply.answering(prompt)),
     )
-    page = page_for(make_user())
-    select_model(page, reporter)
-    send(page, prompt)
-    expect_reply(page, "Charted.")
+    chat = chat_for(make_user())
+    select_model(chat, reporter)
+    send(chat, prompt)
+    expect_reply(chat, "Charted.")
 
     [told] = tool_results(upstream, prompt)
     assert "harbour_chart: Embedded UI result is active" in told
-    chart = last_reply(page).frame_locator("iframe").locator("#chart")
+    chart = last_reply(chat).frame_locator("iframe").locator("#chart")
     expect(chart).to_have_text("Chart of Pula")
-    page.reload()
-    expect(last_reply(page).frame_locator("iframe").locator("#chart")).to_have_text("Chart of Pula")
+    chat = chat.reload()
+    expect(last_reply(chat).frame_locator("iframe").locator("#chart")).to_have_text("Chart of Pula")
 
 
 @pytest.fixture
@@ -449,7 +468,7 @@ def image_engine(admin, preserve, listener) -> None:
 
 
 def test_a_picture_drawn_through_call_tool_shows_and_is_stored(
-    builtins_deferred, image_engine, page_for, make_user, upstream, listener
+    builtins_deferred, image_engine, chat_for, make_user, upstream, listener
 ):
     person = make_user()
     prompt = f"draw a lighthouse {uuid.uuid4().hex[:6]}"
@@ -457,12 +476,12 @@ def test_a_picture_drawn_through_call_tool_shows_and_is_stored(
         call_tool("generate_image", {"prompt": "a lighthouse"}, prompt, "call_i"),
         reply.text("Here is your lighthouse.", match=reply.answering(prompt)),
     )
-    page = page_for(person)
-    turn_on_integration(page, "Image")
-    send(page, prompt)
-    expect_reply(page, "Here is your lighthouse.")
+    chat = chat_for(person)
+    turn_on_integration(chat, "Image")
+    send(chat, prompt)
+    expect_reply(chat, "Here is your lighthouse.")
 
-    picture = last_reply(page).get_by_role("img")
+    picture = last_reply(chat).get_by_role("img")
     expect(picture).to_be_visible()
     source = picture.get_attribute("src")
     assert FILE_CONTENT_URL.search(source), f"the picture is not a stored file: {source}"
@@ -471,10 +490,10 @@ def test_a_picture_drawn_through_call_tool_shows_and_is_stored(
     [told] = tool_results(upstream, prompt)
     assert json.loads(told)["status"] == "success"
 
-    expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
-    page.reload()
-    expect_reply(page, "Here is your lighthouse.")
-    expect(last_reply(page).get_by_role("img")).to_have_attribute("src", source)
+    expect(chat.page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
+    chat = chat.reload()
+    expect_reply(chat, "Here is your lighthouse.")
+    expect(last_reply(chat).get_by_role("img")).to_have_attribute("src", source)
     with person.client() as client:
         assert client.get(source).content == base64.b64decode(PNG_BASE64)
 
@@ -506,8 +525,22 @@ def searcher(instance_with, preserve, listener):
     return searching
 
 
+@pytest.fixture
+def searcher_chat_for(chat_for, searcher, preserve) -> ChatOpener:
+    """`chat_for` on the local-fetch instance, with side chats allowed there."""
+    admin = admin_of(searcher)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=searcher)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    return dataclasses.replace(chat_for, upstream=searcher.upstream, admin=admin)
+
+
 @pytest.mark.slow
-def test_a_page_read_through_call_tool_is_the_reply_source(page_for, searcher, listener):
+def test_a_page_read_through_call_tool_is_the_reply_source(searcher_chat_for, searcher, listener):
     page_url = f"{listener.base_url}/herons"
     prompt = f"how many herons? {uuid.uuid4().hex[:6]}"
     searcher.upstream.queue(
@@ -515,16 +548,16 @@ def test_a_page_read_through_call_tool_is_the_reply_source(page_for, searcher, l
         call_tool("fetch_url", {"url": page_url}, prompt, "call_f"),
         reply.text("Two herons [1].", match=reply.answering(prompt)),
     )
-    page = page_for(create_user(searcher))
-    turn_on_integration(page, "Web Search")
-    send(page, prompt)
-    expect_reply(page, "Two herons")
+    chat = searcher_chat_for(create_user(searcher))
+    turn_on_integration(chat, "Web Search")
+    send(chat, prompt)
+    expect_reply(chat, "Two herons")
 
     assert listener.requests_to("/search"), "the dispatched search never reached the engine"
-    expect(conversation(page).get_by_role("button", name="Toggle 1 source")).to_be_visible()
+    expect(conversation(chat).get_by_role("button", name="Toggle 1 source")).to_be_visible()
     site = page_url.split("/")[2]
-    last_reply(page).get_by_role("button", name=f"View source: {site}").click()
-    citation = page.get_by_role("dialog")
+    last_reply(chat).get_by_role("button", name=f"View source: {site}").click()
+    citation = chat.page.get_by_role("dialog")
     expect(citation.get_by_role("link", name=page_url, exact=True)).to_be_visible()
     expect(citation).to_contain_text(PAGE_TEXT)
 
@@ -548,11 +581,11 @@ def dispatched(tool_name: str, params: dict, call_id: str) -> dict:
 
 
 def test_a_mixed_round_asks_each_call_in_turn_and_a_second_round_asks_again(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
 
     prompt = f"shout twice {uuid.uuid4().hex[:6]}"
     round_one = [
@@ -565,20 +598,20 @@ def test_a_mixed_round_asks_each_call_in_turn_and_a_second_round_asks_again(
         call_tool("shout", {"text": "three"}, prompt, "call_4"),
         reply.text("Shouted what I could.", match=reply.answering(prompt)),
     )
-    send(page, prompt)
+    send(chat, prompt)
     for word, action in (("one", "Allow"), ("two", "Deny"), ("three", "Allow")):
-        buttons = last_reply(page).get_by_role("button", name=action, exact=True)
+        buttons = last_reply(chat).get_by_role("button", name=action, exact=True)
         expect(buttons).not_to_have_count(0, timeout=REPLY_TIMEOUT_MS)
-        card = last_reply(page).get_by_text("Allow shout?")
-        closed_group = last_reply(page).get_by_role("button", name="Toggle details", expanded=False)
+        card = last_reply(chat).get_by_text("Allow shout?")
+        closed_group = last_reply(chat).get_by_role("button", name="Toggle details", expanded=False)
         # the card hides briefly while the next call renders; clicking an open group closes it
         expect(card.or_(closed_group).first).to_be_visible()
         if not card.is_visible() and closed_group.count():
             closed_group.last.click()
         card.click()
-        expect(last_reply(page)).to_contain_text(re.compile(rf"Input\s*text\s*{word}"))
+        expect(last_reply(chat)).to_contain_text(re.compile(rf"Input\s*text\s*{word}"))
         buttons.last.click()
-    expect_reply(page, "Shouted what I could.")
+    expect_reply(chat, "Shouted what I could.")
 
     unavailable = 'Error: Tool "whisper" is not available. Search for an available tool.'
     final = requests_for(upstream, prompt)[-1]
@@ -593,44 +626,45 @@ def test_a_mixed_round_asks_each_call_in_turn_and_a_second_round_asks_again(
         "call_3": unavailable,
         "call_4": "THREE",
     }
-    expect(last_reply(page)).to_contain_text("Denied shout")
+    expect(last_reply(chat)).to_contain_text("Denied shout")
 
 
 def test_a_pending_dispatch_survives_a_reload_and_another_tab_can_allow_it(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, page_for, make_user, upstream, shouter
 ):
     account = make_user()
-    page = page_for(account)
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    chat = chat_for(account)
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
     prompt = f"shout later {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("shout", {"text": "patience"}, prompt, "call_p"),
         reply.text("Shouted after all.", match=reply.answering(prompt)),
     )
-    send(page, prompt)
-    approval_button(page, "Allow")
-    expect(page).to_have_url(re.compile(r"/c/"))
+    send(chat, prompt)
+    approval_button(chat, "Allow")
+    expect(chat.page).to_have_url(re.compile(r"/c/"))
 
-    page.reload()
-    approval_button(page, "Allow")
-    expect(last_reply(page)).to_contain_text("Allow shout?")
-    other_tab = page_for(account, path=page.url)
+    chat = chat.reload()
+    approval_button(chat, "Allow")
+    expect(last_reply(chat)).to_contain_text("Allow shout?")
+    other_tab = page_for(account, path=chat.page.url)
     expect(last_reply(other_tab)).to_contain_text("Allow shout?")
     approval_button(other_tab, "Allow").click()
 
     expect_reply(other_tab, "Shouted after all.")
-    expect_reply(page, "Shouted after all.")
-    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
+    expect_reply(chat, "Shouted after all.")
+    expect(conversation(chat).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
     assert tool_results(upstream, prompt) == ["PATIENCE"]
 
 
 def test_switching_to_full_access_runs_the_pending_calls_and_ask_asks_again_later(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    """In a side chat: red on dev, no issue filed (fix PR open-webui/open-webui#34064)."""
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
     prompt = f"shout both {uuid.uuid4().hex[:6]}"
     both = [
         dispatched("shout", {"text": "first"}, "call_1"),
@@ -640,44 +674,48 @@ def test_switching_to_full_access_runs_the_pending_calls_and_ask_asks_again_late
         reply.Reply(tool_calls=both, match=reply.answering(prompt)),
         reply.text("Both shouted.", match=reply.answering(prompt)),
     )
-    send(page, prompt)
-    approval_button(page, "Allow")
-    set_tool_approval_mode(page, "Full access")
-    expect_reply(page, "Both shouted.")
+    send(chat, prompt)
+    approval_button(chat, "Allow")
+    set_tool_approval_mode(chat, "Full access")
+    expect_reply(chat, "Both shouted.")
     assert tool_results(upstream, prompt) == ["FIRST", "SECOND"]
 
-    set_tool_approval_mode(page, "Ask for approval")
+    set_tool_approval_mode(chat, "Ask for approval")
     again = f"shout again {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("shout", {"text": "asked"}, again, "call_3"),
         reply.text("Asked again.", match=reply.answering(again)),
     )
-    send(page, again)
-    approval_button(page, "Allow").click()
-    expect_reply(page, "Asked again.")
+    send(chat, again)
+    approval_button(chat, "Allow").click()
+    expect_reply(chat, "Asked again.")
 
 
 def test_a_denied_dispatch_is_asked_again_on_regenerate_and_continue_runs_nothing(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    """In a side chat: red on dev, open-webui/open-webui#34014.
+
+    Fix PR open-webui/open-webui#34064.
+    """
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
     prompt = f"shout maybe {uuid.uuid4().hex[:6]}"
     upstream.queue(
         call_tool("shout", {"text": "maybe"}, prompt, "call_m"),
         reply.text("Not shouted.", match=reply.answering(prompt)),
     )
-    send(page, prompt)
-    approval_button(page, "Deny")
-    expect(regenerate_buttons(page)).to_have_count(0)
-    approval_button(page, "Deny").click()
-    expect_reply(page, "Not shouted.")
+    send(chat, prompt)
+    approval_button(chat, "Deny")
+    expect(regenerate_buttons(chat)).to_have_count(0)
+    approval_button(chat, "Deny").click()
+    expect_reply(chat, "Not shouted.")
 
     upstream.queue(reply.text(" Really not.", match=reply.answering(prompt)))
-    last_reply(page).hover()
-    conversation(page).get_by_role("button", name="Continue Response").click()
-    expect_reply(page, "Really not.")
+    last_reply(chat).hover()
+    conversation(chat).get_by_role("button", name="Continue Response").click()
+    expect_reply(chat, "Really not.")
     continued = requests_for(upstream, prompt)[-1]
     assert tool_results(upstream, prompt) == [REJECTED]
     assert reply.conversation(continued)[-1]["role"] == "assistant"
@@ -686,21 +724,26 @@ def test_a_denied_dispatch_is_asked_again_on_regenerate_and_continue_runs_nothin
         call_tool("shout", {"text": "maybe"}, prompt, "call_r"),
         reply.text("Shouted this time.", match=reply.answering(prompt)),
     )
-    last_reply(page).hover()
-    regenerate_buttons(page).last.click()
-    page.get_by_text("Try Again").click()
-    approval_button(page, "Allow").click()
-    expect_reply(page, "Shouted this time.")
+    last_reply(chat).hover()
+    regenerate_buttons(chat).last.click()
+    chat.page.get_by_text("Try Again").click()
+    approval_button(chat, "Allow").click()
+    expect_reply(chat, "Shouted this time.")
     assert tool_results(upstream, prompt) == ["MAYBE"]
 
 
 def test_a_temporary_chat_asks_before_running_the_dispatched_tool(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
-    page.get_by_role("button", name="Temporary Chat").click()
+    """In a side chat: red on dev, open-webui/open-webui#34035.
+
+    Fix PR open-webui/open-webui#34064.
+    """
+    account = make_user()
+    chat = chat_for(account)
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
+    turn_temporary(chat)
 
     for word, action, answer, result in (
         ("hidden", "Deny", "Kept quiet.", "Error: tool call was not approved."),
@@ -711,34 +754,36 @@ def test_a_temporary_chat_asks_before_running_the_dispatched_tool(
             call_tool("shout", {"text": word}, prompt, "call_t"),
             reply.text(answer, match=reply.answering(prompt)),
         )
-        send(page, prompt)
-        dialog = page.get_by_role("dialog")
+        send(chat, prompt)
+        dialog = chat.page.get_by_role("dialog")
         expect(dialog).to_contain_text("Tool Permissions", timeout=REPLY_TIMEOUT_MS)
         expect(dialog).to_contain_text(re.compile(rf'shout\s*\{{\s*"text": "{word}"'))
         dialog.get_by_role("button", name=action, exact=True).click()
-        expect_reply(page, answer)
+        expect_reply(chat, answer)
         assert tool_results(upstream, prompt)[-1:] == [result]
-    assert "/c/" not in page.url
+    # a temporary chat has an address of its own (/c/temporary:...) and is never stored
+    with account.client() as client:
+        assert client.get("/api/v1/chats/").json() == []
 
 
 # --- one call_tool call carrying several tool calls -------------------------------------------
 
 
-def expect_batch_shown(page: Page) -> None:
-    group = last_reply(page).get_by_text(re.compile(r"^Explored shout, mumble"))
+def expect_batch_shown(chat: ChatSurface) -> None:
+    group = last_reply(chat).get_by_text(re.compile(r"^Explored shout, mumble"))
     expect(group).to_be_visible()
     group.click()
     for name, shown in (
         ("shout", r"Input\s*text\s*ahoy\s*Output\s*AHOY"),
         ("mumble", r"Input\s*text\s*HUSH\s*Output\s*hush"),
     ):
-        last_reply(page).get_by_text(f"View Result from {name}").click()
-        expect(last_reply(page)).to_contain_text(re.compile(shown))
-    expect(last_reply(page)).not_to_contain_text("call_tool")
+        last_reply(chat).get_by_text(f"View Result from {name}").click()
+        expect(last_reply(chat)).to_contain_text(re.compile(shown))
+    expect(last_reply(chat)).not_to_contain_text("call_tool")
 
 
 def test_a_batch_of_calls_shows_each_tool_and_the_reply_goes_on(
-    tool_search_on, page_for, make_user, upstream, shouter
+    tool_search_on, chat_for, make_user, upstream, shouter
 ):
     prompt = f"shout and mumble {uuid.uuid4().hex[:6]}"
     calls = [
@@ -752,11 +797,11 @@ def test_a_batch_of_calls_shows_each_tool_and_the_reply_goes_on(
         reply.text("Shouted and mumbled.", match=reply.answering(prompt)),
     )
     account = make_user()
-    page = page_for(account)
-    select_model(page, shouter)
-    send(page, prompt)
-    expect_reply(page, "Shouted and mumbled.")
-    expect_batch_shown(page)
+    chat = chat_for(account)
+    select_model(chat, shouter)
+    send(chat, prompt)
+    expect_reply(chat, "Shouted and mumbled.")
+    expect_batch_shown(chat)
 
     [combined] = tool_results(upstream, prompt)
     results = json.loads(combined)["results"]
@@ -765,9 +810,8 @@ def test_a_batch_of_calls_shows_each_tool_and_the_reply_goes_on(
         ("mumble", "hush"),
     ], combined
 
-    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
-    chat_path = page.url[page.url.index("/c/") :]
-    expect_batch_shown(page_for(account, path=chat_path))
+    expect(chat.page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    expect_batch_shown(chat.reload())
 
 
 @pytest.fixture
@@ -780,7 +824,7 @@ def tool_call_labels_on(admin, tool_search_on) -> None:
 
 
 def test_labels_of_a_batch_show_in_the_group_summary_also_after_the_chat_is_opened_again(
-    tool_call_labels_on, page_for, make_user, upstream, shouter
+    tool_call_labels_on, chat_for, make_user, upstream, shouter
 ):
     shouted = {"running": "Shouting the greeting", "completed": "Shouted the greeting"}
     mumbled = {"running": "Mumbling the reply", "completed": "Mumbled the reply"}
@@ -796,17 +840,17 @@ def test_labels_of_a_batch_show_in_the_group_summary_also_after_the_chat_is_open
         reply.text("Shouted and mumbled.", match=reply.answering(prompt)),
     )
     account = make_user()
-    page = page_for(account)
-    select_model(page, shouter)
-    send(page, prompt)
-    expect_reply(page, "Shouted and mumbled.")
+    chat = chat_for(account)
+    select_model(chat, shouter)
+    send(chat, prompt)
+    expect_reply(chat, "Shouted and mumbled.")
 
     summary = f"{shouted['completed']}, {mumbled['completed']}"
-    expect(last_reply(page).get_by_text(summary, exact=True)).to_be_visible()
-    expect(last_reply(page)).not_to_contain_text("call_tool")
+    expect(last_reply(chat).get_by_text(summary, exact=True)).to_be_visible()
+    expect(last_reply(chat)).not_to_contain_text("call_tool")
 
-    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
-    reopened = page_for(account, path=page.url[page.url.index("/c/") :])
+    expect(chat.page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    reopened = chat.reload()
     expect(last_reply(reopened).get_by_text(summary, exact=True)).to_be_visible()
 
 
@@ -962,11 +1006,11 @@ def test_the_embeddings_engine_names_the_documents_embedding_model_and_is_kept(
 
 
 def test_each_call_of_a_batch_asks_for_approval_in_turn(
-    tool_approval_on, page_for, make_user, upstream, shouter
+    tool_approval_on, chat_for, make_user, upstream, shouter
 ):
-    page = page_for(make_user())
-    select_model(page, shouter)
-    set_tool_approval_mode(page, "Ask for approval")
+    chat = chat_for(make_user())
+    select_model(chat, shouter)
+    set_tool_approval_mode(chat, "Ask for approval")
 
     prompt = f"shout and mumble {uuid.uuid4().hex[:6]}"
     calls = [
@@ -979,21 +1023,21 @@ def test_each_call_of_a_batch_asks_for_approval_in_turn(
         ),
         reply.text("Shouted, not mumbled.", match=reply.answering(prompt)),
     )
-    send(page, prompt)
+    send(chat, prompt)
     for name, word, action in (("shout", "one", "Allow"), ("mumble", "TWO", "Deny")):
-        buttons = last_reply(page).get_by_role("button", name=action, exact=True)
+        buttons = last_reply(chat).get_by_role("button", name=action, exact=True)
         expect(buttons).not_to_have_count(0, timeout=REPLY_TIMEOUT_MS)
-        card = last_reply(page).get_by_text(f"Allow {name}?")
-        closed_group = last_reply(page).get_by_role("button", name="Toggle details", expanded=False)
+        card = last_reply(chat).get_by_text(f"Allow {name}?")
+        closed_group = last_reply(chat).get_by_role("button", name="Toggle details", expanded=False)
         # the pending calls sit in a folded group; clicking an open group closes it
         expect(card.or_(closed_group).first).to_be_visible()
         if not card.is_visible() and closed_group.count():
             closed_group.last.click()
         card.click()
-        expect(last_reply(page)).to_contain_text(re.compile(rf"Input\s*text\s*{word}"))
+        expect(last_reply(chat)).to_contain_text(re.compile(rf"Input\s*text\s*{word}"))
         buttons.last.click()
-    expect_reply(page, "Shouted, not mumbled.")
-    expect(last_reply(page)).to_contain_text("Denied mumble")
+    expect_reply(chat, "Shouted, not mumbled.")
+    expect(last_reply(chat)).to_contain_text("Denied mumble")
 
     [combined] = tool_results(upstream, prompt)
     results = json.loads(combined)["results"]
