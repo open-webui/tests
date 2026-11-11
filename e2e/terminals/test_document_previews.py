@@ -9,11 +9,11 @@ LibreOffice: the page lays the document out and draws the slides itself, each wi
 reviewer's comment, its author and text. A file that only carries the .docx name says it failed
 to load and that its comments could not be read.
 
-Discriminates: all pass on dev c15f28649 with Terminals 0.4.1 and Open Terminal 0.17.7. On one
-frontend build of it with these mutations each named test fails: the terminal's PDF never asked
-for (both converted tests); the page's own drawing of a .docx and of a .pptx skipped (the two
-drawn tests); Word and presentation comments not read (both comment checks); the failure of a
-broken document swallowed (broken document).
+Discriminates: all pass on dev c15f28649 with Terminals 0.4.1 and Open Terminal 0.17.7. On
+frontend builds of it with these mutations each named test fails: the terminal's PDF never asked
+for (both converted tests); the page's own drawing of a .docx skipped, and on another build its
+comments not handed to the drawing (laid-out Word document); the page's own drawing of a .pptx
+skipped (drawn presentation); the failure of a broken document swallowed (broken document).
 """
 
 from __future__ import annotations

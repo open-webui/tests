@@ -47,7 +47,8 @@ from harness.chat_history import seed_chat
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import calling
 from utils.chat_ui import expect_reply, send, split_screen
-from utils.file_views import file_browser, files_of, open_file, tab
+from utils.file_browser import file_browser
+from utils.file_views import files_of, open_file, tab
 from utils.sidebar_chats import chat_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]

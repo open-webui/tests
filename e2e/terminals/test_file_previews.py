@@ -47,16 +47,8 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import ask, calling
 from utils.chat_ui import split_screen
 from utils.clipboard import copied, loopback_clipboard
-from utils.file_views import (
-    back_to,
-    comment_shown_by,
-    file_browser,
-    files_of,
-    open_file,
-    rest_elsewhere,
-    row,
-    tab,
-)
+from utils.file_browser import file_browser, row
+from utils.file_views import back_to, comment_shown_by, files_of, open_file, rest_elsewhere, tab
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 

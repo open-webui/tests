@@ -10,11 +10,11 @@ kernel that has forgotten what the cells set, and Stop ends the kernel, after wh
 Stop are gone until a cell is run again. A read-only notebook shows its cells with nothing to
 run or edit.
 
-Discriminates: all pass on dev c15f28649 with the full image of Open Terminal 0.17.7. On one
-frontend build of it with these mutations each named test fails: a cell's result never put
-under it (run); a retyped cell run with its old source (retyped cell); Run All stopping after
-the first cell and a failing cell's error dropped (Run All); Restart keeping the kernel and
-Stop leaving the buttons (Restart and Stop); the run controls shown for a read-only file
+Discriminates: all pass on dev c15f28649 with the full image of Open Terminal 0.17.7. On
+frontend builds of it with these mutations each named test fails: a cell's run number never
+put under it (run); a retyped cell run with its old source (retyped cell); Run All stopping
+after the first cell (Run All); Restart neither stopping nor starting a kernel, and on another
+build Stop doing nothing (Restart and Stop); the run controls shown for a read-only file
 (read-only).
 """
 
@@ -126,6 +126,8 @@ def test_a_retyped_cell_runs_with_ctrl_enter_as_it_was_typed(open_notebook):
     page = browser.page
 
     browser.get_by_text(f"print('{tag}', 'as written')").dblclick()
+    # the cell's editor takes the focus only once its language has loaded
+    expect(page.locator("[contenteditable=true]:focus")).to_contain_text(f"'{tag}', 'as written'")
     page.keyboard.press("Control+a")
     # in one piece, so the editor closes no bracket of its own
     page.keyboard.insert_text(f"print('{tag}', 2 + 3)")

@@ -38,7 +38,8 @@ from harness.open_terminal import API_KEY
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import choose_terminal, open_files_tab
 from utils.chat_ui import expect_reply, send, split_screen
-from utils.file_views import connect_for, enter, file_browser, files_in, files_of, open_file
+from utils.file_browser import file_browser
+from utils.file_views import connect_for, enter, files_in, files_of, open_file
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 

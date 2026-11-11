@@ -5,7 +5,7 @@ folder of the terminal's home when one is named (`connect_for` and `files_in` ar
 for a page that is set up in between). A clicked file opens in a tab of its own, so
 `file_browser` is always the one on screen: `open_file` clicks a file in the list and waits for
 its tab, `back_to` returns to the folder's list, `tab` is a tab of the workspace by its name.
-`row_menu` opens a file's More menu and `toggle_selected` Ctrl-clicks it into the selection.
+The list's rows and menus are `utils/file_browser.py`'s.
 `comment_shown_by` rests on a comment marker of a document and returns the comment that opens.
 """
 
@@ -17,10 +17,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.terminal_server import configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
-
-
-def file_browser(page: Page) -> Locator:
-    return page.get_by_role("region", name="File browser")
+from utils.file_browser import file_browser
 
 
 def tab(page: Page, name: str) -> Locator:
@@ -72,28 +69,6 @@ def back_to(browser: Locator, folder: str) -> None:
     """From an opened file back to the list of the folder it is in."""
     browser.get_by_role("button", name=folder, exact=True).click()
     expect(browser.get_by_role("list")).to_be_visible()
-    rest_elsewhere(browser.page)
-
-
-def row(browser: Locator, name: str) -> Locator:
-    return browser.get_by_role("listitem").filter(has=browser.page.get_by_text(name, exact=True))
-
-
-def row_menu(browser: Locator, name: str) -> Locator:
-    """Open the More menu of a file in the list; returns the menu."""
-    rest_elsewhere(browser.page)
-    entry = row(browser, name)
-    entry.hover()
-    entry.get_by_role("button", name="More", exact=True).click()
-    menu = browser.page.get_by_role("menu")
-    expect(menu).to_be_visible()
-    return menu
-
-
-def toggle_selected(browser: Locator, name: str) -> None:
-    """Ctrl-click the file in the list, which adds it to the selection or takes it out."""
-    rest_elsewhere(browser.page)
-    row(browser, name).get_by_text(name, exact=True).click(modifiers=["Control"])
     rest_elsewhere(browser.page)
 
 

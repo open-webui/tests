@@ -34,7 +34,8 @@ from harness import sample_documents as samples
 from harness.listener import json_answer
 from harness.terminal_files import HOME, serving_files
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
-from utils.file_views import files_of, rest_elsewhere, row_menu, toggle_selected
+from utils.file_browser import row_menu, select
+from utils.file_views import files_of, rest_elsewhere
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -130,14 +131,14 @@ def test_two_selected_files_are_compared_from_the_selection_bar(folder, browse):
     browser = browse()
     compare = browser.get_by_role("button", name="Compare", exact=True)
 
-    toggle_selected(browser, "draft.txt")
+    select(browser, "draft.txt")
     expect(browser.get_by_text("1 selected", exact=True)).to_be_visible()
     expect(compare).to_be_disabled()
-    toggle_selected(browser, "final.txt")
-    toggle_selected(browser, "notes.txt")
+    select(browser, "final.txt")
+    select(browser, "notes.txt")
     expect(browser.get_by_text("3 selected", exact=True)).to_be_visible()
     expect(compare).to_be_disabled()
-    toggle_selected(browser, "notes.txt")
+    select(browser, "notes.txt")
     expect(browser.get_by_text("2 selected", exact=True)).to_be_visible()
 
     compare.click()
