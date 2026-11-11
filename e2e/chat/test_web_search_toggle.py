@@ -5,7 +5,9 @@ offered `search_web` and `fetch_url`; clicking the chip turns it off again, and 
 goes out without them. With Web Search withdrawn from the default permissions, a group whose
 Permissions tab switches Web Search on gives it back to its members, who see the toggle and get
 the search, while everyone else still has neither. A chat link carrying `web-search=true` gives a
-user without the permission no search either. The engine is a local one nobody needs to reach.
+user without the permission no search either. With Web Search in Chat set to Always in the
+Interface settings every message is offered the search without the toggle. The engine is a local
+one nobody needs to reach.
 
 The chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so the
 chip test turns it on for its account.
@@ -13,7 +15,13 @@ Discriminates: passes on dev ebc6add67; run on a frontend build whose Web Search
 toggle on and whose chat sends Web Search without the permission check, against a backend copy
 that offers the web tools without the permission check and leaves the user's groups out of their
 permissions, every test fails: the chip leaves the search on, the link searches, and the member
-gets no toggle.
+gets no toggle. The Always test fails on a frontend build that ignores the setting.
+
+Every test except the chat link one (an address parameter of the page) runs in the main chat and
+in a side chat (`utils/chat_surface.py`), the Always test in every way a side chat starts and
+every state it can be in. A side chat ignored Always and searched only with the toggle on
+(open-webui/open-webui#34033, fix PR open-webui/open-webui#34064); for it the dev c15f28649 build
+is the mutant.
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import expect_reply, open_integrations_menu, send, show_input_selections
 from utils.tooltips import tooltip_button
 
@@ -71,36 +80,56 @@ def crew(admin, make_user) -> Iterator[tuple[str, Actor]]:
         client.delete(f"/api/v1/groups/id/{group_id}/delete")
 
 
-def offered_tools(page: Page, upstream, question: str) -> set[str]:
+def offered_tools(chat: Page | ChatSurface, upstream, question: str) -> set[str]:
     upstream.queue(reply.text("Calm seas.", match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, "Calm seas.")
+    send(chat, question)
+    expect_reply(chat, "Calm seas.")
     sent = next(filter(reply.answering(question), upstream.chat_requests()))
     return {tool["function"]["name"] for tool in sent.get("tools") or []}
 
 
 def test_the_chip_by_the_input_turns_web_search_off_again(
-    page_for, make_user, upstream, web_search_on
+    chat_for, make_user, upstream, web_search_on
 ):
     person = make_user()
     show_input_selections(person)
-    page = page_for(person)
-    toggle = open_integrations_menu(page).get_by_role("menuitemcheckbox", name="Web Search")
+    chat = chat_for(person)
+    page = chat.page
+    toggle = open_integrations_menu(chat).get_by_role("menuitemcheckbox", name="Web Search")
     toggle.click()
     expect(toggle).to_have_attribute("aria-checked", "true")
     page.keyboard.press("Escape")
 
-    tooltip_button(page.locator("form"), "Web Search").click()
+    tooltip_button(chat.panel.locator("form"), "Web Search").click()
     expect(
-        open_integrations_menu(page).get_by_role("menuitemcheckbox", name="Web Search")
+        open_integrations_menu(chat).get_by_role("menuitemcheckbox", name="Web Search")
     ).to_have_attribute("aria-checked", "false")
     page.keyboard.press("Escape")
 
-    assert not WEB_TOOLS & offered_tools(page, upstream, "Is the sea calm at the quay?")
+    assert not WEB_TOOLS & offered_tools(chat, upstream, "Is the sea calm at the quay?")
+
+
+# one model only: Always holds when every picked model can search, one or several alike
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_web_search_in_chat_always_offers_the_search_unasked(
+    chat_for, make_user, upstream, web_search_on
+):
+    """In a side chat: open-webui/open-webui#34033."""
+    person = make_user()
+    with person.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"webSearch": "always"}}
+        )
+    assert saved.status_code == 200, saved.text
+    chat = chat_for(person)
+
+    offered = offered_tools(chat, upstream, "What is new at the harbour today?")
+
+    assert WEB_TOOLS <= offered, f"Always gave the {chat.place} no web search, only {offered}"
 
 
 def test_a_group_permission_gives_web_search_back_to_its_members(
-    page_for, admin, make_user, upstream, withheld_by_default, crew
+    page_for, chat_for, admin, make_user, upstream, withheld_by_default, crew
 ):
     name, member = crew
     admin_page = page_for(admin, path="/admin/users/groups")
@@ -116,15 +145,15 @@ def test_a_group_permission_gives_web_search_back_to_its_members(
     editing.get_by_role("button", name="Save").click()
     expect(admin_page.get_by_text("Group updated successfully")).to_be_visible()
 
-    outsider = page_for(make_user())
+    outsider = chat_for(make_user())
     expect(
         open_integrations_menu(outsider).get_by_role("menuitemcheckbox", name="Web Search")
     ).to_have_count(0)
-    member_page = page_for(member)
-    open_integrations_menu(member_page).get_by_role("menuitemcheckbox", name="Web Search").click()
-    member_page.keyboard.press("Escape")
+    member_chat = chat_for(member)
+    open_integrations_menu(member_chat).get_by_role("menuitemcheckbox", name="Web Search").click()
+    member_chat.page.keyboard.press("Escape")
 
-    assert WEB_TOOLS <= offered_tools(member_page, upstream, "Is the sea calm at the slipway?")
+    assert WEB_TOOLS <= offered_tools(member_chat, upstream, "Is the sea calm at the slipway?")
 
 
 def test_a_web_search_link_gives_no_search_without_the_permission(
