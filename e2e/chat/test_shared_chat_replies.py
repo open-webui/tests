@@ -43,6 +43,11 @@ refused) passes all ten. The live view test passes on dev c31423955 and turns re
 reverted (Voice mode shows for the member) and in a build of it that only leaves out closing the
 call (the call stays open over the shared chat).
 
+With Allow replies the Share dialog warns that the people who can reply can also use the chat's
+own terminal, and with Clone only it does not. On the dev c15f28649 build the Clone only test
+reads that; in a frontend copy with the warning left out, and in one that shows it in both modes,
+it fails.
+
 The edit and presence tests pass on dev 948432b43. A frontend build whose chat page moves other
 viewers onto an edited branch and keeps one's own picture in the presence list fails all three;
 one showing Regenerate only on one's own replies fails the edit test; a backend copy whose
@@ -82,6 +87,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 QUESTION = "when does the ferry leave?"
 ANSWER = "At half past nine."
 OWNER_PROMPT = "You answer as the harbour master and never mention the toll."
+TERMINAL_WARNING = "People who can reply can also use this chat’s own terminal."
 
 
 def _accounts(make_user):
@@ -259,7 +265,9 @@ def test_setting_the_mode_back_to_clone_only_leaves_a_frozen_copy(page_for, make
 
     owner_page.reload()
     dialog = _share_dialog(owner_page)
+    expect(dialog.get_by_text(TERMINAL_WARNING)).to_be_visible()
     _set_sharing_mode(dialog, "Clone only")
+    expect(dialog.get_by_text(TERMINAL_WARNING)).to_have_count(0)
     dialog.get_by_role("button", name="Close").click()
     _sent_home(member_page)
     _ask(owner_page, upstream, "and dogs?", "Dogs on a lead.")

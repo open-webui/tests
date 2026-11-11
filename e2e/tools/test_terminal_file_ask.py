@@ -13,6 +13,10 @@ Discriminates: passes on dev 3b8205505; on a build where the file browser's ask 
 quote, where asking during a reply sends at once instead of queueing, and where the unsaved-edit
 prompt is skipped, the matching tests here fail.
 
+A selection of more than 16 KiB is refused: the box does not open and a notice says to select
+less, while one of exactly 16 KiB is taken. The limit test passes on the dev c15f28649 build and
+fails in a frontend copy without the limit.
+
 Since 555125b36 scrolling the file closes the ask box, which otherwise stayed where the selection
 had been. The scroll test passes on dev e8c0ad85e and fails in a frontend copy with 555125b36
 reverted.
@@ -205,3 +209,26 @@ def test_scrolling_the_file_dismisses_the_ask_box(browser, open_terminal):
 
     expect(browser.get_by_text(SELECTED, exact=True)).not_to_be_in_viewport()
     expect(ask_box(browser.page)).to_be_hidden()
+
+
+@pytest.mark.parametrize("extra", [0, 1], ids=["at-the-limit", "one-byte-over"])
+def test_a_selection_is_taken_up_to_16_kib_and_refused_past_it(browser, open_terminal, extra):
+    page = browser.page
+    first_line = f"# ledger {uuid.uuid4().hex[:8]}".ljust(63, "x") + "\n"
+    ledger = first_line + ("# " + "y" * 61 + "\n") * 255 + "z" * extra
+    assert len(ledger.encode()) == 16384 + extra
+    path = open_terminal.home / f"ledger-{uuid.uuid4().hex[:8]}.py"
+    path.write_text(ledger)
+    browser.get_by_label("Refresh", exact=True).first.click()
+    browser.get_by_text(path.name, exact=True).click()
+    browser.get_by_text(first_line.strip(), exact=True).click()
+
+    page.keyboard.press("Control+a")
+
+    refusal = page.get_by_text("Select less text (maximum 16 KiB).")
+    if extra:
+        expect(refusal).to_be_visible()
+        expect(ask_box(page)).to_have_count(0)
+    else:
+        expect(ask_box(page)).to_be_visible()
+        expect(refusal).to_have_count(0)
