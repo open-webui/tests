@@ -7,6 +7,10 @@ in a chat typed in the browser the mark shows on the cut-off reply and only ther
 
 Discriminates: passes on the dev 87a937459 build. With the dev build on a backend copy with
 039867feb reverted the cut-off test goes red (the filter is handed no reason, so no mark).
+
+The test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649 a
+side chat showed an outlet filter's change only after a reload, so its side variant is red there
+(no filed issue); it passes on dev e791cbdde, with PR open-webui/open-webui#34064.
 """
 
 from __future__ import annotations
@@ -48,18 +52,18 @@ def cut_off_filter(admin):
 
 
 def test_a_filter_marks_only_the_reply_the_provider_cut_off(
-    cut_off_filter, page_for, make_user, upstream
+    cut_off_filter, chat_for, make_user, upstream
 ):
     finished_prompt, cut_prompt = f"tides {uuid.uuid4().hex[:6]}", f"more {uuid.uuid4().hex[:6]}"
     upstream.queue(
         reply.text("High water is at six.", match=reply.answering(finished_prompt)),
         reply.text("Low water is at", finish_reason="length", match=reply.answering(cut_prompt)),
     )
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    send(page, finished_prompt)
-    expect_reply(page, "High water is at six.")
-    send(page, cut_prompt)
+    send(chat, finished_prompt)
+    expect_reply(chat, "High water is at six.")
+    send(chat, cut_prompt)
 
-    expect(last_reply(page)).to_contain_text(f"Low water is at {CUT_OFF}")
-    expect(page.get_by_text(CUT_OFF)).to_have_count(1)
+    expect(last_reply(chat)).to_contain_text(f"Low water is at {CUT_OFF}")
+    expect(chat.page.get_by_text(CUT_OFF)).to_have_count(1)
