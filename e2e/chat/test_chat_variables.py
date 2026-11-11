@@ -11,6 +11,12 @@ answers the first message straight away, with the defaults filled in.
 Discriminates: passes on dev 30f3f6a8f; in a backend copy that writes every chat variable as empty
 into the system prompt every test fails, and in a frontend build that sends the first message
 without asking the three tests that fill the form fail.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a side chat put on
+the model in its own model selector; the form, the control and the defaults also in every place a
+side chat is still empty. In a side chat the control did nothing and the first message went out
+without the form, so the system prompt had empty values (open-webui/open-webui#34020, fix PR
+open-webui/open-webui#34064); for those the dev c15f28649 build is the mutant.
 """
 
 from __future__ import annotations
@@ -18,11 +24,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_surface import EMPTY_SIDE_CONDITIONS, MAIN_CHAT, ChatSurface
+from utils.chat_ui import chat_input, expect_reply, send, start_from_link
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -32,6 +39,9 @@ TRIP_PROMPT = f"You plan trips for {PROJECT} in a {TONE} tone."
 DEFAULTS_PROMPT = (
     'You write for {{chat.variables.audience | text:placeholder="Audience":default="sailors"}}.'
 )
+# a chat's first message asks for the values, so the side chats that already hold one are left out;
+# one model only: the variables belong to the model's own system prompt
+FIRST_MESSAGE_PLACES = (MAIN_CHAT, *EMPTY_SIDE_CONDITIONS)
 
 
 @pytest.fixture
@@ -68,88 +78,97 @@ def _system_prompt(upstream, question: str) -> str:
     )
 
 
-def _ask(page: Page, upstream, question: str, answer: str = "Planned.") -> str:
+def _chat_on(chat_for, account, model_id: str) -> ChatSurface:
+    chat = chat_for(account)
+    start_from_link(chat, f"/?model={model_id}")
+    return chat
+
+
+def _ask(chat: ChatSurface, upstream, question: str, answer: str = "Planned.") -> str:
     upstream.queue(reply.text(answer, match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, answer)
+    send(chat, question)
+    expect_reply(chat, answer)
     return _system_prompt(upstream, question)
 
 
-def _form(page: Page) -> Locator:
-    form = page.get_by_role("dialog").filter(has_text="Chat Variables")
-    expect(form).to_be_visible()
+def _form(chat: ChatSurface) -> Locator:
+    form = chat.page.get_by_role("dialog").filter(has_text="Chat Variables")
+    expect(form, f"no Chat Variables form in the {chat.place}").to_be_visible()
     return form
 
 
-def _first_message_through_the_form(page: Page, upstream, project: str) -> str:
+def _first_message_through_the_form(chat: ChatSurface, upstream, project: str) -> str:
     question = f"plan the first day {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Day one planned.", match=reply.answering(question)))
-    send(page, question)
-    form = _form(page)
+    send(chat, question)
+    form = _form(chat)
     assert not [body for body in upstream.chat_requests() if reply.answering(question)(body)]
     form.get_by_placeholder("Which project?").fill(project)
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_hidden()
     # the message waits in the box until it is sent again
-    expect(chat_input(page)).to_have_text(question)
-    chat_input(page).click()
-    page.keyboard.press("Enter")
-    expect_reply(page, "Day one planned.")
+    expect(chat_input(chat)).to_have_text(question)
+    chat_input(chat).click()
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Day one planned.")
     return _system_prompt(upstream, question)
 
 
+@pytest.mark.chat_surfaces(*FIRST_MESSAGE_PLACES)
 def test_a_required_variable_is_asked_for_and_fills_the_system_prompt(
-    page_for, variables_model, upstream
+    chat_for, variables_model, upstream
 ):
+    """In a side chat: open-webui/open-webui#34020."""
     account, make = variables_model
-    page = page_for(account)
-    page.goto(f"/?model={make(TRIP_PROMPT)}")
+    chat = _chat_on(chat_for, account, make(TRIP_PROMPT))
 
-    system = _first_message_through_the_form(page, upstream, "Harbour Fair")
+    system = _first_message_through_the_form(chat, upstream, "Harbour Fair")
     assert "You plan trips for Harbour Fair in a Formal tone." in system
 
 
 def test_the_values_stay_with_the_chat_for_later_messages_and_a_reload(
-    page_for, variables_model, upstream
+    chat_for, variables_model, upstream
 ):
+    """In a side chat: open-webui/open-webui#34020."""
     account, make = variables_model
-    page = page_for(account)
-    page.goto(f"/?model={make(TRIP_PROMPT)}")
-    _first_message_through_the_form(page, upstream, "Island Hop")
+    chat = _chat_on(chat_for, account, make(TRIP_PROMPT))
+    _first_message_through_the_form(chat, upstream, "Island Hop")
 
-    later = _ask(page, upstream, f"and the second day? {uuid.uuid4().hex[:6]}")
+    later = _ask(chat, upstream, f"and the second day? {uuid.uuid4().hex[:6]}")
     assert "You plan trips for Island Hop in a Formal tone." in later
-    page.reload()
-    expect_reply(page, "Planned.")
-    after_reload = _ask(page, upstream, f"and the third day? {uuid.uuid4().hex[:6]}")
+    chat = chat.reload()
+    expect_reply(chat, "Planned.")
+    after_reload = _ask(chat, upstream, f"and the third day? {uuid.uuid4().hex[:6]}")
     assert "You plan trips for Island Hop in a Formal tone." in after_reload
 
 
+@pytest.mark.chat_surfaces(*FIRST_MESSAGE_PLACES)
 def test_the_control_beside_the_message_box_changes_a_value_for_later_messages(
-    page_for, variables_model, upstream
+    chat_for, variables_model, upstream
 ):
+    """In a side chat: open-webui/open-webui#34020."""
     account, make = variables_model
-    page = page_for(account)
-    page.goto(f"/?model={make(TRIP_PROMPT)}")
-    _first_message_through_the_form(page, upstream, "Coast Walk")
+    chat = _chat_on(chat_for, account, make(TRIP_PROMPT))
+    _first_message_through_the_form(chat, upstream, "Coast Walk")
 
-    page.get_by_role("button", name="Chat Variables").click()
-    form = _form(page)
+    chat.panel.get_by_role("button", name="Chat Variables").click()
+    form = _form(chat)
     form.get_by_role("combobox").select_option("Casual")
     form.get_by_role("button", name="Save", exact=True).click()
     expect(form).to_be_hidden()
 
-    changed = _ask(page, upstream, f"anything else? {uuid.uuid4().hex[:6]}")
+    changed = _ask(chat, upstream, f"anything else? {uuid.uuid4().hex[:6]}")
     assert "You plan trips for Coast Walk in a Casual tone." in changed
 
 
+@pytest.mark.chat_surfaces(*FIRST_MESSAGE_PLACES)
 def test_variables_with_defaults_send_the_first_message_without_asking(
-    page_for, variables_model, upstream
+    chat_for, variables_model, upstream
 ):
+    """In a side chat: open-webui/open-webui#34020."""
     account, make = variables_model
-    page = page_for(account)
-    page.goto(f"/?model={make(DEFAULTS_PROMPT)}")
+    chat = _chat_on(chat_for, account, make(DEFAULTS_PROMPT))
 
-    system = _ask(page, upstream, f"write a welcome {uuid.uuid4().hex[:6]}", "Welcome aboard.")
+    system = _ask(chat, upstream, f"write a welcome {uuid.uuid4().hex[:6]}", "Welcome aboard.")
     assert "You write for sailors." in system
-    expect(page.get_by_role("dialog").filter(has_text="Chat Variables")).to_have_count(0)
+    expect(chat.page.get_by_role("dialog").filter(has_text="Chat Variables")).to_have_count(0)
