@@ -12,7 +12,11 @@ Unavailable terminal for a person with Direct Integrations and is unpicked for e
 The menu moves into the chat input's More menu when the input is too narrow for it. A side chat
 has the same menu and a pick of its own: it starts from the chat's terminal, picking in one
 leaves the other alone, and its pick is stored with the side chat and back after a reload.
-Side chats had no menu and always used the chat's terminal (open-webui/open-webui#34149).
+Each of the two offers the model only its own terminal's tool, runs the model's command and
+searches files there, with a personal terminal picked in one and one of the admin's in the other,
+also after a reload. Side chats had no menu and always used the chat's terminal, and then a
+personal terminal picked in either still reached the model in the other
+(open-webui/open-webui#34149).
 
 A local fake terminal stands for the admin's connection and for the personal terminal; the
 deleted terminal is one on the real Terminals service on Docker (`harness.terminals`), and its
@@ -31,7 +35,10 @@ a saved chat opened without its terminal, and a refused pick made without a word
 chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
 deleted test); the controls never moved into the More menu (the narrow test). The cog's target
 has no mutation of its own. The side chat tests (open-webui/open-webui#34149) fail on the dev
-262a8c6f7 build, where a side chat shows no Terminal button, and pass with the fix.
+262a8c6f7 build, where a side chat shows no Terminal button, and pass with the fix; the keeps its
+own terminal test also fails on the fix's first commit bdeed3736, where the chat's personal
+terminal reaches the model in the side chat too, and passes on b0e710c2a; with the @ mention's
+file search back on the page's personal terminal only, its file search check fails.
 """
 
 from __future__ import annotations
@@ -42,6 +49,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.backends import wait_until
 from harness.chat_history import seed_chat
 from harness.listener import json_answer
 from harness.terminal_server import (
@@ -51,7 +59,7 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from harness.terminals import create_template, share_template
-from utils.cached_chat import ask, chat_requests, choose_terminal, offered_tools
+from utils.cached_chat import ask, calling, chat_requests, choose_terminal, offered_tools
 from utils.chat_surface import (
     DRAGGED_TAB,
     MAIN_CHAT,
@@ -63,6 +71,7 @@ from utils.chat_surface import (
     reload_beside_the_chat,
 )
 from utils.chat_ui import (
+    chat_input,
     close_menu,
     expect_reply,
     open_input_menu,
@@ -94,6 +103,8 @@ def _serve(server, operation: str) -> None:
     server.route("GET", "/files/list", json_answer({"dir": HOME, "entries": []}))
     server.route("GET", "/files/read", (404, {"Content-Type": "text/plain"}, b"no such file"))
     server.route("GET", "/skills", json_answer([]))
+    server.route("GET", "/files/search", json_answer({"results": []}))
+    server.route("POST", f"/{operation}", json_answer({"ran": operation}))
 
 
 @pytest.fixture
@@ -494,19 +505,62 @@ def test_a_terminal_picked_before_the_first_message_is_saved_with_the_new_chat(
     )
 
 
+def _tools_offered_in(chat: ChatSurface, upstream, prompt: str) -> set[str]:
+    """Ask `prompt` in the chat; which of the two terminals' tools the model was offered."""
+    upstream.queue(reply.text("Answered.", match=reply.answering(prompt)))
+    send(chat, prompt)
+    expect_reply(chat, "Answered.")
+    return _terminal_tools_sent_for(upstream, prompt)
+
+
+def _run_in(chat: ChatSurface, upstream, tool: str, prompt: str) -> None:
+    """Ask `prompt` in the chat, the model runs `tool` and answers once it has the result."""
+    ask(chat, upstream, prompt, calling(tool, {}), reply.text(f"Ran {tool}."))
+
+
+def _search_files_in(chat: ChatSurface, query: str, terminal) -> None:
+    """Type an @ mention into the chat's input, which searches the files of its terminal; waits
+    until `terminal` got the search."""
+    chat_input(chat).click()
+    chat.page.keyboard.type(f"@{query}")
+    wait_until(lambda: _searched(terminal, query), timeout=10)
+    chat.page.keyboard.press("Escape")
+
+
+def _calls(server, path: str) -> int:
+    """The POSTs `path` got; a browser's CORS preflight comes first as an OPTIONS."""
+    return sum(request.method == "POST" for request in server.requests_to(path))
+
+
+def _searched(server, query: str) -> bool:
+    return any(f"query={query}" in request.path for request in server.requests_to("/files/search"))
+
+
 def test_a_side_chat_keeps_its_own_terminal_apart_from_the_chat(
-    page_for, make_user, admin, preserve, connect, upstream
+    page_for,
+    make_user,
+    admin,
+    preserve,
+    connect,
+    upstream,
+    direct_integrations,
+    fake_terminal,
+    personal_terminal,
 ):
-    """open-webui/open-webui#34149: a side chat had no menu and used the chat's terminal."""
+    """open-webui/open-webui#34149: a side chat had no menu and used the chat's terminal, and
+    a personal terminal picked in either still reached the model in the other."""
+    direct_integrations(True)
     preserve("permissions")
     with admin.client() as client:
         permissions = client.get("/api/v1/users/default/permissions").json()
         permissions["chat"].update(side_chat=True)
+        permissions["features"].update(direct_tool_servers=True)
         allowed = client.post("/api/v1/users/default/permissions", json=permissions)
     assert allowed.status_code == 200, allowed.text
     person = make_user()
-    harbour, quarry, _ = _names()
+    harbour, quarry, laptop = _names()
     connections = connect([harbour, quarry], person)
+    _add_personal_terminal(person, personal_terminal, laptop)
     tag = uuid.uuid4().hex[:6]
     main_id = _saved_chat(person, f"main {tag}")
     page = page_for(person, path=f"/c/{main_id}")
@@ -539,4 +593,56 @@ def test_a_side_chat_keeps_its_own_terminal_apart_from_the_chat(
 
     side = reload_beside_the_chat(side, question)
     expect(_chat_terminal_button(side, quarry)).to_be_visible()
-    expect(_chat_terminal_button(main_chat(page), "Terminal")).to_be_visible()
+    main = main_chat(page)
+    expect(_chat_terminal_button(main, "Terminal")).to_be_visible()
+
+    # a personal terminal picked in the chat stays the chat's, and the reverse
+    _pick_in(main, laptop)
+    expect(_chat_terminal_button(main, laptop)).to_be_visible()
+    offered = {
+        "chat": _tools_offered_in(main, upstream, f"chat on the laptop {tag}"),
+        "side": _tools_offered_in(side, upstream, f"side on the server {tag}"),
+    }
+    assert offered == {"chat": {"run_on_laptop"}, "side": {"run_on_server"}}, (
+        f"with the laptop picked in the chat the model was offered {offered}"
+    )
+    _pick_in(side, laptop, picked=quarry)
+    _pick_in(main, harbour, picked=laptop)
+    expect(_chat_terminal_button(side, laptop)).to_be_visible()
+    expect(_chat_terminal_button(main, harbour)).to_be_visible()
+    offered = {
+        "chat": _tools_offered_in(main, upstream, f"chat on the server {tag}"),
+        "side": _tools_offered_in(side, upstream, f"side on the laptop {tag}"),
+    }
+    assert offered == {"chat": {"run_on_server"}, "side": {"run_on_laptop"}}, (
+        f"with the laptop picked in the side chat the model was offered {offered}"
+    )
+
+    # each chat's commands and file searches reach its own terminal, also after a reload
+    side = reload_beside_the_chat(side, question)
+    main = main_chat(page)
+    expect(_chat_terminal_button(side, laptop)).to_be_visible()
+    expect(_chat_terminal_button(main, harbour)).to_be_visible()
+    fake_terminal.clear()
+    personal_terminal.clear()
+    _run_in(side, upstream, "run_on_laptop", f"side runs {tag}")
+    _run_in(main, upstream, "run_on_server", f"chat runs {tag}")
+    ran = {
+        "laptop": _calls(personal_terminal, "/run_on_laptop"),
+        "server": _calls(fake_terminal, "/run_on_server"),
+    }
+    assert ran == {"laptop": 1, "server": 1}, f"the two commands ran as {ran}"
+    _search_files_in(side, f"side{tag}", personal_terminal)
+    _search_files_in(main, f"chat{tag}", fake_terminal)
+    searched = {
+        "side on the laptop": _searched(personal_terminal, f"side{tag}"),
+        "chat on the server": _searched(fake_terminal, f"chat{tag}"),
+        "side on the server": _searched(fake_terminal, f"side{tag}"),
+        "chat on the laptop": _searched(personal_terminal, f"chat{tag}"),
+    }
+    assert searched == {
+        "side on the laptop": True,
+        "chat on the server": True,
+        "side on the server": False,
+        "chat on the laptop": False,
+    }, f"the file searches went {searched}"
