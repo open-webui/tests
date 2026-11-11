@@ -7,6 +7,10 @@ removes the block in Chat.svelte that refused to send after an errored reply wit
 
 Twin of unit/chat/test_stream_error_close.py.
 
+The test runs in the main chat and in a side chat (`utils/chat_surface.py`) and asserts in both
+that the error shows in the reply, as the main chat shows it. PR open-webui/open-webui#34064 names
+it as a difference that a side chat shows errors as notifications.
+
 Discriminates: passes on the bbfa876af build; with the toast-and-return block restored in
 Chat.svelte the second message is refused with that toast and never reaches the provider.
 """
@@ -25,8 +29,8 @@ REFUSAL = "Oops! There was an error in the previous response."
 
 
 @pytest.fixture
-def chat_page(page_for, make_user):
-    return page_for(make_user())
+def chat_page(chat_for, make_user):
+    return chat_for(make_user())
 
 
 def test_a_provider_error_is_shown_and_the_next_message_still_sends(chat_page, upstream):
@@ -37,5 +41,5 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(chat_page, u
 
     send(chat_page, "hello again")
     expect_reply(chat_page, "back again")
-    expect(chat_page.get_by_text(REFUSAL)).to_have_count(0)
+    expect(chat_page.page.get_by_text(REFUSAL)).to_have_count(0)
     assert reply.conversation(upstream.chat_requests()[-1])[-1]["content"] == "hello again"
