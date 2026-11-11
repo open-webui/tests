@@ -275,8 +275,8 @@ def _skipped_frame(request: DeviceRequest) -> None:
 
 def _past_the_window(request: DeviceRequest) -> None:
     request.stream.send("http-response", status=200, headers={"Content-Type": "text/plain"})
-    for _ in range(40):
-        request.stream.send("data", b"x" * CHUNK, wait_for_credit=False)
+    # one frame over the whole window; credit returned between frames would hide a series of them
+    request.stream.send("data", b"x" * (CHUNK + 1024), wait_for_credit=False)
     request.stream.send("end")
 
 
@@ -302,7 +302,10 @@ def test_an_answer_the_device_breaks_off_interrupts_that_call_only(
         after = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
 
     assert len(device.requests_to("/execute")) == 1, "the call never reached the device"
-    assert interrupted.status_code == 502, f"{interrupted.status_code} {interrupted.text}"
+    assert interrupted.status_code == 502, (
+        f"the broken answer came back as {interrupted.status_code} with "
+        f"{len(interrupted.content)} bytes: {interrupted.text[:200]}"
+    )
     assert _without_message(interrupted) == INTERRUPTED, interrupted.text
     assert f"Tether connection interrupted: {reason}." in interrupted.json()["error"], (
         interrupted.text
