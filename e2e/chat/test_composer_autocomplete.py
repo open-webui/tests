@@ -12,15 +12,19 @@ Discriminates: passes on the dev 30f3f6a8f build and backend; in a frontend buil
 person's switch, leaves the conversation out of the request and keeps a suggestion through further
 typing, every test fails (the last on the kept suggestion); with the input length check removed
 from a backend copy, the last test fails (the long text is continued).
+
+Every test runs in the main chat and in a side chat; the side variants are green on dev c15f28649
+and on the side chat rework build (open-webui/open-webui#34064).
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -51,18 +55,19 @@ def switch_autocomplete(admin, preserve):
     return switch
 
 
-def _open_composer(page_for, account, personal_switch: bool, path: str = "/") -> Page:
-    page = page_for(account)
+def _open_composer(
+    chat_for, account, personal_switch: bool, chat_id: str | None = None
+) -> ChatSurface:
     with account.client() as client:
         saved = client.post(
             "/api/v1/users/user/settings/update",
             json={"ui": {"showChangelog": False, "promptAutocomplete": personal_switch}},
         )
     saved.raise_for_status()
-    page.goto(path)
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
-    return page
+    chat = chat_for(account, chat_id=chat_id)
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
+    return chat
 
 
 def _suggest(upstream, text: str) -> None:
@@ -75,12 +80,12 @@ def _autocomplete_requests(upstream) -> list[dict]:
     ]
 
 
-def _suggestion(page: Page):
-    return page.locator("#chat-input [data-suggestion]")
+def _suggestion(chat: ChatSurface):
+    return chat_input(chat).locator("[data-suggestion]")
 
 
 def test_a_suggestion_in_a_running_chat_is_written_with_the_conversation(
-    page_for, make_user, upstream, switch_autocomplete
+    chat_for, make_user, upstream, switch_autocomplete
 ):
     switch_autocomplete(turn_on=True)
     account = make_user()
@@ -92,63 +97,63 @@ def test_a_suggestion_in_a_running_chat_is_written_with_the_conversation(
                 {"role": "assistant", "content": "The lighthouse at Whitby dates from 1858."},
             ],
         )
-    page = _open_composer(page_for, account, personal_switch=True, path=f"/c/{chat_id}")
+    chat = _open_composer(chat_for, account, personal_switch=True, chat_id=chat_id)
     _suggest(upstream, " lighthouse at Whitby")
 
-    page.keyboard.type("How tall is the")
+    chat.page.keyboard.type("How tall is the")
 
-    expect(_suggestion(page)).to_have_attribute("data-suggestion", " lighthouse at Whitby")
+    expect(_suggestion(chat)).to_have_attribute("data-suggestion", " lighthouse at Whitby")
     [asked] = _autocomplete_requests(upstream)
     assert "How tall is the" in str(asked["messages"])
     assert "dates from 1858" in str(asked["messages"])
 
 
 def test_typing_on_drops_the_suggestion_and_asks_again_for_the_longer_text(
-    page_for, make_user, upstream, switch_autocomplete
+    chat_for, make_user, upstream, switch_autocomplete
 ):
     switch_autocomplete(turn_on=True)
-    page = _open_composer(page_for, make_user(), personal_switch=True)
+    chat = _open_composer(chat_for, make_user(), personal_switch=True)
     _suggest(upstream, " Hallstatt in the morning")
-    page.keyboard.type("Ferries to")
-    expect(_suggestion(page)).to_have_attribute("data-suggestion", " Hallstatt in the morning")
+    chat.page.keyboard.type("Ferries to")
+    expect(_suggestion(chat)).to_have_attribute("data-suggestion", " Hallstatt in the morning")
 
     _suggest(upstream, "")
-    with page.expect_response(lambda response: AUTOCOMPLETE_ROUTE in response.url):
-        page.keyboard.type(" St. Wolfgang")
+    with chat.page.expect_response(lambda response: AUTOCOMPLETE_ROUTE in response.url):
+        chat.page.keyboard.type(" St. Wolfgang")
 
-    expect(_suggestion(page)).to_have_count(0)
-    expect(chat_input(page)).to_have_text("Ferries to St. Wolfgang")
+    expect(_suggestion(chat)).to_have_count(0)
+    expect(chat_input(chat)).to_have_text("Ferries to St. Wolfgang")
     asked_again = _autocomplete_requests(upstream)[-1]
     assert "Ferries to St. Wolfgang" in str(asked_again["messages"])
 
 
 def test_with_the_personal_switch_off_the_model_is_never_asked(
-    page_for, make_user, upstream, switch_autocomplete
+    chat_for, make_user, upstream, switch_autocomplete
 ):
     switch_autocomplete(turn_on=True)
-    page = _open_composer(page_for, make_user(), personal_switch=False)
+    chat = _open_composer(chat_for, make_user(), personal_switch=False)
     _suggest(upstream, " early in the autumn.")
 
-    page.keyboard.type("The best time to visit Hallstatt is")
-    page.wait_for_timeout(QUIET_MS)
+    chat.page.keyboard.type("The best time to visit Hallstatt is")
+    chat.page.wait_for_timeout(QUIET_MS)
 
-    expect(_suggestion(page)).to_have_count(0)
+    expect(_suggestion(chat)).to_have_count(0)
     assert _autocomplete_requests(upstream) == []
 
 
 def test_a_text_longer_than_the_admins_limit_is_not_continued(
-    page_for, make_user, upstream, switch_autocomplete
+    chat_for, make_user, upstream, switch_autocomplete
 ):
     switch_autocomplete(turn_on=True, max_length=20)
-    page = _open_composer(page_for, make_user(), personal_switch=True)
+    chat = _open_composer(chat_for, make_user(), personal_switch=True)
     _suggest(upstream, " in the morning")
-    page.keyboard.type("Ferries to Hallstatt")
-    expect(_suggestion(page)).to_have_attribute("data-suggestion", " in the morning")
+    chat.page.keyboard.type("Ferries to Hallstatt")
+    expect(_suggestion(chat)).to_have_attribute("data-suggestion", " in the morning")
 
     _suggest(upstream, " every hour")
-    with page.expect_response(lambda response: AUTOCOMPLETE_ROUTE in response.url) as answered:
-        page.keyboard.type(" leave from the pier")
+    with chat.page.expect_response(lambda response: AUTOCOMPLETE_ROUTE in response.url) as answered:
+        chat.page.keyboard.type(" leave from the pier")
 
     assert answered.value.status == 400
-    expect(_suggestion(page)).to_have_count(0)
+    expect(_suggestion(chat)).to_have_count(0)
     assert len(_autocomplete_requests(upstream)) == 1
