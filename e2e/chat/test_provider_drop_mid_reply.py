@@ -3,7 +3,10 @@
 The scripted provider streams the first three pieces of a reply and then drops the connection
 without finishing the stream, the way a provider that crashes or loses its network does. The
 page shows what arrived with the error under it and the reply as finished, and Regenerate asks
-again and replaces the broken reply with a whole one.
+again and replaces the broken reply with a whole one. Both tests run in the main chat and in a
+side chat (`utils/chat_surface.py`) and assert in both that the error shows in the reply, as the
+main chat shows it; PR open-webui/open-webui#34064 names it as a difference that a side chat shows
+errors as notifications.
 
 Discriminates: passes on dev ebc6add67; the error test fails on a build whose reply hides its
 error and the regenerate test on a build whose Regenerate ignores a failed reply.
@@ -37,17 +40,17 @@ DROP_ERROR = re.compile("payload is not completed", re.IGNORECASE)
 
 
 @pytest.fixture
-def dropped_reply(page_for, make_user, upstream):
-    """A page whose reply lost its provider after three pieces, with a whole answer queued next."""
+def dropped_reply(chat_for, make_user, upstream):
+    """A chat whose reply lost its provider after three pieces, with a whole answer queued next."""
     upstream.queue(
         reply.text(SLOW_PIECES, chunk_delay=0.2, hang_up_after=3, match=reply.answering(PROMPT)),
         reply.text("The lighthouse keeper slept well.", match=reply.answering(PROMPT)),
     )
-    page = page_for(make_user())
-    send(page, PROMPT)
-    expect(last_reply(page)).to_contain_text("part-2")
-    expect(stop_button(page)).to_be_hidden()
-    return page
+    chat = chat_for(make_user())
+    send(chat, PROMPT)
+    expect(last_reply(chat)).to_contain_text("part-2")
+    expect(stop_button(chat)).to_be_hidden()
+    return chat
 
 
 def test_the_reply_keeps_what_arrived_and_shows_the_error(dropped_reply):
@@ -62,7 +65,7 @@ def test_the_reply_keeps_what_arrived_and_shows_the_error(dropped_reply):
 def test_regenerate_replaces_the_dropped_reply_with_a_whole_one(dropped_reply):
     last_reply(dropped_reply).hover()
     regenerate_buttons(dropped_reply).last.click()
-    dropped_reply.get_by_text("Try Again").click()
+    dropped_reply.page.get_by_text("Try Again").click()
 
     expect_reply(dropped_reply, "The lighthouse keeper slept well.")
     expect(last_reply(dropped_reply)).not_to_contain_text(DROP_ERROR)
