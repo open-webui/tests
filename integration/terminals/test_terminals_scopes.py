@@ -10,7 +10,9 @@ none. In a chat shared for replies a collaborator uses the terminal its owner pi
 terminal runs in that chat's one machine as long as the owner may use the terminal, and the
 collaborator may change the chat's models, terminal and working directory and nothing else. A
 collaborator's message in such a chat works on the files the owner's message left, for a terminal
-with one machine for all, per chat and per model.
+with one machine for all, per chat and per model. On a per-chat terminal the owner's access also
+carries the collaborator's message (#34103); every other terminal still needs the collaborator's own
+access, and a reader of the chat or someone it is not shared with reaches neither.
 
 The real Terminals service (open-webui/terminals) runs on Docker and starts a real Open Terminal
 container per machine (`harness.terminals`); without its images or Docker the tests skip.
@@ -32,7 +34,11 @@ test (the collaborator is refused in the owner's chat). `title` added to what a 
 change fails the chat-fields test. The orchestrator's reason replaced by a fixed text fails the
 unknown-scope test. A collaborator refused the terminal the owner picked fails the three
 collaborator's-message tests, and the collaborator, owner's-access and chat-fields tests with
-them.
+them. The per-chat collaborator's-message test fails on dev 262a8c6f7 without the fix for #34103
+(the model is offered no terminal, so no file is written). Every terminal checked against the chat's
+owner in place of the collaborator fails the any-other-terminal tests (the command runs). Replies
+allowed in a chat shared for reading fails the reader test, and a chat the caller may not reply in
+taken as no chat fails the reader and stranger tests (409 in place of 403).
 """
 
 from __future__ import annotations
@@ -533,6 +539,118 @@ def test_a_collaborators_message_works_on_the_files_the_owners_message_left(
     )
     assert [machine["context_id"] for machine in terminals.instances()] == [context], (
         f"the shared chat started other machines than {context}: {terminals.instances()}"
+    )
+
+
+def _shared_on_the_owners_access(admin, connect_terminals, owner, guest, scope) -> tuple[str, str]:
+    """A chat of `owner` on a terminal of `scope`, shared for replies with `guest`, who may use
+    the connection but not the terminal; returns the terminal and the chat."""
+    (terminal_id,) = _terminals_for(admin, connect_terminals, [owner, guest], scope)
+    with owner.client() as client:
+        chat_id = _new_chat(client, terminal_id=terminal_id)
+    _share_chat(owner, chat_id, guest)
+    with admin.client() as client:
+        share_template(client, terminal_id, read_grant(owner.id))
+    return terminal_id, chat_id
+
+
+def test_a_collaborators_message_runs_in_a_per_chat_terminal_on_the_owners_access(
+    admin, make_user, connect_terminals, terminals, upstream
+):
+    """Issue #34103: the collaborator's message was offered no terminal tools, with no error."""
+    owner, guest = make_user(), make_user()
+    terminal_id, chat_id = _shared_on_the_owners_access(
+        admin, connect_terminals, owner, guest, "chat"
+    )
+    tag = uuid.uuid4().hex[:8]
+    owners, guests = f"owner-{tag}.txt", f"guest-{tag}.txt"
+
+    first = _message_running(owner, upstream, chat_id, terminal_id, f"echo owner > ~/{owners}")
+    second = _message_running(
+        guest,
+        upstream,
+        chat_id,
+        terminal_id,
+        f"cat ~/{owners} > ~/{guests}; echo guest >> ~/{guests}",
+    )
+
+    for label, message in (("the owner's", first), ("the collaborator's", second)):
+        assert (message.get("content"), message.get("error")) == ("Done.", None), (
+            f"{label} message did not finish: {message}"
+        )
+    assert terminals.holding(guests) == {f"chat:{chat_id}": "owner\nguest\n"}, (
+        "the collaborator's command did not run in the chat's machine on the owner's files: "
+        f"{terminals.holding(guests)}"
+    )
+    assert [machine["context_id"] for machine in terminals.instances()] == [f"chat:{chat_id}"], (
+        f"the shared chat started other machines: {terminals.instances()}"
+    )
+
+
+@pytest.mark.parametrize("scope", [None, "user", "model"])
+def test_a_collaborators_message_needs_their_own_access_to_any_other_terminal(
+    scope, admin, make_user, connect_terminals, terminals, upstream
+):
+    owner, guest = make_user(), make_user()
+    terminal_id, chat_id = _shared_on_the_owners_access(
+        admin, connect_terminals, owner, guest, scope
+    )
+    name = f"guest-{uuid.uuid4().hex[:8]}.txt"
+
+    message = _message_running(guest, upstream, chat_id, terminal_id, f"echo guest > ~/{name}")
+    with owner.client() as client:
+        owners_command = output_of(execute(client, terminal_id, "echo ran", chat_id, MOCK_MODEL_ID))
+
+    assert "Terminal access denied" in json.dumps(message.get("error")), (
+        f"the collaborator's message on a terminal not shared with them ended as {message}"
+    )
+    assert terminals.holding(name) == {}, (
+        f"the collaborator's command ran without access: {terminals.holding(name)}"
+    )
+    assert owners_command.strip() == "ran", (
+        f"the owner's command in the chat printed {owners_command!r}"
+    )
+
+
+@pytest.mark.parametrize("shared_for_reading", [True, False], ids=["reader", "stranger"])
+def test_only_a_collaborator_who_may_reply_reaches_a_shared_chats_per_chat_terminal(
+    shared_for_reading, admin, make_user, connect_terminals, terminals, upstream
+):
+    owner, other = make_user(), make_user()
+    (terminal_id,) = _terminals_for(admin, connect_terminals, [owner, other], "chat")
+    with owner.client() as client:
+        chat_id = _new_chat(client, terminal_id=terminal_id)
+    if shared_for_reading:
+        _share_chat(owner, chat_id, other, share_mode=None)
+    name = f"other-{uuid.uuid4().hex[:8]}.txt"
+
+    with other.client() as client:
+        command = execute(client, terminal_id, f"echo other > ~/{name}", chat_id)
+        sent = client.post(
+            "/api/chat/completions",
+            json={
+                "model": MOCK_MODEL_ID,
+                "messages": [{"role": "user", "content": f"run {name}"}],
+                "chat_id": chat_id,
+                "terminal_id": terminal_id,
+                "id": str(uuid.uuid4()),
+                "user_message": {"id": str(uuid.uuid4()), "role": "user", "content": f"run {name}"},
+                "session_id": f"harness-{uuid.uuid4().hex[:8]}",
+            },
+        )
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}").json()["chat"].get("history") or {}
+
+    assert _reason(command) == (403, "Chat access denied"), (
+        f"a command in someone else's chat answered {command.status_code} {command.text}"
+    )
+    assert sent.status_code == 404, (
+        f"a message in someone else's chat answered {sent.status_code} {sent.text}"
+    )
+    assert stored.get("messages", {}) == {}, f"the message reached the owner's chat: {stored}"
+    assert terminals.holding(name) == {}, f"the command ran in a machine: {terminals.holding(name)}"
+    assert terminals.instances() == [], (
+        f"someone else's chat started a machine: {terminals.instances()}"
     )
 
 
