@@ -9,14 +9,17 @@ table still becomes one markdown table.
 
 Discriminates: passes on the dev b859124f9 build, fails on that build with c5dac0070 reverted
 (the model receives the email's text several times).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -38,10 +41,9 @@ PLAIN_TABLE = """
 """
 
 PASTE = """
-(html) => {
+(target, html) => {
     const data = new DataTransfer();
     data.setData('text/html', html);
-    const target = document.querySelector('#chat-input');
     target.dispatchEvent(
         new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true })
     );
@@ -49,10 +51,10 @@ PASTE = """
 """
 
 
-def paste_html(page: Page, html: str) -> None:
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
-    page.evaluate(PASTE, html)
+def paste_html(chat: ChatSurface, html: str) -> None:
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
+    chat_input(chat).evaluate(PASTE, html)
 
 
 def sent_text(upstream, words: str) -> str:
@@ -61,27 +63,27 @@ def sent_text(upstream, words: str) -> str:
     return message["content"]
 
 
-def paste_and_send(page: Page, upstream, html: str, words: str) -> str:
+def paste_and_send(chat: ChatSurface, upstream, html: str, words: str) -> str:
     upstream.queue(reply.text("Noted.", match=reply.answering(words)))
-    paste_html(page, html)
-    page.keyboard.press("Enter")
-    expect_reply(page, "Noted.")
+    paste_html(chat, html)
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Noted.")
     return sent_text(upstream, words)
 
 
-def test_a_pasted_email_with_nested_tables_is_sent_once(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_pasted_email_with_nested_tables_is_sent_once(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
 
-    sent = paste_and_send(page, upstream, NESTED_EMAIL, "Quarterly newsletter")
+    sent = paste_and_send(chat, upstream, NESTED_EMAIL, "Quarterly newsletter")
 
     assert sent.count("Quarterly newsletter") == 1, sent
     assert sent.count("Harbour update for March") == 1, sent
 
 
-def test_a_pasted_plain_table_still_becomes_one_markdown_table(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_pasted_plain_table_still_becomes_one_markdown_table(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
 
-    sent = paste_and_send(page, upstream, PLAIN_TABLE, "Plum")
+    sent = paste_and_send(chat, upstream, PLAIN_TABLE, "Plum")
 
     rows = [line.strip() for line in sent.splitlines() if line.strip()]
     assert rows == [
