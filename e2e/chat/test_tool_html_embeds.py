@@ -22,8 +22,10 @@ A prompt an embed submits to the chat is asked, once confirmed, in the chat the 
 that chat's history, and never in another chat on the page. The PR names it as a difference that
 an embed in a side chat still sends its prompt to the main chat; the test pins what the main chat
 does. It is red in every side chat on dev c15f28649 (#34015, no embed to click) and on dev
-e791cbdde, which holds #34064: the confirmed prompt is asked in the main chat (issue draft
-pending).
+e791cbdde, which holds #34064: the confirmed prompt is asked in the main chat. The fix for
+open-webui/open-webui#34152 (branch fix-embed-prompt-sent-twice) hands each embed's prompt to the
+chat that shows it; every variant passes on its build and the side chat ones stay red on dev
+262a8c6f7 until it merges.
 """
 
 from __future__ import annotations
@@ -119,8 +121,8 @@ def test_an_embed_keeps_escaped_markup_as_text(chat_for, make_user, upstream, em
 def test_a_prompt_an_embed_submits_is_asked_in_the_chat_the_embed_is_in(
     chat_for, make_user, upstream, embed_tool
 ):
-    """In a side chat: open-webui/open-webui#34015, then the prompt goes to the main chat (issue
-    draft pending)."""
+    """In a side chat: open-webui/open-webui#34015, then the prompt goes to the main chat
+    (open-webui/open-webui#34152)."""
     chat = chat_for(make_user())
     prompt = f"How high is the tide at noon? ({uuid.uuid4().hex[:8]})"
     call_tool(chat, upstream, "show_asker", {"prompt": prompt})

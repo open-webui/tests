@@ -21,7 +21,9 @@ smuggle a directive in as `SMUGGLED_SITE`; `signals` shows `SIGNAL_PAGE`, whose 
 the chat to send `SIGNAL_MESSAGE` (`ui/message`) and then reads "sent" or "cancelled";
 `refresh_berths`, offered to the app alone and answering
 `BERTHS_REFRESHED`, and `close_harbour`, offered to the model alone and answering
-`HARBOUR_CLOSED`. `tls=True` serves it over
+`HARBOUR_CLOSED`. With `asking=True`, `name_tag` asks the person for a name (an MCP elicitation)
+and answers `NAME_TAG` with it, or "elicitation <action>" when they decline or cancel.
+`tls=True` serves it over
 HTTPS with a self-signed certificate. With `bearer_key` every request without that key gets a
 plain 401, the way a server keyed by an API key answers (no OAuth metadata). With `moved_from` a
 request to that path gets a 307 to `/mcp` on the same server, the way a server that moved within
@@ -54,9 +56,10 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import uvicorn
-from mcp.server.mcpserver import Audio, Image, MCPServer
+from mcp.server.mcpserver import Audio, Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
+from mcp_types import ElicitRequest, ElicitRequestFormParams, InputRequiredResult
 from pydantic import BaseModel
 
 from harness.instance import free_port
@@ -65,6 +68,17 @@ from harness.object_storage import self_signed_certificate
 ECHO_DESCRIPTION = "Repeat the text back."
 CAPSIZE_ERROR = "the boat capsized in the harbour"
 PONDERED = "slept on it"
+NAME_TAG = "Name tag for {name}"
+NAME_REQUEST = ElicitRequest(
+    params=ElicitRequestFormParams(
+        message="Which name goes on the tag?",
+        requested_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "title": "Name"}},
+            "required": ["name"],
+        },
+    )
+)
 FORECAST_SUMMARY = "Mostly dry in Graz, rain on Saturday."
 FORECAST = {
     "city": "Graz",
@@ -193,6 +207,7 @@ def _echo_server(
     structured: bool = False,
     composed: bool = False,
     apps: bool = False,
+    asking: bool = False,
     **auth: Any,
 ) -> MCPServer:
     server = MCPServer("harness-mcp", log_level="WARNING", **auth)
@@ -268,6 +283,18 @@ def _echo_server(
     if apps:
         _add_apps(server)
 
+    if asking:
+
+        @server.tool(description="Make a name tag for the person asking.")
+        async def name_tag(ctx: Context) -> str | InputRequiredResult:
+            # the 2026 protocol asks in a result the client answers by calling again
+            answer = (ctx.input_responses or {}).get("name")
+            if answer is None:
+                return InputRequiredResult(input_requests={"name": NAME_REQUEST})
+            if answer.action != "accept":
+                return f"elicitation {answer.action}"
+            return NAME_TAG.format(name=answer.content["name"])
+
     return server
 
 
@@ -319,13 +346,14 @@ def serving_mcp(
     bearer_key: str | None = None,
     moved_from: str | None = None,
     apps: bool = False,
+    asking: bool = False,
     **auth: Any,
 ) -> Iterator[str]:
     """Serve the echo server on `port` (a free one by default); `auth` goes to MCPServer."""
     port = port or free_port(host)
     # mcp 2 moved transport security off the server onto the Streamable HTTP app.
     transport_security = auth.pop("transport_security", None)
-    server = _echo_server(media, failing, slow, structured, composed, apps, **auth)
+    server = _echo_server(media, failing, slow, structured, composed, apps, asking, **auth)
     app = server.streamable_http_app(transport_security=transport_security)
     if bearer_key:
         app = _requiring_bearer(app, bearer_key)

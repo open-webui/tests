@@ -30,8 +30,15 @@ the new chat, the shortcut leaves the chat's reply as it was) and pass on the bu
 3cab22263, fix PR open-webui/open-webui#34064, and on dev e791cbdde, which has it. A question
 the model asks with Ask User is answered in its own chat with the other one on the page, in both
 directions; it passes on both.
-The input request that fix also covers (an MCP elicitation) has no test: the MCP server of the
-harness refuses to ask on the connection Open WebUI opens.
+An MCP tool that asks for input (an elicitation) gets the typed answer in the chat and in the note
+chat; the harness server asks the 2026 way, in a result Open WebUI answers by calling again.
+
+The chat behind the note leaves the note chat's business to it: a prompt an embed in the note
+chat sends is confirmed and asked once (open-webui/open-webui#34152), the note chat's input
+request is not cancelled (#34153) and its answer on screen raises no notification (#34154). All
+three are red on dev 262a8c6f7 (two confirmations, the request cancelled, the notification) and
+pass on the builds of their fixes (branches fix-embed-prompt-sent-twice and
+fix-note-chat-treated-as-closed); the elicitation test in the chat passes on both.
 """
 
 from __future__ import annotations
@@ -46,8 +53,12 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from harness.chat import ask
 from harness.chat_history import seed_chat
+from harness.mcp_server import NAME_TAG, TOOL_SERVERS, mcp_connection, serving_mcp
+from harness.python_tools import python_tool
 from harness.upstream import MOCK_MODEL_ID
+from utils.cached_chat import turn_on_tool
 from utils.chat_surface import ChatSurface, main_chat
 from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply
 from utils.model_selector import select_model
@@ -60,6 +71,7 @@ ACTION_ITEMS_PROMPT = "Extract action items from this note."
 REWRITE_PROMPT = "Rewrite the selected text."
 SELECTION_MARKER = "Selected note text for replace_note_content operations:"
 WORKSPACE_MODEL_PROMPT = "You are the note chat model."
+EVERYONE = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
 def _unique(prefix: str) -> str:
@@ -447,3 +459,154 @@ def test_the_regenerate_shortcut_in_the_chat_regenerates_the_chats_reply_not_the
         body for body in upstream.chat_requests() if reply.answering(note_question)(body)
     ]
     assert len(asked_again) == 1, "the shortcut regenerated the note chat's reply"
+
+
+# ---------------------------------------------------------------- embeds and notifications
+
+ASKER_SOURCE = '''
+import json
+
+from fastapi.responses import HTMLResponse
+
+
+class Tools:
+    def show_asker(self, prompt: str) -> HTMLResponse:
+        """Show a page that asks the chat a question."""
+        message = json.dumps({"type": "input:prompt:submit", "text": prompt})
+        page = (
+            "<button id='ask'>Ask the chat</button><script>"
+            "ask.onclick = () => parent.postMessage(" + message + ", '*');</script>"
+        )
+        return HTMLResponse(content=page, headers={"Content-Disposition": "inline"})
+'''
+
+
+@pytest.fixture(scope="module")
+def asker_tool(admin):
+    with python_tool(admin, ASKER_SOURCE, name="Question page") as tool_id:
+        yield tool_id
+
+
+def test_a_prompt_an_embed_in_the_note_chat_submits_is_asked_once_in_the_note_chat(
+    page_for, make_user, upstream, asker_tool
+):
+    """#34152: red on dev 262a8c6f7, the chat behind the note asks to confirm it as well."""
+    author = make_user()
+    text = "Tide table for the harbour."
+    note_id = _create_note(author, _unique("Tides"), text)
+    page = _note_opened_from_a_chat(page_for, author, note_id, text)
+    open_note_chat(page)
+    note_chat = _note_tab_chat(page)
+    prompt = _unique("How high is the tide at noon?")
+    turn_on_tool(note_chat, "Question page")
+    upstream.queue(
+        reply.tool_call("show_asker", {"prompt": prompt}, match=reply.answering("show the page")),
+        reply.text("Page shown.", match=reply.answering("show the page")),
+        reply.text("About four metres.", match=reply.answering(prompt)),
+        reply.text("About four metres.", match=reply.answering(prompt)),
+    )
+    note_chat.send("show the page")
+    note_chat.expect_reply("Page shown.")
+
+    asker = note_chat.last_reply.frame_locator("iframe").get_by_role("button", name="Ask the chat")
+    asker.click()
+    dialogs = page.get_by_role("dialog").filter(has_text="Confirm Prompt from Embed")
+    expect(dialogs, "not exactly one chat asked to confirm the embed's prompt").to_have_count(1)
+    dialogs.get_by_role("button", name="Confirm").click()
+
+    note_chat.expect_reply("About four metres.")
+    asked = _requests_answering(upstream, prompt)
+    assert len(asked) == 1, f"the embed's prompt was asked {len(asked)} times"
+    assert "show the page" in json.dumps(asked[0]["messages"]), "asked outside the note chat"
+
+
+def test_an_answer_in_the_note_chat_raises_no_notification(page_for, make_user, upstream):
+    """#34154: red on dev 262a8c6f7, the answer on screen also shows as a notification."""
+    author = make_user()
+    text = "Ferry times for Sunday."
+    note_id = _create_note(author, _unique("Ferry"), text)
+    question, elsewhere = _unique("when is the last ferry?"), _unique("when is the first ferry?")
+    upstream.queue(
+        reply.text("At ten past nine.", match=reply.answering(question)),
+        reply.text("At six in the morning.", match=reply.answering(elsewhere)),
+    )
+    page, _ = _open_note(page_for, author, note_id, text)
+    open_note_chat(page)
+
+    send_in_note_chat(page, question)
+    _note_tab_chat(page).expect_reply("At ten past nine.")
+    # an answer in a chat that is not on the page does show one
+    with author.client() as client:
+        ask(client, elsewhere)
+    # the toast list item and the card inside it both carry the role; the card holds no other
+    notifications = (
+        page.get_by_role("status")
+        .filter(has=page.get_by_label("Dismiss notification"))
+        .filter(has_not=page.get_by_role("status"))
+    )
+    expect(notifications.filter(has_text="At six in the morning.")).to_be_visible()
+
+    expect(
+        notifications.filter(has_text="At ten past nine."),
+        "the note chat's answer on screen also showed as a notification",
+    ).to_have_count(0)
+
+
+@pytest.fixture
+def name_tag_server(admin, preserve):
+    """An MCP server every account may use whose `name_tag` tool asks for a name; its id."""
+    preserve(TOOL_SERVERS)
+    server_id = f"tags_{uuid.uuid4().hex[:6]}"
+    with serving_mcp(asking=True) as url:
+        with admin.client() as client:
+            saved = client.post(
+                TOOL_SERVERS[1],
+                json={"TOOL_SERVER_CONNECTIONS": [mcp_connection(url, server_id, [EVERYONE])]},
+            )
+        assert saved.status_code == 200, saved.text
+        yield server_id
+
+
+def _ask_for_a_name_tag(chat: ChatSurface, upstream, server_id: str) -> None:
+    """Have the model call the name tag tool in `chat`, fill in Ada and read the tool's result."""
+    prompt = _unique("make me a name tag")
+    upstream.queue(
+        reply.tool_call(f"{server_id}_name_tag", {}, match=reply.answering(prompt)),
+        reply.text("Your tag is ready.", match=reply.answering(prompt)),
+    )
+    turn_on_tool(chat, server_id)
+    chat.send(prompt)
+
+    dialog = chat.page.get_by_role("dialog").filter(has_text="Which name goes on the tag?")
+    expect(dialog, f"the {chat.place} never asked for the name").to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
+    dialog.get_by_label("Name").fill("Ada")
+    dialog.get_by_role("button", name="Submit").click()
+    chat.expect_reply("Your tag is ready.")
+    conversation = reply.conversation(_requests_answering(upstream, prompt)[-1])
+    results = [str(entry["content"]) for entry in conversation if entry["role"] == "tool"]
+    assert results and NAME_TAG.format(name="Ada") in results[0], (
+        f"the tool did not get the typed name: {results}"
+    )
+
+
+def test_a_tool_asking_for_input_in_the_note_chat_gets_the_typed_answer(
+    page_for, make_user, upstream, name_tag_server
+):
+    """#34153: red on dev 262a8c6f7, the chat behind the note cancels the request at once."""
+    author = make_user()
+    text = "Seating plan for the dinner."
+    note_id = _create_note(author, _unique("Dinner"), text)
+    page = _note_opened_from_a_chat(page_for, author, note_id, text)
+    open_note_chat(page)
+
+    _ask_for_a_name_tag(_note_tab_chat(page), upstream, name_tag_server)
+
+
+def test_a_tool_asking_for_input_in_the_chat_gets_the_typed_answer(
+    page_for, make_user, upstream, name_tag_server
+):
+    page = page_for(make_user())
+
+    _ask_for_a_name_tag(main_chat(page), upstream, name_tag_server)
