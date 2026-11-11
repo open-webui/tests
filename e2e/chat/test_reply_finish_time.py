@@ -9,6 +9,12 @@ finish time, still shows the time it was sent.
 Discriminates: passes on dev e8c0ad85e. On a build from before #33895 (6113e15af, a branch off
 dev of Nov 5) with the e8c0ad85e backend the live, stored and failed tests fail (the reply shows
 its send time); the reply without a finish time passes on both.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a stored chat
+dragged into a tab beside a new chat. The chat is opened again by the address the page shows. On
+dev c15f28649 a side chat's messages showed no time and a failed reply showed no error (no filed
+issue for either), so the side variants are red there; they pass on dev e791cbdde, with PR
+open-webui/open-webui#34064.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -43,11 +50,11 @@ def shown_time(message: Locator) -> float:
     ).timestamp()
 
 
-def user_message(page: Page) -> Locator:
+def user_message(page: Page | ChatSurface) -> Locator:
     return conversation(page).locator("[id^='message-'].user-message").last
 
 
-def assistant_message(page: Page) -> Locator:
+def assistant_message(page: Page | ChatSurface) -> Locator:
     return conversation(page).locator("[id^='message-']:has(.chat-assistant)").last
 
 
@@ -55,31 +62,31 @@ def reopen(page_for, account, page: Page) -> Page:
     return page_for(account, path=urlparse(page.url).path)
 
 
-def test_a_reply_that_took_a_while_shows_when_it_finished(page_for, make_user, upstream):
+def test_a_reply_that_took_a_while_shows_when_it_finished(page_for, chat_for, make_user, upstream):
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     question = f"how long is the crossing? {uuid.uuid4().hex[:6]}"
     released = Event()
     upstream.queue(reply.text("About an hour.", hold=released, match=reply.answering(question)))
     try:
-        send(page, question)
-        sent_at = shown_time(user_message(page))
-        page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
+        send(chat, question)
+        sent_at = shown_time(user_message(chat))
+        chat.page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
     finally:
         released.set()
-    expect_reply(page, "About an hour.")
+    expect_reply(chat, "About an hour.")
 
-    finished_at = shown_time(assistant_message(page))
+    finished_at = shown_time(assistant_message(chat))
     assert finished_at >= sent_at + GAP_SECONDS, (
         f"the reply shows {finished_at}, not after the {sent_at + GAP_SECONDS} it finished by"
     )
-    reopened = reopen(page_for, account, page)
+    reopened = reopen(page_for, account, chat.page)
     expect_reply(reopened, "About an hour.")
     assert shown_time(assistant_message(reopened)) >= sent_at + GAP_SECONDS
     assert shown_time(user_message(reopened)) == sent_at
 
 
-def test_a_stored_reply_shows_its_recorded_finish_time(page_for, make_user):
+def test_a_stored_reply_shows_its_recorded_finish_time(chat_for, make_user):
     account = make_user()
     sent_at = int(time.time()) - 2 * HOUR
     with account.client() as client:
@@ -95,14 +102,14 @@ def test_a_stored_reply_shows_its_recorded_finish_time(page_for, make_user):
                 },
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, "At nine.")
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, "At nine.")
 
-    assert shown_time(assistant_message(page)) == sent_at + HOUR
-    assert shown_time(user_message(page)) == sent_at
+    assert shown_time(assistant_message(chat)) == sent_at + HOUR
+    assert shown_time(user_message(chat)) == sent_at
 
 
-def test_a_reply_without_a_finish_time_shows_when_it_was_sent(page_for, make_user):
+def test_a_reply_without_a_finish_time_shows_when_it_was_sent(chat_for, make_user):
     account = make_user()
     sent_at = int(time.time()) - 2 * HOUR
     with account.client() as client:
@@ -113,15 +120,17 @@ def test_a_reply_without_a_finish_time_shows_when_it_was_sent(page_for, make_use
                 {"role": "assistant", "content": "At ten.", "timestamp": sent_at},
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, "At ten.")
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, "At ten.")
 
-    assert shown_time(assistant_message(page)) == sent_at
+    assert shown_time(assistant_message(chat)) == sent_at
 
 
-def test_a_failed_reply_shows_its_finish_time_after_a_reload(page_for, make_user, upstream):
+def test_a_failed_reply_shows_its_finish_time_after_a_reload(
+    page_for, chat_for, make_user, upstream
+):
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     question = f"is the harbour open? {uuid.uuid4().hex[:6]}"
     released = Event()
     upstream.queue(
@@ -130,13 +139,13 @@ def test_a_failed_reply_shows_its_finish_time_after_a_reload(page_for, make_user
         )
     )
     try:
-        send(page, question)
-        sent_at = shown_time(user_message(page))
-        page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
+        send(chat, question)
+        sent_at = shown_time(user_message(chat))
+        chat.page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
     finally:
         released.set()
-    expect_reply(page, "the harbour office is closed")
+    expect_reply(chat, "the harbour office is closed")
 
-    reopened = reopen(page_for, account, page)
+    reopened = reopen(page_for, account, chat.page)
     expect_reply(reopened, "the harbour office is closed")
     assert shown_time(assistant_message(reopened)) >= sent_at + GAP_SECONDS
