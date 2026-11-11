@@ -21,6 +21,10 @@ The count and Show Input Selections tests pass on dev f659c0d12; in a build of i
 chips beside + show whatever the setting says the Show Input Selections test fails, and in one
 whose Tools and Skills rows show no count the count test fails. The count test also checks that
 no Integrations button sits beside +; in an e8c0ad85e build with such a button put back it fails.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). A tool picked in a
+side chat reaches the model on dev c15f28649 as well, in every way a side chat starts; what a chat
+opened in a tab lost (open-webui/open-webui#34034) is pinned in test_new_chat_tool_picks.py.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
     chat_input,
     close_menu,
@@ -42,6 +47,7 @@ from utils.chat_ui import (
     expect_reply,
     open_integrations_menu,
     send,
+    start_from_link,
 )
 from utils.user_menu import open_settings
 
@@ -54,19 +60,20 @@ PUFFIN_TOOL = '''class Tools:
 '''
 
 
-def ready(page: Page) -> None:
-    expect(chat_input(page)).to_be_visible()
-    expect(page.get_by_role("button", name=re.compile("^Selected model")).first).to_be_visible()
+def ready(chat: ChatSurface) -> None:
+    expect(chat_input(chat)).to_be_visible()
+    selector = chat.panel.get_by_role("button", name=re.compile("^Selected model"))
+    expect(selector.first).to_be_visible()
 
 
-def open_integrations(page: Page) -> Locator:
-    ready(page)
-    return open_integrations_menu(page)
+def open_integrations(chat: ChatSurface) -> Locator:
+    ready(chat)
+    return open_integrations_menu(chat)
 
 
-def offers_web_search(page: Page) -> bool:
+def offers_web_search(chat: ChatSurface) -> bool:
     """Whether the integrations in the More menu hold Web Search."""
-    menu = open_integrations(page)
+    menu = open_integrations(chat)
     return menu.get_by_role("menuitemcheckbox", name="Web Search").count() > 0
 
 
@@ -93,17 +100,17 @@ def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
 # --------------------------------------------------------------------------- web search
 
 
-def test_web_search_is_offered_while_the_instance_has_it_on(page_for, make_user, web_search_on):
-    assert offers_web_search(page_for(make_user()))
+def test_web_search_is_offered_while_the_instance_has_it_on(chat_for, make_user, web_search_on):
+    assert offers_web_search(chat_for(make_user()))
 
 
 def test_web_search_is_withdrawn_from_a_user_without_the_permission(
-    page_for, admin, make_user, web_search_on, preserve
+    page_for, chat_for, admin, make_user, web_search_on, preserve
 ):
     preserve("permissions")
     save_default_permission(page_for(admin), "Web Search", turn_on=False)
 
-    assert not offers_web_search(page_for(make_user()))
+    assert not offers_web_search(chat_for(make_user()))
 
 
 @pytest.fixture
@@ -130,16 +137,17 @@ def model_without_web_search(admin, make_user):
 
 
 def test_a_model_without_the_web_search_capability_is_offered_no_web_search(
-    page_for, model_without_web_search, web_search_on
+    chat_for, model_without_web_search, web_search_on
 ):
     account, model_id = model_without_web_search
-    page = page_for(account)
-    assert offers_web_search(page)
+    chat = chat_for(account)
+    assert offers_web_search(chat)
+    close_menu(chat)
 
-    page.goto(f"/?model={model_id}")
-    expect(page.get_by_role("button", name=f"Selected model: {model_id}")).to_be_visible()
+    start_from_link(chat, f"/?model={model_id}")
+    expect(chat.button(f"Selected model: {model_id}")).to_be_visible()
 
-    assert not offers_web_search(page)
+    assert not offers_web_search(chat)
 
 
 # --------------------------------------------------------------------------- tools and skills
@@ -187,16 +195,16 @@ def builder(make_user) -> tuple[Actor, str]:
             client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
 
-def open_list(page: Page, entry: str) -> Locator:
-    menu = open_integrations(page)
+def open_list(chat: ChatSurface, entry: str) -> Locator:
+    menu = open_integrations(chat)
     menu.get_by_role("menuitem", name=re.compile(rf"^{entry}")).click()
     expect(menu.get_by_placeholder(f"Search {entry.lower()}")).to_be_visible()
     return menu
 
 
-def test_the_tool_search_narrows_the_list_by_name_and_by_description(page_for, builder):
+def test_the_tool_search_narrows_the_list_by_name_and_by_description(chat_for, builder):
     account, suffix = builder
-    menu = open_list(page_for(account), "Tools")
+    menu = open_list(chat_for(account), "Tools")
     expect(menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}")).to_be_visible()
     expect(menu.get_by_role("menuitemcheckbox", name=f"Tide table {suffix}")).to_be_visible()
 
@@ -212,27 +220,27 @@ def test_the_tool_search_narrows_the_list_by_name_and_by_description(page_for, b
     expect(menu.get_by_text("No tools found")).to_be_visible()
 
 
-def test_a_tool_picked_from_the_search_is_offered_to_the_model(page_for, builder, upstream):
+def test_a_tool_picked_from_the_search_is_offered_to_the_model(chat_for, builder, upstream):
     account, suffix = builder
-    page = page_for(account)
-    menu = open_list(page, "Tools")
+    chat = chat_for(account)
+    menu = open_list(chat, "Tools")
     menu.get_by_placeholder("Search tools").fill("seabirds")
     menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}").click()
-    close_menu(page)
-    expect_picked(page, "Tools", 1)
+    close_menu(chat)
+    expect_picked(chat, "Tools", 1)
 
     question = f"how many puffins? {suffix}"
     upstream.queue(reply.text("Plenty.", match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, "Plenty.")
+    send(chat, question)
+    expect_reply(chat, "Plenty.")
 
     sent = next(filter(reply.answering(question), upstream.chat_requests()))
     assert "count_puffins" in {tool["function"]["name"] for tool in sent.get("tools") or []}
 
 
-def test_the_skill_search_narrows_the_list(page_for, builder):
+def test_the_skill_search_narrows_the_list(chat_for, builder):
     account, suffix = builder
-    menu = open_list(page_for(account), "Skills")
+    menu = open_list(chat_for(account), "Skills")
     expect(
         menu.get_by_role("menuitemcheckbox", name=re.compile(f"Knot tying {suffix}"))
     ).to_be_visible()
@@ -252,13 +260,14 @@ def test_the_skill_search_narrows_the_list(page_for, builder):
     expect(menu.get_by_text("No skills found")).to_be_visible()
 
 
-def test_the_tools_and_skills_rows_count_what_is_picked(page_for, builder):
+def test_the_tools_and_skills_rows_count_what_is_picked(chat_for, builder):
     account, suffix = builder
-    page = page_for(account)
-    ready(page)
+    chat = chat_for(account)
+    page = chat.page
+    ready(chat)
     # the integrations live in the + menu, with no button of their own beside it
     expect(page.get_by_role("button", name="Integrations", exact=True)).to_have_count(0)
-    menu = open_list(page, "Tools")
+    menu = open_list(chat, "Tools")
     menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}").click()
     menu.get_by_role("menuitemcheckbox", name=f"Tide table {suffix}").click()
     # the list's heading leads back to the menu's first page
@@ -273,25 +282,26 @@ def test_the_tools_and_skills_rows_count_what_is_picked(page_for, builder):
     menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
     expect(menu.get_by_role("menuitem", name=re.compile(r"^Skills"))).to_contain_text("1 selected")
 
-    close_menu(page)
-    menu = open_integrations(page)
+    close_menu(chat)
+    menu = open_integrations(chat)
     expect(menu.get_by_role("menuitem", name=re.compile(r"^Tools"))).to_contain_text("2 selected")
 
 
-def pick_from_list(page: Page, entry: str, name: str) -> None:
-    item = open_list(page, entry).get_by_role("menuitemcheckbox", name=name)
+def pick_from_list(chat: ChatSurface, entry: str, name: str) -> None:
+    item = open_list(chat, entry).get_by_role("menuitemcheckbox", name=name)
     item.click()
     expect(item).to_have_attribute("aria-checked", "true")
-    close_menu(page)
+    close_menu(chat)
 
 
-def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(page_for, builder):
+def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(chat_for, builder):
     account, suffix = builder
-    page = page_for(account)
-    pick_from_list(page, "Tools", f"Puffin counter {suffix}")
-    expect_picked(page, "Tools", 1)
-    tools_chip = page.get_by_role("button", name="Available Tools")
-    expect(tools_chip).to_have_count(0)
+    chat = chat_for(account)
+    page = chat.page
+    pick_from_list(chat, "Tools", f"Puffin counter {suffix}")
+    expect_picked(chat, "Tools", 1)
+    expect(page.get_by_role("button", name="Available Tools")).to_have_count(0)
+    tools_chip = chat.panel.get_by_role("button", name="Available Tools")
 
     open_settings(page)
     settings = page.get_by_role("dialog")
@@ -307,6 +317,6 @@ def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(page
     expect(tools_chip).to_have_text("1")
 
     # the setting is the account's, so a page opened afresh shows the chips too
-    page = page_for(account)
-    pick_from_list(page, "Tools", f"Tide table {suffix}")
-    expect(page.get_by_role("button", name="Available Tools")).to_have_text("1")
+    chat = chat_for(account)
+    pick_from_list(chat, "Tools", f"Tide table {suffix}")
+    expect(chat.panel.get_by_role("button", name="Available Tools")).to_have_text("1")
