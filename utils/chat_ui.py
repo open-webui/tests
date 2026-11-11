@@ -14,7 +14,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from harness.plain_http import loopback_url
 from utils.chat_surface import REPLY_TIMEOUT_MS as REPLY_TIMEOUT_MS
-from utils.chat_surface import ChatSurface
+from utils.chat_surface import ChatSurface, main_chat, open_new_chat_tab
 
 Chat = Page | ChatSurface
 
@@ -276,12 +276,18 @@ def start_from_link(chat: ChatSurface, link: str) -> None:
         chat.page.goto(link)
         return
     asked = parse_qs(urlsplit(link).query)
-    model_ids = asked.pop("models", []) + asked.pop("model", [])
+    model_ids = [
+        model_id
+        for value in asked.pop("models", []) + asked.pop("model", [])
+        for model_id in value.split(",")
+    ]
     tool_ids = [tool_id for value in asked.pop("tools", []) for tool_id in value.split(",")]
     assert not asked, f"a side chat cannot be started with {sorted(asked)} from a link"
     if model_ids:
-        (model_id,) = model_ids
-        _pick_model(chat, _names_by_id(chat.page, "/api/models")[model_id])
+        names = _names_by_id(chat.page, "/api/models")
+        first, *others = (names[model_id] for model_id in model_ids)
+        _pick_model(chat, first)
+        _compare_with(chat, first, others)
     if tool_ids:
         tool_names = _names_by_id(chat.page, "/api/v1/tools/")
         for tool_id in tool_ids:
@@ -298,6 +304,20 @@ def _compare_with(chat: ChatSurface, current: str, names: list[str]) -> None:
         chat.page.get_by_role("combobox", name="Search In Models").fill(name)
         chat.page.get_by_role("option", name=f"Select {name} model", exact=True).click()
     chat.page.keyboard.press("Escape")
+
+
+def start_another_chat(chat: ChatSurface, link: str = "/") -> ChatSurface:
+    """Start a further new chat the way a link does, and return the chat it is.
+
+    The main chat opens the link in the same page. A side chat opens a New Chat tab beside it."""
+    if not chat.is_side:
+        chat.page.goto(link)
+        return chat
+    # the shortcut opens beside the main chat, which a selected side tab hides
+    main_chat(chat.page).show()
+    another = open_new_chat_tab(chat.page)
+    start_from_link(another, link)
+    return another
 
 
 def start_on_default_models(chat: ChatSurface) -> None:
