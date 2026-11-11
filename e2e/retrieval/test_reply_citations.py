@@ -11,6 +11,11 @@ as the n+1th source turned the marker test red, the source list shown whatever t
 capability turned the capability test red and the source list left out of read-only views turned
 the shared link test red; in a backend copy, the reply stored without the sources it streamed
 turned the reload test red.
+
+Every test but the shared link runs in the main chat and in a side chat
+(`utils/chat_surface.py`); the shared link is a page of its own. A side chat answer listed no
+sources from an attached file until a reload (open-webui/open-webui#34017, fix PR
+open-webui/open-webui#34064), so the side chat variants are red on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -25,7 +30,17 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, listed_source, send
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import (
+    chat_input,
+    conversation,
+    expect_reply,
+    last_reply,
+    listed_source,
+    open_input_menu,
+    send,
+    start_from_link,
+)
 
 pytestmark = [
     pytest.mark.journey,
@@ -51,17 +66,20 @@ NO_CITATIONS = {
 }
 
 
-def _attach(page: Page, *files: tuple[str, str]) -> None:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="More", exact=True).last.click()
+def _attach(chat: Page | ChatSurface, *files: tuple[str, str]) -> None:
+    page = chat.page if isinstance(chat, ChatSurface) else chat
+    expect(chat_input(chat)).to_be_visible()
+    menu = open_input_menu(chat)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
+        menu.get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files(
         [{"name": name, "mimeType": "text/plain", "buffer": text.encode()} for name, text in files]
     )
 
 
-def _ask_with_files(page: Page, upstream, answer: str, *files: tuple[str, str]) -> str:
+def _ask_with_files(
+    page: Page | ChatSurface, upstream, answer: str, *files: tuple[str, str]
+) -> str:
     """Attach `files`, ask about them and wait for `answer`; returns the question asked."""
     question = f"what do my notes say? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text(answer, match=reply.answering(question)))
@@ -81,32 +99,32 @@ def _source_ids_sent(upstream, question: str) -> dict[str, str]:
     return dict(SOURCE_TAG.findall(context))
 
 
-def _open_listed_source(page: Page, name: str, count: int = 1):
-    chat = conversation(page)
+def _open_listed_source(chat: Page | ChatSurface, name: str, count: int = 1):
+    page = chat.page if isinstance(chat, ChatSurface) else chat
     label = "Toggle 1 source" if count == 1 else f"Toggle {count} sources"
-    chat.get_by_role("button", name=label).click()
-    listed_source(page, name).click()
+    conversation(chat).get_by_role("button", name=label).click()
+    listed_source(chat, name).click()
     return page.get_by_role("dialog")
 
 
-def test_each_inline_marker_opens_the_source_it_names(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_each_inline_marker_opens_the_source_it_names(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     question = _ask_with_files(
-        page, upstream, "Herons wait [1] and otters slide [2].", HERONS, OTTERS
+        chat, upstream, "Herons wait [1] and otters slide [2].", HERONS, OTTERS
     )
     source_ids = _source_ids_sent(upstream, question)
     assert set(source_ids.values()) == {HERONS[0], OTTERS[0]}, source_ids
     texts = dict((HERONS, OTTERS))
 
-    expect(conversation(page).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
-    markers = last_reply(page).get_by_role("button", name=re.compile(r"^View source: "))
+    expect(conversation(chat).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
+    markers = last_reply(chat).get_by_role("button", name=re.compile(r"^View source: "))
     expect(markers).to_have_count(2)
     for position in (1, 2):
         name = source_ids[str(position)]
         marker = markers.nth(position - 1)
         expect(marker).to_have_accessible_name(f"View source: {name}")
         marker.click()
-        citation = page.get_by_role("dialog")
+        citation = chat.page.get_by_role("dialog")
         expect(citation.get_by_role("link", name=name)).to_be_visible()
         expect(citation).to_contain_text(texts[name])
         expect(citation.get_by_text(PERCENTAGE)).to_be_visible()
@@ -114,14 +132,14 @@ def test_each_inline_marker_opens_the_source_it_names(page_for, make_user, upstr
         expect(citation).to_be_hidden()
 
 
-def test_the_sources_are_still_listed_after_a_reload(page_for, make_user, upstream):
-    page = page_for(make_user())
-    _ask_with_files(page, upstream, "They wait in the reeds.", HERONS)
-    expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
+def test_the_sources_are_still_listed_after_a_reload(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    _ask_with_files(chat, upstream, "They wait in the reeds.", HERONS)
+    expect(chat.page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
 
-    page.reload()
-    expect_reply(page, "They wait in the reeds.")
-    citation = _open_listed_source(page, HERONS[0])
+    chat = chat.reload()
+    expect_reply(chat, "They wait in the reeds.")
+    citation = _open_listed_source(chat, HERONS[0])
     expect(citation).to_contain_text(HERONS[1])
 
 
@@ -167,14 +185,15 @@ def model_without_citations(admin):
 
 
 def test_a_model_with_citations_off_shows_no_sources(
-    page_for, make_user, upstream, model_without_citations
+    chat_for, make_user, upstream, model_without_citations
 ):
-    page = page_for(make_user(), path=f"/?models={model_without_citations}")
-    question = _ask_with_files(page, upstream, "Herons wait in the reeds [1].", HERONS)
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={model_without_citations}")
+    question = _ask_with_files(chat, upstream, "Herons wait in the reeds [1].", HERONS)
     assert _source_ids_sent(upstream, question) == {"1": HERONS[0]}
 
-    reply_shown = last_reply(page)
+    reply_shown = last_reply(chat)
     expect(reply_shown).to_contain_text("Herons wait in the reeds.")
     expect(reply_shown).not_to_contain_text("[1]")
     expect(reply_shown.get_by_role("button", name=re.compile(r"^View source: "))).to_have_count(0)
-    expect(conversation(page).get_by_role("button", name=SOURCE_TOGGLE)).to_have_count(0)
+    expect(conversation(chat).get_by_role("button", name=SOURCE_TOGGLE)).to_have_count(0)
