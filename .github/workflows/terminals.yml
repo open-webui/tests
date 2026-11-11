@@ -252,12 +252,15 @@ jobs:
             echo "OWUI_TEST_REQUIRE_TERMINALS=1"
           } >> "$GITHUB_ENV"
 
+      # The runner's log masking takes hours on a line of megabytes (a failed assertion that quotes a
+      # large body), so pytest's output lines are cut at 10 000 characters; the reports keep them whole.
       - name: Run the terminal tests of the integration suite
         working-directory: tests
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        shell: bash
+        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -392,7 +395,8 @@ jobs:
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
           OWUI_TEST_DATABASE: postgres
           OWUI_TEST_REDIS: '1'
-        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html
+        shell: bash
+        run: pytest integration -m terminal -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -581,7 +585,8 @@ jobs:
           LC_ALL: en_US.UTF-8
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest e2e -m terminal -q --splits 3 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html
+        shell: bash
+        run: pytest e2e -m terminal -q --splits 3 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -754,7 +759,8 @@ jobs:
           LC_ALL: en_US.UTF-8
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
-        run: pytest integration e2e -m full_terminal -q --junitxml=test-results/junit.xml --html=test-results/full-terminal-report.html --self-contained-html
+        shell: bash
+        run: pytest integration e2e -m full_terminal -q --junitxml=test-results/junit.xml --html=test-results/full-terminal-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
