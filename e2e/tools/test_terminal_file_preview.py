@@ -35,7 +35,8 @@ find never moving to a match, a workbook save never uploading, undo and redo doi
 preview size limit and the CSV view cut at 1000 rows. The paste, column, protected sheet and pasted
 picture tests pass on dev e8c0ad85e and fail on a copy of the dev e8c0ad85e build where every paste
 is refused as too long, the arrow keys move no column edge, sheet protection is ignored and a pasted
-picture is not taken as an image.
+picture is not taken as an image. The second pasted picture test passes on dev c15f28649 and
+fails on a build of it where an upload from the editor keeps the name it was given.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import os
 import re
 import sqlite3
 import stat
@@ -785,4 +787,45 @@ def test_a_picture_pasted_into_a_note_is_uploaded_beside_it_and_linked(browser, 
     assert wait_until(lambda: "pier.png" in note.read_text(), 10), note.read_text()
     assert "![pier.png](./pier.png)" in note.read_text(), (
         f"the note does not link the picture beside it: {note.read_text()!r}"
+    )
+
+
+OTHER_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQmGAAAAGEANH1YFpOAAAAAElFTkSuQmCC"
+)
+
+
+def test_a_second_pasted_picture_of_the_same_name_is_stored_under_a_name_of_its_own(
+    browser, open_terminal
+):
+    folder = open_terminal.home / unique("walk.d").replace(".", "-")
+    folder.mkdir()
+    note = folder / "walk.md"
+    note.write_text("# Walk\n\nThe quay at noon.\n")
+    browser.get_by_label("Refresh", exact=True).first.click()
+    open_file(browser, folder.name)
+    open_file(browser, note.name)
+    browser.get_by_text("The quay at noon.", exact=True).click()
+    browser.page.keyboard.press("End")
+    paste_into_focus(browser.page, picture=("quay.png", TINY_PNG))
+    expect(browser.get_by_role("img", name="quay.png")).to_be_visible()
+    assert wait_until((folder / "quay.png").exists, 10), "the first picture was not uploaded"
+
+    paste_into_focus(browser.page, picture=("quay.png", OTHER_PNG))
+
+    second = folder / "quay (1).png"
+    assert wait_until(second.exists, 10), (
+        f"the second picture got no name of its own; the folder holds {sorted(os.listdir(folder))}"
+    )
+    assert second.read_bytes() == OTHER_PNG, "the second picture's file holds other bytes"
+    assert (folder / "quay.png").read_bytes() == TINY_PNG, (
+        "the second picture was written over the first"
+    )
+    expect(browser.get_by_role("img", name="quay (1).png")).to_be_visible()
+    browser.get_by_role("button", name="Save", exact=True).click()
+    assert wait_until(lambda: "quay%20%281%29.png" in note.read_text(), 10), (
+        f"the note does not link the second picture by its own name: {note.read_text()!r}"
+    )
+    assert "![quay.png](./quay.png)" in note.read_text(), (
+        f"the note lost the link to the first picture: {note.read_text()!r}"
     )
