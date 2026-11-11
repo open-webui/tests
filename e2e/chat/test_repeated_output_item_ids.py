@@ -12,16 +12,20 @@ tab fails the test and does not hang the run.
 
 Discriminates: passes on the dev b859124f9 build; in the build with 8b4d3ac52 reverted the
 reopened chat never shows its reply (the tab is unresponsive).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a stored chat
+dragged into a tab beside a new chat.
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import responses_provider as responses_api
 from harness.chat_history import seed_chat
 from harness.second_provider import OPENAI_CONFIG
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import expect_reply, last_reply, send
 from utils.model_selector import select_model
 
@@ -40,26 +44,26 @@ def responses(admin, preserve, listener):
         yield responses_api.connect_responses(client, listener)
 
 
-def expect_responsive(page: Page) -> None:
+def expect_responsive(chat: ChatSurface) -> None:
     # a frozen renderer never answers, so the wait ends at its timeout
-    page.wait_for_function("() => true", timeout=RESPONSIVE_MS)
+    chat.page.wait_for_function("() => true", timeout=RESPONSIVE_MS)
 
 
-def expect_whole_reply(page: Page) -> None:
-    expect(last_reply(page)).to_contain_text(BEFORE_THE_TOOL, timeout=RESPONSIVE_MS)
-    expect(last_reply(page)).to_contain_text(AFTER_THE_TOOL, timeout=RESPONSIVE_MS)
-    expect(last_reply(page).get_by_text("View Result from get_current_timestamp")).to_be_visible(
+def expect_whole_reply(chat: ChatSurface) -> None:
+    expect(last_reply(chat)).to_contain_text(BEFORE_THE_TOOL, timeout=RESPONSIVE_MS)
+    expect(last_reply(chat)).to_contain_text(AFTER_THE_TOOL, timeout=RESPONSIVE_MS)
+    expect(last_reply(chat).get_by_text("View Result from get_current_timestamp")).to_be_visible(
         timeout=RESPONSIVE_MS
     )
-    expect_responsive(page)
+    expect_responsive(chat)
 
 
 def test_a_reply_with_the_provider_reusing_item_ids_shows_after_a_reload(
-    page_for, make_user, responses
+    chat_for, make_user, responses
 ):
     # an admin account, so the Responses connection's model needs no access grant
-    page = page_for(make_user(role="admin"))
-    select_model(page, MODEL)
+    chat = chat_for(make_user(role="admin"))
+    select_model(chat, MODEL)
     responses.answer(
         responses_api.events_stream(
             *responses_api.message(BEFORE_THE_TOOL),
@@ -71,14 +75,14 @@ def test_a_reply_with_the_provider_reusing_item_ids_shows_after_a_reload(
         ),
     )
 
-    send(page, "what time is it?")
-    expect_reply(page, AFTER_THE_TOOL)
-    page.reload()
+    send(chat, "what time is it?")
+    expect_reply(chat, AFTER_THE_TOOL)
+    chat = chat.reload()
 
-    expect_whole_reply(page)
+    expect_whole_reply(chat)
 
 
-def test_a_stored_reply_with_repeated_item_ids_opens_with_text_and_tool_call(page_for, make_user):
+def test_a_stored_reply_with_repeated_item_ids_opens_with_text_and_tool_call(chat_for, make_user):
     account = make_user()
     call = {
         "type": "function_call",
@@ -107,9 +111,9 @@ def test_a_stored_reply_with_repeated_item_ids_opens_with_text_and_tool_call(pag
     ]
     with account.client() as client:
         chat_id, _ = seed_chat(client, history, model=MODEL)
-    page = page_for(account, path=f"/c/{chat_id}")
+    chat = chat_for(account, chat_id=chat_id)
 
-    expect_whole_reply(page)
+    expect_whole_reply(chat)
 
 
 def _message(item_id: str, text: str) -> dict:
