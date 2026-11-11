@@ -24,7 +24,10 @@ the domain filter skipped in `get_filtered_results` every filter case fails.
 
 No engine writes the query into the default server log (fix 8d7b71f6c, PR
 open-webui/open-webui#33701); on a backend copy with 8d7b71f6c reverted the Exa and Ollama cases
-fail.
+fail. Nor does any engine write the hits it found there, the external engine included
+(open-webui/open-webui#34129): on dev 262a8c6f7 the Kagi, Mojeek, Serply, SerpApi, Firecrawl,
+Yandex and external cases fail, and they pass on the fix branch
+Classic298:fix/retrieved-content-in-info-logs.
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ from harness.search_apis import (
     serving_search_apis,
 )
 from harness.tool_calls import run_tool
-from harness.web_retrieval import save_web_settings, web_settings_restored
+from harness.web_retrieval import save_web_settings, serve_search_results, web_settings_restored
 
 pytestmark = [
     pytest.mark.journey,
@@ -97,13 +100,32 @@ def test_the_model_gets_the_hits_the_engine_found(engine, searching, searching_a
     found = search(searching, "ferry harbour")
 
     assert found == engine.found([HARBOUR, ELSEWHERE])
-    assert "ferry harbour" not in searching.log_since(log_offset), (
+    logged = searching.log_since(log_offset)
+    assert "ferry harbour" not in logged, (
         f"searching with {engine.name} wrote the query into the default server log (#33701)"
+    )
+    assert HARBOUR.snippet not in logged, (
+        f"searching with {engine.name} wrote what it found into the default server log (#34129)"
     )
     [sent] = engine.searches(apis)[-1:]
     assert carries(sent, "ferry harbour"), f"{engine.name} was not asked the query: {sent}"
     if engine.name not in {"yacy", "openserp"}:  # neither takes a key
         assert carries(sent, API_KEY), f"{engine.name} was not sent the admin's key: {sent}"
+
+
+def test_the_external_engine_keeps_its_hits_out_of_the_default_log(
+    searching, searching_admin, apis
+):
+    save_web_settings(searching_admin, **serve_search_results(apis.listener, [HARBOUR.link]))
+    log_offset = searching.log_size()
+
+    found = search(searching, "ferry external")
+
+    assert [hit["link"] for hit in found] == [HARBOUR.link], found
+    assert f"snippet of {HARBOUR.link}" not in searching.log_since(log_offset), (
+        "searching with the external engine wrote what it found into the default server log"
+        " (#34129)"
+    )
 
 
 @pytest.mark.parametrize(

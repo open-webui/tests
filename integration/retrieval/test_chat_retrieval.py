@@ -31,6 +31,10 @@ base test red.
 The failing reranker test pins fix 8d7b71f6c (PR open-webui/open-webui#33701): the default server
 log held every question sent to an external reranker and, when it failed, its address. It passes
 on dev e8c0ad85e and fails on a backend copy with 8d7b71f6c reverted.
+
+The knowledge base, full context and relevance threshold tests also check that the default server
+log does not name the file a search found (open-webui/open-webui#34129). They fail on dev
+262a8c6f7 and pass on the fix branch Classic298:fix/retrieved-content-in-info-logs.
 """
 
 from __future__ import annotations
@@ -143,6 +147,12 @@ def paragraphs_in(sent: str) -> set[str]:
     return {paragraph for paragraph in PARAGRAPHS if paragraph in sent}
 
 
+def assert_found_files_kept_out_of(logged: str) -> None:
+    assert "field-notes.txt" not in logged, (
+        "the default server log names the file the search found (#34129)"
+    )
+
+
 # --- which chunks the model gets ----------------------------------------------------------------
 
 
@@ -167,10 +177,12 @@ def test_a_larger_top_k_sends_more_chunks(ranked, settings, reader):
 def test_full_context_sends_every_chunk(ranked, settings, reader):
     settings(TOP_K=1, RAG_FULL_CONTEXT=True, ENABLE_RAG_HYBRID_SEARCH=False)
     notes = attached_file(reader)
+    log_offset = ranked.log_size()
 
     sent, _ = ask_about(ranked, reader, "What lives by the heron pond?", [notes])
 
     assert paragraphs_in(sent) == set(PARAGRAPHS), f"full context left chunks out: {sent}"
+    assert_found_files_kept_out_of(ranked.log_since(log_offset))
 
 
 def test_a_file_attached_in_full_sends_its_whole_text(ranked, settings, reader):
@@ -210,10 +222,12 @@ def test_a_knowledge_base_attached_to_the_chat_is_searched(ranked, settings, rea
     ):
         add_text_file(client, guide_id, "field-notes.txt", FIELD_NOTES)
         guide = {"type": "collection", "id": guide_id, "name": "Field guide"}
+        log_offset = ranked.log_size()
 
         sent, _ = ask_about(ranked, reader, "Where does the heron hunt?", [guide])
 
     assert paragraphs_in(sent) == HERON_PARAGRAPHS, sent
+    assert_found_files_kept_out_of(ranked.log_since(log_offset))
 
 
 # a paragraph no question is about, with letters that take two bytes each
@@ -260,10 +274,12 @@ def test_the_relevance_threshold_drops_weak_chunks(ranked, settings, reader):
 
     strict, _ = ask_about(ranked, reader, "Where does the heron hunt?", [notes])
     settings(RELEVANCE_THRESHOLD=0.0)
+    log_offset = ranked.log_size()
     lenient, _ = ask_about(ranked, reader, "Where does the heron hunt?", [notes])
 
     assert paragraphs_in(strict) == HERON_PARAGRAPHS, f"weak chunks passed the threshold: {strict}"
     assert paragraphs_in(lenient) == set(PARAGRAPHS)
+    assert_found_files_kept_out_of(ranked.log_since(log_offset))
 
 
 @pytest.fixture
