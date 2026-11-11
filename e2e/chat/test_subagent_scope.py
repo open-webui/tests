@@ -16,6 +16,10 @@ written (open-webui/open-webui#32066, fixed by 641c82df1).
 Discriminates: passes on dev 176d31d1d. In backend copies each test turns red with its edit: the
 sub-agent's tool ids dropped, the sub-agent's chat left listed, and the sub-agent's answer left
 out of a shared copy of the chat.
+
+The test of the tool switched on in the chat runs in the main chat and in a side chat. The other
+two are about the page (the sidebar and its search, the share link of the chat header's menu) and
+stay on the main chat.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.python_tools import python_tool
 from utils.cached_chat import turn_on_tool
-from utils.chat_ui import conversation, expect_reply, last_reply, send
+from utils.chat_ui import Chat, conversation, expect_reply, last_reply, send
 from utils.member_picker import pick_member
 from utils.search_dialog import no_matches, open_search_from_sidebar, result, search
 
@@ -72,14 +76,14 @@ def delegation(prompt: str, task: str, *sub_steps: reply.Reply) -> list[reply.Re
     ]
 
 
-def delegated_row(page: Page, task: str) -> Locator:
+def delegated_row(chat: Chat, task: str) -> Locator:
     # a narrow chat column shows the short label, without "View Result from"
     name = re.escape(f'Sub-agent: "{task}"')
-    return last_reply(page).get_by_role("button", name=re.compile(name))
+    return last_reply(chat).get_by_role("button", name=re.compile(name))
 
 
 def test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_does_not(
-    subagents_on, admin, page_for, make_user, upstream
+    subagents_on, admin, chat_for, make_user, upstream
 ):
     used, unused = f"shout_{uuid.uuid4().hex[:6]}", f"whisper_{uuid.uuid4().hex[:6]}"
     used_name, unused_name = unique("Loud tools"), unique("Quiet tools")
@@ -96,16 +100,16 @@ def test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_do
         python_tool(admin, TOOL_SOURCE.format(name=used), used_name),
         python_tool(admin, TOOL_SOURCE.format(name=unused), unused_name),
     ):
-        page = page_for(make_user())
-        turn_on_tool(page, used_name)
-        send(page, prompt)
-        expect_reply(page, "The helper is done.")
+        chat = chat_for(make_user())
+        turn_on_tool(chat, used_name)
+        send(chat, prompt)
+        expect_reply(chat, "The helper is done.")
 
     first, *_, last = sub_requests(upstream, task)
     assert used in offered(first)
     assert unused not in offered(first)
     assert last["messages"][-1] == {"role": "tool", "tool_call_id": "sub_call", "content": "AHOY"}
-    expect(delegated_row(page, task)).to_be_visible()
+    expect(delegated_row(chat, task)).to_be_visible()
 
 
 def sidebar_chats(page: Page) -> Locator:
