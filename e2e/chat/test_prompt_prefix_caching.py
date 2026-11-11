@@ -33,6 +33,15 @@ was already stored in the chat, the way automations, sub-agents and timers prepa
 was refused with 409 and the reply never written (open-webui/open-webui#32066, fixed by
 641c82df1).
 
+Nine tests run in the main chat and in a side chat (`utils/chat_surface.py`): the long chat, the
+image, the regenerated reply, the temperature, the skill, the sub-agent, the timer, the background
+sub-agent report and the workspace tool. The terminal tests, the Create skill test and the folder
+test stay on the page: they are about the page's Files tab and tab menus, the terminal's split
+screen and the folder page's address. On dev c15f28649 four side variants are red: the
+regenerated reply (no Regenerate, open-webui/open-webui#34014), the timer and the background
+report (shown in a side chat only after a reload, no filed issue) and the workspace tool picked
+before the first turn; all pass on dev e791cbdde, with PR open-webui/open-webui#34064.
+
 Discriminates: passes on dev 30f3f6a8f apart from those five, which fail there. In backend
 copies, a clock value added to the model's system prompt turned every other test red; with no
 stored system prompt handed to a timer or a report and the Create skill command left as typed,
@@ -86,6 +95,7 @@ from utils.chat_ui import (
     expect_reply,
     last_reply,
     split_screen,
+    start_from_link,
 )
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -115,35 +125,38 @@ def cached_setup(admin, preserve):
         yield model
 
 
-def test_a_long_chat_in_the_browser_only_appends(page_for, cached_setup, make_user, upstream):
+def test_a_long_chat_in_the_browser_only_appends(
+    chat_for, page_for, cached_setup, make_user, upstream
+):
     person = make_user()
-    page = page_for(person, path=f"/?models={cached_setup.id}")
+    chat = chat_for(person)
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    attach(page, *NOTES)
+    attach(chat, *NOTES)
     ask(
-        page,
+        chat,
         upstream,
         "which berth is free?",
         calling("query_chat_files", {"query": "free berth"}),
         reply.text("Berth 5 is free (berths.txt)."),
     )
     ask(
-        page,
+        chat,
         upstream,
         "and for the pilot boat?",
         reply.text("Berth 3, as the file says.", reasoning="the file names berth 3"),
     )
     ask(
-        page,
+        chat,
         upstream,
         "when does the ferry leave?",
         calling("query_knowledge_files", {"query": "ferry"}),
         reply.text("At 06:40 (handbook.txt)."),
     )
-    chat_url = page.url
+    chat_url = chat.page.url
 
-    page.reload()
-    ask(page, upstream, "is that every day?", reply.text("Every day, the handbook says."))
+    chat = chat.reload()
+    ask(chat, upstream, "is that every day?", reply.text("Every day, the handbook says."))
 
     second = page_for(person, path=chat_url)
     expect(second.get_by_text("Every day, the handbook says.")).to_be_visible()
@@ -167,14 +180,15 @@ def test_a_long_chat_in_the_browser_only_appends(page_for, cached_setup, make_us
     assert_append_only(requests)
 
 
-def test_a_chat_about_an_attached_image_only_appends(page_for, cached_setup, make_user, upstream):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+def test_a_chat_about_an_attached_image_only_appends(chat_for, cached_setup, make_user, upstream):
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    attach(page, "harbour.png", SNAPSHOT_PNG, "image/png")
-    ask(page, upstream, "what is in this picture?", reply.text("A calm harbour."))
-    ask(page, upstream, "any boats?", reply.text("Two boats."))
-    page.reload()
-    ask(page, upstream, "thanks", reply.text("Enjoy the view."))
+    attach(chat, "harbour.png", SNAPSHOT_PNG, "image/png")
+    ask(chat, upstream, "what is in this picture?", reply.text("A calm harbour."))
+    ask(chat, upstream, "any boats?", reply.text("Two boats."))
+    chat = chat.reload()
+    ask(chat, upstream, "thanks", reply.text("Enjoy the view."))
 
     requests = chat_requests(upstream)
     first_question = requests[0]["messages"][1]["content"]
@@ -388,17 +402,18 @@ def test_a_chat_in_a_folder_with_its_own_prompt_and_knowledge_only_appends(
     assert_append_only(requests)
 
 
-def test_regenerating_the_last_reply_only_appends(page_for, cached_setup, make_user, upstream):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    ask(page, upstream, "when does the ferry leave?", reply.text("Soon."))
+def test_regenerating_the_last_reply_only_appends(chat_for, cached_setup, make_user, upstream):
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
+    ask(chat, upstream, "when does the ferry leave?", reply.text("Soon."))
 
     upstream.queue(reply.text("At 06:40.", match=reply.answering("when does the ferry leave?")))
-    last_reply(page).hover()
-    conversation(page).get_by_role("button", name="Regenerate").last.click()
-    page.get_by_text("Try Again").click()
-    expect_reply(page, "At 06:40.")
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    last_reply(chat).hover()
+    conversation(chat).get_by_role("button", name="Regenerate").last.click()
+    chat.page.get_by_text("Try Again").click()
+    expect_reply(chat, "At 06:40.")
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     original, regenerated = requests[1], requests[2]
@@ -415,22 +430,23 @@ def test_regenerating_the_last_reply_only_appends(page_for, cached_setup, make_u
 
 
 def test_a_temperature_and_model_description_change_mid_chat_only_append(
-    page_for, cached_setup, admin, make_user, upstream
+    chat_for, cached_setup, admin, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
 
-    panel = open_section(open_chat_controls(page), "Advanced Params")
+    panel = open_section(open_chat_controls(chat), "Advanced Params")
     control_button(panel, "Temperature").click()
     panel.get_by_role("spinbutton", name="Temperature").fill("0.2")
-    close_menu(page)
+    close_menu(chat)
     with admin.client() as client:
         stored = client.get("/api/v1/models/model", params={"id": cached_setup.id}).json()
         stored["meta"]["description"] = "Answers questions about the harbour"
         updated = client.post("/api/v1/models/model/update", json=stored)
         assert updated.status_code == 200, updated.text
-    ask(page, upstream, "when does the ferry leave?", reply.text("At 06:40."))
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    ask(chat, upstream, "when does the ferry leave?", reply.text("At 06:40."))
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     assert requests[1].get("temperature") == 0.2, requests[1].get("temperature")
@@ -459,18 +475,19 @@ def harbour_skill(admin):
 
 
 def test_a_skill_loaded_on_demand_only_appends(
-    page_for, cached_setup, harbour_skill, make_user, upstream
+    chat_for, cached_setup, harbour_skill, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
     ask(
-        page,
+        chat,
         upstream,
         "when is high tide?",
         calling("view_skill", {"id": harbour_skill}),
         reply.text("At noon."),
     )
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     listed = "\n".join(reply.context_results(requests[0], "list_available_skills"))
@@ -502,19 +519,20 @@ def requests_of_chat(upstream, opening: str) -> list[dict]:
     ]
 
 
-def test_a_sub_agent_only_appends(page_for, cached_setup, make_user, subagents_on, upstream):
+def test_a_sub_agent_only_appends(chat_for, cached_setup, make_user, subagents_on, upstream):
     subagents_on()
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
     upstream.queue(reply.text("It leaves at 06:40.", match=reply.answering("find the ferry time")))
     ask(
-        page,
+        chat,
         upstream,
         "ask a helper about the ferry",
         calling("delegate_task", {"task": "find the ferry time"}),
         reply.text("The helper says 06:40."),
     )
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = requests_of_chat(upstream, "good morning")
     assert "It leaves at 06:40." in tool_results(requests[-1]), tool_results(requests[-1])
@@ -523,20 +541,21 @@ def test_a_sub_agent_only_appends(page_for, cached_setup, make_user, subagents_o
 
 @pytest.mark.regression
 def test_a_timer_firing_into_the_open_chat_keeps_the_prefix(
-    page_for, cached_setup, make_user, subagents_on, upstream
+    chat_for, cached_setup, make_user, subagents_on, upstream
 ):
     subagents_on()
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
     upstream.queue(reply.text("Time to go.", match=reply.answering(TIMER_PROMPT)))
     ask(
-        page,
+        chat,
         upstream,
         "remind me to leave",
         calling("timer", {"prompt": TIMER_PROMPT, "at": "2s"}),
         reply.text("Timer set."),
     )
-    expect_reply(page, "Time to go.")
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    expect_reply(chat, "Time to go.")
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = requests_of_chat(upstream, "remind me to leave")
     assert reply.answering(TIMER_PROMPT)(requests[2]), "the timer's turn is not the third request"
@@ -549,24 +568,25 @@ def test_a_timer_firing_into_the_open_chat_keeps_the_prefix(
 
 @pytest.mark.regression
 def test_a_background_sub_agent_report_keeps_the_prefix(
-    page_for, cached_setup, make_user, subagents_on, upstream
+    chat_for, cached_setup, make_user, subagents_on, upstream
 ):
     subagents_on(SUBAGENTS_BACKGROUND_ENABLED=True)
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
     task = f"find the ferry time {uuid.uuid4().hex[:6]}"
     upstream.queue(
         reply.text("It leaves at 06:40.", match=reply.answering(task), delay=3),
         reply.text("The helper says 06:40.", match=reply.answering("[ASYNC SUBAGENT COMPLETE")),
     )
     ask(
-        page,
+        chat,
         upstream,
         "ask a helper about the ferry",
         calling("delegate_task", {"task": task, "background": True}),
         reply.text("A helper is on it."),
     )
-    expect_reply(page, "The helper says 06:40.")
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    expect_reply(chat, "The helper says 06:40.")
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = requests_of_chat(upstream, "ask a helper about the ferry")
     broken = first_break(requests)
@@ -610,14 +630,15 @@ def test_the_create_skill_command_keeps_the_prefix(terminal_skill, skill_author_
 
 
 def test_a_workspace_tool_picked_before_the_first_turn_only_appends(
-    page_for, cached_setup, admin, make_user, upstream
+    chat_for, cached_setup, admin, make_user, upstream
 ):
     with python_tool(admin, TIDE_TOOL, name="Tide clock") as tool_id:
-        page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-        turn_on_tool(page, "Tide clock")
-        ask(page, upstream, "good morning", reply.text("Morning."))
+        chat = chat_for(make_user())
+        start_from_link(chat, f"/?models={cached_setup.id}")
+        turn_on_tool(chat, "Tide clock")
+        ask(chat, upstream, "good morning", reply.text("Morning."))
         ask(
-            page,
+            chat,
             upstream,
             "when is high tide here and in Oban?",
             calling_together(
@@ -626,13 +647,13 @@ def test_a_workspace_tool_picked_before_the_first_turn_only_appends(
             reply.text("At noon in both."),
         )
         # the chat keeps its tool choice in a draft saved half a second after each send
-        page.wait_for_function(
+        chat.page.wait_for_function(
             "toolId => Object.keys(sessionStorage).some((key) =>"
             " key.startsWith('chat-input-') && sessionStorage[key].includes(toolId))",
             arg=tool_id,
         )
-        page.reload()
-        ask(page, upstream, "thanks", reply.text("Safe travels."))
+        chat = chat.reload()
+        ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     assert "tide_time" in called_tools(requests[-1])
