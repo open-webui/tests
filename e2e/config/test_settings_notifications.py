@@ -25,6 +25,13 @@ hides while the sound is off.
 Discriminates: on dev f659c0d12, in a frontend copy whose notification click opens nothing the
 reply, channel and calendar tests fail at the click, one whose toast plays no sound fails the
 sound test, and one that plays the Chime for every style fails the style test at the preview.
+
+A reply that finishes while the window is in the background raises the browser notification and
+the toast in the main chat and in a chat in a side tab alike, and a reply read in view raises
+none. A side chat raised nothing at all (open-webui/open-webui#34025).
+
+Discriminates: the side chat variants fail on dev 262a8c6f7 and pass on the fix branch
+fix/side-chat-background-notification; the main chat variant passes on both.
 """
 
 from __future__ import annotations
@@ -43,6 +50,14 @@ from harness import upstream as reply
 from harness.backends import wait_until
 from harness.calendar_api import MINUTE_NS, create_event, default_calendar_id
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from utils.chat_surface import (
+    ASKED_ASIDE,
+    DRAGGED_TAB,
+    MAIN_CHAT,
+    REPLY_TIMEOUT_MS,
+    SIDE_CHAT,
+    TEMPORARY_SIDE,
+)
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -137,6 +152,53 @@ def test_a_reply_finished_in_another_chat_shows_a_browser_notification_that_open
     other = recording_page(page_for, make_user(), allow=True)
     expect(notifications_switch(other)).to_have_attribute("aria-checked", "false")
     assert finish_a_reply_elsewhere(other, upstream, "When does the tide turn today?") == []
+
+
+# a headless page is never hidden, so it is told what a page in a window in the background is told
+SHOW_THE_WINDOW_AS = """state => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange'));
+}"""
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, ASKED_ASIDE, DRAGGED_TAB, TEMPORARY_SIDE)
+def test_a_reply_that_finishes_while_the_window_is_in_the_background_shows_a_notification(
+    chat_for, make_user, upstream
+):
+    """In a side chat: open-webui/open-webui#34025, no notification, toast or sound at all."""
+    account = make_user()
+    with account.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"notificationEnabled": True}}
+        )
+    assert saved.status_code == 200, saved.text
+    chat = chat_for(
+        account,
+        init_script="const ALLOWED = true;" + RECORD_NOTIFICATIONS,
+        permissions=["notifications"],
+    )
+    page = chat.page
+    in_view = f"When does the ferry leave? ({uuid.uuid4().hex[:6]})"
+    upstream.queue(reply.text("At nine.", match=reply.answering(in_view)))
+    chat.send(in_view)
+    chat.expect_reply("At nine.")
+    expect(chat.stop_button).to_be_hidden(timeout=REPLY_TIMEOUT_MS)
+    assert page.evaluate("window.shownNotifications") == [], "a reply read in view was notified"
+
+    window_hidden = threading.Event()
+    away = f"When does the tide turn? ({uuid.uuid4().hex[:6]})"
+    upstream.queue(reply.text(ANSWER, hold=window_hidden, match=reply.answering(away)))
+    chat.send(away)
+    expect(chat.stop_button).to_be_visible()
+    page.evaluate(SHOW_THE_WINDOW_AS, "hidden")
+    window_hidden.set()
+
+    page.wait_for_function("window.shownNotifications.length > 0", timeout=REPLY_TIMEOUT_MS)
+    shown = page.evaluate("window.shownNotifications")
+    assert [notification["body"] for notification in shown] == [ANSWER], (
+        f"the {chat.place} notified {shown}"
+    )
+    expect(page.get_by_role("status").filter(has_text=ANSWER).last).to_be_visible()
 
 
 # keeps the pitch of every tone the page plays; since b6a77a0f1 the notification sound is a few
