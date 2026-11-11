@@ -19,6 +19,10 @@ with the reply stuck on the tool call although the server logged the connection 
 passed 3 of 3 locally: since de73bb830 the reply in a new chat sometimes stays unfinished until
 a reload although the server saved it whole (open-webui/open-webui#32091).
 
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649
+the hang-up test is red in a side chat: the error never shows in the reply (no filed issue); it
+passes on dev e791cbdde, with PR open-webui/open-webui#34064.
+
 Discriminates: passes on dev `bbfa876af`; each test fails with its fix reverted in the backend and
 the dev frontend build unchanged (one mutation each).
 """
@@ -34,7 +38,7 @@ from harness import upstream as reply
 from harness.plugins import installed_function
 from harness.second_provider import OPENAI_CONFIG, attach, sse, tool_call_delta
 from harness.socket_client import connected
-from utils.chat_ui import conversation, expect_reply, last_reply, send
+from utils.chat_ui import conversation, expect_reply, last_reply, send, start_from_link
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -42,13 +46,13 @@ SECOND_MODEL = "second-model"
 THOUGHTS = re.compile(r"^(Thinking|Thought)")
 
 
-def _chat_id(page) -> str:
-    expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
-    return page.url.rsplit("/", 1)[-1]
+def _chat_id(chat) -> str:
+    expect(chat.page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
+    return chat.page.url.rsplit("/", 1)[-1]
 
 
-def thinking_blocks(page):
-    return last_reply(page).get_by_role("button", name=THOUGHTS)
+def thinking_blocks(chat):
+    return last_reply(chat).get_by_role("button", name=THOUGHTS)
 
 
 @pytest.fixture
@@ -60,13 +64,14 @@ def second_provider(preserve, admin, listener):
 
 
 @pytest.fixture
-def second_model_page(page_for, make_user, second_provider):
-    """A signed-in admin's chat page with the second connection's model selected."""
-    page = page_for(make_user(role="admin"), path=f"/?models={SECOND_MODEL}")
-    return page
+def second_model_page(chat_for, make_user, second_provider):
+    """A signed-in admin's chat with the second connection's model selected."""
+    chat = chat_for(make_user(role="admin"))
+    start_from_link(chat, f"/?models={SECOND_MODEL}")
+    return chat
 
 
-def test_an_outlet_edit_to_the_output_survives_a_reload(page_for, make_user, admin, upstream):
+def test_an_outlet_edit_to_the_output_survives_a_reload(chat_for, make_user, admin, upstream):
     appends = """
 class Filter:
     def outlet(self, body: dict) -> dict:
@@ -76,13 +81,13 @@ class Filter:
     upstream.queue(reply.text("hello there"))
     person = make_user()
     with installed_function(admin, appends, is_global=True), connected(person) as socket:
-        page = page_for(person)
-        send(page, "hi")
-        expect_reply(page, "hello there")
-        socket.wait_for(_chat_id(page), "chat:outlet")
+        chat = chat_for(person)
+        send(chat, "hi")
+        expect_reply(chat, "hello there")
+        socket.wait_for(_chat_id(chat), "chat:outlet")
 
-        page.reload()
-        expect_reply(page, "hello there [reviewed]")
+        chat = chat.reload()
+        expect_reply(chat, "hello there [reviewed]")
 
 
 def test_reasoning_after_the_answer_shows_above_it(second_model_page, second_provider):
@@ -125,30 +130,31 @@ def test_a_provider_that_hangs_up_after_a_tool_call_shows_an_error(
     expect_reply(second_model_page, "Server Connection Error")
 
 
-def test_a_plain_json_error_line_shows_after_a_reload(page_for, make_user, second_provider):
+def test_a_plain_json_error_line_shows_after_a_reload(chat_for, make_user, second_provider):
     second_provider.route("POST", "/v1/chat/completions", sse('{"error": "rate limit exceeded"}'))
     owner = make_user(role="admin")
-    page = page_for(owner, path=f"/?models={SECOND_MODEL}")
+    chat = chat_for(owner)
+    start_from_link(chat, f"/?models={SECOND_MODEL}")
     with connected(owner) as socket:
-        send(page, "hello")
-        socket.wait_for(_chat_id(page), "chat:active", active=False)
+        send(chat, "hello")
+        socket.wait_for(_chat_id(chat), "chat:active", active=False)
 
-    page.reload()
-    expect_reply(page, "rate limit exceeded")
+    chat = chat.reload()
+    expect_reply(chat, "rate limit exceeded")
 
 
 def test_thinking_after_a_tool_call_does_not_stream_as_the_answer(chat_page_for_user, upstream):
-    page = chat_page_for_user
+    chat = chat_page_for_user
     pieces = [f"piece-{index} " for index in range(15)]
     upstream.queue(
         reply.tool_call("get_current_timestamp", {}, reasoning="I should check the clock"),
         reply.text(pieces, reasoning="the clock says now", chunk_delay=0.4),
     )
-    send(page, "what time is it?")
-    expect(last_reply(page)).to_contain_text("piece-1 ", timeout=30_000)
+    send(chat, "what time is it?")
+    expect(last_reply(chat)).to_contain_text("piece-1 ", timeout=30_000)
 
-    thought_shown_as_answer = conversation(page).get_by_text("the clock says now").is_visible()
-    assert "piece-14" not in last_reply(page).inner_text(), "the reply finished before the check"
+    thought_shown_as_answer = conversation(chat).get_by_text("the clock says now").is_visible()
+    assert "piece-14" not in last_reply(chat).inner_text(), "the reply finished before the check"
     assert not thought_shown_as_answer, (
         "the thinking after a tool call streamed into the empty message item the tool round "
         "left behind, so it rendered as the answer until the turn finished (#29040)"
@@ -156,6 +162,5 @@ def test_thinking_after_a_tool_call_does_not_stream_as_the_answer(chat_page_for_
 
 
 @pytest.fixture
-def chat_page_for_user(page_for, make_user):
-    page = page_for(make_user())
-    return page
+def chat_page_for_user(chat_for, make_user):
+    return chat_for(make_user())
