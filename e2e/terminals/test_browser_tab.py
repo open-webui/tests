@@ -19,14 +19,17 @@ The terminal is a template on a real Terminals orchestrator, so each test gets a
 own (the slim Open Terminal image: no Chromium, so the tab works in Proxy mode); the tests skip
 without the images or Docker.
 
-`test_a_port_opens_in_a_new_browser_tab_from_the_start_page` is red on dev c15f28649: Open in
-new tab beside a port opens `/proxy/<port>/` of Open WebUI itself, which answers "404: Not
-Found" (finding 'issue: "Open in new tab" beside a port on the Browser tab's start page opens
-"404: Not Found"').
+`test_a_port_opens_in_a_new_browser_tab_from_the_start_page` is red on dev c15f28649 and
+e791cbdde (#34108): Open in new tab beside a port opens `/proxy/<port>/` of Open WebUI itself,
+which answers "404: Not Found". Its Per chat case also fails on a frontend copy that opens the
+terminal's own port address, which such a terminal refuses without the chat ("This terminal
+requires a saved chat"); it passes with the tab's preview address handed to the Browser tab.
 
 Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7,
-except the red test, which passes on a frontend copy whose port row opens the terminal's port
-preview. Each of these edits of a frontend copy turns its test red: live port updates dropped,
+except the red test, which passes in both cases on the e791cbdde build with the tab's preview
+address handed to the Browser tab (fails in both on e791cbdde; the Per chat case fails on a copy
+whose port row opens the terminal's own port address). Each of these edits of a frontend copy
+turns its test red: live port updates dropped,
 no number beside Ports, a port click that opens nothing, the tab named after the host, the
 terminal not told the tab's page, Desktop offered on every terminal; any scheme or a sign-in
 accepted, a bare localhost sent over https, a leading slash not read against the page on screen,
@@ -79,11 +82,13 @@ def _page(title: str, heading: str, more: str = "") -> str:
     return f"<html><head><title>{title}</title></head><body><h1>{heading}</h1>{more}</body></html>"
 
 
-def _open_workbench(page_for, make_user, shared_terminal, interface: dict | None = None):
+def _open_workbench(
+    page_for, make_user, shared_terminal, interface: dict | None = None, scope: str = "user"
+):
     person = make_user()
     tag = uuid.uuid4().hex[:8]
     name = f"Workbench {tag}"
-    terminal_id = shared_terminal(person, name=name)
+    terminal_id = shared_terminal(person, name=name, scope=scope)
     if interface:
         with person.client() as client:
             saved = client.post("/api/v1/users/user/settings/update", json={"ui": interface})
@@ -100,9 +105,9 @@ def workbench(page_for, make_user, shared_terminal):
     return _open_workbench(page_for, make_user, shared_terminal)
 
 
-def _serve(person, terminal_id: str, tag: str, **pages: str) -> None:
+def _serve(person, terminal_id: str, tag: str, headers: dict | None = None, **pages: str) -> None:
     with person.client() as client:
-        serve_site(client, terminal_id, f"site-{tag}", PORT, pages)
+        serve_site(client, terminal_id, f"site-{tag}", PORT, pages, headers)
 
 
 def _heading(page: Page, name: str):
@@ -153,13 +158,27 @@ def test_a_server_started_in_the_terminal_shows_under_ports_and_opens_in_the_tab
         ), f"the terminal was not told the tab's page: {open_tabs(client, terminal_id)}"
 
 
-def test_a_port_opens_in_a_new_browser_tab_from_the_start_page(workbench):
-    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34108)."""
-    page, person, terminal_id, tag = workbench
+@pytest.mark.parametrize("scope", ["user", "chat"])
+def test_a_port_opens_in_a_new_browser_tab_from_the_start_page(
+    scope, page_for, make_user, shared_terminal, upstream
+):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34108). A Per chat terminal
+    serves the port only under the chat's own address."""
+    page, person, terminal_id, tag = _open_workbench(
+        page_for, make_user, shared_terminal, scope=scope
+    )
     # a signed-in browser carries the session as a cookie too, which a new tab's request needs
     page.context.add_cookies([{"name": "token", "value": person.token, "url": person.base_url}])
+    chat = None
+    if scope == "chat":
+        # a Per chat terminal runs only for a saved chat
+        ask(page, upstream, f"keep the harbour open {tag}", reply.text(f"Kept {tag}."))
+        page.wait_for_url(re.compile(r"/c/[0-9a-f-]+$"))
+        chat = {"X-Session-Id": page.url.rsplit("/", 1)[1]}
     view = open_browser_tab(page)
-    _serve(person, terminal_id, tag, **{"index.html": _page(f"Harbour {tag}", f"Keeper {tag}")})
+    _serve(
+        person, terminal_id, tag, chat, **{"index.html": _page(f"Harbour {tag}", f"Keeper {tag}")}
+    )
     row = port_row(view, PORT)
     expect(row).to_be_visible()
 
