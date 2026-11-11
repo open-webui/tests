@@ -18,6 +18,10 @@ text and lower-cases what is typed, the slug, typed-case and odd-character tests
 Retargeted for 37138282f, where the rewritten editor names its text box Prompt Content, refuses an
 odd command on creation with its own message and leaves a refused rename in the field: the tests
 pass on that build.
+
+The test of a prompt named like a built-in command runs in the main chat and in a side chat (green
+on dev c15f28649 and on the side chat rework build, open-webui/open-webui#34064). The other tests
+are about the Create Prompt dialog and the editor in the workspace and stay on pages of their own.
 """
 
 from __future__ import annotations
@@ -30,7 +34,8 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import make_group
 from harness.actors import Actor
-from utils.chat_ui import chat_input
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import Chat, chat_input
 from utils.model_selector import model_search
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -59,10 +64,15 @@ def author(make_user):
             client.delete(f"/api/v1/prompts/id/{prompt_id}/delete")
 
 
-def _slash_menu(page: Page, typed: str) -> Locator:
+def _home(page: Page) -> Page:
     page.goto("/")
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+    return page
+
+
+def _slash_menu(chat: Chat, typed: str) -> Locator:
+    page = chat.page if isinstance(chat, ChatSurface) else chat
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
     page.keyboard.type(f"/{typed}")
     return page.get_by_role("tooltip")
 
@@ -89,7 +99,7 @@ def test_creating_a_prompt_with_a_command_the_same_account_holds_is_refused(page
 
     expect(page.get_by_text(TAKEN).first).to_be_visible()
     expect(dialog).to_be_visible()
-    menu = _slash_menu(page, command)
+    menu = _slash_menu(_home(page), command)
     expect(menu.get_by_role("button", name=command)).to_have_count(1)
     menu.get_by_role("button", name=command).click()
     expect(chat_input(page)).to_have_text("The first text.")
@@ -110,10 +120,10 @@ def test_creating_a_prompt_with_a_command_another_accounts_private_prompt_holds_
 
     expect(page.get_by_text(TAKEN).first).to_be_visible()
     expect(dialog).to_be_visible()
-    expect(_slash_menu(page_for(owner), command).get_by_role("button", name=command)).to_have_count(
-        1
-    )
-    expect(_slash_menu(page, command).get_by_role("button", name=command)).to_have_count(0)
+    expect(
+        _slash_menu(_home(page_for(owner)), command).get_by_role("button", name=command)
+    ).to_have_count(1)
+    expect(_slash_menu(_home(page), command).get_by_role("button", name=command)).to_have_count(0)
 
 
 def test_renaming_a_command_to_a_taken_one_in_the_editor_is_refused(page_for, author):
@@ -130,10 +140,10 @@ def test_renaming_a_command_to_a_taken_one_in_the_editor_is_refused(page_for, au
     expect(page.get_by_text(TAKEN).first).to_be_visible()
     with account.client() as client:
         assert client.get(f"/api/v1/prompts/id/{moving_id}").json()["command"] == moving
-    expect(_slash_menu(page, moving).get_by_role("button", name=moving)).to_have_count(1)
+    expect(_slash_menu(_home(page), moving).get_by_role("button", name=moving)).to_have_count(1)
     # a page of its own: this one restores the unsent "/moving" draft over whatever is typed next
     chat_page = page_for(account)
-    menu = _slash_menu(chat_page, held)
+    menu = _slash_menu(_home(chat_page), held)
     expect(menu.get_by_role("button", name=held)).to_have_count(1)
     menu.get_by_role("button", name=held).click()
     expect(chat_input(chat_page)).to_have_text("Held text.")
@@ -149,7 +159,7 @@ def test_the_command_follows_the_name_as_a_slug_and_is_offered_under_that_name(p
     dialog.get_by_role("button", name="Save & Create").click()
     expect(page.get_by_role("main").get_by_text(f"Café   Menu! {suffix}")).to_be_visible()
 
-    menu = _slash_menu(page, f"cafe-menu-{suffix}")
+    menu = _slash_menu(_home(page), f"cafe-menu-{suffix}")
     menu.get_by_role("button", name=f"cafe-menu-{suffix}").click()
     expect(chat_input(page)).to_have_text("Today's specials.")
 
@@ -167,7 +177,7 @@ def test_a_typed_command_keeps_its_letters_case_and_underscores(page_for, author
         listed = client.get("/api/v1/prompts/").json()
     stored = [prompt for prompt in listed if prompt["name"] == f"Brief {command}"]
     assert [prompt["command"] for prompt in stored] == [command]
-    menu = _slash_menu(page, command.lower())
+    menu = _slash_menu(_home(page), command.lower())
     menu.get_by_role("button", name=command).click()
     expect(chat_input(page)).to_have_text("Brief the team.")
     with account.client() as client:
@@ -190,7 +200,7 @@ def test_a_typed_command_with_a_leading_slash_or_odd_characters_is_refused(page_
     assert name not in names
 
 
-def test_a_prompt_named_like_a_built_in_command_is_listed_next_to_it(page_for, author):
+def test_a_prompt_named_like_a_built_in_command_is_listed_next_to_it(chat_for, author):
     account, add = author
     prompt_id = add("model", "Pick a vessel.")
     with account.client() as client:
@@ -198,21 +208,21 @@ def test_a_prompt_named_like_a_built_in_command_is_listed_next_to_it(page_for, a
             f"/api/v1/prompts/id/{prompt_id}/update/meta",
             json={"name": "Vessel picker", "command": "model"},
         )
-    page = page_for(account)
+    chat = chat_for(account)
 
-    menu = _slash_menu(page, "model")
+    menu = _slash_menu(chat, "model")
     built_in = menu.get_by_role("button", name=re.compile(r"^Model:"))
     prompt = menu.get_by_role("button").filter(has_text="Vessel picker")
     expect(built_in).to_have_count(1)
     expect(prompt).to_have_count(1)
 
     prompt.click()
-    expect(chat_input(page)).to_have_text("Pick a vessel.")
-    expect(model_search(page)).to_have_count(0)
+    expect(chat_input(chat)).to_have_text("Pick a vessel.")
+    expect(model_search(chat)).to_have_count(0)
 
     # the chat keeps the inserted text as a draft, so clear it rather than reload
-    page.keyboard.press("ControlOrMeta+A")
-    page.keyboard.press("Delete")
-    page.keyboard.type("/model")
-    page.get_by_role("tooltip").get_by_role("button", name=re.compile(r"^Model:")).click()
-    expect(model_search(page)).to_be_visible()
+    chat.page.keyboard.press("ControlOrMeta+A")
+    chat.page.keyboard.press("Delete")
+    chat.page.keyboard.type("/model")
+    chat.page.get_by_role("tooltip").get_by_role("button", name=re.compile(r"^Model:")).click()
+    expect(model_search(chat)).to_be_visible()
