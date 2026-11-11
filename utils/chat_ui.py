@@ -224,14 +224,19 @@ def open_add_context(chat: Chat) -> Locator:
     return menu
 
 
-def _names_by_id(page: Page, path: str) -> dict[str, str]:
-    """The name of each model or tool the account is offered at `path`, by id."""
+def _get(page: Page, path: str):
+    """What `path` answers the page's account."""
     token = page.evaluate("localStorage.token")
-    listed = page.request.get(
+    answered = page.request.get(
         loopback_url(page.url, path), headers={"Authorization": f"Bearer {token}"}
     )
-    assert listed.ok, f"{path} answered {listed.status}: {listed.text()}"
-    entries = listed.json()
+    assert answered.ok, f"{path} answered {answered.status}: {answered.text()}"
+    return answered.json()
+
+
+def _names_by_id(page: Page, path: str) -> dict[str, str]:
+    """The name of each model or tool the account is offered at `path`, by id."""
+    entries = _get(page, path)
     if isinstance(entries, dict):
         entries = entries["data"]
     return {entry["id"]: entry["name"] for entry in entries}
@@ -276,3 +281,30 @@ def start_from_link(chat: ChatSurface, link: str) -> None:
         tool_names = _names_by_id(chat.page, "/api/v1/tools/")
         for tool_id in tool_ids:
             _pick_tool(chat, tool_names[tool_id])
+
+
+def _compare_with(chat: ChatSurface, current: str, names: list[str]) -> None:
+    """Add the models `names` beside `current` through the chat's Compare."""
+    if not names:
+        return
+    chat.button(f"Selected model: {current}").click()
+    chat.page.get_by_role("button", name="Compare").click()
+    for name in names:
+        chat.page.get_by_role("combobox", name="Search In Models").fill(name)
+        chat.page.get_by_role("option", name=f"Select {name} model", exact=True).click()
+    chat.page.keyboard.press("Escape")
+
+
+def start_on_default_models(chat: ChatSurface) -> None:
+    """Have a new chat ask the account's default models, as a new main chat does.
+
+    A side chat starts on the model of the chat it was opened from, so it picks them in its own
+    model selector: the first, then the others through Compare."""
+    model_ids = _get(chat.page, "/api/v1/users/user/settings")["ui"]["models"]
+    names = _names_by_id(chat.page, "/api/models")
+    first, *others = (names[model_id] for model_id in model_ids)
+    if chat.is_side:
+        _pick_model(chat, first)
+        _compare_with(chat, first, others)
+    shown = f"Selected model: {first} +{len(others)}" if others else f"Selected model: {first}"
+    expect(chat.button(shown)).to_be_visible()
