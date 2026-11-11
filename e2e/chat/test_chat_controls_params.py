@@ -30,6 +30,13 @@ values as text both custom parameter tests fail, and one that drops the paramete
 account setting fails the three account tests. On dev 948432b43, a backend copy whose param save
 replaces the chat's stored settings with the sent one fails the two tabs test (the system prompt
 is gone).
+
+The tests of one chat's values and of the account's parameters run in the main chat and in a side
+chat (`utils/chat_surface.py`); the account's parameters are saved in a page of their own first.
+The new chat, sidebar and system prompt tests go to another chat through the sidebar and the two
+tabs test opens the chat in two browser tabs, so they stay in the main chat. On dev c15f28649 a
+side chat sent its own parameters only in part and the account's over them (no filed issue; the
+system prompt part is open-webui/open-webui#34027); every variant passes on dev e791cbdde.
 """
 
 from __future__ import annotations
@@ -46,6 +53,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.chat import ask
 from utils.chat_controls import control_button, open_chat_controls, open_section
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import REPLY_TIMEOUT_MS, close_menu, conversation, expect_reply, send
 from utils.setting_rows import setting_button
 
@@ -54,7 +62,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 CHAT_PROMPT = "You answer like a lighthouse keeper."
 
 
-def _advanced_params(page: Page) -> Locator:
+def _advanced_params(page: Page | ChatSurface) -> Locator:
     panel = open_section(open_chat_controls(page), "Advanced Params")
     expect(panel.get_by_text("Temperature", exact=True)).to_be_visible()
     return panel
@@ -70,7 +78,7 @@ def _set_text(panel: Locator, label: str, value: str) -> None:
     panel.get_by_role("textbox", name=label).fill(value)
 
 
-def _ask(page: Page, upstream, topic: str = "how cold is the sea today?") -> dict:
+def _ask(page: Page | ChatSurface, upstream, topic: str = "how cold is the sea today?") -> dict:
     question = f"{topic} {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Brisk.", match=reply.answering(question)))
     send(page, question)
@@ -90,28 +98,30 @@ def _sidebar_chat(page: Page, title: str) -> Locator:
     return sidebar.get_by_role("button", name=title).first
 
 
-def test_a_temperature_and_seed_set_in_the_chat_are_sent_and_kept(page_for, make_user, upstream):
-    page = page_for(make_user())
-    panel = _advanced_params(page)
+def test_a_temperature_and_seed_set_in_the_chat_are_sent_and_kept(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    page = chat.page
+    panel = _advanced_params(chat)
     _set(panel, "Temperature", "0.3")
     _set(panel, "Seed", "4242")
-    close_menu(page)
+    close_menu(chat)
 
-    first = _ask(page, upstream)
+    first = _ask(chat, upstream)
     assert (first.get("temperature"), first.get("seed")) == (0.3, 4242)
 
     expect(page).to_have_url(re.compile(r"/c/"))
-    page.reload()
-    expect_reply(page, "Brisk.")
-    later = _ask(page, upstream)
+    chat = chat.reload()
+    expect_reply(chat, "Brisk.")
+    later = _ask(chat, upstream)
     assert (later.get("temperature"), later.get("seed")) == (0.3, 4242)
 
 
 def test_every_sampling_parameter_set_in_the_chat_reaches_the_provider(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
-    panel = _advanced_params(page)
+    """Red in a side chat on dev c15f28649, which ignored its Controls (no filed issue)."""
+    chat = chat_for(make_user())
+    panel = _advanced_params(chat)
     _set(panel, "top_p", "0.4")
     _set(panel, "max_tokens", "321")
     _set(panel, "min_p", "0.05")
@@ -120,9 +130,9 @@ def test_every_sampling_parameter_set_in_the_chat_reaches_the_provider(
     _set_text(panel, "Stop Sequence", "END,HALT,\\n")
     _set_text(panel, "Reasoning Effort", "high")
     _set_text(panel, "logit_bias", "5432:100, 413:-100")
-    close_menu(page)
+    close_menu(chat)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
 
     sent = {key: request.get(key) for key in EXPECTED_SAMPLING}
     assert sent == EXPECTED_SAMPLING
@@ -140,32 +150,34 @@ EXPECTED_SAMPLING = {
 }
 
 
-def test_a_stop_sequence_with_a_percent_sign_is_sent_as_typed(page_for, make_user, upstream):
-    """#32649 (fix fdb304be2): a `%` in a stop sequence kept every message from sending."""
-    page = page_for(make_user())
-    _set_text(_advanced_params(page), "Stop Sequence", "100%,END")
-    close_menu(page)
+def test_a_stop_sequence_with_a_percent_sign_is_sent_as_typed(chat_for, make_user, upstream):
+    """#32649 (fix fdb304be2): a `%` in a stop sequence kept every message from sending.
 
-    request = _ask(page, upstream)
+    Red in a side chat on dev c15f28649, which ignored its Controls (no filed issue)."""
+    chat = chat_for(make_user())
+    _set_text(_advanced_params(chat), "Stop Sequence", "100%,END")
+    close_menu(chat)
+
+    request = _ask(chat, upstream)
 
     assert request.get("stop") == ["100%", "END"]
 
 
-def test_an_admins_custom_parameter_is_sent_under_its_name(page_for, make_user, upstream):
-    page = page_for(make_user(role="admin"))
-    panel = _advanced_params(page)
+def test_an_admins_custom_parameter_is_sent_under_its_name(chat_for, make_user, upstream):
+    chat = chat_for(make_user(role="admin"))
+    panel = _advanced_params(chat)
     control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").fill("top_k")
     panel.get_by_placeholder("Custom Parameter Value").fill("7")
-    close_menu(page)
+    close_menu(chat)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
     assert request.get("top_k") == 7
 
 
-def test_custom_parameters_are_sent_as_json_or_as_text(page_for, make_user, upstream):
-    page = page_for(make_user(role="admin"))
-    panel = _advanced_params(page)
+def test_custom_parameters_are_sent_as_json_or_as_text(chat_for, make_user, upstream):
+    chat = chat_for(make_user(role="admin"))
+    panel = _advanced_params(chat)
     control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").last.fill("chat_template_kwargs")
     panel.get_by_placeholder("Custom Parameter Value").last.fill(
@@ -174,9 +186,9 @@ def test_custom_parameters_are_sent_as_json_or_as_text(page_for, make_user, upst
     control_button(panel, "Add Custom Parameter").click()
     panel.get_by_placeholder("Custom Parameter Name").last.fill("verbosity")
     panel.get_by_placeholder("Custom Parameter Value").last.fill("low and slow")
-    close_menu(page)
+    close_menu(chat)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
 
     assert request.get("chat_template_kwargs") == {"enable_thinking": False, "levels": [1, 2]}
     assert request.get("verbosity") == "low and slow"
@@ -311,38 +323,45 @@ def tuned_account(make_user) -> Actor:
     return make_user()
 
 
-def test_the_accounts_saved_parameters_reach_a_new_chat(page_for, tuned_account, upstream):
+def test_the_accounts_saved_parameters_reach_a_new_chat(
+    page_for, chat_for, tuned_account, upstream
+):
     page = page_for(tuned_account)
     _save_account_parameters(page, {"Temperature": "0.6", "max_tokens": "200"})
+    chat = chat_for(tuned_account)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
 
     assert (request.get("temperature"), request.get("max_tokens")) == (0.6, 200)
 
 
-def test_a_chat_value_wins_over_the_accounts_saved_one(page_for, tuned_account, upstream):
+def test_a_chat_value_wins_over_the_accounts_saved_one(page_for, chat_for, tuned_account, upstream):
+    """Red in a side chat on dev c15f28649, which ignored its Controls (no filed issue)."""
     page = page_for(tuned_account)
     _save_account_parameters(page, {"Temperature": "0.6", "max_tokens": "200"})
-    _set(_advanced_params(page), "Temperature", "0.2")
-    close_menu(page)
+    chat = chat_for(tuned_account)
+    _set(_advanced_params(chat), "Temperature", "0.2")
+    close_menu(chat)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
 
     assert (request.get("temperature"), request.get("max_tokens")) == (0.2, 200)
 
 
 def test_a_chat_value_switched_back_to_default_leaves_the_accounts_one(
-    page_for, tuned_account, upstream
+    page_for, chat_for, tuned_account, upstream
 ):
+    """Red in a side chat on dev c15f28649, which ignored its Controls (no filed issue)."""
     page = page_for(tuned_account)
     _save_account_parameters(page, {"Temperature": "0.6"})
-    panel = _advanced_params(page)
+    chat = chat_for(tuned_account)
+    panel = _advanced_params(chat)
     _set(panel, "Temperature", "0.2")
     control_button(panel, "Temperature").click()
     expect(control_button(panel, "Temperature")).to_have_text("Default")
-    close_menu(page)
+    close_menu(chat)
 
-    request = _ask(page, upstream)
+    request = _ask(chat, upstream)
 
     assert request.get("temperature") == 0.6, (
         "Temperature reads Default in the chat's Controls, yet the account's saved 0.6 was not "
