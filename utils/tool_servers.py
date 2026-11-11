@@ -7,7 +7,14 @@ import re
 from playwright.sync_api import Locator, Page, expect
 
 from utils.access_control import choose_visibility
-from utils.chat_ui import close_menu, conversation, integration_row, open_integrations_menu
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import (
+    Chat,
+    close_menu,
+    conversation,
+    integration_row,
+    open_integrations_menu,
+)
 from utils.tooltips import tooltip_button
 
 
@@ -83,10 +90,15 @@ def connection_row(settings: Locator, name: str) -> Locator:
     return blocks.filter(has=settings.page.get_by_role("switch")).last
 
 
-def open_tools_menu(page: Page) -> Locator:
-    """The chat's Integrations > Tools list, on a freshly loaded chat page."""
-    page.goto("/")
-    menu = open_integrations_menu(page)
+def open_tools_menu(chat: Chat) -> Locator:
+    """The chat's Integrations > Tools list, on a freshly loaded chat page.
+
+    A side chat has no address of its own, so it is not loaded anew: it is new already."""
+    if not isinstance(chat, ChatSurface):
+        chat.goto("/")
+    elif not chat.is_side:
+        chat.page.goto("/")
+    menu = open_integrations_menu(chat)
     menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
     expect(menu.get_by_placeholder("Search tools")).to_be_visible()
     return menu
@@ -98,16 +110,16 @@ def press_to_sign_in(menu: Locator, server_name: str) -> None:
     integration_row(menu, server_name, role="menuitem").click()
 
 
-def pick_tool(page: Page, name: str) -> None:
+def pick_tool(chat: Chat, name: str) -> None:
     """Turn on the tool or tool server `name` for the next message of a new chat."""
-    menu = open_tools_menu(page)
+    menu = open_tools_menu(chat)
     tool = menu.get_by_role("menuitemcheckbox", name=name)
     tool.click()
     expect(tool).to_have_attribute("aria-checked", "true")
-    close_menu(page)
+    close_menu(chat)
 
 
-def tool_output(page: Page, call_name: str) -> Locator:
+def tool_output(chat: Chat, call_name: str) -> Locator:
     """Open the reply's call of `call_name` and return its Output section."""
-    conversation(page).get_by_text(f"View Result from {call_name}").click()
-    return conversation(page).get_by_text("Output", exact=True).last.locator("..")
+    conversation(chat).get_by_text(f"View Result from {call_name}").click()
+    return conversation(chat).get_by_text("Output", exact=True).last.locator("..")

@@ -15,7 +15,8 @@ import re
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import Chat, chat_input, expect_reply, send, start_from_link
 
 
 def open_editor(page: Page, model: dict) -> Locator:
@@ -68,10 +69,16 @@ def pick(editor: Locator, label: str, name: str, ticked: bool = True) -> None:
     expect(editor.page.get_by_placeholder(f"Search {label.lower()}")).to_have_count(0)
 
 
-def open_chat_on(page: Page, model: dict) -> None:
-    page.goto(f"/?model={model['id']}")
-    expect(page.get_by_role("button", name=f"Selected model: {model['name']}")).to_be_visible()
-    expect(chat_input(page)).to_be_visible()
+def open_chat_on(chat: Chat, model: dict) -> None:
+    """Start a new chat on the model: the page's chat opens the link, a side chat picks it."""
+    selected = f"Selected model: {model['name']}"
+    if isinstance(chat, ChatSurface):
+        start_from_link(chat, f"/?model={model['id']}")
+        expect(chat.button(selected)).to_be_visible()
+    else:
+        chat.goto(f"/?model={model['id']}")
+        expect(chat.get_by_role("button", name=selected)).to_be_visible()
+    expect(chat_input(chat)).to_be_visible()
 
 
 def open_menu(page: Page, button_name: str) -> Locator:
@@ -81,7 +88,7 @@ def open_menu(page: Page, button_name: str) -> Locator:
     return menu
 
 
-def sent_request(page: Page, upstream, question: str, answer: str = "noted") -> dict:
+def sent_request(page: Chat, upstream, question: str, answer: str = "noted") -> dict:
     """Send `question` in the open chat; the request the provider got for it."""
     upstream.queue(reply.text(answer, match=reply.answering(question)))
     send(page, question)

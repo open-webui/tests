@@ -21,6 +21,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.upstream import Reply
 from utils.chat_ui import (
+    Chat,
     chat_input,
     close_menu,
     expect_reply,
@@ -155,7 +156,7 @@ def tool_results(request: dict) -> str:
     )
 
 
-def turn_on_tool(page: Page, tool_name: str) -> None:
+def turn_on_tool(page: Chat, tool_name: str) -> None:
     """Switch a workspace tool on for this chat from the Integrations menu."""
     menu = open_integrations_menu(page)
     menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
