@@ -15,6 +15,11 @@ already stored in the chat, the way automations, sub-agents and timers prepare t
 refused with 409 and the reply is never written (open-webui/open-webui#32066, fixed by 641c82df1).
 
 Discriminates: passes on dev a5bc78300; both tests fail on dev 176d31d1d for the reason above.
+
+Both tests run in the main chat and in a side chat. In a side chat both are red on dev c15f28649
+and green on the side chat rework build (fix PR open-webui/open-webui#34064), with no issue
+filed: a side chat ignores the server's tell-to-reload message, so the fired timer and the
+follow-up never show in it.
 """
 
 from __future__ import annotations
@@ -23,9 +28,10 @@ import re
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -48,11 +54,11 @@ def unique(label: str) -> str:
     return f"{label} {uuid.uuid4().hex[:8]}"
 
 
-def timer_row(page: Page, prompt: str) -> Locator:
-    return conversation(page).get_by_role("button", name=re.compile(f"Timer .*{prompt}"))
+def timer_row(chat: ChatSurface, prompt: str) -> Locator:
+    return conversation(chat).get_by_role("button", name=re.compile(f"Timer .*{prompt}"))
 
 
-def set_timer(page: Page, upstream, prompt: str, follow_up: reply.Reply) -> None:
+def set_timer(chat: ChatSurface, upstream, prompt: str, follow_up: reply.Reply) -> None:
     """The person asks and the model sets a 3 second timer; `follow_up` answers when it fires."""
     ask = unique("remind me shortly")
     upstream.queue(
@@ -60,40 +66,42 @@ def set_timer(page: Page, upstream, prompt: str, follow_up: reply.Reply) -> None
         reply.text("Timer set.", match=reply.answering(ask)),
         follow_up,
     )
-    send(page, ask)
-    expect_reply(page, "Timer set.")
-    expect(timer_row(page, prompt)).to_have_count(0)
+    send(chat, ask)
+    expect_reply(chat, "Timer set.")
+    expect(timer_row(chat, prompt)).to_have_count(0)
 
 
 def test_the_timer_and_the_follow_up_show_in_the_open_chat_without_a_reload(
-    timers_on, page_for, make_user, upstream
+    timers_on, chat_for, make_user, upstream
 ):
+    """In a side chat: red on dev, no issue filed (fix PR open-webui/open-webui#34064)."""
     prompt = unique("The kettle has boiled")
-    page = page_for(make_user())
-    set_timer(page, upstream, prompt, reply.text("Pour the tea.", match=reply.answering(prompt)))
+    chat = chat_for(make_user())
+    set_timer(chat, upstream, prompt, reply.text("Pour the tea.", match=reply.answering(prompt)))
 
     expect(
-        timer_row(page, prompt),
+        timer_row(chat, prompt),
         "the fired timer never showed in the open chat (it shows only after a reload)",
     ).to_be_visible(timeout=FIRE_TIMEOUT_MS)
-    expect_reply(page, "Pour the tea.")
+    expect_reply(chat, "Pour the tea.")
 
 
 def test_a_slow_follow_up_shows_the_timer_first_and_the_answer_when_it_is_written(
-    timers_on, page_for, make_user, upstream
+    timers_on, chat_for, make_user, upstream
 ):
+    """In a side chat: red on dev, no issue filed (fix PR open-webui/open-webui#34064)."""
     prompt = unique("The dough has risen")
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     set_timer(
-        page,
+        chat,
         upstream,
         prompt,
         reply.text("Knead it now.", delay=SLOW_SECONDS, match=reply.answering(prompt)),
     )
 
     expect(
-        timer_row(page, prompt),
+        timer_row(chat, prompt),
         "the fired timer never showed in the open chat (it shows only after a reload)",
     ).to_be_visible(timeout=FIRE_TIMEOUT_MS)
-    expect(conversation(page)).not_to_contain_text("Knead it now.")
-    expect_reply(page, "Knead it now.")
+    expect(conversation(chat)).not_to_contain_text("Knead it now.")
+    expect_reply(chat, "Knead it now.")
