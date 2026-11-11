@@ -13,6 +13,11 @@ close itself, so the dialog needed a second click (open-webui/open-webui#31963),
 Discriminates: passes on dev f6cbeb1a1; both answering tests fail on dev 6defd4a94, before
 806644fcb. On a frontend build of dev 30f3f6a8f that closes the Integrations menu as Web Search is
 picked and asks even with the switch off, the "unasked" test fails.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the Cancel and
+Continue tests in every way a side chat starts and every state it can be in. A side chat never
+asked and ran the search at once (open-webui/open-webui#34021, fix PR
+open-webui/open-webui#34064); for those the dev c15f28649 build is the mutant.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import expect_reply, open_integrations_menu, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -56,8 +62,8 @@ def save_confirmation(admin_page: Page, turn_on: bool) -> None:
     expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
-def turn_web_search_on(page: Page) -> None:
-    open_integrations_menu(page).get_by_role("menuitemcheckbox", name="Web Search").click()
+def turn_web_search_on(chat: ChatSurface) -> None:
+    open_integrations_menu(chat).get_by_role("menuitemcheckbox", name="Web Search").click()
 
 
 def offered_tools(upstream, question: str) -> set[str]:
@@ -65,10 +71,10 @@ def offered_tools(upstream, question: str) -> set[str]:
     return {tool["function"]["name"] for tool in sent.get("tools") or []}
 
 
-def ask(page: Page, upstream, question: str) -> set[str]:
+def ask(chat: ChatSurface, upstream, question: str) -> set[str]:
     upstream.queue(reply.text("Calm seas today.", match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, "Calm seas today.")
+    send(chat, question)
+    expect_reply(chat, "Calm seas today.")
     return offered_tools(upstream, question)
 
 
@@ -86,38 +92,43 @@ def answer_confirmation(page: Page, button: str) -> None:
     ).to_have_count(0)
 
 
+# one model only: the question comes as the switch is turned on, before any model answers
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_cancelling_the_confirmation_leaves_web_search_off(
-    page_for, admin, make_user, upstream, search_engine
+    page_for, chat_for, admin, make_user, upstream, search_engine
 ):
+    """In a side chat: open-webui/open-webui#34021."""
     save_confirmation(page_for(admin), turn_on=True)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    turn_web_search_on(page)
-    answer_confirmation(page, "Cancel")
+    turn_web_search_on(chat)
+    answer_confirmation(chat.page, "Cancel")
 
-    assert "search_web" not in ask(page, upstream, "Is the sea calm at the pier?")
+    assert "search_web" not in ask(chat, upstream, "Is the sea calm at the pier?")
 
 
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_continuing_the_confirmation_turns_web_search_on(
-    page_for, admin, make_user, upstream, search_engine
+    page_for, chat_for, admin, make_user, upstream, search_engine
 ):
+    """In a side chat: open-webui/open-webui#34021."""
     save_confirmation(page_for(admin), turn_on=True)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    turn_web_search_on(page)
-    answer_confirmation(page, "Continue")
+    turn_web_search_on(chat)
+    answer_confirmation(chat.page, "Continue")
 
-    assert "search_web" in ask(page, upstream, "Is the sea calm at the breakwater?")
+    assert "search_web" in ask(chat, upstream, "Is the sea calm at the breakwater?")
 
 
 def test_with_the_confirmation_off_web_search_turns_on_unasked(
-    page_for, admin, make_user, upstream, search_engine
+    page_for, chat_for, admin, make_user, upstream, search_engine
 ):
     save_confirmation(page_for(admin), turn_on=False)
-    page = page_for(make_user())
+    chat = chat_for(make_user())
 
-    turn_web_search_on(page)
-    page.keyboard.press("Escape")
+    turn_web_search_on(chat)
+    chat.page.keyboard.press("Escape")
 
-    assert "search_web" in ask(page, upstream, "Is the sea calm at the lighthouse?")
-    expect(confirmation(page)).to_have_count(0)
+    assert "search_web" in ask(chat, upstream, "Is the sea calm at the lighthouse?")
+    expect(confirmation(chat.page)).to_have_count(0)
