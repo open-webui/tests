@@ -3,7 +3,8 @@
 Fix `35dda256f` (open-webui/open-webui#31315, issue open-webui/open-webui#29293): when the model
 called two tools in one turn, only the first got Allow and Deny buttons; the second stayed on
 "Executing..." for good, never ran, and the reply never finished. Every call now gets its own
-approval in turn. Browser twin of integration/chat/test_multi_tool_call_approval.py.
+approval in turn. Browser twin of integration/chat/test_multi_tool_call_approval.py. Runs in the
+main chat and in a side chat (`utils/chat_surface.py`).
 
 Discriminates: passes on dev efe63bd34; with 35dda256f reverted in a backend copy (on the clean
 build) the test fails: after the first Allow the second call is never put up for approval.
@@ -65,7 +66,7 @@ def _wait_until_second_call_is_asked(account) -> None:
 
 
 def test_both_calls_of_a_turn_are_allowed_one_after_the_other(
-    tool_approval_on, page_for, make_user, upstream
+    tool_approval_on, chat_for, make_user, upstream
 ):
     question = f"what time is it twice? {uuid.uuid4().hex[:6]}"
     calls = [
@@ -81,18 +82,18 @@ def test_both_calls_of_a_turn_are_allowed_one_after_the_other(
         reply.text("Checked the clock twice.", match=reply.answering(question)),
     )
     account = make_user()
-    page = page_for(account)
-    set_tool_approval_mode(page, "Ask for approval")
+    chat = chat_for(account)
+    set_tool_approval_mode(chat, "Ask for approval")
 
-    send(page, question)
-    allow = conversation(page).get_by_role("button", name="Allow", exact=True)
+    send(chat, question)
+    allow = conversation(chat).get_by_role("button", name="Allow", exact=True)
     expect(allow).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
     allow.click()
     _wait_until_second_call_is_asked(account)
     expect(allow).to_be_enabled()
     allow.click()
 
-    expect_reply(page, "Checked the clock twice.")
+    expect_reply(chat, "Checked the clock twice.")
     tool_results = [
         entry.get("tool_call_id")
         for entry in reply.conversation(upstream.chat_requests()[-1])
