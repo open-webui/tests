@@ -16,6 +16,8 @@ also sends the message the Use in prompt test fails, in one whose copy buttons c
 the copy test fails, in one whose Next change stays put the step-through test fails, in one that
 counts identical texts as one change the no-differences test fails, and in one whose Cancel closes
 without asking the discard test fails.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -24,9 +26,10 @@ import re
 import uuid
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -35,18 +38,20 @@ ORIGINAL = "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\ngolf"
 REVISED = "alpha\nBRAVO\ncharlie\ndelta\necho\nFOXTROT\ngolf"
 
 
-def _type_draft(page: Page, text: str) -> None:
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+def _type_draft(chat: ChatSurface, text: str) -> None:
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
     page.keyboard.type(text)
-    expect(chat_input(page)).to_have_text(text)
+    expect(chat_input(chat)).to_have_text(text)
 
 
-def _open_compare(page: Page) -> Locator:
+def _open_compare(chat: ChatSurface) -> Locator:
     """Open the compare view from the `/compare` command typed after the draft, if any."""
-    expect(chat_input(page)).to_be_visible()
-    draft = chat_input(page).inner_text().strip()
-    chat_input(page).click()
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
+    draft = chat_input(chat).inner_text().strip()
+    chat_input(chat).click()
     page.keyboard.press("End")
     page.keyboard.type(" /compare" if draft else "/compare")
     page.get_by_role("tooltip").get_by_role("button", name="Compare text").click()
@@ -73,37 +78,38 @@ def _start_comparing(compare: Locator, original: str, revised: str) -> Locator:
 
 
 def test_use_in_prompt_puts_the_revision_in_the_input_without_sending(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    chat = chat_for(make_user())
+    page = chat.page
     draft = f"Tell me about the tides {uuid.uuid4().hex[:6]}"
     revised = f"{draft}, in one short sentence"
-    _type_draft(page, draft)
+    _type_draft(chat, draft)
     sent_before = len(upstream.chat_requests())
 
-    compare = _open_compare(page)
+    compare = _open_compare(chat)
     expect(_pane(compare, "Original")).to_have_text(draft)
     _pane(compare, "Proposed revision").click()
     page.keyboard.insert_text(revised)
     compare.get_by_role("button", name="Use in prompt").click()
 
     expect(compare).to_have_count(0)
-    expect(chat_input(page)).to_have_text(revised)
+    expect(chat_input(chat)).to_have_text(revised)
     # a bounded look that nothing is sent on its own after the revision lands
     page.wait_for_timeout(1000)
     assert len(upstream.chat_requests()) == sent_before, "Use in prompt sent the message itself"
     expect(page).not_to_have_url(re.compile(r"/c/"))
 
     upstream.queue(reply.text("Noted.", match=reply.answering(revised)))
-    chat_input(page).press("Enter")
-    expect_reply(page, "Noted.")
+    chat_input(chat).press("Enter")
+    expect_reply(chat, "Noted.")
     [request] = [body for body in upstream.chat_requests() if reply.answering(revised)(body)]
     assert reply.conversation(request)[-1]["content"] == revised
 
 
-def test_next_and_previous_change_step_through_the_changes(page_for, make_user):
-    page = page_for(make_user())
-    compare = _open_compare(page)
+def test_next_and_previous_change_step_through_the_changes(chat_for, make_user):
+    chat = chat_for(make_user())
+    compare = _open_compare(chat)
     counter = _start_comparing(compare, ORIGINAL, REVISED)
     previous = compare.get_by_role("button", name="Previous change")
     following = compare.get_by_role("button", name="Next change")
@@ -117,9 +123,9 @@ def test_next_and_previous_change_step_through_the_changes(page_for, make_user):
     expect(counter).to_have_text("Change 1 of 2")
 
 
-def test_a_change_is_copied_to_the_proposal_or_back_to_the_original(page_for, make_user):
-    page = page_for(make_user())
-    compare = _open_compare(page)
+def test_a_change_is_copied_to_the_proposal_or_back_to_the_original(chat_for, make_user):
+    chat = chat_for(make_user())
+    compare = _open_compare(chat)
     counter = _start_comparing(compare, ORIGINAL, REVISED)
     expect(counter).to_have_text("Change 1 of 2")
 
@@ -135,15 +141,15 @@ def test_a_change_is_copied_to_the_proposal_or_back_to_the_original(page_for, ma
 
     compare.get_by_role("button", name="Use in prompt").click()
     expect(compare).to_have_count(0)
-    expect(chat_input(page)).to_contain_text("bravo")
-    expect(chat_input(page)).to_contain_text("FOXTROT")
+    expect(chat_input(chat)).to_contain_text("bravo")
+    expect(chat_input(chat)).to_contain_text("FOXTROT")
 
 
-def test_identical_texts_show_no_differences(page_for, make_user):
-    page = page_for(make_user())
+def test_identical_texts_show_no_differences(chat_for, make_user):
+    chat = chat_for(make_user())
     same = "The harbour closes at dusk."
-    _type_draft(page, same)
-    compare = _open_compare(page)
+    _type_draft(chat, same)
+    compare = _open_compare(chat)
     _write(compare, "Proposed revision", same)
     compare.get_by_role("button", name="Compare", exact=True).click()
 
@@ -153,16 +159,17 @@ def test_identical_texts_show_no_differences(page_for, make_user):
     expect(compare.get_by_role("button", name="Copy change to proposal")).to_be_disabled()
 
 
-def test_closing_after_an_edit_asks_to_discard_and_keeps_the_message(page_for, make_user):
-    page = page_for(make_user())
+def test_closing_after_an_edit_asks_to_discard_and_keeps_the_message(chat_for, make_user):
+    chat = chat_for(make_user())
+    page = chat.page
     draft = f"Keep this draft {uuid.uuid4().hex[:6]}"
-    _type_draft(page, draft)
+    _type_draft(chat, draft)
 
-    compare = _open_compare(page)
+    compare = _open_compare(chat)
     compare.get_by_role("button", name="Cancel", exact=True).click()
     expect(compare).to_have_count(0)
 
-    compare = _open_compare(page)
+    compare = _open_compare(chat)
     _write(compare, "Proposed revision", "Something else entirely")
     compare.get_by_role("button", name="Cancel", exact=True).click()
     confirm = page.get_by_role("dialog", name="Discard comparison changes?")
@@ -174,4 +181,4 @@ def test_closing_after_an_edit_asks_to_discard_and_keeps_the_message(page_for, m
     compare.get_by_role("button", name="Cancel", exact=True).click()
     confirm.get_by_role("button", name="Discard").click()
     expect(compare).to_have_count(0)
-    expect(chat_input(page)).to_have_text(draft)
+    expect(chat_input(chat)).to_have_text(draft)
