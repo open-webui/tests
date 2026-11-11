@@ -13,6 +13,10 @@ Twin of integration/chat/test_filter_context_and_handlers.py (its mid-request ca
 Discriminates: both pass on dev ef67cc3fa. The first fails with 7d694570a reverted in a backend
 copy (the reply arrives without the stream mark); the second fails in a backend copy that drops
 the outlet's `output` edit (the page shows the unedited reply).
+
+Both tests run in the main chat and in a side chat. In a side chat the outlet test is red on dev
+c15f28649 and green on the side chat rework build (fix PR open-webui/open-webui#34064), with no
+issue filed: the side chat keeps showing the unedited reply until a reload.
 """
 
 from __future__ import annotations
@@ -70,18 +74,18 @@ class Filter:
 
 
 def test_the_reply_keeps_the_filter_switched_off_during_it(
-    page_for, instance, admin, make_user, upstream
+    chat_for, instance, admin, make_user, upstream
 ):
     prompt = "tell me about filters"
     upstream.queue(reply.text("filtered reply", match=reply.answering(prompt)))
-    page = page_for(make_user())
+    chat = chat_for(make_user())
     with installed_function(admin, LATE_STREAM_FILTER, is_global=True) as late_filter:
         switching = SWITCHING_FILTER.format(
             base_url=instance.base_url, target=late_filter, token=admin.token
         )
         with installed_function(admin, switching, is_global=True):
-            send(page, prompt)
-            expect_reply(page, "filtered reply [late stream]")
+            send(chat, prompt)
+            expect_reply(chat, "filtered reply [late stream]")
 
 
 def stored_reply(person, chat_id: str, expected: str) -> dict:
@@ -106,19 +110,20 @@ def output_text(message: dict) -> str:
     )
 
 
-def test_an_outlet_edit_to_the_reply_shows_on_the_page(page_for, admin, make_user, upstream):
+def test_an_outlet_edit_to_the_reply_shows_on_the_page(chat_for, admin, make_user, upstream):
+    """In a side chat: red on dev, no issue filed (fix PR open-webui/open-webui#34064)."""
     prompt = "say something plain"
     upstream.queue(reply.text("plain answer", match=reply.answering(prompt)))
     person = make_user()
-    page = page_for(person)
+    chat = chat_for(person)
     with installed_function(admin, HIGHLIGHTING_OUTLET, is_global=True):
-        send(page, prompt)
-        expect_reply(page, "plain answer [highlighted]")
-        expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
-        chat_id = page.url.rsplit("/", 1)[-1]
+        send(chat, prompt)
+        expect_reply(chat, "plain answer [highlighted]")
+        expect(chat.page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
+        chat_id = chat.page.url.rsplit("/", 1)[-1]
         stored = stored_reply(person, chat_id, "plain answer [highlighted]")
         assert stored["content"] == "plain answer [highlighted]"
         assert output_text(stored) == "plain answer [highlighted]"
 
-        page.reload()
-        expect_reply(page, "plain answer [highlighted]")
+        chat = chat.reload()
+        expect_reply(chat, "plain answer [highlighted]")
