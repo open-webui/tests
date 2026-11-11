@@ -10,14 +10,18 @@ list, a reload and shared links are covered in test_reply_citations.py.
 Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
 copy: a group marker opening the source after the one it lists) both grouped marker tests go
 red; the single marker check in the first test passes there.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a stored chat
+dragged into a tab beside a new chat.
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness.chat_history import seed_chat
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, last_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -37,7 +41,7 @@ def stored_source(name: str, text: str, distance: float) -> dict:
     }
 
 
-def open_cited_chat(page_for, make_user, answer: str) -> Page:
+def open_cited_chat(chat_for, make_user, answer: str) -> ChatSurface:
     account = make_user()
     sources = [stored_source(name, text, 0.8) for name, text in SOURCES.items()]
     with account.client() as client:
@@ -48,13 +52,13 @@ def open_cited_chat(page_for, make_user, answer: str) -> Page:
                 {"role": "assistant", "content": answer, "sources": sources},
             ],
         )
-    page = page_for(account, path=f"/c/{chat_id}")
-    expect_reply(page, "End of notes.")
-    return page
+    chat = chat_for(account, chat_id=chat_id)
+    expect_reply(chat, "End of notes.")
+    return chat
 
 
-def expect_source_dialog(page: Page, name: str) -> None:
-    dialog = page.get_by_role("dialog")
+def expect_source_dialog(chat: ChatSurface, name: str) -> None:
+    dialog = chat.page.get_by_role("dialog")
     expect(dialog).to_contain_text(name)
     expect(dialog).to_contain_text(SOURCES[name])
     other = next(other for other in SOURCES if other != name)
@@ -65,12 +69,12 @@ def expect_source_dialog(page: Page, name: str) -> None:
 
 @pytest.mark.parametrize("written", ["[1, 2]", "[1][2]"])
 def test_a_group_marker_lists_each_source_and_opens_each_on_its_own_text(
-    page_for, make_user, written
+    chat_for, make_user, written
 ):
-    page = open_cited_chat(
-        page_for, make_user, f"Both animals are shy {written}. Otters play [2]. End of notes."
+    chat = open_cited_chat(
+        chat_for, make_user, f"Both animals are shy {written}. Otters play [2]. End of notes."
     )
-    reply_shown = last_reply(page)
+    reply_shown = last_reply(chat)
     # the marker's button sits inside a link-preview trigger of the same name
     group = reply_shown.get_by_role("button", name="herons.txt +1 more sources").last
     expect(group).to_be_visible()
@@ -78,17 +82,17 @@ def test_a_group_marker_lists_each_source_and_opens_each_on_its_own_text(
     expect(reply_shown).not_to_contain_text(written)
 
     # the list has no role, and its entry shares a name with the single [2]
-    listed = page.locator("[data-link-preview-content]")
+    listed = chat.page.locator("[data-link-preview-content]")
     for name in SOURCES:
         group.click()
         listed.get_by_role("button", name=f"View source: {name}").click()
-        expect_source_dialog(page, name)
+        expect_source_dialog(chat, name)
         # the list stays open behind the dialog, and a click on the marker would toggle it shut
-        page.keyboard.press("Escape")
+        chat.page.keyboard.press("Escape")
         expect(listed).to_have_count(0)
 
     single = reply_shown.get_by_role("button", name="View source: otters.txt")
     expect(single).to_have_count(1)
     single.click()
-    expect_source_dialog(page, "otters.txt")
-    expect(conversation(page).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
+    expect_source_dialog(chat, "otters.txt")
+    expect(conversation(chat).get_by_role("button", name="Toggle 2 sources")).to_be_visible()
