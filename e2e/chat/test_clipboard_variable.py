@@ -13,6 +13,9 @@ message, open-webui/open-webui#33937: picking it did nothing at all.
 Discriminates: passes on the efe63bd34 build, fails on it with `b233d0d94` reverted (the pasted
 text loses a dollar sign and `$&` turns back into the variable). The plain HTTP test fails on
 0.13.1 and dev b6534c58f (the prompt list stays open and nothing is inserted).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). The clipboard is
+pasted in the message box, so a side chat does it as the main chat does, also on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, expect_reply
 from utils.clipboard import write_text
 
@@ -48,8 +52,9 @@ def with_clipboard(page: Page, text: str) -> None:
     write_text(page, text)
 
 
-def use_prompt(page: Page, command: str) -> None:
-    chat_input(page).click()
+def use_prompt(chat: ChatSurface, command: str) -> None:
+    page = chat.page
+    chat_input(chat).click()
     page.keyboard.type(f"/{command}")
     picker = page.get_by_role("tooltip").filter(has_text="Prompts")
     picker.get_by_role("button", name=command).click()
@@ -58,41 +63,42 @@ def use_prompt(page: Page, command: str) -> None:
 
 # the browser lets a page read the clipboard only in a secure context
 @pytest.mark.secure_context
-def test_the_chat_input_pastes_the_clipboard_exactly(writer, page_for, upstream):
+def test_the_chat_input_pastes_the_clipboard_exactly(writer, chat_for, upstream):
     account, command = writer
-    page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
+    chat = chat_for(account)
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
     with_clipboard(page, COPIED)
 
-    use_prompt(page, command)
+    use_prompt(chat, command)
 
-    expect(chat_input(page)).to_have_text(f"Run: {COPIED}")
+    expect(chat_input(chat)).to_have_text(f"Run: {COPIED}")
     upstream.queue(reply.text("Done.", match=reply.answering("Run: ")))
     page.keyboard.press("Enter")
-    expect_reply(page, "Done.")
+    expect_reply(chat, "Done.")
     sent = reply.conversation(upstream.chat_requests()[-1])[-1]["content"]
     assert sent == f"Run: {COPIED}"
 
 
 # the browser lets a page read the clipboard only in a secure context
 @pytest.mark.secure_context
-def test_plain_clipboard_text_is_pasted_unchanged(writer, page_for):
+def test_plain_clipboard_text_is_pasted_unchanged(writer, chat_for):
     account, command = writer
-    page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
-    with_clipboard(page, "no dollars here")
+    chat = chat_for(account)
+    expect(chat_input(chat)).to_be_visible()
+    with_clipboard(chat.page, "no dollars here")
 
-    use_prompt(page, command)
+    use_prompt(chat, command)
 
-    expect(chat_input(page)).to_have_text("Run: no dollars here")
+    expect(chat_input(chat)).to_have_text("Run: no dollars here")
 
 
-def test_a_clipboard_prompt_is_still_inserted_over_plain_http(writer, page_for):
+def test_a_clipboard_prompt_is_still_inserted_over_plain_http(writer, chat_for):
     account, command = writer
-    page = page_for(account)
-    expect(chat_input(page)).to_be_visible()
+    chat = chat_for(account)
+    expect(chat_input(chat)).to_be_visible()
 
-    use_prompt(page, command)
+    use_prompt(chat, command)
 
-    expect(chat_input(page)).to_have_text("Run: {{CLIPBOARD}}")
-    expect(page.get_by_text("Failed to read clipboard contents")).to_be_visible()
+    expect(chat_input(chat)).to_have_text("Run: {{CLIPBOARD}}")
+    expect(chat.page.get_by_text("Failed to read clipboard contents")).to_be_visible()
