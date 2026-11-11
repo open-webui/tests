@@ -9,8 +9,10 @@ button; picking it again unpicks it, and picking a terminal of the other kind un
 In a saved chat the pick is stored on the chat and is back when the chat is opened again, and a
 pick the server refuses is not made and says why. A picked terminal that is deleted reads
 Unavailable terminal for a person with Direct Integrations and is unpicked for everyone else.
-The menu moves into the chat input's More menu when the input is too narrow for it, and a side
-chat has none.
+The menu moves into the chat input's More menu when the input is too narrow for it. A side chat
+has the same menu and a pick of its own: it starts from the chat's terminal, picking in one
+leaves the other alone, and its pick is stored with the side chat and back after a reload.
+Side chats had no menu and always used the chat's terminal (open-webui/open-webui#34149).
 
 A local fake terminal stands for the admin's connection and for the personal terminal; the
 deleted terminal is one on the real Terminals service on Docker (`harness.terminals`), and its
@@ -27,8 +29,9 @@ again, and the personal terminal left on when one of the admin's is picked (the 
 the model is still offered the personal terminal's tool); the pick not stored on a saved chat,
 a saved chat opened without its terminal, and a refused pick made without a word (the saved
 chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
-deleted test); the controls never moved into the More menu (the narrow test); the Terminal menu
-offered in a side chat (the side chat test). The cog's target has no mutation of its own.
+deleted test); the controls never moved into the More menu (the narrow test). The cog's target
+has no mutation of its own. The side chat tests (open-webui/open-webui#34149) fail on the dev
+262a8c6f7 build, where a side chat shows no Terminal button, and pass with the fix.
 """
 
 from __future__ import annotations
@@ -49,13 +52,21 @@ from harness.terminal_server import (
 )
 from harness.terminals import create_template, share_template
 from utils.cached_chat import ask, chat_requests, choose_terminal, offered_tools
+from utils.chat_surface import (
+    DRAGGED_TAB,
+    MAIN_CHAT,
+    OPENED_ASIDE,
+    TAB_BESIDE_A_CHAT,
+    ChatSurface,
+    ask_aside,
+    main_chat,
+    reload_beside_the_chat,
+)
 from utils.chat_ui import (
     close_menu,
     expect_reply,
     open_input_menu,
     send,
-    side_chat_panel,
-    side_chat_tab,
 )
 from utils.tooltips import tooltip_button
 from utils.user_terminals import TEMPLATES, listed_terminal, open_terminal_menu
@@ -404,7 +415,89 @@ def test_a_chat_input_too_narrow_for_the_terminal_offers_it_in_its_more_menu(
     expect(_terminal_button(page, quarry)).to_be_visible()
 
 
-def test_a_side_chat_has_no_terminal_menu(page_for, make_user, admin, preserve, connect, upstream):
+def _chat_terminal_button(chat: ChatSurface, label: str) -> Locator:
+    """The Terminal button of this chat's input, which reads the chat's picked terminal."""
+    return chat.panel.get_by_role("button", name=label, exact=True)
+
+
+def _pick_in(chat: ChatSurface, name: str, picked: str | None = None) -> None:
+    """Open the chat's Terminal menu, whose button reads `picked`, and click the terminal `name`."""
+    tooltip_button(chat.panel, picked or "Terminal").click()
+    expect(chat.page.get_by_role("menu")).to_be_visible()
+    listed_terminal(chat.page, name).click()
+    expect(chat.page.get_by_role("menu")).to_have_count(0)
+
+
+def _reloaded(chat: ChatSurface) -> ChatSurface:
+    """The same chat after a page reload, back in its tab when it is a side chat."""
+    if chat.is_side:
+        return reload_beside_the_chat(chat, chat.tab.inner_text().strip())
+    return chat.reload()
+
+
+def _chat_asking(person, question: str) -> str:
+    """The id of the person's saved chat whose messages hold `question`."""
+    with person.client() as client:
+        listed = client.get("/api/v1/chats/", params={"page": 1})
+        assert listed.status_code == 200, listed.text
+        for listed_chat in listed.json():
+            stored = client.get(f"/api/v1/chats/{listed_chat['id']}")
+            assert stored.status_code == 200, stored.text
+            messages = stored.json()["chat"].get("history", {}).get("messages", {}).values()
+            if any(question in str(message.get("content")) for message in messages):
+                return listed_chat["id"]
+    raise AssertionError(f"no saved chat holds {question!r}")
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT, DRAGGED_TAB)
+def test_a_pick_in_a_saved_chat_or_side_chat_is_stored_with_it_and_back_after_a_reload(
+    chat_for, make_user, connect
+):
+    """In a side chat: open-webui/open-webui#34149."""
+    person = make_user()
+    harbour, _, _ = _names()
+    connections = connect([harbour], person)
+    chat_id = _saved_chat(person, f"kept {uuid.uuid4().hex[:6]}")
+    chat = chat_for(person, chat_id=chat_id)
+    expect(chat.last_reply).to_contain_text("Noted.")
+
+    _pick_in(chat, harbour)
+    expect(_chat_terminal_button(chat, harbour)).to_be_visible()
+    assert _stored_terminal(person, chat_id) == connections[0]["id"], (
+        f"the chat is stored with the terminal {_stored_terminal(person, chat_id)!r}"
+    )
+
+    chat = _reloaded(chat)
+    expect(_chat_terminal_button(chat, harbour)).to_be_visible()
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT, OPENED_ASIDE, TAB_BESIDE_A_CHAT)
+def test_a_terminal_picked_before_the_first_message_is_saved_with_the_new_chat(
+    chat_for, make_user, connect, upstream
+):
+    """In a side chat: open-webui/open-webui#34149."""
+    person = make_user()
+    harbour, _, _ = _names()
+    connections = connect([harbour], person)
+    chat = chat_for(person)
+
+    _pick_in(chat, harbour)
+    expect(_chat_terminal_button(chat, harbour)).to_be_visible()
+    question = f"first question {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("First answer.", match=reply.answering(question)))
+    send(chat, question)
+    expect_reply(chat, "First answer.")
+
+    chat_id = _chat_asking(person, question)
+    assert _stored_terminal(person, chat_id) == connections[0]["id"], (
+        f"the new chat is stored with the terminal {_stored_terminal(person, chat_id)!r}"
+    )
+
+
+def test_a_side_chat_keeps_its_own_terminal_apart_from_the_chat(
+    page_for, make_user, admin, preserve, connect, upstream
+):
+    """open-webui/open-webui#34149: a side chat had no menu and used the chat's terminal."""
     preserve("permissions")
     with admin.client() as client:
         permissions = client.get("/api/v1/users/default/permissions").json()
@@ -412,23 +505,38 @@ def test_a_side_chat_has_no_terminal_menu(page_for, make_user, admin, preserve, 
         allowed = client.post("/api/v1/users/default/permissions", json=permissions)
     assert allowed.status_code == 200, allowed.text
     person = make_user()
-    harbour, _, _ = _names()
-    connect([harbour], person)
+    harbour, quarry, _ = _names()
+    connections = connect([harbour, quarry], person)
     tag = uuid.uuid4().hex[:6]
-    page = page_for(person, path=f"/c/{_saved_chat(person, f'main {tag}')}")
-    expect_reply(page, "Noted.")
-    open_terminal_menu(page)
-    _pick(page, harbour, shown=harbour)
+    main_id = _saved_chat(person, f"main {tag}")
+    page = page_for(person, path=f"/c/{main_id}")
+    main = main_chat(page)
+    expect(main.last_reply).to_contain_text("Noted.")
+    _pick_in(main, harbour)
+    expect(_chat_terminal_button(main, harbour)).to_be_visible()
 
     question = f"an aside {tag}"
     upstream.queue(reply.text("Aside answered.", match=reply.answering(question)))
-    send(page, f"/side {question}")
-    expect(side_chat_tab(page, question)).to_have_attribute("aria-selected", "true")
-    panel = side_chat_panel(page, question)
-    expect(panel).to_contain_text("Aside answered.")
+    side = ask_aside(page, question)
+    side.expect_reply("Aside answered.")
+    side_id = _chat_asking(person, question)
+    assert side_id != main_id
 
-    # the side chat's input has its More menu and model, the chat's input keeps the terminal
-    expect(panel.get_by_role("button", name="More", exact=True)).to_be_visible()
-    expect(panel.get_by_role("button", name=harbour, exact=True)).to_have_count(0)
-    expect(panel.get_by_role("button", name="Terminal", exact=True)).to_have_count(0)
-    expect(_terminal_button(page, harbour)).to_have_count(1)
+    # a new side chat starts from the chat's terminal, as a new chat does
+    expect(_chat_terminal_button(side, harbour)).to_be_visible()
+    _pick_in(side, quarry, picked=harbour)
+    expect(_chat_terminal_button(side, quarry)).to_be_visible()
+    expect(_chat_terminal_button(main, harbour)).to_be_visible()
+
+    # and a pick in the chat leaves the side chat's alone
+    _pick_in(main, harbour, picked=harbour)
+    expect(_chat_terminal_button(main, "Terminal")).to_be_visible()
+    expect(_chat_terminal_button(side, quarry)).to_be_visible()
+    stored = {"chat": _stored_terminal(person, main_id), "side": _stored_terminal(person, side_id)}
+    assert stored == {"chat": None, "side": connections[1]["id"]}, (
+        f"the chats are stored with the terminals {stored}"
+    )
+
+    side = reload_beside_the_chat(side, question)
+    expect(_chat_terminal_button(side, quarry)).to_be_visible()
+    expect(_chat_terminal_button(main_chat(page), "Terminal")).to_be_visible()
