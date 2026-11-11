@@ -139,6 +139,18 @@ def _error(reply: dict) -> str | None:
     return (reply.get("error") or {}).get("content")
 
 
+def _with_error(client: httpx.Client, turn: ChatTurn, reply: dict) -> dict:
+    """The done reply once its error is stored: a turn that fails after the agent started is
+    marked done a few milliseconds before the error is written."""
+    deadline = time.monotonic() + 10
+    while not _error(reply) and time.monotonic() < deadline:
+        time.sleep(0.1)
+        stored = client.get(f"/api/v1/chats/{turn.chat_id}")
+        stored.raise_for_status()
+        reply = stored.json()["chat"]["history"]["messages"][turn.assistant_message_id]
+    return reply
+
+
 def _pending(client: httpx.Client, turn: ChatTurn) -> dict:
     """The agent's request waiting for the person, once it is stored."""
     deadline = time.monotonic() + REPLY_TIMEOUT
@@ -279,6 +291,7 @@ def test_a_session_the_terminal_refuses_to_start_ends_the_reply_with_its_reason(
     with person.client() as client:
         agents.refuse_start = (409, {"detail": busy})
         turn, refused = _ask(client, terminal_id, "start while busy")
+        refused = _with_error(client, turn, refused)
         agents.refuse_start = None
         _, after = _ask(
             client,
@@ -585,7 +598,8 @@ def test_agent_output_lost_on_the_way_ends_the_reply_with_an_error(make_user, ag
     with person.client() as client:
         _, whole = _ask(client, terminal_id, "count")
         agents.turn = lose_the_middle
-        _, broken = _ask(client, terminal_id, "count")
+        lost, broken = _ask(client, terminal_id, "count")
+        broken = _with_error(client, lost, broken)
 
     assert whole.get("content") == "Scripted agent heard: count", whole
     assert _error(broken) == "Agent protocol output was lost", (
@@ -733,7 +747,7 @@ def test_an_agent_socket_that_stays_away_for_a_minute_ends_the_reply(make_user, 
             client, "a long task", model=model_id(terminal_id, MODEL), terminal_id=terminal_id
         )
         started = time.monotonic()
-        reply = wait_for_reply(client, turn, timeout=100)
+        reply = _with_error(client, turn, wait_for_reply(client, turn, timeout=100))
         waited = time.monotonic() - started
         agents.turn = heard
         _, after = _ask(
