@@ -16,6 +16,12 @@ the Copy and Download test stays green there as a control. The closed pane test 
 version. Retargeted for 2d7cf5ec9, which shows the pane as the Artifacts tab of the side panel:
 the test closes that tab. Since 0b6d43405 the pane opens beside the conversation, so the Preview
 test checks the split instead of turning it on.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the SVG and page
+tests in every way a side chat starts and every state it can be in. The page has one artifacts
+pane, which shows the main chat's artifacts, so a side chat answer's blocks never reach it
+(open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
+variants are red on dev c15f28649 and on dev e791cbdde.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
 from utils.clipboard import read_text
 from utils.tooltips import tooltip_button
@@ -52,11 +59,11 @@ def fenced(lang: str, code: str) -> str:
     return f"```{lang}\n{code}\n```"
 
 
-def ask(page: Page, upstream, answer: str, prompt: str) -> Locator:
+def ask(chat: ChatSurface, upstream, answer: str, prompt: str) -> Locator:
     upstream.queue(reply.text(f"{answer}\n\nArtifact done.", match=reply.answering(prompt)))
-    send(page, prompt)
-    expect_reply(page, "Artifact done.")
-    return last_reply(page)
+    send(chat, prompt)
+    expect_reply(chat, "Artifact done.")
+    return last_reply(chat)
 
 
 def artifacts_pane(page: Page) -> Locator:
@@ -67,10 +74,14 @@ def artifact_page(page: Page):
     return artifacts_pane(page).frame_locator("iframe")
 
 
-def test_an_svg_block_opens_the_pane_on_the_drawing(page_for, make_user, upstream):
-    page = page_for(make_user())
+# the model count cannot matter: the pane shows the blocks of the reply that holds them
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_an_svg_block_opens_the_pane_on_the_drawing(chat_for, make_user, upstream):
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = chat_for(make_user())
+    page = chat.page
 
-    ask(page, upstream, fenced("svg", SUN), "draw me a sun")
+    ask(chat, upstream, fenced("svg", SUN), "draw me a sun")
 
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 1 of 1")
@@ -84,12 +95,15 @@ def test_an_svg_block_opens_the_pane_on_the_drawing(page_for, make_user, upstrea
     assert "Download" in tooltips and "Open in full screen" not in tooltips, tooltips
 
 
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_html_css_and_script_blocks_make_one_styled_page_that_cannot_reach_the_chat(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = chat_for(make_user())
+    page = chat.page
 
-    ask(page, upstream, PAGE_BLOCKS, "build me a harbour page")
+    ask(chat, upstream, PAGE_BLOCKS, "build me a harbour page")
 
     expect(artifacts_pane(page)).to_contain_text("Version 1 of 1")
     title = artifact_page(page).locator("#title")
@@ -99,13 +113,15 @@ def test_html_css_and_script_blocks_make_one_styled_page_that_cannot_reach_the_c
     assert page.title() != "changed by the artifact"
 
 
-def test_preview_moves_the_pane_to_that_blocks_version(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_preview_moves_the_pane_to_that_blocks_version(chat_for, make_user, upstream):
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = chat_for(make_user())
+    page = chat.page
     answer = (
         fenced("html", "<h1>first draft</h1>") + "\n\n" + fenced("html", "<h1>second draft</h1>")
     )
 
-    box = ask(page, upstream, answer, "give me two drafts")
+    box = ask(chat, upstream, answer, "give me two drafts")
 
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
@@ -117,12 +133,15 @@ def test_preview_moves_the_pane_to_that_blocks_version(page_for, make_user, upst
 
 
 def test_preview_on_an_earlier_block_reopens_the_closed_pane_on_that_blocks_version(
-    page_for, make_user, upstream
+    chat_for, make_user, upstream
 ):
-    """open-webui/open-webui#32688, fix 9862a5bd6: the reopened pane showed the newest version."""
-    page = page_for(make_user())
+    """open-webui/open-webui#32688, fix 9862a5bd6: the reopened pane showed the newest version.
+
+    In a side chat: open-webui/open-webui#34026."""
+    chat = chat_for(make_user())
+    page = chat.page
     answer = fenced("html", "<h1>first plan</h1>") + "\n\n" + fenced("html", "<h1>second plan</h1>")
-    box = ask(page, upstream, answer, "give me two plans")
+    box = ask(chat, upstream, answer, "give me two plans")
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
 
@@ -134,9 +153,11 @@ def test_preview_on_an_earlier_block_reopens_the_closed_pane_on_that_blocks_vers
     expect(artifact_page(page).locator("h1")).to_have_text("first plan")
 
 
-def test_copy_and_download_give_the_whole_page(page_for, make_user, upstream):
-    page = page_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
-    ask(page, upstream, fenced("html", "<h1>saved card</h1>"), "make a card to keep")
+def test_copy_and_download_give_the_whole_page(chat_for, make_user, upstream):
+    """In a side chat: open-webui/open-webui#34026."""
+    chat = chat_for(make_user(), permissions=["clipboard-read", "clipboard-write"])
+    page = chat.page
+    ask(chat, upstream, fenced("html", "<h1>saved card</h1>"), "make a card to keep")
     pane = artifacts_pane(page)
     expect(artifact_page(page).locator("h1")).to_have_text("saved card")
     chat_id = page.url.rsplit("/", 1)[-1]
