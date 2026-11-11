@@ -14,11 +14,11 @@ far the model gets only the side question.
 What a side chat does not offer yet on dev c15f28649 is pinned as plain tests, red until it
 lands: Regenerate, Edit, Continue Response and rating under its messages
 (open-webui/open-webui#34014) and follow-up suggestions (open-webui/open-webui#34015), which pass
-on the build of fix PR open-webui/open-webui#34064; an HTML block opening as an artifact
-(open-webui/open-webui#34026, red on that build too, the PR leaves it out); and its tab taking
+on dev e791cbdde, which has fix PR open-webui/open-webui#34064 (b428dbaf2); an HTML block
+opening as an artifact (open-webui/open-webui#34026, red on dev e791cbdde too); and its tab taking
 the new title when the chat is renamed in the sidebar, checked in the main chat and in every way
 a side chat starts and every state it can be in: no filed issue covers it (draft pending) and it
-is red in every side chat on that build too.
+is red in every side chat on dev e791cbdde too.
 
 Discriminates: passes on dev f659c0d12 apart from those gaps. In a backend copy whose chat Stop
 stops nothing, that never offers the web tools, never names attached knowledge to the model, whose
@@ -683,8 +683,8 @@ def open_sidebar(page: Page) -> Locator:
 # a temporary side chat is not in the sidebar
 @pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
 def test_a_chat_renamed_in_the_sidebar_shows_its_new_name_on_its_tab(chat_for, make_user, upstream):
-    """In a side chat: red on dev c15f28649 and on the build of PR open-webui/open-webui#34064,
-    no issue filed yet (draft pending)."""
+    """In a side chat: red on dev c15f28649 and on dev e791cbdde, after the side chat swap of
+    open-webui/open-webui#34064 (issue draft pending)."""
     account = make_user()
     chat = chat_for(account)
     page = chat.page

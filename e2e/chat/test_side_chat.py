@@ -504,7 +504,8 @@ def test_temporary_chat_turned_on_in_a_side_chat_keeps_it_out_of_the_chat_list(
 def test_an_empty_side_chat_says_whether_its_messages_are_saved(
     page_for, make_user, upstream, side_chat_allowed
 ):
-    """Red on the build of PR open-webui/open-webui#34064, which drops the note on purpose."""
+    """Red on dev since the side chat swap of open-webui/open-webui#34064 (b428dbaf2), which
+    dropped the note on purpose; whether a side chat keeps it is the maintainers' call."""
     page, _ = open_answered_chat(page_for, make_user(), upstream)
     side = open_empty_side_chat(page)
     expect(side.panel).to_contain_text("Messages are saved to your chats.")
@@ -518,8 +519,8 @@ def test_an_empty_side_chat_says_whether_its_messages_are_saved(
 def test_a_saved_chat_in_a_tab_beside_a_temporary_chat_can_be_rated(
     page_for, make_user, side_chat_allowed
 ):
-    """Red on dev c15f28649 (no rating in a tab, open-webui/open-webui#34014) and on the build of
-    PR open-webui/open-webui#34064, which names a temporary chat beside it as left out."""
+    """Red on dev c15f28649 (no rating in a tab, open-webui/open-webui#34014) and still on dev
+    e791cbdde, after the side chat swap of open-webui/open-webui#34064 (issue draft pending)."""
     account = make_user()
     seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
     page = page_for(account, path="/?temporary-chat=true")

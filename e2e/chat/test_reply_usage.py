@@ -16,7 +16,8 @@ and sends no usage the first test fails.
 Both tests run in the main chat and in every way a side chat starts and every state it can be in
 (`utils/chat_surface.py`). In a side chat the info button showed only after a reload
 (open-webui/open-webui#34016, fix PR open-webui/open-webui#34064): on dev c15f28649 the first
-test is red in every side chat and passes on the PR's build. A temporary side chat is left out of
+test is red in every side chat and passes on dev e791cbdde, which has the fix (b428dbaf2). A
+temporary side chat is left out of
 it, as the chat is gone after the reload the test makes.
 """
 

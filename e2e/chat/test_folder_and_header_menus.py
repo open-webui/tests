@@ -25,8 +25,8 @@ and whose menu shows Rename only on writable views, each of the three goes red.
 The rename tests also run on a chat in a side tab: a saved chat dragged into a tab, and a chat
 started in every way a side chat starts and every state it can be in (a temporary one has no
 stored title). Its tab must offer the same chat menu and rename the chat it shows. On dev
-c15f28649 and on the build of PR open-webui/open-webui#34064 a side tab has no chat menu, so
-every side variant is red (open-webui/open-webui#34031, which the PR leaves out).
+c15f28649 and on dev e791cbdde, after the side chat swap of open-webui/open-webui#34064, a side
+tab has no chat menu, so every side variant is red (open-webui/open-webui#34031).
 """
 
 from __future__ import annotations
