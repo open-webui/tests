@@ -10,6 +10,8 @@ the test reads the image the scripted provider was sent.
 
 Discriminates: passes on the 015dbc861 build; with `6c322941d` reverted in the chat input (the
 015dbc861 mutation build) both cases go red: the photo goes up under its HEIC name and type.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
@@ -18,10 +20,11 @@ import base64
 import re
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import chat_input, expect_reply, open_input_menu, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -39,11 +42,11 @@ RED_HEIC = base64.b64decode(
 JPEG_MAGIC = b"\xff\xd8\xff"
 
 
-def attach(page: Page, name: str, content: bytes, mime_type: str) -> None:
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("button", name="More", exact=True).last.click()
-    with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
+def attach(chat: ChatSurface, name: str, content: bytes, mime_type: str) -> None:
+    expect(chat_input(chat)).to_be_visible()
+    menu = open_input_menu(chat)
+    with chat.page.expect_file_chooser() as chooser:
+        menu.get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": content})
 
 
@@ -56,16 +59,16 @@ def images_sent(upstream, prompt: str) -> list[str]:
 
 # Chromium types a file it is given untyped from its extension, so an empty type cannot be played
 @pytest.mark.parametrize("reported_type", ["image/heic", "image/heif"], ids=["heic", "heif"])
-def test_a_heic_photo_reaches_the_model_as_a_jpeg(page_for, make_user, upstream, reported_type):
+def test_a_heic_photo_reaches_the_model_as_a_jpeg(chat_for, make_user, upstream, reported_type):
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     prompt = f"what colour is this photo ({reported_type})?"
     upstream.queue(reply.text("It is red.", match=reply.answering(prompt)))
 
-    attach(page, "IMG_0001.HEIC", RED_HEIC, reported_type)
-    expect(page.get_by_role("button", name="Show image preview")).to_be_visible()
-    send(page, prompt)
-    expect_reply(page, "It is red.")
+    attach(chat, "IMG_0001.HEIC", RED_HEIC, reported_type)
+    expect(chat.panel.get_by_role("button", name="Show image preview")).to_be_visible()
+    send(chat, prompt)
+    expect_reply(chat, "It is red.")
 
     with account.client() as client:
         uploaded = client.get("/api/v1/files/", params={"content": False}).json()["items"]
