@@ -21,6 +21,11 @@ form turned the tool, pipe, reset and Integrations menu tests red and left the c
 green, while the Default button leaving a custom value in place together with the chat controls
 never saving turned only the reset and chat controls tests red. With `be35c8f65` reverted (the
 015dbc861 mutation build) both list valve tests go red.
+
+The four tests of user valves set from a chat (the Integrations menu and the chat controls) run
+in the main chat and in a side chat. The tests that set valves on the workspace and admin pages
+stay on the main chat: the page is what they are about, and the chat only shows their effect.
+The side chat variants are green on dev c15f28649 and on head e791cbdde.
 """
 
 from __future__ import annotations
@@ -37,9 +42,17 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import grant
 from harness.plugins import installed_function
-from utils.cached_chat import turn_on_tool
 from utils.chat_controls import open_chat_controls, open_section
-from utils.chat_ui import chat_input, expect_reply, integration_row, open_integrations_menu, send
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import (
+    Chat,
+    chat_input,
+    close_menu,
+    expect_reply,
+    integration_row,
+    open_integrations_menu,
+    send,
+)
 from utils.menus import late_menu_entry
 from utils.valves import customise, valve
 from utils.workspace_list import item_row
@@ -142,20 +155,44 @@ def tool_results(upstream, question: str) -> list[str]:
     answered = [
         request for request in upstream.chat_requests() if reply.answering(question)(request)
     ]
-    return [
-        entry["content"] for entry in reply.conversation(answered[-1]) if entry["role"] == "tool"
-    ]
+    conversation = reply.conversation(answered[-1])
+    # a side chat can hold earlier turns: count from the question's own turn on
+    asked = max(number for number, entry in enumerate(conversation) if entry["role"] == "user")
+    return [entry["content"] for entry in conversation[asked:] if entry["role"] == "tool"]
 
 
-def ask_tool(page: Page, upstream, tool_name: str, function_name: str, question: str) -> None:
+def start_fresh(chat: Chat) -> None:
+    """Open the chat page anew; a side chat has no address of its own and stays as it is, with
+    whatever menu a step before left open closed."""
+    if isinstance(chat, ChatSurface):
+        if chat.is_side:
+            close_menu(chat)
+        else:
+            chat.page.goto("/")
+    else:
+        chat.goto("/")
+
+
+def have_tool_on(chat: Chat, tool_name: str) -> None:
+    """Switch the tool on for the next message unless the chat has it on already."""
+    menu = open_integrations_menu(chat)
+    menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    tool = menu.get_by_role("menuitemcheckbox", name=tool_name)
+    if tool.get_attribute("aria-checked") != "true":
+        tool.click()
+    expect(tool).to_have_attribute("aria-checked", "true")
+    close_menu(chat)
+
+
+def ask_tool(chat: Chat, upstream, tool_name: str, function_name: str, question: str) -> None:
     upstream.queue(
         reply.tool_call(function_name, {}, match=reply.answering(question)),
         reply.text(f"answered {question}", match=reply.answering(question)),
     )
-    page.goto("/")
-    turn_on_tool(page, tool_name)
-    send(page, question)
-    expect_reply(page, f"answered {question}")
+    start_fresh(chat)
+    have_tool_on(chat, tool_name)
+    send(chat, question)
+    expect_reply(chat, f"answered {question}")
 
 
 @pytest.fixture
@@ -315,59 +352,59 @@ def naming_tool(admin, make_user):
         client.delete(f"/api/v1/tools/id/{tool_id}/delete")
 
 
-def set_nickname_from_integrations(page: Page, tool_name: str, nickname: str) -> None:
-    page.goto("/")
-    expect(chat_input(page)).to_be_visible()
-    open_integrations_menu(page)
-    page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
-    tool_row = integration_row(page.get_by_role("menu"), tool_name)
+def set_nickname_from_integrations(chat: Chat, tool_name: str, nickname: str) -> None:
+    start_fresh(chat)
+    expect(chat_input(chat)).to_be_visible()
+    open_integrations_menu(chat)
+    chat.page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    tool_row = integration_row(chat.page.get_by_role("menu"), tool_name)
     tool_row.hover()
     late_menu_entry(tool_row, "Valves").click()
-    dialog = page.get_by_role("dialog").filter(has_text="Valves")
+    dialog = chat.page.get_by_role("dialog").filter(has_text="Valves")
     nickname_valve = valve(dialog, "Nickname", "What the tool calls you")
     customise(nickname_valve)
     nickname_valve.get_by_role("textbox").fill(nickname)
     dialog.get_by_role("button", name="Save").click()
-    expect(page.get_by_text("Valves updated successfully")).to_be_visible()
+    expect(chat.page.get_by_text("Valves updated successfully")).to_be_visible()
 
 
 def test_each_user_sets_their_own_user_valves_from_the_integrations_menu(
-    page_for, naming_tool, upstream
+    chat_for, naming_tool, upstream
 ):
     name, first, second = naming_tool
-    first_page, second_page = page_for(first), page_for(second)
-    set_nickname_from_integrations(first_page, name, "Captain")
-    set_nickname_from_integrations(second_page, name, "Doc")
+    first_chat, second_chat = chat_for(first), chat_for(second)
+    set_nickname_from_integrations(first_chat, name, "Captain")
+    set_nickname_from_integrations(second_chat, name, "Doc")
 
-    ask_tool(first_page, upstream, name, "whoami", "what do you call me?")
-    ask_tool(second_page, upstream, name, "whoami", "which name is mine?")
+    ask_tool(first_chat, upstream, name, "whoami", "what do you call me?")
+    ask_tool(second_chat, upstream, name, "whoami", "which name is mine?")
 
     assert tool_results(upstream, "what do you call me?") == ["calling you Captain"]
     assert tool_results(upstream, "which name is mine?") == ["calling you Doc"]
 
 
-def open_chat_controls_valves(page: Page, tool_name: str) -> Locator:
-    panel = open_section(open_chat_controls(page), "Valves")
-    tool_picker = page.get_by_role("combobox").filter(
-        has=page.get_by_role("option", name=tool_name)
+def open_chat_controls_valves(chat: Chat, tool_name: str) -> Locator:
+    panel = open_section(open_chat_controls(chat), "Valves")
+    tool_picker = chat.page.get_by_role("combobox").filter(
+        has=chat.page.get_by_role("option", name=tool_name)
     )
     tool_picker.select_option(label=tool_name)
     return panel.locator("form").filter(has=tool_picker)
 
 
-def test_user_valves_set_in_the_chat_controls_replace_the_default(page_for, naming_tool, upstream):
+def test_user_valves_set_in_the_chat_controls_replace_the_default(chat_for, naming_tool, upstream):
     name, first, _ = naming_tool
-    page = page_for(first)
-    ask_tool(page, upstream, name, "whoami", "who am I to you?")
+    chat = chat_for(first)
+    ask_tool(chat, upstream, name, "whoami", "who am I to you?")
 
-    panel = open_chat_controls_valves(page, name)
+    panel = open_chat_controls_valves(chat, name)
     nickname_valve = valve(panel, "Nickname", "What the tool calls you")
     customise(nickname_valve)
     nickname_valve.get_by_role("textbox").fill("Skipper")
     nickname_valve.get_by_role("textbox").press("Tab")
-    expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
+    expect(chat.page.get_by_text("Valves updated", exact=True)).to_be_visible()
 
-    ask_tool(page, upstream, name, "whoami", "who am I to you now?")
+    ask_tool(chat, upstream, name, "whoami", "who am I to you now?")
     assert tool_results(upstream, "who am I to you?") == ["calling you guest"]
     assert tool_results(upstream, "who am I to you now?") == ["calling you Skipper"]
 
@@ -405,13 +442,13 @@ def saved_user_valves(account, tool_id: str, expected: dict) -> dict:
 
 
 def test_an_unset_list_valve_keeps_its_default_when_the_chat_controls_save_another(
-    page_for, booking_tool, upstream
+    chat_for, booking_tool, upstream
 ):
     name, tool_id, booker = booking_tool
-    page = page_for(booker)
-    ask_tool(page, upstream, name, "booking", "what may I book?")
+    chat = chat_for(booker)
+    ask_tool(chat, upstream, name, "booking", "what may I book?")
 
-    panel = open_chat_controls_valves(page, name)
+    panel = open_chat_controls_valves(chat, name)
     rooms_valve = valve(panel, "Rooms", "Rooms you may book")
     expect(
         late_menu_entry(rooms_valve, "Default"), "the unset list shows as Custom (#31300)"
@@ -419,9 +456,9 @@ def test_an_unset_list_valve_keeps_its_default_when_the_chat_controls_save_anoth
     nickname_valve = valve(panel, "Nickname", "What the tool calls you")
     customise(nickname_valve)
     type_into(nickname_valve, "Skipper")
-    expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
+    expect(chat.page.get_by_text("Valves updated", exact=True)).to_be_visible()
 
-    ask_tool(page, upstream, name, "booking", "what may I book now?")
+    ask_tool(chat, upstream, name, "booking", "what may I book now?")
     assert booking_result(upstream, "what may I book now?") == {
         "nickname": "Skipper",
         "rooms": ["lobby"],
@@ -429,7 +466,7 @@ def test_an_unset_list_valve_keeps_its_default_when_the_chat_controls_save_anoth
 
 
 def test_a_list_valve_set_in_the_chat_controls_drops_empty_entries_and_keeps_saving(
-    page_for, booking_tool, upstream
+    chat_for, booking_tool, upstream
 ):
     name, tool_id, booker = booking_tool
     with booker.client() as client:
@@ -437,15 +474,15 @@ def test_a_list_valve_set_in_the_chat_controls_drops_empty_entries_and_keeps_sav
             f"/api/v1/tools/id/{tool_id}/valves/user/update", json={"rooms": ["lobby", "hall"]}
         )
     assert seeded.status_code == 200, seeded.text
-    page = page_for(booker)
-    ask_tool(page, upstream, name, "booking", "which rooms are mine?")
+    chat = chat_for(booker)
+    ask_tool(chat, upstream, name, "booking", "which rooms are mine?")
 
-    panel = open_chat_controls_valves(page, name)
+    panel = open_chat_controls_valves(chat, name)
     rooms_valve = valve(panel, "Rooms", "Rooms you may book")
     expect(rooms_valve.get_by_role("textbox")).to_have_value("lobby,hall")
     type_into(rooms_valve, "north, south, ")
     # the panel takes the saved valves back with this notice; an edit before it would be replaced
-    expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
+    expect(chat.page.get_by_text("Valves updated", exact=True)).to_be_visible()
     nickname_valve = valve(panel, "Nickname", "What the tool calls you")
     customise(nickname_valve)
     type_into(nickname_valve, "Skipper")
@@ -453,5 +490,5 @@ def test_a_list_valve_set_in_the_chat_controls_drops_empty_entries_and_keeps_sav
     expected = {"nickname": "Skipper", "rooms": ["north", "south"]}
     saved = saved_user_valves(booker, tool_id, expected)
     assert saved == expected, f"the list or a later edit was saved wrongly (#31300): {saved}"
-    ask_tool(page, upstream, name, "booking", "which rooms are mine now?")
+    ask_tool(chat, upstream, name, "booking", "which rooms are mine now?")
     assert booking_result(upstream, "which rooms are mine now?") == expected
