@@ -17,7 +17,13 @@ flipped on and was never saved), while an account that has it on can still switc
 Temporary Chat by Default starts a new chat temporary and unstored; Insert Suggestion Prompt to
 Input fills the input from a suggestion instead of sending it; Show Formatting Toolbar shows the
 toolbar over selected input text; Landing Page Mode Chat shows the conversation pane on a new chat;
-Render Markdown in User Messages off shows a message as typed.
+Render Markdown in User Messages off shows a message as typed. Haptic Feedback makes the page
+vibrate while a reply streams in, and not for an account that left it off.
+
+The Auto-Copy test and the Haptic Feedback test run in the main chat and in every way a side
+chat starts and every state it can be in (`utils/chat_surface.py`): a side chat ignores both
+switches (open-webui/open-webui#34024, fix PR open-webui/open-webui#34064). Every other test runs
+in the main chat only.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, reading `chatBubble` as always on turns
 the bubble tests red, passing `richText` as always on turns the rich text test red, copying a reply
@@ -42,7 +48,8 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
+from utils.chat_surface import EVERYWHERE, ChatSurface
+from utils.chat_ui import Chat, chat_input, conversation, expect_reply, last_reply, replies, send
 from utils.clipboard import on_clipboard, read_text, write_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -67,10 +74,14 @@ def flip(page: Page, name: str) -> None:
 
 
 def chat_once(page: Page, upstream, question: str) -> None:
-    upstream.queue(reply.text(ANSWER, match=reply.answering(question)))
     page.goto("/")
-    send(page, question)
-    expect_reply(page, "is lit")
+    answer_once(page, upstream, question)
+
+
+def answer_once(chat: Chat, upstream, question: str) -> None:
+    upstream.queue(reply.text(ANSWER, match=reply.answering(question)))
+    send(chat, question)
+    expect_reply(chat, "is lit")
 
 
 def own_message_label(page: Page, text: str) -> Locator:
@@ -386,23 +397,62 @@ def clipboard_becomes(page: Page, expected: str) -> bool:
     )
 
 
+# several models: not offered in a side chat on dev, and the switch acts on whatever answer ends
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 @pytest.mark.secure_context
-def test_auto_copy_response_puts_a_finished_reply_on_the_clipboard(page_for, make_user, upstream):
-    page = page_for(make_user(), permissions=CLIPBOARD)
-    flip(page, "Auto-Copy Response to Clipboard")
-    page.goto("/")
-    write_text(page, "nothing copied")
+def test_auto_copy_response_puts_a_finished_reply_on_the_clipboard(
+    page_for, chat_for, make_user, upstream
+):
+    """In a side chat: open-webui/open-webui#34024."""
+    account = make_user()
+    flip(page_for(account, permissions=CLIPBOARD), "Auto-Copy Response to Clipboard")
+    chat = chat_for(account, permissions=CLIPBOARD)
+    write_text(chat.page, "nothing copied")
 
-    chat_once(page, upstream, "Is the lamp lit tonight?")
-    assert clipboard_becomes(page, ANSWER), (
-        f"the reply never reached the clipboard: {read_text(page)!r}"
+    answer_once(chat, upstream, "Is the lamp lit tonight?")
+    assert clipboard_becomes(chat.page, ANSWER), (
+        f"the reply in the {chat.place} never reached the clipboard: {read_text(chat.page)!r}"
     )
 
-    other = page_for(make_user(), permissions=CLIPBOARD)
-    write_text(other, "nothing copied")
-    chat_once(other, upstream, "Is the lamp lit this night?")
-    other.wait_for_timeout(1000)
-    assert read_text(other) == "nothing copied"
+    other = chat_for(make_user(), permissions=CLIPBOARD)
+    write_text(other.page, "nothing copied")
+    answer_once(other, upstream, "Is the lamp lit this night?")
+    other.page.wait_for_timeout(1000)
+    assert read_text(other.page) == "nothing copied"
+
+
+VIBRATIONS = """() => {
+    window.vibrations = 0;
+    navigator.vibrate = () => {
+        window.vibrations += 1;
+        return true;
+    };
+}"""
+
+
+def vibrations_while_answering(chat: ChatSurface, upstream, question: str) -> int:
+    """How often the page vibrated while the reply to `question` streamed in pieces."""
+    chat.page.evaluate(VIBRATIONS)
+    pieces = ["The lamp ", "is lit ", "and ", "turning."]
+    upstream.queue(reply.text(pieces, match=reply.answering(question)))
+    send(chat, question)
+    expect_reply(chat, "is lit and turning.")
+    return chat.page.evaluate("window.vibrations")
+
+
+# several models: not offered in a side chat on dev, and the switch acts on whatever answer streams
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_haptic_feedback_vibrates_while_a_reply_streams(page_for, chat_for, make_user, upstream):
+    """In a side chat: open-webui/open-webui#34024."""
+    account = make_user()
+    flip(page_for(account), "Haptic Feedback (Android)")
+    chat = chat_for(account)
+
+    vibrations = vibrations_while_answering(chat, upstream, "Is the lamp turning tonight?")
+    assert vibrations > 0, f"the page never vibrated while the {chat.place} answered"
+
+    other = chat_for(make_user())
+    assert vibrations_while_answering(other, upstream, "Is the lamp turning this night?") == 0
 
 
 def test_auto_copy_response_over_plain_http_stays_off_and_says_why(page_for, make_user):
