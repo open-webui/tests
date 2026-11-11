@@ -7,6 +7,12 @@ the window, and leaving full screen shows the pane as it was.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose pane opens on the first version,
 whose version arrows stay put and whose full screen does nothing, every test fails.
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the first in every
+way a side chat starts and every state it can be in. The page has one artifacts pane, which shows
+the main chat's artifacts, so a side chat answer's blocks never reach it
+(open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
+variants are red on dev c15f28649 and on dev e791cbdde.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE
 from utils.chat_ui import expect_reply, expect_split_screen, send
 from utils.tooltips import tooltip_button
 
@@ -34,22 +41,25 @@ def shown_artifact(page: Page):
 
 
 @pytest.fixture
-def two_artifacts(page_for, make_user, upstream):
-    """A chat whose two replies each hold an artifact, the pane open on the second."""
-    page = page_for(make_user())
+def two_artifacts(chat_for, make_user, upstream):
+    """A chat whose two replies each hold an artifact, the pane open on the second; the page."""
+    chat = chat_for(make_user())
     upstream.queue(
         reply.text(html_reply("first card"), match=reply.answering("first page")),
         reply.text(html_reply("second card"), match=reply.answering("second page")),
     )
-    send(page, "make me the first page")
-    expect_reply(page, "Done with first card.")
-    expect_split_screen(page)
-    send(page, "make me the second page")
-    expect_reply(page, "Done with second card.")
-    return page
+    send(chat, "make me the first page")
+    expect_reply(chat, "Done with first card.")
+    expect_split_screen(chat.page)
+    send(chat, "make me the second page")
+    expect_reply(chat, "Done with second card.")
+    return chat.page
 
 
+# the model count cannot matter: the pane shows the blocks of the replies that hold them
+@pytest.mark.chat_surfaces(*EVERYWHERE)
 def test_the_pane_opens_on_the_newest_version_labelled_as_the_last_of_two(two_artifacts):
+    """In a side chat: open-webui/open-webui#34026."""
     page = two_artifacts
 
     expect(artifacts_pane(page)).to_contain_text("Version 2 of 2")
@@ -57,6 +67,7 @@ def test_the_pane_opens_on_the_newest_version_labelled_as_the_last_of_two(two_ar
 
 
 def test_previous_version_shows_the_first_block_and_next_version_the_newest_again(two_artifacts):
+    """In a side chat: open-webui/open-webui#34026."""
     page = two_artifacts
     expect(shown_artifact(page)).to_have_text("second card")
 
@@ -72,6 +83,7 @@ def test_previous_version_shows_the_first_block_and_next_version_the_newest_agai
 def test_full_screen_makes_the_artifact_fill_the_window_and_leaving_it_brings_the_pane_back(
     two_artifacts,
 ):
+    """In a side chat: open-webui/open-webui#34026."""
     page = two_artifacts
     expect(shown_artifact(page)).to_have_text("second card")
     frame = artifacts_pane(page).locator("iframe")
