@@ -15,7 +15,7 @@ Copy button (the mutation build) the clipboard holds the HTML document and the t
 The test runs in the main chat and in a side chat. The side variant is red on dev c15f28649 (the
 code block has no Preview button, open-webui/open-webui#34026) and still red on the side chat
 rework build (open-webui/open-webui#34064): there Preview is offered but opens no Artifacts pane
-for a side chat's answer.
+for a side chat's answer (open-webui/open-webui#34026, fix PR open-webui/open-webui#34166).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ ANSWER = (
 def test_the_shortcut_copies_the_last_code_block_with_the_artifacts_pane_open(
     chat_for, make_user, upstream
 ):
-    """In a side chat: open-webui/open-webui#34026."""
+    """In a side chat: open-webui/open-webui#34026, fix PR open-webui/open-webui#34166."""
     chat = chat_for(make_user())
     chat.page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     upstream.queue(reply.text(ANSWER, match=reply.answering("page and script")))
