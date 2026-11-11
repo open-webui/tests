@@ -21,9 +21,9 @@ Every test runs in the main chat and in a side chat, the side chat put on its mo
 model selector; the three that compare two models run in every way a side chat starts and every
 state it can be in (`utils/chat_surface.py`). A side chat had no Compare in its model selector
 (open-webui/open-webui#34030, fix PR open-webui/open-webui#34064), so the comparing side chat
-variants are red on dev c15f28649. There the side chat also kept its tools as they were when its
-model was switched, so the switching journey is red in a side chat as well (no filed issue; it
-passes on dev e791cbdde).
+variants are red on dev c15f28649. There a side chat's Tools list also did not show the tools
+expected after its model was switched, so the switching journey is red in a side chat as well (no
+filed issue; it passes on dev e791cbdde).
 """
 
 from __future__ import annotations
