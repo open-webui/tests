@@ -7,6 +7,10 @@ file and opening the citation shows the text.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the retrieval of attached
 collections switched off the model is sent the question alone, without the file's text.
+
+The chat half runs in the main chat and in a side chat; the knowledge base is built on a page of
+its own first. A side chat answer showed no sources until a reload (open-webui/open-webui#34017,
+fix PR open-webui/open-webui#34064), so the side chat variant is red on dev c15f28649.
 """
 
 from __future__ import annotations
@@ -45,7 +49,8 @@ def curator(make_user):
                 client.delete(f"/api/v1/knowledge/{knowledge['id']}/delete")
 
 
-def test_an_uploaded_file_is_retrieved_and_cited_in_a_chat(page_for, curator, upstream):
+def test_an_uploaded_file_is_retrieved_and_cited_in_a_chat(page_for, chat_for, curator, upstream):
+    """In a side chat: open-webui/open-webui#34017."""
     name = f"Lake {uuid.uuid4().hex[:6]}"
     page = page_for(curator, path="/workspace/knowledge/create")
     creating = page.get_by_role("dialog")
@@ -64,19 +69,19 @@ def test_an_uploaded_file_is_retrieved_and_cited_in_a_chat(page_for, curator, up
     expect(base.get_by_role("button", name=re.compile(re.escape(FILE_NAME)))).to_be_visible()
 
     upstream.queue(reply.text("It is 4242.", match=reply.answering(QUESTION)))
-    page.goto("/")
-    chat_input(page).click()
-    page.keyboard.type("#Lake")
-    page.get_by_role("tooltip").get_by_role("button", name=name).click()
-    send(page, QUESTION)
-    expect_reply(page, "It is 4242.")
+    chat = chat_for(curator)
+    chat_input(chat).click()
+    chat.page.keyboard.type("#Lake")
+    chat.page.get_by_role("tooltip").get_by_role("button", name=name).click()
+    send(chat, QUESTION)
+    expect_reply(chat, "It is 4242.")
 
     sent = json.dumps(upstream.chat_requests()[-1]["messages"])
     assert "gate code is 4242" in sent
 
-    chat = conversation(page)
-    chat.get_by_role("button", name="Toggle 1 source").click()
-    listed_source(page, FILE_NAME).click()
-    citation = page.get_by_role("dialog")
+    messages = conversation(chat)
+    messages.get_by_role("button", name="Toggle 1 source").click()
+    listed_source(chat, FILE_NAME).click()
+    citation = chat.page.get_by_role("dialog")
     expect(citation.get_by_role("link", name=FILE_NAME)).to_be_visible()
     expect(citation).to_contain_text("The lake house gate code is 4242.")
