@@ -17,6 +17,9 @@
   refused connection, a 401) was logged at debug level only, so at the default log level the
   chat lost its tools with nothing in the log saying why. The failure is now an error line
   naming the server, with the reason.
+* Issue 34170: once an MCP server dropped the connection during a reply (a restart, say), every
+  later call to it in that reply failed with "MCP client is not connected.", even after the
+  server was back. The model kept retrying a server it could never reach again.
 
 Twin of unit/tools/test_tool_server_plumbing.py. The empty cached terminal list with no terminal
 able to serve stays in unit/tools/test_tool_server_auth_and_terminal_cache.py: a chat on a
@@ -28,7 +31,8 @@ the proxy's connection-error arm and the body read inside the `try`, one mutatio
 ef67cc3fa, with `f1a64ccfc2` reverted the empty-list and absent-key cases fail for both lists
 (the empty tool list is written back, the absent key logs a decode error); the populated and
 corrupt cases pass on both. The MCP failure lines pass on dev 5032e834e and are missing with
-`ee1d9255f` reverted.
+`ee1d9255f` reverted. The MCP restart test is red on dev 782f4b705 (the call after the
+restart gets "MCP client is not connected.") and green with the fix 7e88a1e7a.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ import contextlib
 import json
 import secrets
 import socket
+import threading
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -47,7 +52,7 @@ import redis
 from harness import backends
 from harness import upstream as reply
 from harness.actors import admin_of
-from harness.chat import ask
+from harness.chat import ask, send_message, wait_for_reply
 from harness.instance import free_port
 from harness.listener import json_answer
 from harness.mcp_server import mcp_connection, serving_mcp
@@ -358,6 +363,67 @@ def test_an_mcp_server_that_fails_in_a_chat_is_logged_with_the_reason(
     )
     assert MCP_FAILURES[failure] in log[log.index(marker) :], (
         f"the error line does not say why the connection failed: {log}"
+    )
+
+
+# --- issue 34170: an MCP server that comes back during a reply is called again -------------
+
+
+def _wait_for_chat_requests(upstream, count: int) -> None:
+    deadline = time.monotonic() + 30
+    while len(upstream.chat_requests()) < count:
+        assert time.monotonic() < deadline, f"the model was not asked {count} times"
+        time.sleep(0.05)
+
+
+def test_an_mcp_server_that_restarts_mid_reply_is_called_again(
+    admin, make_user, preserve, upstream
+):
+    person = make_user()
+    server_id = f"beacon_{secrets.token_hex(4)}"
+    echo = f"{server_id}_echo"
+    port = free_port()
+    stopped, restarted = threading.Event(), threading.Event()
+    preserve(TOOL_SERVERS_CONFIG)
+    asked = len(upstream.chat_requests())
+    upstream.queue(
+        reply.tool_call(echo, {"text": "lit"}, call_id="call_1"),
+        reply.tool_call(echo, {"text": "while down"}, call_id="call_2", hold=stopped),
+        reply.tool_call(echo, {"text": "lit again"}, call_id="call_3", hold=restarted),
+        reply.text("the beacon is lit"),
+    )
+    try:
+        with serving_mcp(port=port) as url:
+            connection = mcp_connection(url, server_id, [read_grant(person.id)])
+            with admin.client() as client:
+                saved = client.post(
+                    TOOL_SERVERS_CONFIG[1], json={"TOOL_SERVER_CONNECTIONS": [connection]}
+                )
+            assert saved.status_code == 200, saved.text
+            with person.client() as client:
+                turn = send_message(
+                    client, "light the beacon", tool_ids=[f"server:mcp:{server_id}"]
+                )
+            _wait_for_chat_requests(upstream, asked + 2)
+        stopped.set()
+        _wait_for_chat_requests(upstream, asked + 3)
+        with serving_mcp(port=port):
+            restarted.set()
+            with person.client() as client:
+                message = wait_for_reply(client, turn)
+    finally:
+        stopped.set()
+        restarted.set()
+
+    assert message["content"] == "the beacon is lit", message
+    results = {
+        entry["tool_call_id"]: entry["content"]
+        for entry in reply.conversation(upstream.chat_requests()[-1])
+        if entry["role"] == "tool"
+    }
+    assert results["call_1"] == "lit", results
+    assert results["call_3"] == "lit again", (
+        f"the call after the MCP server came back did not reach it (#34170): {results}"
     )
 
 
