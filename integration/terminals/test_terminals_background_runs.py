@@ -231,6 +231,7 @@ def test_a_sub_agent_works_in_the_persons_machine(
 def test_a_sub_agent_on_a_per_chat_terminal_works_in_the_machine_of_the_chat_that_delegated(
     background, subagents_on, make_user, shared_terminal, terminals, upstream
 ):
+    """Red on dev c15f28649 (open-webui/open-webui#34091)."""
     person = make_user()
     terminal_id = shared_terminal(person, scope="chat")
     tag = uuid.uuid4().hex[:8]

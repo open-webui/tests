@@ -527,8 +527,7 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
 def test_a_new_chat_started_beside_an_open_shell_sends_its_first_message(
     terminal_account, page_for, upstream
 ):
-    """Red on dev c15f28649, finding "issue: [dev] The first message of a new chat is not sent
-    while a shell tab from the previous chat is open"."""
+    """Red on dev c15f28649 (open-webui/open-webui#34088)."""
     person, terminal = terminal_account
     page = page_for(person)
     _answered_chat(page, upstream, terminal)
@@ -1708,8 +1707,7 @@ def test_tabs_are_stepped_through_and_moved_with_the_keyboard(terminal_page):
 
 
 def test_a_tab_moved_with_the_keyboard_keeps_the_focus_for_the_next_move(terminal_page):
-    """Red on dev c15f28649, finding "issue: A tab moved with Alt+Shift+Arrow loses the keyboard
-    focus, so the next press does nothing"."""
+    """Red on dev c15f28649 (open-webui/open-webui#34099)."""
     page, terminal = terminal_page
     pick_terminal(page, terminal)
     open_new_terminal(page)

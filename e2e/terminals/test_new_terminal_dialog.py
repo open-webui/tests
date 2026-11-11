@@ -100,6 +100,7 @@ def _create(page: Page) -> None:
 def test_the_first_terminal_of_a_connection_is_created_from_the_chat_input(
     page_for, make_user, connect_terminals, terminals
 ):
+    """Red on dev c15f28649 (open-webui/open-webui#34093)."""
     writer = make_user()
     connect_terminals(write_grant(writer.id))
     name = f"First {uuid.uuid4().hex[:8]}"

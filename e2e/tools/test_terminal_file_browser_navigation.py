@@ -272,8 +272,7 @@ def test_a_right_click_on_the_empty_part_of_the_list_offers_the_folders_actions(
 def test_a_right_click_near_the_lower_edge_shows_the_whole_menu(browser, quay):
     """Red on dev c15f28649 (same menu code in 0.13.3): the menu is drawn from the pointer
     downwards and to the right with no regard for the window, so near the lower edge its entries
-    are outside it (finding "issue: The file browser's right-click menu opens outside the window
-    near the lower or right edge")."""
+    are outside it (open-webui/open-webui#34097)."""
     enter(browser, quay.name, "nets.txt")
     rest_pointer(browser)
     listing = browser.locator("[data-file-list]").locator("xpath=..").bounding_box()

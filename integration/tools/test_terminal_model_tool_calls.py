@@ -325,11 +325,8 @@ def test_a_command_slower_than_the_tool_timeout_is_handed_to_the_model_as_an_err
 def test_a_command_slower_than_the_tool_timeout_tells_the_model_that_it_timed_out(
     instance_with, preserve
 ):
-    """Red on dev c15f28649 and on v0.13.3: the model is handed an empty error.
-
-    Draft issue: "issue: A tool call that exceeds AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER reaches the
-    model as an empty error".
-    """
+    """Red on dev c15f28649 and on v0.13.3: the model is handed an empty error
+    (open-webui/open-webui#34096)."""
     _, result, _ = _slow_command_turn(instance_with, preserve)
 
     assert isinstance(result, dict) and str(result.get("error") or "").strip(), (

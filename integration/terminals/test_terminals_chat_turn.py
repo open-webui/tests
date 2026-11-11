@@ -658,6 +658,7 @@ def test_a_message_sent_while_the_machine_is_still_starting_says_so_and_works_wh
 def test_the_still_starting_message_names_the_terminal_the_person_picked(
     instance_with, preserve, terminals
 ):
+    """Red on dev c15f28649 (open-webui/open-webui#34090)."""
     name = f"Workbench {uuid.uuid4().hex[:8]}"
     slow, person, terminal_id = _reader_on_a_short_timeout(instance_with, preserve, terminals, name)
     with person.client() as client:

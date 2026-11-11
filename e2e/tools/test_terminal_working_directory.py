@@ -470,6 +470,7 @@ def workbench_model(admin):
 def test_a_models_default_terminal_is_picked_for_its_new_chats(
     page_for, admin, terminal, workbench_model
 ):
+    """Red on dev c15f28649 (open-webui/open-webui#34087)."""
     page = page_for(admin, path=f"/workspace/models/edit?id={workbench_model['id']}")
     editor = page.get_by_role("main")
     # the editor fills in after the app loads the model list, part of the same cold load

@@ -289,6 +289,7 @@ def test_a_file_dragged_onto_a_folder_moves_into_it(browser, home):
 def test_the_grid_view_shows_folders_with_their_item_count_and_is_kept_after_a_reload(
     browser, home
 ):
+    """Red in most runs on dev c15f28649 (open-webui/open-webui#34089)."""
     charts = home / f"charts-{uuid.uuid4().hex[:6]}"
     charts.mkdir()
     (charts / "bay.txt").write_text("rocks\n")

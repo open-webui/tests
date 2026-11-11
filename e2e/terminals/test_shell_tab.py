@@ -660,8 +660,7 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
 def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed(
     harbour, page_for, upstream
 ):
-    """Red on a terminal on Terminals 0.4.1, finding "issue: A shell that is open in another
-    window shows "Session no longer available" on a terminal behind Terminals"."""
+    """Red on a terminal on Terminals 0.4.1 (open-webui/terminals#80)."""
     person, name, terminal_id = harbour
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]

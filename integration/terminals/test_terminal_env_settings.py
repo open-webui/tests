@@ -293,6 +293,7 @@ def test_the_admins_headers_are_on_every_answer_of_the_terminal_and_win_over_its
 
 
 def test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins(configured):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34092)."""
     with configured.instance.client() as client:
         added = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/list")
         answered = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/zone")

@@ -589,8 +589,7 @@ def test_a_pull_request_is_closed_after_a_question_and_opened_again(page_for, fo
 
 
 def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(page_for, forge):
-    """Red on dev c15f28649, finding "issue: The pull request list of the Git panel keeps showing
-    a renamed or closed pull request as it was"."""
+    """Red on dev c15f28649 (open-webui/open-webui#34098)."""
     page, git = _pull_requests(page_for, forge)
     _listed(git, 12).click()
     expect(git.get_by_text("Six metres at low water.")).to_be_visible()

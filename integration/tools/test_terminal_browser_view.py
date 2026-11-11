@@ -626,8 +626,8 @@ def test_a_viewer_the_terminal_closes_ends_with_the_terminals_code(
     make_user, share_terminal, terminal
 ):
     """Red on dev c15f28649 and on 0.13.3: the page gets 1011 whatever the terminal's code, so
-    a Chrome tab shown in two windows is taken back and forth between them without end. Draft:
-    "issue: A Browser tab in Chrome mode opened in two windows keeps reconnecting in both"."""
+    a Chrome tab shown in two windows is taken back and forth between them without end
+    (open-webui/open-webui#34095)."""
     person = make_user()
     tab = _open_tab(person, share_terminal(person)["id"])
 

@@ -191,6 +191,7 @@ def test_an_attached_file_is_written_into_the_terminal_under_a_name_that_is_free
 def test_an_attached_file_lands_in_the_folder_the_file_browser_has_open(
     page_for, person, connect, hold, open_terminal
 ):
+    """Red on dev c15f28649 (open-webui/open-webui#34100)."""
     terminal_name = connect(FILESYSTEM)
     page = page_for(person)
     pick_terminal(page, terminal_name)

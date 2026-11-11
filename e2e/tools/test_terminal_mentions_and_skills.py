@@ -289,6 +289,7 @@ def test_a_terminal_skill_switched_on_in_the_skills_menu_is_listed_under_availab
 def test_a_sent_terminal_skill_mention_still_reads_as_a_mention_after_a_reload(
     page_for, person, terminal_name, cellar, upstream
 ):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34102)."""
     page = page_for(person)
     choose_terminal(page, terminal_name)
     _send_a_terminal_skill_mention(page, upstream, cellar)
@@ -308,6 +309,7 @@ def test_a_sent_terminal_skill_mention_still_reads_as_a_mention_after_a_reload(
 def test_the_more_menu_offers_a_terminals_skills_before_anything_is_typed(
     page_for, person, terminal_name, cellar
 ):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34102)."""
     page = page_for(person)
     choose_terminal(page, terminal_name)
 

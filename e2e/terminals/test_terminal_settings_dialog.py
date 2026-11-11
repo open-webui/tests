@@ -540,7 +540,8 @@ def test_a_machine_of_a_terminal_per_chat_is_named_after_its_chat_and_its_owner(
 def test_system_info_and_files_are_not_offered_for_another_persons_chat_machine(
     page_for, managed_terminal
 ):
-    """Red on dev c15f28649: both are offered there and can only fail."""
+    """Red on dev c15f28649: both are offered there and can only fail
+    (open-webui/open-webui#34094)."""
     terminal = managed_terminal(scope="chat")
     writer, reader = terminal.writer, terminal.reader
     tag = uuid.uuid4().hex[:8]

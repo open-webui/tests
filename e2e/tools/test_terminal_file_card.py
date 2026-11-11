@@ -305,6 +305,7 @@ def test_a_chat_opened_with_another_terminal_picked_reads_terminal_unavailable_o
 def test_the_card_follows_the_terminal_picked_for_the_chat_without_a_reload(
     page_for, person, terminal, upstream, log_text
 ):
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34101)."""
     page = page_for(person)
     choose_terminal(page, terminal.name)
     shown = _show(page, upstream, LOG, inline=True)
