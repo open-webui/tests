@@ -18,6 +18,12 @@ a backend copy whose `DELETE /api/v1/memories/delete/user` answers true without 
 add_memory tool answers success without storing and whose list_memories tool lists nothing turns
 the clear, saved-in-a-chat and read-by-the-tool tests red, and a frontend copy whose memory
 search ignores its text turns the search test red.
+
+The two tests whose subject is the model's memory tool (saving a memory and reading one back) run
+in the main chat and in a side chat; the saved memory is then looked up in the settings dialog
+of the page. The others walk the Personalization settings dialog and the Memory switch, which are
+page things, and stay on the main chat. The side chat variants are green on dev c15f28649 and on
+head e791cbdde.
 """
 
 from __future__ import annotations
@@ -170,31 +176,31 @@ def test_searching_memories_narrows_the_list(page_for, make_user):
     expect(settings.get_by_text(FIRST)).to_be_visible()
 
 
-def test_a_memory_the_model_saves_during_a_chat_is_listed(page_for, make_user, upstream):
+def test_a_memory_the_model_saves_during_a_chat_is_listed(chat_for, make_user, upstream):
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     request = "please remember that I cycle to work"
     upstream.queue(
         reply.tool_call("add_memory", {"content": LATER}, match=reply.answering(request)),
         reply.text("I will remember that.", match=reply.answering(request)),
     )
-    send(page, request)
-    expect_reply(page, "I will remember that.")
+    send(chat, request)
+    expect_reply(chat, "I will remember that.")
 
-    settings = _personalization(page)
+    settings = _personalization(chat.page)
     expect(settings.get_by_text(LATER)).to_be_visible()
     assert _stored_memories(account) == [LATER]
 
 
-def test_the_model_reads_a_memory_through_its_memory_tool(page_for, make_user, upstream):
-    page = page_for(_remembering(make_user, FIRST))
+def test_the_model_reads_a_memory_through_its_memory_tool(chat_for, make_user, upstream):
+    chat = chat_for(_remembering(make_user, FIRST))
     question = "check your notes: what is on my roof?"
     upstream.queue(
         reply.tool_call("list_memories", {}, match=reply.answering(question)),
         reply.text("Your notes say bees.", match=reply.answering(question)),
     )
-    send(page, question)
-    expect_reply(page, "Your notes say bees.")
+    send(chat, question)
+    expect_reply(chat, "Your notes say bees.")
 
     answered = list(filter(reply.answering(question), upstream.chat_requests()))
     tool_results = [entry for entry in answered[-1]["messages"] if entry["role"] == "tool"]
