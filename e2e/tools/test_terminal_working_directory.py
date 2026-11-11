@@ -48,7 +48,9 @@ Cancel that leaves the clone form open the Cancel test.
 
 `test_a_models_default_terminal_is_picked_for_its_new_chats` is red on dev c15f28649: the model is
 saved, then the editor asks "Discard unsaved changes?" and stays open (finding "issue: [dev]
-Saving a model asks "Discard unsaved changes?" right after the save", from da850248d).
+Saving a model asks "Discard unsaved changes?" right after the save", from da850248d). With the
+default terminal set over the API, a new chat on the model also started without it on dev
+8588bd2a7 (the new chat screen lost the chat's terminal); e791cbdde fixed that before it was filed.
 
 Gap (strict xfail, not a bug in what exists): a folder's Default terminal lists only admin
 terminals, so a person cannot make their own terminal a folder's default.
