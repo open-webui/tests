@@ -24,9 +24,11 @@ and whose menu shows Rename only on writable views, each of the three goes red.
 
 The rename tests also run on a chat in a side tab: a saved chat dragged into a tab, and a chat
 started in every way a side chat starts and every state it can be in (a temporary one has no
-stored title). Its tab must offer the same chat menu and rename the chat it shows. On dev
-c15f28649 and on dev e791cbdde, after the side chat swap of open-webui/open-webui#34064, a side
-tab has no chat menu, so every side variant is red (open-webui/open-webui#34031).
+stored title). Its tab must offer the same chat menu and rename the chat it shows; the menu is
+looked for on the chat's own tab, as a side tab can share its bar with the main chat's tab. On dev
+c15f28649 and, after the side chat swap of open-webui/open-webui#34064, on dev e791cbdde and
+262a8c6f7, a side tab has no chat menu, so every side variant is red
+(open-webui/open-webui#34031); all pass on the fix branch fix/side-tab-title-and-menu.
 """
 
 from __future__ import annotations
@@ -259,10 +261,16 @@ def _shown_title(chat: Page | ChatSurface) -> Locator:
     return surface_of(chat).tab
 
 
+def _own_tab(surface: ChatSurface) -> Locator:
+    """The chat's tab with the buttons beside its title."""
+    # the bar can also hold the tab of the main chat with a menu of its own
+    return surface.tab_bar.locator("[data-panel-tab]").filter(has=surface.tab)
+
+
 def _start_rename(chat: Page | ChatSurface, title: str) -> Locator:
     """Pick Rename in the chat's header menu; returns the text box that replaced the title."""
     surface = surface_of(chat)
-    actions = surface.tab_bar.get_by_label("Chat actions")
+    actions = _own_tab(surface).get_by_label("Chat actions")
     expect(actions, f"the tab of the {surface.place} offers no chat menu").to_have_count(1)
     actions.click()
     surface.page.get_by_role("menu").get_by_role("menuitem", name="Rename").click()
