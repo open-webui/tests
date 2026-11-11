@@ -300,6 +300,11 @@ def _listed(git: Locator, number: int) -> Locator:
     return git.get_by_role("button", name=f"#{number} ")
 
 
+def _title_of_opened(git: Locator, text: str) -> Locator:
+    """The title above the opened pull request; its list row can carry the same text."""
+    return git.get_by_text(text, exact=True).and_(git.locator("span"))
+
+
 def _listed_numbers(git: Locator) -> list[int]:
     rows = git.get_by_role("button").filter(has_text="#").all_inner_texts()
     return [int(row.split()[0].lstrip("#")) for row in rows]
@@ -467,7 +472,7 @@ def test_a_pull_request_is_edited_and_checked_out_from_its_actions(page_for, for
     git.get_by_role("button", name="Save", exact=True).click()
 
     expect(git.get_by_text("Six metres, sounded twice.")).to_be_visible()
-    expect(git.get_by_text("#12 Chart the east channel at low water", exact=True)).to_be_visible()
+    expect(_title_of_opened(git, "#12 Chart the east channel at low water")).to_be_visible()
     sent = forge.asked_to("edit")[-1]
     assert (sent["number"], sent["title"], sent["body"]) == (
         12,
@@ -598,7 +603,7 @@ def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(
     _actions(page, git).get_by_role("menuitem", name="Edit").click()
     git.get_by_role("textbox", name="Pull request title").fill("Chart both channels")
     git.get_by_role("button", name="Save", exact=True).click()
-    expect(git.get_by_text("#12 Chart both channels", exact=True)).to_be_visible()
+    expect(_title_of_opened(git, "#12 Chart both channels")).to_be_visible()
     _wait_until(lambda: "Chart both channels" in _row(git, 12))
     if "Chart both channels" not in _row(git, 12):
         stale.append(f"renamed to Chart both channels, listed as {_row(git, 12)!r}")
