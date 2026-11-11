@@ -20,9 +20,11 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.upstream import Reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
     Chat,
     chat_input,
+    chat_scope,
     close_menu,
     expect_reply,
     open_add_context,
@@ -36,20 +38,21 @@ from utils.tooltips import tooltip_button
 CALL_NUMBERS = itertools.count(1)
 
 
-def attach(page: Page, name: str, content: str | bytes, mime_type: str = "text/plain") -> None:
-    menu = open_input_menu(page)
+def attach(chat: Chat, name: str, content: str | bytes, mime_type: str = "text/plain") -> None:
+    page = chat.page if isinstance(chat, ChatSurface) else chat
+    menu = open_input_menu(chat)
     with page.expect_file_chooser() as chooser:
         menu.get_by_role("menuitem", name="Upload Files").click()
     buffer = content.encode() if isinstance(content, str) else content
     chooser.value.set_files({"name": name, "mimeType": mime_type, "buffer": buffer})
 
 
-def attach_from_menu(page: Page, submenu: str, name: str) -> None:
+def attach_from_menu(chat: Chat, submenu: str, name: str) -> None:
     """Attach a knowledge base, note or chat through the chat input's More menu, Add Context."""
-    menu = open_add_context(page)
+    menu = open_add_context(chat)
     menu.get_by_role("menuitem", name=submenu).click()
     late_menu_entry(menu, name).first.click()
-    expect(page.locator("form").get_by_text(name).first).to_be_visible()
+    expect(chat_scope(chat).locator("form").get_by_text(name).first).to_be_visible()
 
 
 def ask(page: Page, upstream, prompt: str, *replies: Reply) -> None:
@@ -156,11 +159,11 @@ def tool_results(request: dict) -> str:
     )
 
 
-def turn_on_tool(page: Chat, tool_name: str) -> None:
+def turn_on_tool(chat: Chat, tool_name: str) -> None:
     """Switch a workspace tool on for this chat from the Integrations menu."""
-    menu = open_integrations_menu(page)
+    menu = open_integrations_menu(chat)
     menu.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
     tool = menu.get_by_role("menuitemcheckbox", name=tool_name)
     tool.click()
     expect(tool).to_have_attribute("aria-checked", "true")
-    close_menu(page)
+    close_menu(chat)

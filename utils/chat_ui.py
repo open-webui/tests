@@ -23,6 +23,11 @@ def _page(chat: Chat) -> Page:
     return chat.page if isinstance(chat, ChatSurface) else chat
 
 
+def chat_scope(chat: Chat) -> Page | Locator:
+    """What a chat's own elements are looked for in: its panel, or the page for a main chat."""
+    return chat.panel if isinstance(chat, ChatSurface) else chat
+
+
 def chat_input(chat: Chat) -> Locator:
     if isinstance(chat, ChatSurface):
         return chat.input
@@ -96,12 +101,12 @@ def split_screen(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
 
 
-def expect_split_screen(page: Page) -> None:
+def expect_split_screen(chat: Chat) -> None:
     """Wait until the conversation shows beside the other tabs, as it does once the chat opens
     the artifacts pane (since 0b6d43405, open-webui/open-webui#33878)."""
-    button = page.get_by_role("button", name="Split screen", exact=True)
+    button = _page(chat).get_by_role("button", name="Split screen", exact=True)
     expect(button).to_have_attribute("aria-pressed", "true")
-    expect(chat_input(page)).to_be_visible()
+    expect(chat_input(chat)).to_be_visible()
 
 
 def stop_button(chat: Chat) -> Locator:
