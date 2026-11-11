@@ -11,6 +11,11 @@ test_default_chat_permissions.py).
 Discriminates: passes on dev 176d31d1d, fails with `is_saved_chat_id` treating a `temporary:` id
 as saved (an enforced temporary chat is stored). The hidden Enforce test passes on dev b6534c58f
 and fails in a build of it whose new chat applies Enforce without Allow Temporary Chat.
+
+A side chat is a new chat as well, so under Enforce Temporary Chat nothing it sends may be stored
+either; that test opens it beside the new chat (`utils/chat_surface.py`). A side chat has no
+Temporary Chat label of its own (the label belongs to a new main chat's empty page), so it checks
+what is stored. The other tests pin the header's button and the address of the page's own chat.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.chat_surface import SIDE_CHAT
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -118,3 +124,20 @@ def test_an_admin_keeps_the_temporary_chat_button_when_it_is_enforced(page_for, 
     page.goto("/")
 
     expect(toggle(page)).to_be_visible()
+
+
+@pytest.mark.chat_surfaces(SIDE_CHAT)
+def test_enforcing_temporary_chat_keeps_a_side_chat_out_of_storage(
+    page_for, chat_for, admin, make_user, upstream, preserve
+):
+    preserve("permissions")
+    save_default_permission(page_for(admin), "Enforce Temporary Chat", turn_on=True)
+    account = make_user()
+    side = chat_for(account)
+    upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
+
+    send(side, PROMPT)
+
+    expect_reply(side, ANSWER)
+    expect(side.page.locator('a[href^="/c/"]')).to_have_count(0)
+    assert stored_chats(account) == [], "the side chat was stored under Enforce Temporary Chat"
