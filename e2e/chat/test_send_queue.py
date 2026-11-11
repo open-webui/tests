@@ -16,6 +16,12 @@ not sent (open-webui/open-webui#32081, fixed by d12bf062b).
 Discriminates: passes on the efe63bd34 build; with `5f8d8f0c5` reverted the delete and edit
 tests fail (the message behind the failed one is never sent), and with `aea7d34f4` reverted the
 Send now test fails (the rest of the queue is sent while the chosen message is answered).
+
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), and the Send now
+test in every way a side chat starts and every state it can be in. A side chat had no send queue:
+a message sent while an answer was being written, or while an attachment was uploading, stayed in
+the message box (open-webui/open-webui#34022, fix PR open-webui/open-webui#34064). On dev c15f28649
+every test is red in every side chat and passes on the PR's build.
 """
 
 from __future__ import annotations
@@ -23,54 +29,62 @@ from __future__ import annotations
 import re
 
 import pytest
-from playwright.sync_api import Locator, Page, Route, expect
+from playwright.sync_api import Locator, Route, expect
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send, stop_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
+OPENING = "hello"
 FIRST, SECOND, THIRD = "queued alpha", "queued bravo", "queued charlie"
 QUEUE_SEND_BUTTON = re.compile("^(Send now|Waiting for upload|Upload failed)$")
 
 
-def queued_item(page: Page, text: str) -> Locator:
+def queued_item(chat: ChatSurface, text: str) -> Locator:
     """The row of the send queue showing `text`, with its Send now, Edit and Delete buttons."""
-    rows = page.locator("div").filter(has=page.get_by_text(text, exact=True))
-    return rows.filter(has=page.get_by_role("button", name=QUEUE_SEND_BUTTON)).last
+    rows = chat.panel.locator("div").filter(has=chat.page.get_by_text(text, exact=True))
+    return rows.filter(has=chat.page.get_by_role("button", name=QUEUE_SEND_BUTTON)).last
 
 
 def last_user_messages(upstream) -> list[str]:
-    return [
+    """What this module's messages reached the provider as, in the order they were sent."""
+    last_of_each = [
         [entry for entry in body["messages"] if entry["role"] == "user"][-1]["content"]
         for body in upstream.chat_requests()
     ]
+    # a side chat can be opened with a question of its own, which is none of the queue's
+    return [text for text in last_of_each if text in (OPENING, FIRST, SECOND, THIRD)]
 
 
 @pytest.fixture
-def page(page_for, make_user) -> Page:
-    page = page_for(make_user())
-    expect(chat_input(page)).to_be_visible()
-    return page
+def chat(chat_for, make_user) -> ChatSurface:
+    chat = chat_for(make_user())
+    expect(chat_input(chat)).to_be_visible()
+    return chat
 
 
+# main and plain side chat only: how a side chat started decides whether it queues, which the
+# Send now test crosses with every condition; a failed upload is then the queue's own business
 @pytest.fixture
-def failed_upload_ahead(page: Page, upstream) -> Page:
+def failed_upload_ahead(chat: ChatSurface, upstream) -> ChatSurface:
     """An open chat whose queue holds FIRST, its attachment failed, and SECOND behind it."""
-    upstream.queue(reply.text("hello there", match=reply.answering("hello")))
-    send(page, "hello")
-    expect_reply(page, "hello there")
+    page = chat.page
+    upstream.queue(reply.text("hello there", match=reply.answering(OPENING)))
+    send(chat, OPENING)
+    expect_reply(chat, "hello there")
     held: list[Route] = []
     page.route("**/api/v1/files/**", lambda route: held.append(route))
 
-    page.get_by_role("button", name="More", exact=True).last.click()
+    chat.button("More").last.click()
     with page.expect_file_chooser() as chooser:
         page.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
     chooser.value.set_files({"name": "notes.txt", "mimeType": "text/plain", "buffer": b"notes"})
-    send(page, FIRST)
-    expect(queued_item(page, FIRST)).to_be_visible()
-    send(page, SECOND)
-    expect(queued_item(page, SECOND)).to_be_visible()
+    send(chat, FIRST)
+    expect(queued_item(chat, FIRST)).to_be_visible()
+    send(chat, SECOND)
+    expect(queued_item(chat, SECOND)).to_be_visible()
 
     for _ in range(50):
         if held:
@@ -78,18 +92,19 @@ def failed_upload_ahead(page: Page, upstream) -> Page:
         page.wait_for_timeout(100)
     assert held, "the upload never started"
     held[0].fulfill(status=500, json={"detail": "the disk is full"})
-    expect(queued_item(page, FIRST).get_by_text("Upload failed")).to_be_visible()
-    return page
+    expect(queued_item(chat, FIRST).get_by_text("Upload failed")).to_be_visible()
+    return chat
 
 
 def test_deleting_the_failed_message_sends_the_rest_of_the_queue(failed_upload_ahead, upstream):
-    page = failed_upload_ahead
+    """In a side chat: open-webui/open-webui#34022."""
+    chat = failed_upload_ahead
     upstream.queue(reply.text("bravo answered", match=reply.answering(SECOND)))
 
-    queued_item(page, FIRST).get_by_role("button", name="Delete").click()
+    queued_item(chat, FIRST).get_by_role("button", name="Delete").click()
 
-    expect_reply(page, "bravo answered")
-    expect(queued_item(page, SECOND)).to_be_hidden()
+    expect_reply(chat, "bravo answered")
+    expect(queued_item(chat, SECOND)).to_be_hidden()
     assert last_user_messages(upstream)[-1] == SECOND
     assert FIRST not in last_user_messages(upstream)
 
@@ -97,13 +112,14 @@ def test_deleting_the_failed_message_sends_the_rest_of_the_queue(failed_upload_a
 def test_editing_the_failed_message_sends_the_rest_and_keeps_its_text(
     failed_upload_ahead, upstream
 ):
-    page = failed_upload_ahead
+    """In a side chat: open-webui/open-webui#34022."""
+    chat = failed_upload_ahead
     upstream.queue(reply.text("bravo answered", match=reply.answering(SECOND)))
 
-    queued_item(page, FIRST).get_by_role("button", name="Edit").click()
+    queued_item(chat, FIRST).get_by_role("button", name="Edit").click()
 
-    expect_reply(page, "bravo answered")
-    expect(chat_input(page)).to_contain_text(FIRST)
+    expect_reply(chat, "bravo answered")
+    expect(chat_input(chat)).to_contain_text(FIRST)
     assert last_user_messages(upstream)[-1] == SECOND
     assert FIRST not in last_user_messages(upstream)
 
@@ -111,14 +127,18 @@ def test_editing_the_failed_message_sends_the_rest_and_keeps_its_text(
 def test_a_failed_attachment_still_holds_the_queue_until_it_is_dealt_with(
     failed_upload_ahead, upstream
 ):
-    page = failed_upload_ahead
-    page.wait_for_timeout(1500)  # bounded: nothing may be sent while the failed message waits
-    assert last_user_messages(upstream) == ["hello"]
-    expect(queued_item(page, SECOND)).to_be_visible()
-    expect(queued_item(page, FIRST).get_by_role("button", name="Upload failed")).to_be_disabled()
+    """In a side chat: open-webui/open-webui#34022."""
+    chat = failed_upload_ahead
+    chat.page.wait_for_timeout(1500)  # bounded: nothing may be sent while the failed message waits
+    assert last_user_messages(upstream) == [OPENING]
+    expect(queued_item(chat, SECOND)).to_be_visible()
+    expect(queued_item(chat, FIRST).get_by_role("button", name="Upload failed")).to_be_disabled()
 
 
-def test_send_now_sends_only_the_chosen_message(page, upstream):
+# one model only: the queue holds messages per chat, however many models answer each of them
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_send_now_sends_only_the_chosen_message(chat, upstream):
+    """In a side chat: open-webui/open-webui#34022."""
     slow = [f"alpha-{index} " for index in range(40)]
     bravo = [f"bravo-{index} " for index in range(8)]
     upstream.queue(
@@ -126,22 +146,23 @@ def test_send_now_sends_only_the_chosen_message(page, upstream):
         reply.text(bravo, chunk_delay=0.3, match=reply.answering(SECOND)),
         reply.text("charlie answered", match=reply.answering(THIRD)),
     )
-    send(page, FIRST)
-    expect(last_reply(page)).to_contain_text("alpha-1")
-    send(page, SECOND)
-    send(page, THIRD)
-    expect(queued_item(page, THIRD)).to_be_visible()
+    send(chat, FIRST)
+    expect(last_reply(chat)).to_contain_text("alpha-1")
+    send(chat, SECOND)
+    send(chat, THIRD)
+    expect(queued_item(chat, THIRD)).to_be_visible()
 
-    queued_item(page, SECOND).get_by_role("button", name="Send now").click()
+    queued_item(chat, SECOND).get_by_role("button", name="Send now").click()
 
-    expect(last_reply(page)).to_contain_text("bravo-2")
+    expect(last_reply(chat)).to_contain_text("bravo-2")
     assert last_user_messages(upstream) == [FIRST, SECOND], (
         "Send now also sent the rest of the queue"
     )
-    expect(queued_item(page, THIRD)).to_be_visible()
+    expect(queued_item(chat, THIRD)).to_be_visible()
 
-    expect_reply(page, "charlie answered")
-    expect(stop_button(page)).to_be_hidden()
+    expect_reply(chat, "charlie answered")
+    expect(stop_button(chat)).to_be_hidden()
     assert last_user_messages(upstream) == [FIRST, SECOND, THIRD]
-    user_messages = conversation(page).locator(".chat-user")
+    # a side chat can hold the question it was opened with
+    user_messages = conversation(chat).locator(".chat-user").filter(has_text="queued ")
     expect(user_messages).to_contain_text([FIRST, SECOND, THIRD])
