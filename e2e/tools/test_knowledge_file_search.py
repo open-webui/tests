@@ -11,11 +11,15 @@ Twin of unit/tools/test_knowledge_file_search.py.
 Discriminates: passes on dev bbfa876af; fails with the literal backslash-n split restored in the
 grep branches (both tests: the result is `1: ` and the whole file as one line) and with `|`
 dropped from the regex detection (the alternation test: it shows no matches).
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the side chat put on
+the notes preset in its own model selector. A tool call's result shows in a side chat answer on
+dev c15f28649 as well, in every way a side chat starts.
 """
 
 from __future__ import annotations
 
-import json
+import dataclasses
 import re
 
 import pytest
@@ -25,7 +29,8 @@ from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.knowledge_bases import KB_EXEC, add_text_file, knowledge_base, model_with_knowledge
 from harness.python_tools import EVERYONE_READS
-from utils.chat_ui import expect_reply, last_reply, send
+from utils.chat_surface import MAIN_CHAT, ChatSurface
+from utils.chat_ui import expect_reply, last_reply, send, start_from_link
 
 pytestmark = [
     pytest.mark.regression,
@@ -61,33 +66,30 @@ def notes_model(instance_with):
 
 
 @pytest.fixture
-def chat_page(browser, instance_with, notes_model):
+def chat_page(chat_for, instance_with, notes_model, preserve):
     """A new account's chat on the notes preset, signed in to the kb_exec instance."""
     launched = instance_with(KB_EXEC)
-    account = create_user(launched)
-    with account.client() as client:
-        settings = {"ui": {"showChangelog": False}}
-        client.post("/api/v1/users/user/settings/update", json=settings).raise_for_status()
-    context = browser.new_context(
-        viewport={"width": 1920, "height": 1080}, base_url=launched.base_url
-    )
-    context.set_default_timeout(30_000)
-    page = context.new_page()
-    page.add_init_script(
-        f"try {{ localStorage.setItem('token', {json.dumps(account.token)}); }} catch (e) {{}}"
-    )
-    page.goto(f"/?models={notes_model}")
-    yield page, launched.upstream
-    context.close()
+    admin = admin_of(launched)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=launched)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    chat_for = dataclasses.replace(chat_for, upstream=launched.upstream, admin=admin)
+    chat = chat_for(create_user(launched))
+    start_from_link(chat, f"/?models={notes_model}")
+    return chat, launched.upstream
 
 
-def _kb_exec_result(page, command: str):
+def _kb_exec_result(chat_page: tuple[ChatSurface, object], command: str):
     """Have the model run `command` and open its result in the reply."""
-    page, upstream = page
+    chat, upstream = chat_page
     upstream.queue(reply.tool_call("kb_exec", {"command": command}), reply.text("searched"))
-    send(page, "search the notes")
-    expect_reply(page, "searched")
-    answer = last_reply(page)
+    send(chat, "search the notes")
+    expect_reply(chat, "searched")
+    answer = last_reply(chat)
     answer.get_by_role("button", name=re.compile("kb_exec")).click()
     return answer
 
