@@ -36,6 +36,9 @@ Temporary Chat in it with `/temporary` before its first message, or when the adm
 temporary chats. Discriminates: both pass on the e8c0ad85e build; in a build of it whose side
 chat starts saved whatever is enforced the enforced test fails, and in one that ignores the
 toggle the toggle test fails.
+
+Since dev da850248d the address follows the selected tab, so the tests select the chat's own tab
+before a reload and before reading its address.
 """
 
 from __future__ import annotations
@@ -52,6 +55,9 @@ from harness.chat import ChatTurn, ask, wait_for_reply
 from harness.chat_history import seed_chat
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_surface import drop_chat_beside
+from utils.chat_surface import main_chat as main_chat_view
+from utils.chat_surface import open_side_chat as open_empty_side_chat
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -169,6 +175,13 @@ def main_chat(page: Page) -> Locator:
     return page.locator("#messages-container")
 
 
+def reload_the_chat(page: Page) -> None:
+    """Reload with the chat's own tab selected: since dev da850248d the address follows the
+    selected tab, so a reload with a side tab selected opens the side chat instead."""
+    main_chat_view(page).show()
+    page.reload()
+
+
 def open_sidebar(page: Page) -> Locator:
     page.get_by_role("button", name="Open Sidebar", exact=True).click()
     sidebar = page.get_by_role("navigation", name="Chat history")
@@ -233,7 +246,7 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
         ("user", question),
     ], "the side chat's model did not get the chat so far followed by the side question"
 
-    page.reload()
+    reload_the_chat(page)
 
     expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
     expect(main_chat(page).get_by_text(PROMPT)).to_be_visible()
@@ -370,7 +383,7 @@ def test_a_deleted_side_chat_is_gone_and_the_chat_it_came_from_stays(
     expect(chat_row(sidebar, question)).to_have_count(0)
     chats = listed_chats(account)
     assert list(chats) == [chat_id], f"deleting the side chat left {chats}"
-    page.reload()
+    reload_the_chat(page)
     expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
     # the parent's saved tabs may still name the side chat, but its exchange is gone
     expect(page.get_by_text(SIDE_ANSWER)).to_have_count(0)
@@ -397,13 +410,14 @@ def test_a_chat_dropped_from_the_sidebar_opens_beside_the_chat(
     expect(hint).to_have_count(0)
     panel = page.get_by_role("tabpanel", name=OTHER_TITLE, exact=True)
     expect(panel).to_contain_text(OTHER_CHAT[1]["content"])
+    main_chat_view(page).show()
     expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
     expect(main_chat(page)).to_contain_text(ANSWER)
     assert set(listed_chats(account)) == {chat_id, other_id}, (
         f"dropping a chat created or lost chats: {listed_chats(account)}"
     )
     # a saved chat's tab is part of the chat's saved tabs
-    page.reload()
+    reload_the_chat(page)
     expect(main_chat(page)).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
     expect(page.get_by_role("tabpanel", name=OTHER_TITLE, exact=True)).to_contain_text(
         OTHER_CHAT[1]["content"]
@@ -472,24 +486,48 @@ def test_temporary_chat_turned_on_in_a_side_chat_keeps_it_out_of_the_chat_list(
     account = make_user()
     question = tagged(SIDE_QUESTION)
     page, chat_id = open_answered_chat(page_for, account, upstream)
-    send(page, "/side")
-    # the panel's text changes with the toggle, so hold on to it by its id
-    panel_id = side_panel_showing(page, "Messages are saved to your chats.").get_attribute("id")
-    assert panel_id, "the side chat's panel has no id to find it by"
-    panel = page.locator(f"[id='{panel_id}']")
-    side_input = panel.locator("[contenteditable='true']")
-    side_input.click()
+    side = open_empty_side_chat(page)
+    side.input.click()
     page.keyboard.type("/temporary")
     page.get_by_role("button", name=re.compile(r"^Temporary")).click()
-    expect(panel).to_contain_text("Messages disappear when you close this tab.")
+    expect(side.input).to_have_text("")
     upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
 
-    side_input.click()
-    page.keyboard.press("Control+a")
-    page.keyboard.type(question)
-    page.keyboard.press("Enter")
+    side.send(question)
 
-    expect(panel).to_contain_text(SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS)
+    side.expect_reply(SIDE_ANSWER)
     assert list(listed_chats(account)) == [chat_id], (
         f"a side chat switched to temporary was saved: {listed_chats(account)}"
     )
+
+
+def test_an_empty_side_chat_says_whether_its_messages_are_saved(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    """Red on the build of PR open-webui/open-webui#34064, which drops the note on purpose."""
+    page, _ = open_answered_chat(page_for, make_user(), upstream)
+    side = open_empty_side_chat(page)
+    expect(side.panel).to_contain_text("Messages are saved to your chats.")
+    side.input.click()
+    page.keyboard.type("/temporary")
+    page.get_by_role("button", name=re.compile(r"^Temporary")).click()
+
+    expect(side.panel).to_contain_text("Messages disappear when you close this tab.")
+
+
+def test_a_saved_chat_in_a_tab_beside_a_temporary_chat_can_be_rated(
+    page_for, make_user, side_chat_allowed
+):
+    """Red on dev c15f28649 (no rating in a tab, open-webui/open-webui#34014) and on the build of
+    PR open-webui/open-webui#34064, which names a temporary chat beside it as left out."""
+    account = make_user()
+    seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
+    page = page_for(account, path="/?temporary-chat=true")
+    expect(chat_input(page)).to_be_visible()
+
+    saved = drop_chat_beside(page, OTHER_TITLE)
+
+    saved.last_reply.hover()
+    expect(
+        saved.button("Good Response"), "the saved chat's answer offers no rating"
+    ).to_be_visible()
