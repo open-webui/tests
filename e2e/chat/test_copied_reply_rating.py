@@ -7,6 +7,11 @@ original's rating was overwritten. The copy now starts unrated.
 
 Discriminates: passes on the efe63bd34 build, fails on it with `693f666c6` reverted (the copy
 holds the original's feedback id and rating it rewrites the original's feedback).
+
+Both tests run in the main chat and in every way a side chat starts and every state it can be in
+(`utils/chat_surface.py`) except a temporary one, which offers no rating in the main chat either.
+A side chat reply had neither Edit nor the thumbs (open-webui/open-webui#34014, fix PR
+open-webui/open-webui#34064): on dev c15f28649 every side chat variant is red.
 """
 
 from __future__ import annotations
@@ -15,9 +20,9 @@ import json
 import time
 
 import pytest
-from playwright.sync_api import Page
 
 from harness import upstream as reply
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
 from utils.chat_ui import conversation, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -31,20 +36,20 @@ def is_feedback_write(response) -> bool:
     return response.request.method == "POST" and "/evaluations/feedback" in response.url
 
 
-def rate(page: Page, verdict: str):
-    last_reply(page).hover()
-    with page.expect_response(is_feedback_write) as written:
-        conversation(page).get_by_role("button", name=verdict).last.click()
+def rate(chat: ChatSurface, verdict: str):
+    last_reply(chat).hover()
+    with chat.page.expect_response(is_feedback_write) as written:
+        conversation(chat).get_by_role("button", name=verdict).last.click()
     return written.value
 
 
-def save_as_copy(page: Page, text: str) -> None:
-    last_reply(page).hover()
-    conversation(page).get_by_role("button", name="Edit").last.click()
-    editor = conversation(page).locator("textarea").last
+def save_as_copy(chat: ChatSurface, text: str) -> None:
+    last_reply(chat).hover()
+    conversation(chat).get_by_role("button", name="Edit").last.click()
+    editor = conversation(chat).locator("textarea").last
     editor.fill(text)
-    conversation(page).get_by_role("button", name="Save As Copy").click()
-    expect_reply(page, text)
+    conversation(chat).get_by_role("button", name="Save As Copy").click()
+    expect_reply(chat, text)
 
 
 def reads(message: dict, text: str) -> bool:
@@ -69,22 +74,30 @@ def feedback_ratings(client) -> dict[str, int]:
 
 
 @pytest.fixture
-def rated_reply(make_user, page_for, upstream):
+def rated_reply(make_user, chat_for, upstream):
     """A chat whose reply the account rated thumbs up."""
     account = make_user()
-    page = page_for(account)
+    chat = chat_for(account)
     upstream.queue(reply.text(ANSWER, match=reply.answering(QUESTION)))
-    send(page, QUESTION)
-    expect_reply(page, ANSWER)
-    created = rate(page, "Good Response")
+    send(chat, QUESTION)
+    expect_reply(chat, ANSWER)
+    created = rate(chat, "Good Response")
     assert created.url.endswith("/evaluations/feedback"), created.url
-    return account, page
+    return account, chat
 
 
+# a temporary chat offers no rating, in the main chat either; the model count cannot matter, as
+# Save As Copy and the thumbs act on one reply
+EVERY_RATED_PLACE = tuple(place for place in EVERYWHERE if place != TEMPORARY_SIDE)
+
+
+@pytest.mark.chat_surfaces(*EVERY_RATED_PLACE)
 def test_a_copy_of_a_rated_reply_starts_unrated(rated_reply):
-    account, page = rated_reply
-    save_as_copy(page, COPY)
-    chat_id = page.url.rsplit("/", 1)[-1]
+    """In a side chat: open-webui/open-webui#34014."""
+    account, chat = rated_reply
+    save_as_copy(chat, COPY)
+    # the address follows the selected tab, which is the chat's own
+    chat_id = chat.page.url.rsplit("/", 1)[-1]
 
     with account.client() as client:
         copy = stored_message(client, chat_id, COPY)
@@ -95,12 +108,15 @@ def test_a_copy_of_a_rated_reply_starts_unrated(rated_reply):
     assert not (copy.get("annotation") or {}).get("rating"), "the copy holds the original's rating"
 
 
+@pytest.mark.chat_surfaces(*EVERY_RATED_PLACE)
 def test_rating_the_copy_leaves_the_originals_feedback_alone(rated_reply):
-    account, page = rated_reply
-    save_as_copy(page, COPY)
-    chat_id = page.url.rsplit("/", 1)[-1]
+    """In a side chat: open-webui/open-webui#34014."""
+    account, chat = rated_reply
+    save_as_copy(chat, COPY)
+    # the address follows the selected tab, which is the chat's own
+    chat_id = chat.page.url.rsplit("/", 1)[-1]
 
-    written = rate(page, "Bad Response")
+    written = rate(chat, "Bad Response")
 
     assert written.url.endswith("/evaluations/feedback"), "rating the copy rewrote a feedback row"
     with account.client() as client:
