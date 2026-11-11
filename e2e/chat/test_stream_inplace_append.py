@@ -61,6 +61,7 @@ from utils.chat_surface import MAIN_CHAT, ChatOpener, ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     Chat,
+    chat_input,
     conversation,
     expect_reply,
     last_reply,
@@ -524,7 +525,7 @@ def channel_member(streaming, account, preserve, page_for):
     member = create_user(streaming)
     channel_id = group_channel(account, member)
     page = page_for(member, path=f"/channels/{channel_id}")
-    expect(page.locator("#chat-input")).to_be_visible()
+    expect(chat_input(page)).to_be_visible()
     return page, channel_id
 
 

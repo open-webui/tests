@@ -85,8 +85,10 @@ def test_switching_channels_drops_the_pending_reply_and_a_message_sent_there_arr
 
     expect(page).to_have_url(re.compile(f"/channels/{second}$"))
     expect(chat_input(page)).to_be_visible()
+    # the first channel stays open in a tab of its own, holding its reply there
     expect(
-        banner, "#31375: the reply to the other channel's message is still pending"
+        banner.filter(visible=True),
+        "#31375: the reply to the other channel's message is still pending",
     ).to_have_count(0)
     chat_input(page).click()
     page.keyboard.type("hello from the second channel")

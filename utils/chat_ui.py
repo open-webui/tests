@@ -28,10 +28,15 @@ def chat_scope(chat: Chat) -> Page | Locator:
     return chat.panel if isinstance(chat, ChatSurface) else chat
 
 
+# since da850248d a channel opens as a page tab with a box of its own, the chat's hidden behind
+PAGE_MESSAGE_BOX = "#chat-input, [id^='channel-input-'][id$='-main']"
+
+
 def chat_input(chat: Chat) -> Locator:
+    """The message box of the chat, or the one the page shows: its chat's or its channel's."""
     if isinstance(chat, ChatSurface):
         return chat.input
-    return chat.locator("#chat-input")
+    return chat.locator(PAGE_MESSAGE_BOX).filter(visible=True)
 
 
 def send(chat: Chat, text: str) -> None:

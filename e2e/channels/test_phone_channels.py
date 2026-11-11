@@ -53,9 +53,14 @@ def message(page: Page, text: str) -> Locator:
     return page.locator("[id^='message-']").filter(has_text=text).first
 
 
+def channel_box(page: Page) -> Locator:
+    # on a phone the chat's box behind the channel's tab still counts as visible
+    return page.locator("[id^='channel-input-'][id$='-main']")
+
+
 def phone_in_channel(page_for, member, channel_id: str) -> Page:
     page = page_for(member, path=f"/channels/{channel_id}", **PHONE)
-    expect_on_screen(chat_input(page))
+    expect_on_screen(channel_box(page))
     return page
 
 
@@ -77,7 +82,7 @@ def test_a_channel_opens_from_the_drawer_and_a_tapped_send_reaches_the_other_mem
     expect(phone).to_have_url(re.compile(channel_id))
     expect_off_screen(sidebar(phone).get_by_role("link", name="New Chat"))
 
-    tap_on_screen(chat_input(phone))
+    tap_on_screen(channel_box(phone))
     phone.keyboard.type("on my way, ten minutes")
     tap_on_screen(phone.get_by_role("button", name="Send message"))
 

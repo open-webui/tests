@@ -335,12 +335,12 @@ class _HeldPosts:
 def _form(page: Page, in_thread: bool = False) -> Locator:
     """The channel's input form, or the open thread's, with its queue above the input."""
     thread_input = page.get_by_label("Reply to thread...")
-    forms = page.locator("form").filter(has=page.locator("#chat-input"))
+    forms = page.locator("form").filter(has=page.locator("[id^='channel-input-']"))
     return forms.filter(has=thread_input) if in_thread else forms.filter(has_not=thread_input)
 
 
 def _type_and_send(form: Locator, text: str) -> None:
-    form.locator("#chat-input").click()
+    form.locator("[id^='channel-input-']").click()
     form.page.keyboard.type(text)
     form.page.keyboard.press("Enter")
 
@@ -417,7 +417,7 @@ def test_a_queued_message_can_be_edited_or_removed_before_it_posts(people, page_
     expect(form.get_by_text("third, the life vests", exact=True)).to_have_count(0)
 
     _queued(form, "second, the oars").get_by_role("button", name="Edit").click()
-    expect(form.locator("#chat-input")).to_have_text("second, the oars")
+    expect(form.locator("[id^='channel-input-']")).to_have_text("second, the oars")
     expect(_queue_rows(form)).to_have_count(1)
     page.keyboard.press("End")
     page.keyboard.type(" and the rudder")

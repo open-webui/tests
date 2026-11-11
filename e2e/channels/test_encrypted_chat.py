@@ -29,6 +29,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import make_group
 from harness.channel_quotes import enable_channels
+from utils.chat_ui import chat_input
 
 # encrypted chat refuses to start outside a secure context
 pytestmark = [
@@ -88,7 +89,7 @@ def _direct_message(actor, other) -> str:
 
 def _open_conversation(page: Page, channel_id: str) -> None:
     page.goto(f"/channels/{channel_id}")
-    expect(page.locator("#chat-input")).to_be_visible()
+    expect(chat_input(page)).to_be_visible()
 
 
 def _conversation_menu(page: Page, name: str = "Conversation options") -> Locator:
@@ -118,7 +119,7 @@ def _messages(page: Page) -> Locator:
 
 
 def _write(page: Page, text: str) -> None:
-    composer = page.locator("#chat-input")
+    composer = chat_input(page)
     expect(composer).to_be_editable()
     composer.click()
     page.keyboard.insert_text(text)
