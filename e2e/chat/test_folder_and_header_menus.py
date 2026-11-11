@@ -21,18 +21,27 @@ In a frontend copy of dev 30f3f6a8f the Scroll to Top entry closes the menu and 
 its end. The rename tests pass on dev c5981aaea (frontend build of 05e115366, no header change
 since); in a frontend copy whose header rename never sends the title, whose blank check is dropped
 and whose menu shows Rename only on writable views, each of the three goes red.
+
+The rename tests also run on a chat in a side tab: a saved chat dragged into a tab, and a chat
+started in every way a side chat starts and every state it can be in (a temporary one has no
+stored title). Its tab must offer the same chat menu and rename the chat it shows. On dev
+c15f28649 and on the build of PR open-webui/open-webui#34064 a side tab has no chat menu, so
+every side variant is red (open-webui/open-webui#34031, which the PR leaves out).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness import upstream as reply
 from harness.access import make_group
 from harness.chat_history import seed_chat
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface, surface_of
 from utils.sidebar_folders import folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -240,24 +249,27 @@ def test_header_menu_scroll_to_top_brings_the_first_message_into_view(make_user,
     expect(first).to_be_in_viewport()
 
 
-def _header(page: Page) -> Locator:
-    """The tab bar over the open chat, holding its titled tab and the "Chat actions" menu."""
-    return page.get_by_role("main").get_by_role("tablist", name="Tabs")
+def _header(chat: Page | ChatSurface) -> Locator:
+    """The tab bar over the chat, holding its titled tab and the "Chat actions" menu."""
+    return surface_of(chat).tab_bar.get_by_role("tablist", name="Tabs")
 
 
-def _shown_title(page: Page) -> Locator:
-    """The title the open chat's tab shows; its accessible name stays the stored title."""
-    return _header(page).get_by_role("tab", selected=True)
+def _shown_title(chat: Page | ChatSurface) -> Locator:
+    """The title the chat's tab shows; its accessible name stays the stored title."""
+    return surface_of(chat).tab
 
 
-def _start_rename(page: Page, title: str) -> Locator:
-    """Pick Rename in the open chat's header menu; returns the text box that replaced the title."""
-    page.get_by_label("Chat actions").click()
-    page.get_by_role("menu").get_by_role("menuitem", name="Rename").click()
-    box = _header(page).get_by_role("textbox", name="Title")
+def _start_rename(chat: Page | ChatSurface, title: str) -> Locator:
+    """Pick Rename in the chat's header menu; returns the text box that replaced the title."""
+    surface = surface_of(chat)
+    actions = surface.tab_bar.get_by_label("Chat actions")
+    expect(actions, f"the tab of the {surface.place} offers no chat menu").to_have_count(1)
+    actions.click()
+    surface.page.get_by_role("menu").get_by_role("menuitem", name="Rename").click()
+    box = _header(surface).get_by_role("textbox", name="Title")
     expect(box).to_be_focused()
     expect(box).to_have_value(title)
-    expect(_shown_title(page)).to_have_text("")
+    expect(_shown_title(surface)).to_have_text("")
     return box
 
 
@@ -279,31 +291,63 @@ def _stored_title(account, chat_id: str) -> str:
     return stored.json()["title"]
 
 
-def test_header_menu_rename_saves_the_new_title_on_enter(make_user, page_for):
+def test_header_menu_rename_saves_the_new_title_on_enter(make_user, chat_for):
+    """In a side tab: open-webui/open-webui#34031, not fixed by PR open-webui/open-webui#34064."""
     account = make_user()
     suffix = uuid.uuid4().hex[:6]
     title, renamed = f"Driftwood {suffix}", f"Salvage {suffix}"
     chat_id = _create_chat(account, title)
-    page = page_for(account, path=f"/c/{chat_id}")
+    chat = chat_for(account, chat_id=chat_id)
+    page = chat.page
     sidebar = _open_sidebar(page)
     _entry(sidebar, title)
 
-    box = _start_rename(page, title)
+    box = _start_rename(chat, title)
     status = _save_title(page, box, chat_id, renamed)
 
     assert status == 200, f"saving the new title got {status}"
-    expect(_shown_title(page)).to_have_text(renamed)
+    expect(_shown_title(chat)).to_have_text(renamed)
     expect(box).to_have_count(0)
     assert _stored_title(account, chat_id) == renamed
     expect(_entry(sidebar, renamed)).to_be_visible()
     expect(sidebar.locator("#sidebar-chat-group").filter(has_text=title)).to_have_count(0)
 
 
-def test_header_menu_rename_refuses_a_blank_title_and_keeps_the_old_one(make_user, page_for):
+# a temporary side chat has no stored title to rename
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
+def test_header_menu_rename_of_a_chat_started_on_the_page_saves_its_new_title(
+    make_user, chat_for, upstream
+):
+    """In a side chat: open-webui/open-webui#34031, not fixed by PR open-webui/open-webui#34064."""
+    account = make_user()
+    chat = chat_for(account)
+    page = chat.page
+    question = f"Where does the ferry leave? ({uuid.uuid4().hex[:6]})"
+    upstream.queue(reply.text("From the old pier.", match=reply.answering(question)))
+    chat.send(question)
+    chat.expect_reply("From the old pier.")
+    # the address follows the selected tab
+    chat.show()
+    expect(page).to_have_url(re.compile(r"/c/[^/?#]+$"))
+    chat_id = page.url.rsplit("/", 1)[-1]
+    title = _stored_title(account, chat_id)
+    renamed = f"Ferry {uuid.uuid4().hex[:6]}"
+
+    box = _start_rename(chat, title)
+    status = _save_title(page, box, chat_id, renamed)
+
+    assert status == 200, f"saving the new title got {status}"
+    expect(_shown_title(chat)).to_have_text(renamed)
+    assert _stored_title(account, chat_id) == renamed
+
+
+def test_header_menu_rename_refuses_a_blank_title_and_keeps_the_old_one(make_user, chat_for):
+    """In a side tab: open-webui/open-webui#34031, not fixed by PR open-webui/open-webui#34064."""
     account = make_user()
     title = f"Lantern {uuid.uuid4().hex[:6]}"
     chat_id = _create_chat(account, title)
-    page = page_for(account, path=f"/c/{chat_id}")
+    chat = chat_for(account, chat_id=chat_id)
+    page = chat.page
     saves = []
     page.on(
         "request",
@@ -314,12 +358,12 @@ def test_header_menu_rename_refuses_a_blank_title_and_keeps_the_old_one(make_use
         ),
     )
 
-    box = _start_rename(page, title)
+    box = _start_rename(chat, title)
     box.fill("   ")
     box.press("Enter")
 
     expect(page.get_by_text("Title cannot be an empty string.")).to_be_visible()
-    expect(_shown_title(page)).to_have_text(title)
+    expect(_shown_title(chat)).to_have_text(title)
     assert saves == [], f"a blank title was sent to the server: {saves}"
     assert _stored_title(account, chat_id) == title
 
