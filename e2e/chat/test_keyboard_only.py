@@ -33,7 +33,7 @@ sign-in page, settings and search tests are about the page and stay as they were
 the Regenerate button is missing on dev c15f28649 (open-webui/open-webui#34014, fix PR
 open-webui/open-webui#34064). Picking a model with the keys leaves the focus off a side chat's
 message box on both builds: the selector hands the focus to the element with the id `chat-input`,
-which is the main chat's box (no filed issue).
+which is the main chat's box (open-webui/open-webui#34194, fix PR open-webui/open-webui#34195).
 
 On the sign-in page, Skip to main content moves the focus off the link (421b6947b, PR
 open-webui/open-webui#33684) and the show password button is at least 24 pixels wide
@@ -196,7 +196,7 @@ def preset(admin) -> str:
 def test_the_model_selector_is_reached_with_tab_and_a_model_picked_with_the_keys(
     preset, keyboard_chat
 ):
-    """In a side chat: no issue filed, the picked model gives the focus to the main chat's box."""
+    """In a side chat: open-webui/open-webui#34194, fix PR open-webui/open-webui#34195."""
     expect(chat_input(keyboard_chat)).to_be_focused()
     selector = keyboard_chat.button(f"Selected model: {MOCK_MODEL_ID}")
     press_until_focused(keyboard_chat, "Tab", selector)
