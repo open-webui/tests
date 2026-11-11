@@ -90,10 +90,41 @@ orchestrator, so that test runs against the real service on Docker (`harness.ter
 skips without it; on the dev c15f28649 build it fails with the terminal list no longer telling
 the browser a terminal's scope, in a backend copy (the file browser asks for the terminal's
 files before the chat exists and fails to load them).
+
+The Git panel's further tools: a split diff with Hide whitespace, the branch menu's search,
+rename, copy and delete (a branch with commits of its own is kept and the panel says why), a
+worktree opened in the Files tab, Fetch then Pull from the sync button, the History with a
+commit's changes, its unpushed mark and Copy commit hash, the link to the repository's page
+without credentials, Git unavailable with Retry, live updates followed and their loss shown, and
+the diff of an open changed file from its toolbar. The New tab menu and the panel offer only
+what the picked terminal says it has; a file opened again keeps its one tab, the arrow keys,
+Home and End step through the tabs and Alt+Shift+Arrow moves one, a phone opens the tabs from
+the Tabs button, and a person's own terminal is let go when they lose the permission to use one.
+
+Discriminates for these, in frontend copies of the dev c15f28649 build: the split diff drawn
+unified or Hide whitespace hiding nothing fails the diff test; a branch search that narrows
+nothing, a Rename or a Delete that does nothing fails the branch test, and Delete doing nothing
+the kept branch test; a new worktree not opened, or the current one offered and the list not
+narrowed, the worktree test; commits to pull offered as a fetch, or not counted, the sync test;
+no unpushed mark, a short hash copied or a commit's changes not shown, the history test;
+credentials kept in the link, an SSH address not turned into a web address or a GitLab host
+named by its address, the link test; New Terminal or Browser offered whatever the terminal says,
+Git assumed where it says nothing, or a pull request view where it has none, the menu test; a
+failed detection shown as nothing, or Retry not asking again, the Git unavailable test; lost
+live updates not mentioned, a change not followed or the notice kept after they are back, the
+live updates test; a second tab for a file opened again, or its crumbs browsing inside the file
+tab, the file tab test; Alt+Shift+Arrow moving nothing or Home and End selecting nothing, the
+keyboard test; the Tabs button missing for a picked terminal or the drawer opening without the
+files, the phone test; a personal terminal kept picked without the permission, the permission
+test; a changed binary file read as unchanged or Show diff showing nothing, the toolbar diff test.
+`test_a_tab_moved_with_the_keyboard_keeps_the_focus_for_the_next_move` is red on that build: the
+moved tab loses the keyboard focus, so the next Alt+Shift+Arrow does nothing.
 """
 
 from __future__ import annotations
 
+import contextlib
+import json
 import re
 import shutil
 import subprocess
@@ -102,16 +133,28 @@ import uuid
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
+from harness.listener import json_answer
 from harness.open_terminal import HOME_TAB, serving_open_terminal
-from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
+from harness.terminal_server import (
+    TERMINAL_SERVERS_CONFIG,
+    configure_terminals,
+    read_grant,
+    serving_terminal,
+)
 from harness.terminals import create_template, share_template
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_ui import chat_input, close_menu, expect_reply, send
+from utils.clipboard import copied, loopback_clipboard
+from utils.git_panel import expand_git_panel
+from utils.phone import PHONE
 from utils.sidebar_chats import chat_row
+from utils.tooltips import tooltip_button
+from utils.user_terminals import listed_terminal
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -656,13 +699,8 @@ def _open_git_panel(page: Page, terminal: str, folder) -> Locator:
     choose_terminal(page, terminal)
     # the conversation stays in front; Files opens from the New tab menu
     _add_tab(page, re.compile(r"^Files"))
-    files = page.get_by_role("region", name="File browser")
-    files.get_by_text(folder.name, exact=True).click()
-    git = page.get_by_role("region", name="Git")
     # the panel shows once the file browser stands in the repository
-    git.get_by_role("button", name="Expand Git panel").click()
-    expect(git.get_by_role("button", name="Collapse Git panel")).to_be_visible()
-    return git
+    return expand_git_panel(page, folder.name)
 
 
 def _staged(folder) -> set[str]:
@@ -1055,3 +1093,781 @@ def test_a_per_chat_terminal_picked_before_the_first_message_shows_its_files_onc
     expect(files.get_by_text("This folder is empty")).to_be_visible()
     expect(files.get_by_text("manifest.txt", exact=True)).to_have_count(0)
     expect(_tab_strip(page).get_by_role("tab", name=folder, exact=True)).to_have_count(0)
+
+
+def _diff_setting(git: Locator, name: str) -> Locator:
+    """Open the Git panel's Diff settings and return the entry `name` of its menu."""
+    git.get_by_role("button", name="Diff settings").click()
+    entry = git.page.get_by_role("menu").get_by_role("menuitem", name=name)
+    expect(entry).to_be_visible()
+    return entry
+
+
+def _place(line: Locator) -> tuple[float, float]:
+    box = line.bounding_box()
+    return box["x"], box["y"]
+
+
+def test_a_diff_is_shown_side_by_side_and_hides_lines_that_differ_only_in_spacing(
+    terminal_page, repository
+):
+    page, terminal = terminal_page
+    (repository / "tides.txt").write_text("high water at seven\nlow  water at   noon\n")
+    git = _open_git_panel(page, terminal, repository)
+    git.get_by_role("button", name="View changes tides.txt").first.click()
+    before = git.get_by_text("high water at six")
+    after = git.get_by_text("high water at seven")
+    respaced = git.get_by_text("low water at noon")
+    expect(after).to_be_visible()
+    expect(respaced).to_have_count(2)
+    (old_x, old_y), (new_x, new_y) = _place(before), _place(after)
+    assert new_y > old_y + 5 and abs(new_x - old_x) < 2, (
+        f"the unified diff has the old line at {(old_x, old_y)} and the new one at {(new_x, new_y)}"
+    )
+
+    _diff_setting(git, "Split").click()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menu")).to_have_count(0)
+    (old_x, old_y), (new_x, new_y) = _place(before), _place(after)
+    assert abs(new_y - old_y) < 2 and new_x > old_x + 50, (
+        f"the split diff has the old line at {(old_x, old_y)} and the new one at {(new_x, new_y)}"
+    )
+
+    hide = _diff_setting(git, "Hide whitespace")
+    expect(hide).to_have_attribute("aria-pressed", "false")
+    hide.click()
+    expect(hide).to_have_attribute("aria-pressed", "true")
+    expect(respaced).to_have_count(0)
+    expect(after).to_be_visible()
+    hide.click()
+    expect(respaced).to_have_count(2)
+
+
+def _branch_actions(menu: Locator, branch: str) -> Locator:
+    """Open the actions of `branch` in the open branch menu; returns that menu."""
+    more = menu.get_by_role("menuitem", name=f"Branch actions {branch}")
+    more.click()
+    actions = menu.page.get_by_role("menu").filter(
+        has=menu.page.get_by_role("menuitem", name="Copy branch name")
+    )
+    expect(actions).to_be_visible()
+    return actions
+
+
+def _branches(folder) -> set[str]:
+    return set(_git(folder, "branch", "--format=%(refname:short)").split())
+
+
+def test_branches_are_searched_renamed_copied_and_deleted_from_the_branch_menu(
+    terminal_account, page_for, repository
+):
+    person, terminal = terminal_account
+    _git(repository, "branch", "spring-tides")
+    _git(repository, "branch", "neap-tides")
+    page = page_for(person)
+    clipboard = loopback_clipboard(page, person)
+    git = _open_git_panel(page, terminal, repository)
+
+    menu = _branch_menu(git)
+    expect(menu.get_by_role("menuitem", name="spring-tides", exact=True)).to_be_visible()
+    menu.get_by_role("textbox", name="Search branches").fill("NEAP")
+    expect(menu.get_by_role("menuitem", name="spring-tides", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="main", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="neap-tides", exact=True)).to_be_visible()
+    menu.get_by_role("textbox", name="Search branches").fill("")
+
+    _branch_actions(menu, "spring-tides").get_by_role("menuitem", name="Copy branch name").click()
+    assert copied(clipboard) == "spring-tides", f"the clipboard holds {copied(clipboard)!r}"
+
+    _branch_actions(menu, "spring-tides").get_by_role("menuitem", name="Rename").click()
+    dialog = page.get_by_role("dialog").filter(has_text="Rename branch")
+    name = dialog.get_by_role("textbox")
+    expect(name).to_have_value("spring-tides")
+    name.fill("autumn-tides")
+    dialog.get_by_role("button", name="Confirm").click()
+    expect(dialog).to_have_count(0)
+    _wait_until(lambda: "autumn-tides" in _branches(repository))
+    assert _branches(repository) == {"main", "autumn-tides", "neap-tides"}, (
+        f"after the rename the repository has the branches {_branches(repository)}"
+    )
+
+    menu = _branch_menu(git)
+    expect(menu.get_by_role("menuitem", name="autumn-tides", exact=True)).to_be_visible()
+    # the branch that is checked out cannot be deleted
+    expect(_branch_actions(menu, "main").get_by_role("menuitem", name="Delete")).to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menu")).to_have_count(0)
+    menu = _branch_menu(git)
+    _branch_actions(menu, "neap-tides").get_by_role("menuitem", name="Delete").click()
+    dialog = page.get_by_role("dialog").filter(has_text="Delete branch")
+    expect(dialog).to_contain_text("Delete branch neap-tides? Unmerged branches will be kept.")
+    dialog.get_by_role("button", name="Confirm").click()
+    expect(dialog).to_have_count(0)
+    _wait_until(lambda: "neap-tides" not in _branches(repository))
+    assert _branches(repository) == {"main", "autumn-tides"}, (
+        f"after the delete the repository has the branches {_branches(repository)}"
+    )
+    menu = _branch_menu(git)
+    expect(menu.get_by_role("menuitem", name="autumn-tides", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="neap-tides", exact=True)).to_have_count(0)
+
+
+def test_a_branch_with_commits_of_its_own_is_kept_when_deleted_and_the_panel_says_why(
+    terminal_page, repository
+):
+    page, terminal = terminal_page
+    _git(repository, "stash", "-q")
+    _git(repository, "switch", "-q", "-c", "storm-tides")
+    (repository / "storm.txt").write_text("surge at midnight\n")
+    _git(repository, "add", "storm.txt")
+    _git(repository, "commit", "-q", "-m", "Log the storm surge")
+    _git(repository, "switch", "-q", "main")
+    git = _open_git_panel(page, terminal, repository)
+
+    menu = _branch_menu(git)
+    _branch_actions(menu, "storm-tides").get_by_role("menuitem", name="Delete").click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
+
+    expect(git.get_by_role("alert")).to_contain_text("not fully merged")
+    assert "storm-tides" in _branches(repository), "the unmerged branch was deleted"
+
+
+def _worktrees_menu(git: Locator) -> Locator:
+    git.get_by_role("button", name="Worktrees").click()
+    search = git.page.get_by_role("textbox", name="Search worktrees")
+    expect(search).to_be_visible()
+    return git.page.get_by_role("menu").filter(has=search)
+
+
+def test_a_worktree_made_in_the_worktrees_menu_opens_in_the_files_tab(terminal_page, repository):
+    page, terminal = terminal_page
+    night = repository.parent / f"{repository.name}-night"
+    git = _open_git_panel(page, terminal, repository)
+    files = page.get_by_role("region", name="File browser")
+    try:
+        menu = _worktrees_menu(git)
+        # the worktree the file browser stands in is listed and cannot be picked
+        expect(menu.get_by_role("menuitem", name=re.compile(r"^main\b"))).to_be_disabled()
+        menu.get_by_role("menuitem", name="New worktree").click()
+        create = menu.get_by_role("menuitem", name="Create worktree")
+        expect(create).to_be_disabled()
+        menu.get_by_role("textbox", name="Worktree branch").fill("night-tides")
+        menu.get_by_role("textbox", name="Worktree directory").fill(f"../{night.name}")
+        create.click()
+
+        # the new worktree opens in the Files tab, on its own branch and with the committed file
+        expect(_tab_strip(page).get_by_role("tab", name=night.name, exact=True)).to_be_visible()
+        expect(files.get_by_text("tides.txt", exact=True)).to_be_visible()
+        expect(git.get_by_role("button", name="Switch branch")).to_have_text("night-tides")
+        assert (night / "tides.txt").read_text() == "high water at six\nlow water at noon\n", (
+            "the worktree does not hold the committed file"
+        )
+        assert _git(night, "branch", "--show-current").strip() == "night-tides"
+
+        menu = _worktrees_menu(git)
+        expect(menu.get_by_role("menuitem", name=re.compile(r"^night-tides\b"))).to_be_disabled()
+        menu.get_by_role("textbox", name="Search worktrees").fill(night.name)
+        expect(menu.get_by_role("menuitem", name=re.compile(r"^main\b"))).to_have_count(0)
+        menu.get_by_role("textbox", name="Search worktrees").fill("")
+        menu.get_by_role("menuitem", name=re.compile(r"^main\b")).click()
+        expect(
+            _tab_strip(page).get_by_role("tab", name=repository.name, exact=True)
+        ).to_be_visible()
+        expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
+    finally:
+        shutil.rmtree(night, ignore_errors=True)
+
+
+def test_commits_on_the_remote_are_fetched_and_then_pulled_from_the_sync_button(
+    terminal_page, repository, remote
+):
+    page, terminal = terminal_page
+    elsewhere = repository.parent / f"{repository.name}-elsewhere"
+    _git(repository.parent, "clone", "-q", str(remote), str(elsewhere))
+    try:
+        _git(elsewhere, "config", "user.name", "Ben Quay")
+        _git(elsewhere, "config", "user.email", "ben@example.com")
+        (elsewhere / "moon.txt").write_text("full moon on friday\n")
+        _git(elsewhere, "add", "moon.txt")
+        _git(elsewhere, "commit", "-q", "-m", "Note the full moon")
+        _git(elsewhere, "push", "-q", "origin", "main")
+    finally:
+        shutil.rmtree(elsewhere, ignore_errors=True)
+    git = _open_git_panel(page, terminal, repository)
+
+    git.get_by_role("button", name="Fetch", exact=True).click()
+    expect(git.get_by_role("button", name="Pull", exact=True)).to_be_visible()
+    expect(git.get_by_text("↓1", exact=True)).to_be_visible()
+    assert not (repository / "moon.txt").exists(), "Fetch already changed the working tree"
+
+    git.get_by_role("button", name="Pull", exact=True).click()
+    expect(git.get_by_role("button", name="Fetch", exact=True)).to_be_visible()
+    expect(git.get_by_text("↓1", exact=True)).to_have_count(0)
+    assert (repository / "moon.txt").read_text() == "full moon on friday\n", (
+        "Pull did not bring the remote's commit into the working tree"
+    )
+    # the change that was not committed is still there
+    assert (repository / "tides.txt").read_text().startswith("high water at seven")
+
+
+def test_history_shows_a_commits_changes_marks_what_is_not_pushed_and_copies_its_hash(
+    terminal_account, page_for, repository, remote
+):
+    person, terminal = terminal_account
+    _git(repository, "commit", "-q", "-a", "-m", "Move high water to seven")
+    newest = _git(repository, "log", "-1", "--format=%H").strip()
+    page = page_for(person)
+    clipboard = loopback_clipboard(page, person)
+    git = _open_git_panel(page, terminal, repository)
+    git.get_by_role("button", name="History").click()
+    unpushed = git.get_by_title("Unpushed")
+    expect(git.get_by_text("Start the tide log")).to_be_visible()
+    expect(unpushed).to_have_count(1)
+
+    git.get_by_text("Start the tide log").click()
+    expect(git.get_by_text("low water at noon")).to_be_visible()
+    expect(git.get_by_text("high water at seven")).to_have_count(0)
+    git.get_by_text("Move high water to seven").click()
+    expect(git.get_by_text(f"{newest[:7]} · Move high water to seven")).to_be_visible()
+    expect(git.get_by_text("high water at seven")).to_be_visible()
+    expect(git.get_by_text("high water at six")).to_be_visible()
+
+    git.get_by_role("button", name=f"Commit actions {newest[:7]}").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Copy commit hash").click()
+    assert copied(clipboard) == newest, f"the clipboard holds {copied(clipboard)!r}, not {newest}"
+
+    git.get_by_role("button", name="Push", exact=True).click()
+    expect(git.get_by_role("button", name="Fetch", exact=True)).to_be_visible()
+    expect(unpushed).to_have_count(0)
+    expect(git.get_by_text("Move high water to seven").first).to_be_visible()
+
+
+REMOTES = [
+    ("git@github.com:example/logbook.git", "GitHub", "https://github.com/example/logbook"),
+    (
+        "https://ada:hunter2@gitlab.example.com/harbour/logbook.git",
+        "GitLab",
+        "https://gitlab.example.com/harbour/logbook",
+    ),
+    (
+        "ssh://git@bitbucket.org/example/logbook.git",
+        "Bitbucket",
+        "https://bitbucket.org/example/logbook",
+    ),
+    ("https://code.example.com/harbour/logbook", "code.example.com", None),
+]
+
+
+def test_the_panel_links_to_the_repositorys_page_on_its_host_without_credentials(
+    terminal_page, repository
+):
+    page, terminal = terminal_page
+    git = _open_git_panel(page, terminal, repository)
+    link = git.get_by_role("link", name=re.compile("^View on "))
+    expect(git.get_by_role("button", name="Diff settings")).to_be_visible()
+    expect(link).to_have_count(0)
+
+    for number, (remote_url, host, address) in enumerate(REMOTES):
+        _git(repository, "remote", "set-url" if number else "add", "origin", remote_url)
+        # the panel reads the repository again when it is opened
+        git.get_by_role("button", name="Collapse Git panel").click()
+        git.get_by_role("button", name="Expand Git panel").click()
+        expect(link).to_have_accessible_name(f"View on {host}")
+        expect(link).to_have_attribute("href", address or f"{remote_url}")
+        expect(link).to_have_attribute("target", "_blank")
+
+
+SCRIPTED_HOME = "/home/user"
+SCRIPTED_SPEC = {
+    "openapi": "3.0.0",
+    "info": {"title": "Open Terminal", "version": "1"},
+    "paths": {},
+}
+NOT_A_REPOSITORY = {"is_repo": False, "branch": "", "files": [], "ahead": 0, "behind": 0}
+
+
+def _repository_status(*changed: str) -> dict:
+    files = [
+        {
+            "path": path,
+            "status": "modified",
+            "staged": False,
+            "unstaged": True,
+            "additions": 1,
+            "deletions": 1,
+        }
+        for path in changed
+    ]
+    return {
+        "is_repo": True,
+        "root": SCRIPTED_HOME,
+        "branch": "main",
+        "head": "0" * 40,
+        "upstream": "origin/main",
+        "ahead": 0,
+        "behind": 0,
+        "files": files,
+        "remote_url": "",
+    }
+
+
+@pytest.fixture
+def scripted_terminal(admin, preserve):
+    """`scripted_terminal(name, person, features=...)` connects a terminal that answers the file
+    browser from a script, with one file in its home, for the person to use; returns the server.
+    `features=None` makes its configuration fail."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    connections = []
+    with contextlib.ExitStack() as running:
+
+        def connect(name: str, person: Actor, features: dict | None = None):
+            server = running.enter_context(serving_terminal())
+            config = json_answer({"features": features}) if features is not None else (500, {}, b"")
+            server.route("GET", "/openapi.json", json_answer(SCRIPTED_SPEC))
+            server.route("GET", "/api/config", config)
+            server.route(
+                "GET", "/files/cwd", json_answer({"cwd": SCRIPTED_HOME, "home": SCRIPTED_HOME})
+            )
+            listed = [{"name": f"{name.lower()}-notes.md", "type": "file", "size": 12}]
+            server.route(
+                "GET",
+                "/files/list",
+                json_answer({"dir": SCRIPTED_HOME, "entries": listed, "writable": True}),
+            )
+            server.route("GET", "/git/status", json_answer(_repository_status()))
+            server.route("GET", "/git/pr/capabilities", json_answer({"available": False}))
+            connections.append(
+                server.connection(name=name, config={"access_grants": [read_grant(person.id)]})
+            )
+            with admin.client() as client:
+                configure_terminals(client, *connections)
+            return server
+
+        yield connect
+
+
+def _new_tab_entries(page: Page) -> list[str]:
+    """What the open New tab menu offers, without the shortcut beside each entry."""
+    entries = page.get_by_role("menu").get_by_role("menuitem").all_inner_texts()
+    return [entry.strip().splitlines()[0].strip() for entry in entries]
+
+
+def _expect_new_tab_entries(page: Page, expected: list[str]) -> None:
+    # of the pane that holds the Files tab; the conversation's pane has a New tab button too
+    files_view = page.get_by_role("tabpanel").filter(
+        has=page.get_by_role("region", name="File browser")
+    )
+    files_tab = page.locator(f'[id="{files_view.get_attribute("aria-labelledby")}"]')
+    files_pane = page.locator("[data-panel-tab-bar]").filter(has=files_tab)
+    files_pane.get_by_role("button", name="New tab", exact=True).click()
+    expect(page.get_by_role("menu").get_by_role("menuitem").first).to_be_visible()
+    # the entries follow what the terminal answers about itself, shortly after it is picked
+    _wait_until(lambda: _new_tab_entries(page) == expected)
+    assert _new_tab_entries(page) == expected, (
+        f"the New tab menu offers {_new_tab_entries(page)}, expected {expected}"
+    )
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menu")).to_have_count(0)
+
+
+def _watched(terminal) -> list:
+    """The live-update connections the page opened on the scripted terminal."""
+    return [session for session in terminal.sessions if session.path.split("?")[0] == "/events"]
+
+
+def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_do(
+    page_for, make_user, scripted_terminal
+):
+    person = make_user()
+    everything = {"terminal": True, "browser": True, "desktop": True, "git": True, "events": True}
+    plain = scripted_terminal("Plain", person, features={})
+    workstation = scripted_terminal("Workstation", person, features=everything)
+    locked = scripted_terminal(
+        "Locked", person, features={"terminal": False, "git": False, "events": False}
+    )
+    scripted_terminal("Silent", person, features=None)
+    page = page_for(person)
+    files = page.get_by_role("region", name="File browser")
+    git = page.get_by_role("region", name="Git")
+
+    pick_terminal(page, "Plain")
+    # side by side, so the chat input's Terminal menu stays in reach
+    page.keyboard.press("Control+Backslash")
+    expect(chat_input(page)).to_be_visible()
+    expect(files.get_by_text("plain-notes.md", exact=True)).to_be_visible()
+    _expect_new_tab_entries(page, ["Files", "New File", "New Terminal", "Voice Note"])
+    # a terminal that does not say it has Git is never asked about a repository
+    assert not plain.requests_to("/git/status"), "a terminal without Git was asked for its status"
+
+    _pick_another_terminal(page, "Plain", "Workstation")
+    expect(files.get_by_text("workstation-notes.md", exact=True)).to_be_visible()
+    _expect_new_tab_entries(
+        page, ["Files", "New File", "New Terminal", "Browser", "Desktop", "Voice Note"]
+    )
+    expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
+    _wait_until(lambda: _watched(workstation))
+    assert _watched(workstation), "the terminal with live updates was not asked for them"
+
+    _pick_another_terminal(page, "Workstation", "Locked")
+    expect(files.get_by_text("locked-notes.md", exact=True)).to_be_visible()
+    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note"])
+    expect(git).to_have_count(0)
+    assert not locked.requests_to("/git/status"), "a terminal with Git off was asked for its status"
+    assert not _watched(locked), "a terminal with live updates off was asked for them"
+
+    # a terminal whose configuration cannot be read still shows its files
+    _pick_another_terminal(page, "Locked", "Silent")
+    expect(files.get_by_text("silent-notes.md", exact=True)).to_be_visible()
+    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note"])
+    expect(git).to_have_count(0)
+
+
+def test_a_repository_the_terminal_cannot_read_says_git_unavailable_until_a_retry_works(
+    page_for, make_user, scripted_terminal
+):
+    person = make_user()
+    terminal = scripted_terminal("Harbour", person, features={"git": True})
+    terminal.route("GET", "/git/status", json_answer({"detail": "git: command not found"}, 500))
+    page = page_for(person)
+    pick_terminal(page, "Harbour")
+    git = page.get_by_role("region", name="Git")
+    unavailable = page.get_by_text("Git unavailable", exact=True)
+
+    expect(unavailable).to_be_visible()
+    expect(git).to_have_count(0)
+    unavailable.hover()
+    expect(page.get_by_role("tooltip").filter(has_text="git: command not found")).to_be_visible()
+
+    # an Open Terminal from before the Git panel does not know the route
+    terminal.route("GET", "/git/status", json_answer({"detail": "Not Found"}, 404))
+    asked = len(terminal.requests_to("/git/status"))
+    page.get_by_role("button", name="Retry Git detection").click()
+    _wait_until(lambda: len(terminal.requests_to("/git/status")) > asked)
+    unavailable.hover()
+    expect(
+        page.get_by_role("tooltip").filter(
+            has_text="Git support is unavailable on this connection. "
+            "Update and restart Open Terminal."
+        )
+    ).to_be_visible()
+
+    terminal.route("GET", "/git/status", json_answer(_repository_status("tides.txt")))
+    page.get_by_role("button", name="Retry Git detection").click()
+    expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
+    expect(git.get_by_role("button", name="Git changes")).to_contain_text("1 changed")
+    expect(unavailable).to_have_count(0)
+
+
+def _settled(read, quiet: float = 1.5, limit: float = 15.0):
+    """The value `read` gives once it has stopped changing for `quiet` seconds."""
+    deadline = time.monotonic() + limit
+    value, since = read(), time.monotonic()
+    while time.monotonic() < deadline and time.monotonic() - since < quiet:
+        time.sleep(0.1)
+        if (current := read()) != value:
+            value, since = current, time.monotonic()
+    return value
+
+
+def test_the_git_panel_follows_changes_as_they_happen_and_says_when_it_no_longer_hears_of_them(
+    page_for, make_user, scripted_terminal
+):
+    person = make_user()
+    terminal = scripted_terminal("Harbour", person, features={"git": True, "events": True})
+    watching = []
+
+    def watch(session) -> None:
+        session.authenticated()
+        session.receive()
+        session.send(json.dumps({"type": "fs:ready", "path": SCRIPTED_HOME}))
+        watching.append(session)
+
+    terminal.script_sessions(watch, "/events")
+    page = page_for(person)
+    pick_terminal(page, "Harbour")
+    git = page.get_by_role("region", name="Git")
+    changes = git.get_by_role("button", name="Git changes")
+    sync = git.get_by_role("button", name="Fetch", exact=True)
+    expect(sync).to_be_visible()
+    _wait_until(lambda: watching)
+    assert watching, "the page never asked the terminal for live updates"
+    # the page reads the repository once more when its folder is watched; let that pass first
+    _settled(lambda: len(terminal.requests_to("/git/status")))
+    expect(changes).not_to_contain_text("changed")
+
+    terminal.route("GET", "/git/status", json_answer(_repository_status("tides.txt")))
+    for session in list(watching):
+        session.send(json.dumps({"type": "fs:change", "path": f"{SCRIPTED_HOME}/tides.txt"}))
+    expect(changes).to_contain_text("1 changed")
+    sync.hover()
+    expect(page.get_by_role("tooltip").filter(has_text="Fetch")).to_be_visible()
+    expect(page.get_by_role("tooltip").filter(has_text="Live updates unavailable")).to_have_count(0)
+    changes.hover()
+
+    # the terminal hangs up and takes no new connection
+    terminal.refuse_sessions(503, "/events")
+    for session in list(watching):
+        session.drop()
+    watching.clear()
+    lost = page.get_by_role("tooltip").filter(has_text="Live updates unavailable")
+    _wait_until(lambda: _hovering_shows(page, sync, changes, lost))
+    expect(lost).to_be_visible()
+    changes.hover()
+
+    # it is back: the page connects again by itself and the notice goes
+    del terminal.session_refusals["/events"]
+    _wait_until(lambda: watching, seconds=40)
+    assert watching, "the page did not ask for live updates again after losing them"
+    _wait_until(lambda: not _hovering_shows(page, sync, changes, lost))
+    sync.hover()
+    expect(page.get_by_role("tooltip").filter(has_text="Fetch")).to_be_visible()
+    expect(lost).to_have_count(0)
+
+
+def _hovering_shows(page: Page, button: Locator, elsewhere: Locator, tooltip: Locator) -> bool:
+    """Whether `tooltip` shows when the pointer comes onto `button` afresh."""
+    elsewhere.hover()
+    button.hover()
+    try:
+        tooltip.wait_for(state="visible", timeout=1_000)
+    except PlaywrightTimeoutError:
+        return False
+    return True
+
+
+def test_a_file_opened_again_keeps_its_one_tab_and_its_folder_crumb_leads_to_the_files_tab(
+    terminal_page, repository
+):
+    page, terminal = terminal_page
+    (repository / "moon.txt").write_text("full moon on friday\n")
+    git = _open_git_panel(page, terminal, repository)
+    strip = _tab_strip(page)
+    folder_tab = strip.get_by_role("tab", name=repository.name, exact=True)
+    expect(folder_tab).to_have_attribute("aria-selected", "true")
+
+    git.get_by_role("button", name="Open file tides.txt").click()
+    _selected(page, "tides.txt")
+    expect(page.get_by_role("tabpanel", name="tides.txt")).to_contain_text("high water at seven")
+    folder_tab.click()
+    git.get_by_role("button", name="Open file moon.txt").click()
+    _selected(page, "moon.txt")
+    folder_tab.click()
+    git.get_by_role("button", name="Open file tides.txt").click()
+    _selected(page, "tides.txt")
+    assert _tab_names(page) == ["New Chat", repository.name, "tides.txt", "moon.txt"], (
+        f"opening a file that is already open left the tabs as {_tab_names(page)}"
+    )
+
+    # the file's tab names the folders above it; the home's crumb opens it in the Files tab
+    page.get_by_role("tabpanel", name="tides.txt").get_by_role(
+        "button", name="Home", exact=True
+    ).click()
+    expect(strip.get_by_role("tab", name=FILES, exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
+    files = page.get_by_role("region", name="File browser")
+    expect(files.get_by_text(repository.name, exact=True)).to_be_visible()
+    assert _tab_names(page) == ["New Chat", FILES, "tides.txt", "moon.txt"], (
+        f"the crumb left the tabs as {_tab_names(page)}"
+    )
+
+
+def test_tabs_are_stepped_through_and_moved_with_the_keyboard(terminal_page):
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+    open_new_terminal(page)
+    _add_tab(page, "New File")
+    strip = _tab_strip(page)
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+
+    strip.get_by_role("tab", name=FILES, exact=True).click()
+    page.keyboard.press("ArrowRight")
+    _selected(page, "Terminal 1")
+    expect(strip.get_by_role("tab", name="Terminal 1")).to_be_focused()
+    page.keyboard.press("End")
+    _selected(page, "Untitled-1")
+    # past the last tab the arrow comes round to the first
+    page.keyboard.press("ArrowRight")
+    _selected(page, "New Chat")
+    page.keyboard.press("ArrowLeft")
+    _selected(page, "Untitled-1")
+    page.keyboard.press("Home")
+    _selected(page, "New Chat")
+    page.keyboard.press("ArrowRight")
+    _selected(page, FILES)
+    expect(page.get_by_role("region", name="File browser")).to_be_visible()
+
+    page.keyboard.press("Alt+Shift+ArrowRight")
+    _expect_panes(page, [["New Chat", "Terminal 1", FILES, "Untitled-1"]])
+    _selected(page, FILES)
+    # the moved tab is clicked again first: the move takes the focus off it (see the next test)
+    strip.get_by_role("tab", name=FILES, exact=True).click()
+    page.keyboard.press("Alt+Shift+ArrowLeft")
+    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _selected(page, FILES)
+
+
+def test_a_tab_moved_with_the_keyboard_keeps_the_focus_for_the_next_move(terminal_page):
+    """Red on dev c15f28649, finding "issue: A tab moved with Alt+Shift+Arrow loses the keyboard
+    focus, so the next press does nothing"."""
+    page, terminal = terminal_page
+    pick_terminal(page, terminal)
+    open_new_terminal(page)
+    _add_tab(page, "New File")
+    strip = _tab_strip(page)
+    files_tab = strip.get_by_role("tab", name=FILES, exact=True)
+    files_tab.click()
+    expect(files_tab).to_be_focused()
+
+    page.keyboard.press("Alt+Shift+ArrowRight")
+    _expect_panes(page, [["New Chat", "Terminal 1", FILES, "Untitled-1"]])
+    focused = page.evaluate(
+        "document.activeElement.getAttribute('title') || document.activeElement.tagName"
+    )
+    page.keyboard.press("Alt+Shift+ArrowRight")
+    _wait_until(lambda: _panes(page) == [["New Chat", "Terminal 1", "Untitled-1", FILES]], 5)
+    assert _panes(page) == [["New Chat", "Terminal 1", "Untitled-1", FILES]], (
+        f"the second Alt+Shift+ArrowRight moved nothing: the tabs are {_panes(page)} and after "
+        f"the first move the keyboard focus was on {focused!r}, not on the moved tab"
+    )
+
+
+def test_on_a_phone_the_tabs_button_shows_once_a_terminal_is_picked_and_opens_its_files(
+    terminal_account, page_for, open_terminal
+):
+    person, terminal = terminal_account
+    marker = open_terminal.home / f"pier-{uuid.uuid4().hex[:6]}.txt"
+    marker.write_text("berth four\n")
+    page = page_for(person, **PHONE)
+    tabs_button = page.get_by_role("button", name="Tabs", exact=True)
+    expect(chat_input(page)).to_be_visible()
+    # nothing to show beside a new chat yet
+    expect(tabs_button).to_have_count(0)
+
+    tooltip_button(page.get_by_role("main"), "Terminal").tap()
+    listed_terminal(page, terminal).tap()
+    close_menu(page)
+    expect(tabs_button).to_have_attribute("aria-expanded", "false")
+    expect(page.get_by_role("region", name="File browser")).to_have_count(0)
+
+    tabs_button.tap()
+    drawer = page.get_by_role("dialog", name="Tabs")
+    files = drawer.get_by_role("region", name="File browser")
+    expect(files.get_by_text(marker.name, exact=True)).to_be_visible()
+    expect(drawer.get_by_role("tab", name=FILES, exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
+
+    drawer.get_by_role("button", name="Hide tabs").tap()
+    expect(drawer).to_have_count(0)
+    expect(chat_input(page)).to_be_visible()
+    expect(tabs_button).to_have_attribute("aria-expanded", "false")
+
+
+def _add_personal_terminal(person: Actor, server, name: str) -> None:
+    """The terminal as the person's Settings > Integrations stores it."""
+    terminal = {
+        "url": server.base_url,
+        "key": "",
+        "name": name,
+        "enabled": False,
+        "auth_type": "bearer",
+        "path": "/openapi.json",
+        "config": {"enable": True},
+    }
+    with person.client() as client:
+        saved = client.post(
+            "/api/v1/users/user/settings/update",
+            json={"ui": {"showChangelog": False, "terminalServers": [terminal]}},
+        )
+    assert saved.status_code == 200, saved.text
+
+
+def test_a_picked_terminal_of_the_persons_own_is_let_go_when_they_may_no_longer_use_one(
+    page_for, make_user, admin, preserve, direct_integrations, scripted_terminal
+):
+    preserve("permissions")
+    direct_integrations(True)
+    with admin.client() as client:
+        defaults = client.get("/api/v1/users/default/permissions").json()
+        defaults["features"]["direct_tool_servers"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=defaults)
+    assert saved.status_code == 200, saved.text
+    person = make_user()
+    group_id = make_group(admin, [person], {"features": {"direct_tool_servers": True}})
+    scripted_terminal("Harbour", person, features={})
+    with serving_terminal() as laptop:
+        laptop.cors = True
+        laptop.route("GET", "/openapi.json", json_answer(SCRIPTED_SPEC))
+        laptop.route("GET", "/api/config", json_answer({"features": {"terminal": False}}))
+        laptop.route(
+            "GET", "/files/cwd", json_answer({"cwd": SCRIPTED_HOME, "home": SCRIPTED_HOME})
+        )
+        listed = [{"name": "laptop-notes.md", "type": "file", "size": 12}]
+        laptop.route(
+            "GET",
+            "/files/list",
+            json_answer({"dir": SCRIPTED_HOME, "entries": listed, "writable": True}),
+        )
+        _add_personal_terminal(person, laptop, "Laptop")
+        page = page_for(person)
+        pick_terminal(page, "Laptop")
+        files = page.get_by_role("region", name="File browser")
+        expect(files.get_by_text("laptop-notes.md", exact=True)).to_be_visible()
+        page.keyboard.press("Control+Backslash")
+        composer = page.get_by_role("main")
+        expect(composer.get_by_role("button", name="Laptop", exact=True)).to_be_visible()
+
+        with admin.client() as client:
+            removed = client.post(
+                f"/api/v1/groups/id/{group_id}/users/remove", json={"user_ids": [person.id]}
+            )
+        assert removed.status_code == 200, removed.text
+
+        # the pick is gone and with it the terminal's files; the admin's terminal is still offered
+        expect(composer.get_by_role("button", name="Laptop", exact=True)).to_have_count(0)
+        expect(files).to_have_count(0)
+        unpicked = composer.get_by_role("button", name="Terminal", exact=True)
+        expect(unpicked).to_be_visible()
+        unpicked.click()
+        expect(listed_terminal(page, "Harbour")).to_be_visible()
+        expect(listed_terminal(page, "Laptop")).to_have_count(0)
+
+
+def test_an_open_changed_file_shows_its_diff_from_the_toolbar_and_an_unchanged_one_has_none(
+    terminal_page, repository
+):
+    page, terminal = terminal_page
+    (repository / "notes.txt").write_text("nothing new here\n")
+    (repository / "chart.bin").write_bytes(bytes(range(256)))
+    _git(repository, "add", "notes.txt", "chart.bin")
+    _git(repository, "commit", "-q", "-m", "Add the notes and the chart")
+    (repository / "chart.bin").write_bytes(bytes(reversed(range(256))))
+    _open_git_panel(page, terminal, repository)
+    files = page.get_by_role("region", name="File browser")
+    changes = page.get_by_role("region", name="File changes")
+    show = files.get_by_role("button", name="Show diff")
+    hide = files.get_by_role("button", name="Hide diff")
+
+    files.get_by_text("tides.txt", exact=True).click()
+    expect(show).to_have_attribute("aria-pressed", "false")
+    expect(files.get_by_text("+1", exact=True)).to_be_visible()
+    expect(changes).to_have_count(0)
+    show.click()
+    expect(hide).to_have_attribute("aria-pressed", "true")
+    expect(changes.get_by_text("high water at six")).to_be_visible()
+    expect(changes.get_by_text("high water at seven")).to_be_visible()
+    hide.click()
+    expect(changes).to_have_count(0)
+    expect(show).to_be_visible()
+
+    # a file with no change since the last commit has no diff to show
+    files.get_by_role("button", name=repository.name, exact=True).click()
+    files.get_by_text("notes.txt", exact=True).click()
+    expect(files.get_by_role("button", name="Download")).to_be_visible()
+    expect(show).to_have_count(0)
+
+    files.get_by_role("button", name=repository.name, exact=True).click()
+    files.get_by_text("chart.bin", exact=True).click()
+    show.click()
+    expect(changes).to_have_text("Binary file changed")
