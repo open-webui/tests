@@ -11,12 +11,16 @@ A question the model asks with Ask User shows in the side chat, and answering it
 reply. Since 3b1a95383 the shortcut opens a side chat on an empty new chat too; with no chat so
 far the model gets only the side question.
 
-What a side chat does not offer yet is pinned as strict xfails, which turn red the day it lands:
-Regenerate, Edit, Continue Response and rating under its messages, follow-up suggestions, an HTML
-block opening as an artifact, and its tab taking the new title when the chat is renamed.
+What a side chat does not offer yet on dev c15f28649 is pinned as plain tests, red until it
+lands: Regenerate, Edit, Continue Response and rating under its messages
+(open-webui/open-webui#34014) and follow-up suggestions (open-webui/open-webui#34015), which pass
+on the build of fix PR open-webui/open-webui#34064; an HTML block opening as an artifact
+(open-webui/open-webui#34026, red on that build too, the PR leaves it out); and its tab taking
+the new title when the chat is renamed in the sidebar, which no filed issue covers and which is
+red on that build too.
 
-Discriminates: passes on dev f659c0d12 (the gaps xfail). In a backend copy whose chat Stop stops
-nothing, that never offers the web tools, never names attached knowledge to the model, whose
+Discriminates: passes on dev f659c0d12 apart from those gaps. In a backend copy whose chat Stop
+stops nothing, that never offers the web tools, never names attached knowledge to the model, whose
 timestamp tool returns no timestamp and that applies no model system prompt, the stop, web search,
 knowledge, tool and model tests fail on exactly those. The file, image, Copy, code block,
 reasoning, share, export, shortcut and permission tests guard frontend behaviour; their mutation
@@ -54,6 +58,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.cached_chat import calling, choose_terminal, offered_tools
+from utils.chat_surface import main_chat
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -544,13 +549,10 @@ def test_reasoning_in_a_side_chat_reply_is_folded_away_above_the_answer(
 # --- what a side chat does not offer yet ---------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: a side chat reply shows an HTML block as code only, never as an artifact",
-)
 def test_an_html_block_in_a_side_chat_reply_opens_as_an_artifact(
     page_for, make_user, upstream, side_chat_allowed
 ):
+    """Red: open-webui/open-webui#34026, not fixed by PR open-webui/open-webui#34064."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, draw me a sign for the tunnel")
     card = f"Tunnel {uuid.uuid4().hex[:6]}"
@@ -568,10 +570,10 @@ def test_an_html_block_in_a_side_chat_reply_opens_as_an_artifact(
     )
 
 
-@pytest.mark.xfail(strict=True, reason="gap: a side chat reply has no Regenerate button")
 def test_regenerate_in_a_side_chat_replaces_the_reply(
     page_for, make_user, upstream, side_chat_allowed
 ):
+    """Red on dev: open-webui/open-webui#34014, fix PR open-webui/open-webui#34064."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, how long is that tunnel?")
     panel = open_side_chat(page, upstream, question, reply.text("first try"))
@@ -584,8 +586,8 @@ def test_regenerate_in_a_side_chat_replaces_the_reply(
     expect(side_messages(panel)).to_have_count(2)
 
 
-@pytest.mark.xfail(strict=True, reason="gap: a side chat question has no Edit button")
 def test_editing_a_side_chat_question_resends_it(page_for, make_user, upstream, side_chat_allowed):
+    """Red on dev: open-webui/open-webui#34014, fix PR open-webui/open-webui#34064."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, how lnog is that tunnel?")
     panel = open_side_chat(page, upstream, question, reply.text("answer to the typo"))
@@ -601,10 +603,10 @@ def test_editing_a_side_chat_question_resends_it(page_for, make_user, upstream, 
     assert last_user_content(sent_for(upstream, fixed)) == fixed
 
 
-@pytest.mark.xfail(strict=True, reason="gap: a side chat reply has no Continue Response button")
 def test_continue_in_a_side_chat_carries_the_reply_on(
     page_for, make_user, upstream, side_chat_allowed
 ):
+    """Red on dev: open-webui/open-webui#34014, fix PR open-webui/open-webui#34064."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, how long is that tunnel?")
     panel = open_side_chat(page, upstream, question, reply.text("The tunnel is"))
@@ -617,10 +619,8 @@ def test_continue_in_a_side_chat_carries_the_reply_on(
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="gap: a side chat reply has no Good Response or Bad Response buttons"
-)
 def test_a_side_chat_reply_can_be_rated(page_for, make_user, upstream, side_chat_allowed):
+    """Red on dev: open-webui/open-webui#34014, fix PR open-webui/open-webui#34064."""
     account = make_user()
     page = open_chat(page_for, account)
     question = tagged("By the way, how long is that tunnel?")
@@ -652,12 +652,10 @@ def follow_up_generation_on(admin, preserve) -> None:
     assert saved.status_code == 200, saved.text
 
 
-@pytest.mark.xfail(
-    strict=True, reason="gap: a side chat asks for no follow-ups and shows none under its reply"
-)
 def test_a_side_chat_reply_offers_follow_ups(
     page_for, make_user, upstream, side_chat_allowed, follow_up_generation_on
 ):
+    """Red on dev: open-webui/open-webui#34015, fix PR open-webui/open-webui#34064."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, how long is that tunnel?")
     suggestion = f"When was it opened? {uuid.uuid4().hex[:6]}"
@@ -680,13 +678,10 @@ def open_sidebar(page: Page) -> Locator:
     return sidebar
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: an open side chat's tab keeps its old title after a rename",
-)
 def test_a_side_chat_renamed_in_the_sidebar_shows_its_new_name_on_its_tab(
     page_for, make_user, upstream, side_chat_allowed
 ):
+    """Red: the tab of an open side chat keeps its old title; no issue filed yet."""
     page = open_chat(page_for, make_user())
     question = tagged("By the way, how long is that tunnel?")
     open_side_chat(page, upstream, question, reply.text(SIDE_ANSWER))
@@ -787,7 +782,9 @@ def test_a_side_chat_opens_from_an_empty_new_chat_and_answers_alone(
     assert [chat["title"] for chat in listed] == [question], (
         f"expected only the side chat to be saved, the account has {listed}"
     )
-    assert "/c/" not in page.url, f"the empty chat became a chat of its own: {page.url}"
+    # the address follows the selected tab (dev da850248d)
+    main_chat(page).show()
+    expect(page, "the empty chat became a chat of its own").not_to_have_url(re.compile("/c/"))
 
 
 @pytest.fixture
