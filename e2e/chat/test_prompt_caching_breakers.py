@@ -28,6 +28,14 @@ system message list.
 the reply stayed blank on the page; since de73bb830 the reply in a new chat sometimes stays blank
 until a reload although the server saved it whole (open-webui/open-webui#32091).
 
+Every test that drives the chat itself runs in the main chat and in a side chat
+(`utils/chat_surface.py`). The four terminal tests stay on the page: they pick the Open Terminal
+and its split screen with the page's Files tab and tab menus. On dev c15f28649 the edited question
+test is red in a side chat (no Edit, open-webui/open-webui#34014, fix PR
+open-webui/open-webui#34064). The builtin tool category test is red in both places on c15f28649
+and e791cbdde: saving the model in the editor asks to discard the changes it just saved
+(open-webui/open-webui#34087, fix PR open-webui/open-webui#34110).
+
 Discriminates: passes on dev 30f3f6a8f. In a backend copy with a clock value added to the
 model's system prompt every positive test failed, and so did the controls whose break falls after
 the system message, since the clock moved the first break into it; the other controls passed.
@@ -76,7 +84,16 @@ from utils.cached_chat import (
     tool_results,
     turn_on_tool,
 )
-from utils.chat_ui import chat_input, conversation, expect_reply, split_screen, turn_on_integration
+from utils.chat_surface import ChatSurface
+from utils.chat_ui import (
+    chat_input,
+    chat_scope,
+    conversation,
+    expect_reply,
+    split_screen,
+    start_from_link,
+    turn_on_integration,
+)
 from utils.model_editor import section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -154,13 +171,13 @@ def save_skill(directory) -> None:
 # --- File Context and Using Entire Document -----------------------------------------------
 
 
-def test_file_context_on_rewrites_the_prefix(model_with, page_for, make_user, upstream):
-    page = page_for(make_user())
-    page.goto(f"/?models={model_with(file_context=True).id}")
+def test_file_context_on_rewrites_the_prefix(model_with, chat_for, make_user, upstream):
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={model_with(file_context=True).id}")
 
-    attach(page, *NOTES)
-    ask(page, upstream, "which berth is free?", reply.text("Berth 5 is free."))
-    ask(page, upstream, "and for the pilot boat?", reply.text("Berth 3."))
+    attach(chat, *NOTES)
+    ask(chat, upstream, "which berth is free?", reply.text("Berth 5 is free."))
+    ask(chat, upstream, "and for the pilot boat?", reply.text("Berth 3."))
 
     broken = first_break(chat_requests(upstream))
     assert broken is not None, "File Context on left the prefix append-only"
@@ -179,27 +196,27 @@ def retrieved_in_pieces(admin, preserve):
     assert saved.status_code == 200, saved.text
 
 
-def use_entire_document(page: Page, name: str) -> None:
-    page.get_by_role("button", name=re.compile(re.escape(name))).click()
-    dialog = page.get_by_role("dialog")
+def use_entire_document(chat: ChatSurface, name: str) -> None:
+    chat_scope(chat).get_by_role("button", name=re.compile(re.escape(name))).click()
+    dialog = chat.page.get_by_role("dialog")
     expect(dialog.get_by_text("Using Focused Retrieval")).to_be_visible()
     dialog.get_by_role("switch").click()
     expect(dialog.get_by_text("Using Entire Document")).to_be_visible()
-    page.keyboard.press("Escape")
+    chat.page.keyboard.press("Escape")
     expect(dialog).to_have_count(0)
 
 
 @pytest.mark.usefixtures("retrieved_in_pieces")
 def test_using_the_entire_document_with_file_context_on_rewrites_the_prefix(
-    model_with, page_for, make_user, upstream
+    model_with, chat_for, make_user, upstream
 ):
-    page = page_for(make_user())
-    page.goto(f"/?models={model_with(file_context=True).id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={model_with(file_context=True).id}")
 
-    attach(page, *NOTES)
-    use_entire_document(page, NOTES[0])
-    ask(page, upstream, "which berth is free?", reply.text("Berth 5 is free."))
-    ask(page, upstream, "and for the pilot boat?", reply.text("Berth 3."))
+    attach(chat, *NOTES)
+    use_entire_document(chat, NOTES[0])
+    ask(chat, upstream, "which berth is free?", reply.text("Berth 5 is free."))
+    ask(chat, upstream, "and for the pilot boat?", reply.text("Berth 3."))
 
     requests = chat_requests(upstream)
     assert "Berth 3 is reserved for the pilot boat." in str(requests[0]["messages"])
@@ -210,14 +227,15 @@ def test_using_the_entire_document_with_file_context_on_rewrites_the_prefix(
 
 @pytest.mark.usefixtures("retrieved_in_pieces")
 def test_using_the_entire_document_with_file_context_off_does_nothing(
-    cached_setup, page_for, make_user, upstream
+    cached_setup, chat_for, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    attach(page, *NOTES)
-    use_entire_document(page, NOTES[0])
-    ask(page, upstream, "which berth is free?", reply.text("Berth 5 is free."))
-    ask(page, upstream, "and for the pilot boat?", reply.text("Berth 3."))
+    attach(chat, *NOTES)
+    use_entire_document(chat, NOTES[0])
+    ask(chat, upstream, "which berth is free?", reply.text("Berth 5 is free."))
+    ask(chat, upstream, "and for the pilot boat?", reply.text("Berth 3."))
 
     requests = chat_requests(upstream)
     assert "Berth 3 is reserved for the pilot boat." not in str(requests[0]["messages"])
@@ -225,14 +243,15 @@ def test_using_the_entire_document_with_file_context_off_does_nothing(
 
 
 def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
-    cached_setup, page_for, make_user, upstream
+    cached_setup, chat_for, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    attach_from_menu(page, "Attach Knowledge", "Harbour handbook")
-    use_entire_document(page, "Harbour handbook collection")
-    ask(page, upstream, "when does the ferry leave?", reply.text("At 06:40."))
-    ask(page, upstream, "and from which pier?", reply.text("Pier 7."))
+    attach_from_menu(chat, "Attach Knowledge", "Harbour handbook")
+    use_entire_document(chat, "Harbour handbook collection")
+    ask(chat, upstream, "when does the ferry leave?", reply.text("At 06:40."))
+    ask(chat, upstream, "and from which pier?", reply.text("Pier 7."))
 
     requests = chat_requests(upstream)
     assert "The ferry leaves pier 7" not in str(requests[0]["messages"])
@@ -242,12 +261,13 @@ def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
 # --- Citations ------------------------------------------------------------------------------
 
 
-def test_citations_on_only_append(model_with, page_for, make_user, upstream):
+def test_citations_on_only_append(model_with, chat_for, make_user, upstream):
     model = model_with(citations=True)
-    page = page_for(make_user(), path=f"/?models={model.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={model.id}")
 
     ask(
-        page,
+        chat,
         upstream,
         "read the handbook",
         calling("view_knowledge_file", {"file_id": model.handbook_file_id}),
@@ -277,7 +297,7 @@ def add_memory_in_settings(page: Page, text: str) -> None:
 
 
 def test_a_memory_added_mid_chat_with_the_system_context_on_only_appends(
-    cached_setup, admin, page_for, make_user, upstream
+    cached_setup, admin, chat_for, page_for, make_user, upstream
 ):
     with admin.client() as client:
         current = client.get(ADMIN_CONFIG).json()
@@ -286,11 +306,12 @@ def test_a_memory_added_mid_chat_with_the_system_context_on_only_appends(
     person = make_user()
     with person.client() as client:
         client.post("/api/v1/memories/add", json={"content": FIRST_MEMORY}).raise_for_status()
-    page = page_for(person, path=f"/?models={cached_setup.id}")
+    chat = chat_for(person)
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    ask(chat, upstream, "good morning", reply.text("Morning."))
     add_memory_in_settings(page_for(person), SECOND_MEMORY)
-    ask(page, upstream, "what is the weather?", reply.text("Clear."))
+    ask(chat, upstream, "what is the weather?", reply.text("Clear."))
 
     requests = chat_requests(upstream)
     # since e6ae368f5 each question's memories come in a recall round kept in the chat
@@ -300,7 +321,7 @@ def test_a_memory_added_mid_chat_with_the_system_context_on_only_appends(
 
 
 def test_unchanged_memories_with_the_system_context_on_only_append(
-    cached_setup, admin, page_for, make_user, upstream
+    cached_setup, admin, chat_for, make_user, upstream
 ):
     with admin.client() as client:
         current = client.get(ADMIN_CONFIG).json()
@@ -310,12 +331,13 @@ def test_unchanged_memories_with_the_system_context_on_only_append(
     with person.client() as client:
         for memory in (FIRST_MEMORY, SECOND_MEMORY):
             client.post("/api/v1/memories/add", json={"content": memory}).raise_for_status()
-    page = page_for(person, path=f"/?models={cached_setup.id}")
+    chat = chat_for(person)
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    ask(page, upstream, "what is the weather?", reply.text("Clear."))
-    page.reload()
-    ask(page, upstream, "and the tides?", reply.text("High at noon."))
+    ask(chat, upstream, "good morning", reply.text("Morning."))
+    ask(chat, upstream, "what is the weather?", reply.text("Clear."))
+    chat = chat.reload()
+    ask(chat, upstream, "and the tides?", reply.text("High at noon."))
 
     requests = chat_requests(upstream)
     assert SECOND_MEMORY in "\n".join(reply.context_results(requests[0], "recall_memories"))
@@ -326,16 +348,17 @@ def test_unchanged_memories_with_the_system_context_on_only_append(
 
 
 def test_the_first_file_attached_adds_the_file_tools_once(
-    cached_setup, page_for, make_user, upstream
+    cached_setup, chat_for, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    attach(page, *NOTES)
-    ask(page, upstream, "which berth is free?", reply.text("Berth 5 is free."))
-    ask(page, upstream, "and for the pilot boat?", reply.text("Berth 3."))
-    page.reload()
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    ask(chat, upstream, "good morning", reply.text("Morning."))
+    attach(chat, *NOTES)
+    ask(chat, upstream, "which berth is free?", reply.text("Berth 5 is free."))
+    ask(chat, upstream, "and for the pilot boat?", reply.text("Berth 3."))
+    chat = chat.reload()
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     assert "list_chat_files" not in offered_tools(requests[0])
@@ -426,14 +449,16 @@ def untick_builtin_tool(page: Page, model_id: str, label: str) -> None:
 
 
 def test_unticking_a_builtin_tool_category_mid_chat_rewrites_the_prefix(
-    cached_setup, page_for, admin, make_user, upstream
+    cached_setup, chat_for, page_for, admin, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    """Saving the model: open-webui/open-webui#34087, fix PR open-webui/open-webui#34110."""
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
 
     untick_builtin_tool(page_for(admin), cached_setup.id, "Notes")
-    page.reload()
-    ask(page, upstream, "anything new?", reply.text("Nothing new."))
+    chat = chat.reload()
+    ask(chat, upstream, "anything new?", reply.text("Nothing new."))
 
     requests = chat_requests(upstream)
     assert "search_notes" in offered_tools(requests[0])
@@ -443,16 +468,17 @@ def test_unticking_a_builtin_tool_category_mid_chat_rewrites_the_prefix(
 
 
 def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
-    cached_setup, admin, preserve, page_for, make_user, upstream
+    cached_setup, admin, preserve, chat_for, make_user, upstream
 ):
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
         save_web_settings(client, ENABLE_WEB_SEARCH=True)
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    turn_on_integration(page, "Web Search")
-    ask(page, upstream, "look up the tides", reply.text("High at noon."))
+    ask(chat, upstream, "good morning", reply.text("Morning."))
+    turn_on_integration(chat, "Web Search")
+    ask(chat, upstream, "look up the tides", reply.text("High at noon."))
 
     requests = chat_requests(upstream)
     assert "search_web" not in offered_tools(requests[0])
@@ -462,7 +488,7 @@ def test_switching_web_search_on_mid_chat_rewrites_the_prefix(
 
 
 def test_a_skill_mentioned_mid_chat_only_appends(
-    cached_setup, admin, page_for, make_user, upstream
+    cached_setup, admin, chat_for, make_user, upstream
 ):
     skill_id = f"tide-tables-{uuid.uuid4().hex[:6]}"
     with admin.client() as client:
@@ -479,12 +505,13 @@ def test_a_skill_mentioned_mid_chat_only_appends(
         )
         assert created.status_code == 200, created.text
         try:
-            page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-            ask(page, upstream, "good morning", reply.text("Morning."))
-            chat_input(page).click()
-            page.keyboard.type("$Tide")
-            page.get_by_role("button", name=re.compile("Tide tables")).click()
-            ask(page, upstream, "when is high tide?", reply.text("At noon."))
+            chat = chat_for(make_user())
+            start_from_link(chat, f"/?models={cached_setup.id}")
+            ask(chat, upstream, "good morning", reply.text("Morning."))
+            chat_input(chat).click()
+            chat.page.keyboard.type("$Tide")
+            chat.page.get_by_role("button", name=re.compile("Tide tables")).click()
+            ask(chat, upstream, "when is high tide?", reply.text("At noon."))
         finally:
             client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
@@ -497,13 +524,14 @@ def test_a_skill_mentioned_mid_chat_only_appends(
 
 
 def test_a_workspace_tool_switched_on_mid_chat_rewrites_the_prefix(
-    cached_setup, admin, page_for, make_user, upstream
+    cached_setup, admin, chat_for, make_user, upstream
 ):
     with python_tool(admin, TIDE_TOOL, name="Tide clock"):
-        page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-        ask(page, upstream, "good morning", reply.text("Morning."))
-        turn_on_tool(page, "Tide clock")
-        ask(page, upstream, "when is high tide?", reply.text("At noon."))
+        chat = chat_for(make_user())
+        start_from_link(chat, f"/?models={cached_setup.id}")
+        ask(chat, upstream, "good morning", reply.text("Morning."))
+        turn_on_tool(chat, "Tide clock")
+        ask(chat, upstream, "when is high tide?", reply.text("At noon."))
 
     requests = chat_requests(upstream)
     assert "tide_time" in offered_tools(requests[1])
@@ -515,19 +543,20 @@ def test_a_workspace_tool_switched_on_mid_chat_rewrites_the_prefix(
 
 
 def test_an_earlier_question_edited_and_sent_again_rewrites_the_prefix(
-    cached_setup, page_for, make_user, upstream
+    cached_setup, chat_for, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
 
-    ask(page, upstream, "when does the ferry leave?", reply.text("At 06:40."))
-    ask(page, upstream, "and the bus?", reply.text("At 07:15."))
-    question = conversation(page).locator(".chat-user").first
+    ask(chat, upstream, "when does the ferry leave?", reply.text("At 06:40."))
+    ask(chat, upstream, "and the bus?", reply.text("At 07:15."))
+    question = conversation(chat).locator(".chat-user").first
     question.hover()
     question.get_by_role("button", name="Edit").click()
     question.locator("textarea").fill("when does the night ferry leave?")
     upstream.queue(reply.text("At 23:10.", match=reply.answering("night ferry")))
     question.get_by_role("button", name="Send").click()
-    expect_reply(page, "At 23:10.")
+    expect_reply(chat, "At 23:10.")
 
     requests = chat_requests(upstream)
     assert "night ferry" in str(requests[-1]["messages"])
@@ -539,7 +568,7 @@ def test_an_earlier_question_edited_and_sent_again_rewrites_the_prefix(
 
 
 def test_moving_a_chat_into_a_folder_with_a_prompt_rewrites_the_prefix(
-    page_for, cached_setup, make_user, upstream
+    chat_for, cached_setup, make_user, upstream
 ):
     person = make_user()
     with person.client() as client:
@@ -548,32 +577,34 @@ def test_moving_a_chat_into_a_folder_with_a_prompt_rewrites_the_prefix(
             json={"name": "Harbour", "data": {"system_prompt": "Answer as the harbour master."}},
         )
     assert folder.status_code == 200, folder.text
-    page = page_for(person, path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    chat_id = page.url.rsplit("/", 1)[-1]
+    chat = chat_for(person)
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
+    chat_id = chat.page.url.rsplit("/", 1)[-1]
     with person.client() as client:
         moved = client.post(
             f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder.json()["id"]}
         )
     assert moved.status_code == 200, moved.text
-    ask(page, upstream, "anything new?", reply.text("Nothing new."))
+    ask(chat, upstream, "anything new?", reply.text("Nothing new."))
 
     broken = first_break(chat_requests(upstream))
     assert broken is not None and "messages[0] (system)" in broken, broken
 
 
 def test_a_knowledge_base_attached_after_the_first_turn_only_appends(
-    page_for, cached_setup, admin, make_user, upstream
+    chat_for, cached_setup, admin, make_user, upstream
 ):
     person = make_user()
     with (
         admin.client() as client,
         knowledge_base(client, "Timetables", [EVERYONE_READS]) as knowledge_id,
     ):
-        page = page_for(person, path=f"/?models={cached_setup.id}")
-        ask(page, upstream, "good morning", reply.text("Morning."))
-        attach_from_menu(page, "Attach Knowledge", "Timetables")
-        ask(page, upstream, "when does the bus leave?", reply.text("At 07:15."))
+        chat = chat_for(person)
+        start_from_link(chat, f"/?models={cached_setup.id}")
+        ask(chat, upstream, "good morning", reply.text("Morning."))
+        attach_from_menu(chat, "Attach Knowledge", "Timetables")
+        ask(chat, upstream, "when does the bus leave?", reply.text("At 07:15."))
 
     requests = chat_requests(upstream)
     assert knowledge_id not in str(requests[0]["messages"])
@@ -582,10 +613,11 @@ def test_a_knowledge_base_attached_after_the_first_turn_only_appends(
 
 
 def test_a_skill_shared_with_the_person_mid_chat_rewrites_the_prefix(
-    page_for, cached_setup, admin, make_user, upstream
+    chat_for, cached_setup, admin, make_user, upstream
 ):
-    page = page_for(make_user(), path=f"/?models={cached_setup.id}")
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?models={cached_setup.id}")
+    ask(chat, upstream, "good morning", reply.text("Morning."))
     skill_id = f"tide-tables-{uuid.uuid4().hex[:6]}"
     with admin.client() as client:
         created = client.post(
@@ -601,7 +633,7 @@ def test_a_skill_shared_with_the_person_mid_chat_rewrites_the_prefix(
         )
         assert created.status_code == 200, created.text
         try:
-            ask(page, upstream, "anything new?", reply.text("Nothing new."))
+            ask(chat, upstream, "anything new?", reply.text("Nothing new."))
         finally:
             client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
