@@ -17,6 +17,19 @@ backend copy that renders user variables from an empty set the user variable tes
 one that leaves the groups out the group test fails. The location test passes on dev
 f659c0d12 and fails in a frontend copy with 3e6f8b7f4 undone (the message waits for a save
 that never answers and is never sent).
+
+The browser test also runs in every way a side chat starts and every state it can be in
+(`utils/chat_surface.py`), the side chat put on the preset in its own model selector. A side chat
+sent the time zone and language as literal placeholders and the server's date
+(open-webui/open-webui#34032, fix PR open-webui/open-webui#34064), so its side chat variants are
+red on dev c15f28649. A side chat beside a chat adds its side conversation instruction after the
+prompt, so the first line of the system message is read.
+
+On dev c15f28649 and e791cbdde the tests that write the prompt in the model editor are red before
+any chat opens: after Save & Update the editor asks to discard the changes it just saved and stays
+open (issue draft pending). With that dialog confirmed by hand the browser test passes in the
+main chat on both builds, its side chat variants fail on c15f28649 (the language and time zone
+stay literal) and pass on e791cbdde.
 """
 
 from __future__ import annotations
@@ -31,7 +44,8 @@ from playwright.sync_api import Page, expect
 from harness.access import make_group
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input
+from utils.chat_surface import EVERYWHERE, ChatSurface
+from utils.chat_ui import chat_input, start_from_link
 from utils.model_editor import open_chat_on, open_editor, save, sent_request
 from utils.user_menu import open_settings
 
@@ -87,11 +101,26 @@ def system_message(page: Page, upstream, model: dict, question: str) -> str:
     return messages[0]["content"]
 
 
+def system_message_in(chat: ChatSurface, upstream, model: dict, question: str) -> str:
+    """The system message `chat` sends on `model`: the main chat opens the model's link."""
+    start_from_link(chat, f"/?model={model['id']}")
+    expect(chat.button(f"Selected model: {model['name']}")).to_be_visible()
+    expect(chat_input(chat)).to_be_visible()
+    messages = sent_request(chat, upstream, question)["messages"]
+    assert messages[0]["role"] == "system", messages
+    return messages[0]["content"]
+
+
 def today_in(zone: str) -> str:
     return datetime.now(ZoneInfo(zone)).strftime("%A %Y-%m-%d")
 
 
-def test_the_browser_fills_who_the_person_is_and_their_day(page_for, builder, preset, upstream):
+# one model: the values come from the browser, whichever model the prompt belongs to
+@pytest.mark.chat_surfaces(*EVERYWHERE)
+def test_the_browser_fills_who_the_person_is_and_their_day(
+    page_for, chat_for, builder, preset, upstream
+):
+    """In a side chat: open-webui/open-webui#34032. Saving the model: issue draft pending."""
     write_system_prompt(
         page_for(builder),
         preset,
@@ -100,8 +129,8 @@ def test_the_browser_fills_who_the_person_is_and_their_day(page_for, builder, pr
     )
     day_before = today_in(AUCKLAND)
 
-    page = page_for(builder, timezone_id=AUCKLAND)
-    filled = system_message(page, upstream, preset, "good morning")
+    chat = chat_for(builder, timezone_id=AUCKLAND)
+    filled = system_message_in(chat, upstream, preset, "good morning").split("\n")[0]
 
     greeting = f"You greet {builder.name} <{builder.email}>, who reads en-US, in {AUCKLAND} on "
     assert filled.startswith(greeting), filled
@@ -118,6 +147,7 @@ def group_name(admin, group_id: str) -> str:
 def test_the_groups_of_the_person_chatting_fill_the_system_prompt(
     page_for, admin, builder, preset, make_user, upstream
 ):
+    """Saving the model: issue draft pending."""
     sailor, visitor = make_user(), make_user()
     staff_id = make_group(admin, [])
     crew_id = make_group(admin, [sailor], parent_id=staff_id)
@@ -150,6 +180,7 @@ def save_user_variable(page: Page, key: str, value: str) -> None:
 def test_a_user_variable_saved_in_the_account_settings_reaches_only_that_persons_chats(
     page_for, builder, preset, make_user, upstream
 ):
+    """Saving the model: issue draft pending."""
     write_system_prompt(page_for(builder), preset, "Moor at {{user.variables.home_port}}.")
     skipper, deckhand = make_user(), make_user()
     skipper_page = page_for(skipper)
