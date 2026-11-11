@@ -10,9 +10,19 @@ integration/deps/test_local_text_to_speech.py.
 Discriminates: passes on the dev ef67cc3fa build; in a backend copy whose pipeline is built for
 text generation the speech request fails and the answer is never played. In a frontend build
 whose Audio tab saves an empty TTS model the speaker test fails (the fallback speaker reads it).
+
+The answer counts as played once an audio element of the page has played speech fetched by it,
+retargeted for da850248d, which gave each chat an audio element of its own.
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`): the saved chat
+beside a new chat and dragged into a tab beside a saved one. A side chat answer had no Read Aloud
+(open-webui/open-webui#34014, fix PR open-webui/open-webui#34064), so the side chat variants are
+red on dev c15f28649.
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 from playwright.sync_api import expect
@@ -21,15 +31,16 @@ from harness.actors import admin_of, create_user
 from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
 from harness.local_voices import local_voices_env, save_tiny_speech, speaker
+from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT, ChatOpener
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 ANSWER = "The keeper lights the lamp at dusk."
 FIRST_SPEAKER = speaker(12)
-PLAYED = """() => {
-    const audio = document.getElementById('audioElement');
-    return audio.src.startsWith('blob:') && audio.played.length > 0;
-}"""
+# each chat has an audio element of its own since da850248d, which took the page's one away
+PLAYED = """() => [...document.querySelectorAll('audio')].some(
+    (audio) => audio.src.startsWith('blob:') && audio.played.length > 0
+)"""
 
 
 @pytest.fixture(scope="module")
@@ -45,22 +56,40 @@ def speaking(instance_with, tmp_path_factory):
     return instance
 
 
+@pytest.fixture
+def speaking_chat_for(chat_for, speaking, preserve) -> ChatOpener:
+    """`chat_for` on the speaking instance, with side chats allowed there."""
+    admin = admin_of(speaking)
+    if chat_for.place != MAIN_CHAT:
+        preserve("permissions", on=speaking)
+        with admin.client() as client:
+            permissions = client.get("/api/v1/users/default/permissions").json()
+            permissions["chat"].update(side_chat=True)
+            saved = client.post("/api/v1/users/default/permissions", json=permissions)
+        assert saved.status_code == 200, saved.text
+    return dataclasses.replace(chat_for, upstream=speaking.upstream, admin=admin)
+
+
 def _is_speech(response) -> bool:
     return response.url.endswith("/api/v1/audio/speech")
 
 
-def test_an_answer_is_read_aloud_by_the_local_voice(page_for, speaking):
+# a saved chat opens in the main view or is dragged into a tab, the only places it can be opened
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
+def test_an_answer_is_read_aloud_by_the_local_voice(speaking_chat_for, speaking):
+    """In a side chat: open-webui/open-webui#34014."""
     owner = create_user(speaking)
     with owner.client() as client:
         chat_id, _ = seed_chat(
             client,
             [{"role": "user", "content": "lamp?"}, {"role": "assistant", "content": ANSWER}],
         )
-    page = page_for(owner, path=f"/c/{chat_id}")
-    expect(page.get_by_text(ANSWER)).to_be_visible()
+    chat = speaking_chat_for(owner, chat_id=chat_id)
+    page = chat.page
+    expect(chat.conversation.get_by_text(ANSWER)).to_be_visible()
 
     with page.expect_response(_is_speech) as spoken:
-        page.get_by_role("button", name="Read Aloud").click()
+        chat.panel.get_by_role("button", name="Read Aloud").click()
 
     assert spoken.value.ok, spoken.value.text()
     page.wait_for_function(PLAYED)
@@ -81,7 +110,9 @@ def _set_speaker(instance, name: str) -> None:
         client.post(AUDIO_CONFIG[1], json={"tts": tts, "stt": current["stt"]}).raise_for_status()
 
 
-def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking):
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT, DRAGGED_TAB)
+def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking_chat_for, speaking):
+    """In a side chat: open-webui/open-webui#34014."""
     answer = "the ferry leaves the harbour at noon."
     named_speaker = speaker(40)
     owner = create_user(speaking)
@@ -103,10 +134,11 @@ def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking)
         settings.get_by_role("button", name="Save", exact=True).click()
         expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
-        page = page_for(owner, path=f"/c/{chat_id}")
-        expect(page.get_by_text(answer)).to_be_visible()
+        chat = speaking_chat_for(owner, chat_id=chat_id)
+        page = chat.page
+        expect(chat.conversation.get_by_text(answer)).to_be_visible()
         with page.expect_response(_is_speech) as spoken:
-            page.get_by_role("button", name="Read Aloud").click()
+            chat.panel.get_by_role("button", name="Read Aloud").click()
         assert spoken.value.ok, spoken.value.text()
         page.wait_for_function(PLAYED)
         with owner.client() as client:
