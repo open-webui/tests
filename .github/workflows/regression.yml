@@ -139,7 +139,7 @@ jobs:
   # The suite boots its own instances from the checkout. Split into shards balanced on
   # the timings in durations/; a release is gated on all of them.
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     strategy:
       fail-fast: false
       matrix:
@@ -280,7 +280,7 @@ jobs:
   # The integration suite again with every instance on Postgres and Redis. Reports without
   # gating a release until that mode has settled.
   integration-postgres-redis:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -515,7 +515,7 @@ jobs:
   # Reports without gating a release until the browser suite has settled.
   e2e:
     needs: e2e-build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     continue-on-error: true
     strategy:
       fail-fast: false

@@ -144,7 +144,7 @@ jobs:
   # The suite boots its own instances from the checkout, as the regression workflow does.
   integration:
     needs: stack
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: 45
     steps:
       - name: Check out the test suite
@@ -275,7 +275,7 @@ jobs:
   # The same tests again with every instance on Postgres and Redis.
   integration-postgres-redis:
     needs: stack
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: 45
     steps:
       - name: Check out the test suite
@@ -464,7 +464,7 @@ jobs:
   # Split in two on the browser timings in durations/e2e.json, to stay near 20 minutes.
   e2e:
     needs: [stack, e2e-build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -601,7 +601,7 @@ jobs:
   full-terminal:
     if: ${{ inputs.full-open-terminal }}
     needs: [stack, e2e-build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: 45
     steps:
       - name: Check out the test suite
