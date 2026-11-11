@@ -11,14 +11,17 @@ would keep them.
 Discriminates: passes on the dev b859124f9 build, fails on that build with 983fa6c97 reverted
 (the sent English line shows as "?Hello, how are you" and the Arabic line typed under an English
 one sits on the left edge).
+
+Both tests run in the main chat and in a side chat (`utils/chat_surface.py`).
 """
 
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, conversation, expect_reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -68,26 +71,27 @@ def assert_sits_on_the_right(scope: Locator) -> None:
     assert drawn["gapRight"] < drawn["gapLeft"], "the Arabic line sits against the left edge"
 
 
-def type_lines(page: Page, first: str, second: str) -> None:
-    expect(chat_input(page)).to_be_visible()
-    chat_input(page).click()
+def type_lines(chat: ChatSurface, first: str, second: str) -> None:
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
+    chat_input(chat).click()
     page.keyboard.type(first)
     page.keyboard.press("Shift+Enter")
     page.keyboard.type(second)
 
 
-def test_a_sent_english_line_under_an_arabic_one_reads_left_to_right(page_for, make_user, upstream):
-    page = page_for(make_user())
+def test_a_sent_english_line_under_an_arabic_one_reads_left_to_right(chat_for, make_user, upstream):
+    chat = chat_for(make_user())
     upstream.queue(reply.text("Fine, thank you.", match=reply.answering(ENGLISH)))
-    type_lines(page, ARABIC, ENGLISH)
-    page.keyboard.press("Enter")
-    expect_reply(page, "Fine, thank you.")
+    type_lines(chat, ARABIC, ENGLISH)
+    chat.page.keyboard.press("Enter")
+    expect_reply(chat, "Fine, thank you.")
 
-    assert_reads_left_to_right(conversation(page).locator(".chat-user"))
+    assert_reads_left_to_right(conversation(chat).locator(".chat-user"))
 
 
-def test_an_arabic_line_typed_under_an_english_one_sits_on_the_right(page_for, make_user):
-    page = page_for(make_user())
-    type_lines(page, ENGLISH, ARABIC)
+def test_an_arabic_line_typed_under_an_english_one_sits_on_the_right(chat_for, make_user):
+    chat = chat_for(make_user())
+    type_lines(chat, ENGLISH, ARABIC)
 
-    assert_sits_on_the_right(chat_input(page))
+    assert_sits_on_the_right(chat_input(chat))
