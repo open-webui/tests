@@ -21,7 +21,7 @@ after a reload. A fork opens where it was asked, so in a side chat the fork is l
 side chat's tab. A side chat message had no Fork chat, Delete, Edit or Regenerate
 (open-webui/open-webui#34014, fix PR open-webui/open-webui#34064): on dev c15f28649 every side
 chat variant is red. On dev e791cbdde, which holds that PR, all pass but the fork test: in a side
-chat the fork is made and never opened.
+chat the fork is made and never opened (open-webui/open-webui#34182).
 """
 
 from __future__ import annotations
@@ -96,8 +96,8 @@ def _latest_request_messages(upstream) -> list[tuple[str, str]]:
 
 @pytest.mark.chat_surfaces(*EVERY_LASTING_PLACE)
 def test_a_fork_from_the_first_reply_holds_only_the_first_turn(two_turns, upstream):
-    """In a side chat: open-webui/open-webui#34014; on dev e791cbdde the fork is made but never
-    opened."""
+    """In a side chat: open-webui/open-webui#34014; on dev e791cbdde and 782f4b705 the fork is
+    made but never opened (open-webui/open-webui#34182)."""
     chat = two_turns
     page = chat.page
     original_url = page.url

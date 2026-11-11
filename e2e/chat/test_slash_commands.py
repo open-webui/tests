@@ -15,7 +15,8 @@ Status, Compact and typed /model tests in every way a side chat starts and every
 in. In a side chat /status and /fork were offered and did nothing, /compact was not offered, and
 all of them typed went to the model as a message (open-webui/open-webui#34018, fix PR
 open-webui/open-webui#34064). On dev e791cbdde, which holds that PR, every side chat variant passes
-but Fork's: the fork is made and never opened, so the side chat stays on the original.
+but Fork's: the fork is made and never opened, so the side chat stays on the original
+(open-webui/open-webui#34182).
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose / menu commands and typed /model
 do nothing every test fails. The Compare text test passes on the dev 3b8205505 build and fails in
@@ -98,8 +99,8 @@ def pilot_model(make_user):
 
 @pytest.mark.chat_surfaces(*SAVED_CHAT_PLACES)
 def test_fork_copies_the_conversation_into_a_new_chat(chat_for, make_user, upstream):
-    """In a side chat: open-webui/open-webui#34018; on dev e791cbdde the fork is made but never
-    opened."""
+    """In a side chat: open-webui/open-webui#34018; on dev e791cbdde and 782f4b705 the fork is
+    made but never opened (open-webui/open-webui#34182)."""
     chat = chat_for(make_user())
     page = chat.page
     upstream.queue(reply.text("The ferry left at nine.", match=reply.answering("ferry")))
