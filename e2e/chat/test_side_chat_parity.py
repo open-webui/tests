@@ -32,6 +32,12 @@ chats saved since 3b1a95383).
 The empty new chat test passes on dev e8c0ad85e and fails on a copy of the dev e8c0ad85e build that
 offers a New Chat tab only on a saved chat, as before 3b1a95383.
 
+An HTML block in a side chat answer shows the side chat's own page in the Artifacts tab, Preview
+on its first block shows that block, also after the main chat's Preview showed the main chat's
+page, which the main chat's Preview still does. Red on dev 262a8c6f7 (the pane covers the side
+chat and holds the main chat's page, open-webui/open-webui#34026), passes on the fix branch
+fix/side-chat-artifacts.
+
 A question still waiting in a side chat shows again after a reload and can be dismissed, and
 the reply then carries on (5cbd9bc5c, PR open-webui/open-webui#33901). Passes on dev e8c0ad85e
 and fails on that build with 5cbd9bc5c reverted (the question never shows).
@@ -70,6 +76,7 @@ from utils.chat_ui import (
     menu_entries,
     send,
     side_chat_panel,
+    side_chat_tab,
 )
 from utils.clipboard import read_text
 from utils.menus import late_menu_entry
@@ -554,22 +561,46 @@ def test_reasoning_in_a_side_chat_reply_is_folded_away_above_the_answer(
 def test_an_html_block_in_a_side_chat_reply_opens_as_an_artifact(
     page_for, make_user, upstream, side_chat_allowed
 ):
-    """Red: open-webui/open-webui#34026, not fixed by PR open-webui/open-webui#34064."""
-    page = open_chat(page_for, make_user())
-    question = tagged("By the way, draw me a sign for the tunnel")
-    card = f"Tunnel {uuid.uuid4().hex[:6]}"
+    """open-webui/open-webui#34026: the pane kept showing the main chat's artifacts."""
+    account = make_user()
+    sign = f"Felbertauern {uuid.uuid4().hex[:6]}"
+    with account.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                PARENT_CHAT[0],
+                {
+                    "role": "assistant",
+                    "content": f"```html\n<h1>{sign}</h1>\n```\n\nThe pass sign.",
+                },
+            ],
+        )
+    page = page_for(account, path=f"/c/{chat_id}")
+    expect_reply(page, "The pass sign.")
+    shown = page.locator("#artifacts-container").frame_locator("iframe").locator("h1")
+    question = tagged("By the way, draw me two signs for the tunnel")
+    first, second = f"Tunnel {uuid.uuid4().hex[:6]}", f"Portal {uuid.uuid4().hex[:6]}"
 
-    open_side_chat(
+    panel = open_side_chat(
         page,
         upstream,
         question,
-        reply.text(f"```html\n<h1>{card}</h1>\n```\n\nThat is all."),
+        reply.text(
+            f"```html\n<h1>{first}</h1>\n```\n\n```html\n<h1>{second}</h1>\n```\n\nThat is all."
+        ),
         shows="That is all.",
     )
 
-    expect(page.locator("#artifacts-container").frame_locator("iframe").locator("h1")).to_have_text(
-        card
-    )
+    expect(shown, "the pane did not move to the side chat's page").to_have_text(second)
+    side_reply(panel).get_by_role("button", name="Preview", exact=True).first.click()
+    expect(shown, "Preview in the side chat did not show its block").to_have_text(first)
+    # the main chat's Preview still shows the main chat's own page, and back again
+    main_chat(page).show()
+    main_chat(page).last_reply.get_by_role("button", name="Preview", exact=True).click()
+    expect(shown).to_have_text(sign)
+    side_chat_tab(page, question).click()
+    side_reply(panel).get_by_role("button", name="Preview", exact=True).first.click()
+    expect(shown, "Preview in the side chat did not bring back its block").to_have_text(first)
 
 
 def test_regenerate_in_a_side_chat_replaces_the_reply(
