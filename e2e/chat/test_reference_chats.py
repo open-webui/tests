@@ -12,7 +12,8 @@ test fails.
 
 Both tests run in the main chat and in a side chat (`utils/chat_surface.py`), the open chat
 dragged into a tab beside a new chat for the second. That side variant is red on dev c15f28649
-and on dev e791cbdde: the tab's chat is offered as a reference to itself (issue draft pending).
+and on dev e791cbdde: the tab's chat is offered as a reference to itself
+(open-webui/open-webui#34203, fix PR open-webui/open-webui#34204).
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ def test_a_referenced_chat_reaches_the_model_with_the_message(
 
 
 def test_the_open_chat_is_not_offered_as_a_reference_to_itself(chat_for, account, referenced):
-    """In a tab: issue draft pending (the tab's chat is offered to itself)."""
+    """In a tab: open-webui/open-webui#34203, fix PR open-webui/open-webui#34204."""
     chat_id, title = referenced
     chat = chat_for(account, chat_id=chat_id)
     expect(conversation(chat).get_by_text(REFERENCED_FACT)).to_be_visible()
