@@ -378,7 +378,7 @@ def test_a_temporary_chat_streams_over_the_socket_and_its_next_turn_carries_the_
         ),
         reply.text("Roughly 141 metres.", match=reply.answering("How deep is it?")),
     )
-    with connected(person) as socket, person.client() as client:
+    with connected(person, in_order=True) as socket, person.client() as client:
         chat_id = socket.temporary_chat_id(prefix)
         send_message(client, "Which lake is deepest?", chat_id=chat_id, session_id=socket.sid)
         done = socket.wait_for(chat_id, "chat:completion", done=True)

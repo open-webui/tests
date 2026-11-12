@@ -496,7 +496,7 @@ def test_an_error_mid_stream_keeps_the_text_that_arrived(
 def test_a_stopped_reply_keeps_whole_pieces(streaming, owner):
     pieces = [f"part-{index} " for index in range(40)]
     streaming.upstream.queue(reply.text(pieces, chunk_delay=0.15, match=reply.answering("go slow")))
-    with connected(owner) as socket, owner.client() as client:
+    with connected(owner, in_order=True) as socket, owner.client() as client:
         turn = send_message(client, "go slow")
         _wait_for_deltas(socket, turn.chat_id, 3)
         stopped = client.post(f"/api/tasks/chat/{turn.chat_id}/stop")

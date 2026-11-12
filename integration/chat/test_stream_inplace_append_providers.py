@@ -104,7 +104,7 @@ def ollama(streaming, preserve, listener):
     preserve(OLLAMA_CONFIG, on=streaming)
     server = serve_ollama(listener, OLLAMA_MODEL)
     admin = admin_of(streaming)
-    with admin.client() as client, connected(admin) as socket:
+    with admin.client() as client, connected(admin, in_order=True) as socket:
         connect_ollama(client, listener)
         client.get("/api/models").raise_for_status()
         yield server, client, socket
@@ -254,7 +254,7 @@ def reasoning_in_pieces(summary: list[str], text: list[str], index: int = 0) -> 
 def responses(streaming, preserve, listener):
     preserve(OPENAI_CONFIG, on=streaming)
     admin = admin_of(streaming)
-    with admin.client() as client, connected(admin) as socket:
+    with admin.client() as client, connected(admin, in_order=True) as socket:
         provider = responses_api.connect_responses(client, listener)
         yield provider, client, socket
 
@@ -456,7 +456,7 @@ def tooled(streaming, preserve, listener):
     admin = admin_of(streaming)
     pending = []
     listener.route("POST", "/v1/chat/completions", lambda _request: pending.pop(0))
-    with admin.client() as client, connected(admin) as socket:
+    with admin.client() as client, connected(admin, in_order=True) as socket:
         attach(client, listener, SECOND_MODEL)
         yield lambda *replies: pending.extend(replies), client, socket, listener
 
