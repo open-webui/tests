@@ -79,6 +79,7 @@ from utils.chat_ui import (
     send,
 )
 from utils.member_picker import pick_member
+from utils.search_dialog import open_search_from_sidebar, open_selected, result, search
 from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.voice_call import start_call
 
@@ -226,9 +227,17 @@ def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
 
     member_page.get_by_role("link", name="New Chat").first.click()
     start_call(member_page)
-    member_page.go_back()
+    # a sidebar New Chat adds no history entry since dev da850248d, so Back leads elsewhere
+    dialog = open_search_from_sidebar(member_page)
+    search(dialog, QUESTION)
+    result(dialog, QUESTION).click()
+    open_selected(dialog)
+    expect(member_page).to_have_url(re.compile(f"/c/{chat_id}"))
+    expect(
+        member_page.get_by_role("button", name="End call"),
+        "the call stayed open over the shared chat",
+    ).to_have_count(0)
     expect(conversation(member_page).get_by_text("One more at noon.")).to_be_visible()
-    expect(member_page.get_by_role("button", name="End call")).to_have_count(0)
 
 
 def test_a_group_member_loses_the_open_chat_when_taken_out_of_the_group(

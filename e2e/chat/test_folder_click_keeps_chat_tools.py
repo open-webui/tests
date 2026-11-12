@@ -3,9 +3,10 @@
 Issue open-webui/open-webui#30226, fix 15f350b41 (PR open-webui/open-webui#30376). A folder can
 name default models for the chats started in it. Clicking a folder's name while a chat was open
 switched that chat to the folder's model for a moment before the folder page opened, which reset
-the chat's tools to that model's defaults and saved them as the chat's draft. Back in the chat
-(the browser's Back button), the next message went out with the folder model's tools. The
-folder's models now only apply to a chat that has no messages yet.
+the chat's tools to that model's defaults and saved them as the chat's draft. Back in the chat,
+the next message went out with the folder model's tools. The folder's models now only apply to a
+chat that has no messages yet. Since dev da850248d a folder click adds no browser history entry,
+so the tests go back to the chat through its row in the sidebar.
 
 Discriminates: passes on the dev efe63bd34 build, fails on that build with 15f350b41 reverted
 (the next message carries the folder model's tool).
@@ -25,6 +26,7 @@ from harness.chat_history import seed_chat
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, send
+from utils.sidebar_chats import chat_row
 from utils.sidebar_folders import folder_link
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -102,13 +104,15 @@ def open_sidebar(page: Page) -> Locator:
     return sidebar
 
 
-def visit_folder_and_return(page: Page, last_reply: str) -> None:
-    """Click the folder's name, then go back to the chat with the browser's Back button."""
-    folder_link(open_sidebar(page), FOLDER).click()
+def visit_folder_and_return(page: Page, title: str, last_reply: str) -> None:
+    """Click the folder's name, then go back to the chat titled `title` from the sidebar."""
+    sidebar = open_sidebar(page)
+    chat_url = page.url
+    folder_link(sidebar, FOLDER).click()
     expect(page).to_have_url(re.compile(r"/folders/"))
     page.wait_for_timeout(1000)  # a person's glance at the folder; the draft saves after 500 ms
-    page.go_back()
-    expect(page).to_have_url(re.compile(r"/c/"))
+    chat_row(sidebar, title).click()
+    expect(page).to_have_url(chat_url)
     # the URL changes before the chat replaces the folder page, whose input would start a new chat
     expect_reply(page, last_reply)
     expect(chat_input(page)).to_be_visible()
@@ -135,7 +139,7 @@ def test_an_open_chat_keeps_its_own_tools_after_a_folder_click(
     page = page_for(owner, path=f"/c/{chat_id}")
     expect(page.get_by_text("hi there")).to_be_visible()
 
-    visit_folder_and_return(page, "hi there")
+    visit_folder_and_return(page, "Seeded chat", "hi there")
     upstream.queue(reply.text("still here", match=reply.answering("and now?")))
     payload = sent_payload(page, "and now?")
 
@@ -151,7 +155,7 @@ def test_a_chat_started_on_the_home_page_keeps_its_tools(page_for, owner, upstre
     expect_reply(page, "first answer")
     expect(page).to_have_url(re.compile(r"/c/"))
 
-    visit_folder_and_return(page, "first answer")
+    visit_folder_and_return(page, "first question", "first answer")
     upstream.queue(reply.text("second answer", match=reply.answering("second question")))
     payload = sent_payload(page, "second question")
 
