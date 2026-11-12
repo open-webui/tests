@@ -3,7 +3,8 @@
 On a 390 by 844 touch screen Notes opens from the sidebar drawer, and Create opens a new note whose
 title field, editor and header buttons lie on the screen without scrolling sideways. A title and
 text typed there are stored, the note is listed on the Notes page and opens again from it with its
-text. The note's menu fits the screen, and so do its Download choices.
+text. The note's menu fits the screen, and so do its Download choices. Since da850248d Notes and
+the note open as a page tab in the phone's Tabs drawer, over the chat, and are found there.
 
 Discriminates: passes on the ebc6add67 build apart from the Download choices test (red, see below).
 In a backend copy whose live note edits are never written to the note the writing test goes red; in
@@ -13,6 +14,10 @@ right fall off it) the menu test goes red too.
 The Download choices test is red on dev ebc6add67: on a screen this narrow the choices open beside
 the menu, past the left edge of the screen, with their names cut off
 (open-webui/open-webui#32015, fixed by f7727e24b).
+
+The writing test is red on dev 2547992b8: the sidebar button inside the note's page tab opens the
+sidebar behind the Tabs drawer, so a phone user cannot get back to Notes from an open note
+(open-webui/open-webui#34243, fix branch fix/phone-sidebar-behind-tabs).
 """
 
 from __future__ import annotations
@@ -26,7 +31,14 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from utils.chat_ui import chat_input
-from utils.phone import PHONE, SCREEN, expect_on_screen, expect_reachable, tap_on_screen
+from utils.phone import (
+    PHONE,
+    SCREEN,
+    drawer_page,
+    expect_on_screen,
+    expect_reachable,
+    tap_on_screen,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -56,13 +68,13 @@ def open_notes(page: Page) -> None:
 
 def new_note(page: Page) -> str:
     open_notes(page)
-    tap_on_screen(page.get_by_role("main").get_by_role("button", name="Create", exact=True))
+    tap_on_screen(drawer_page(page).get_by_role("button", name="Create", exact=True))
     expect(page).to_have_url(NOTE_URL)
     return page.url.rsplit("/", 1)[1]
 
 
 def editor(page: Page) -> Locator:
-    return page.get_by_role("main").get_by_label("Write something...")
+    return drawer_page(page).get_by_label("Write something...")
 
 
 def stored_note(author: Actor, note_id: str) -> dict:
@@ -86,14 +98,14 @@ def expect_no_sideways_scroll(page: Page) -> None:
 
 
 def open_note_menu(page: Page) -> Locator:
-    tap_on_screen(page.get_by_role("main").get_by_role("button", name="Note Menu"))
+    tap_on_screen(drawer_page(page).get_by_role("button", name="Note Menu"))
     return page.get_by_role("menu")
 
 
 def test_a_note_written_on_a_phone_is_stored_and_listed(phone, author):
     title = f"Packing list {uuid.uuid4().hex[:6]}"
     note_id = new_note(phone)
-    title_field = phone.get_by_role("main").get_by_placeholder("Title")
+    title_field = drawer_page(phone).get_by_placeholder("Title")
     expect_on_screen(title_field)
     expect_on_screen(editor(phone))
     expect_no_sideways_scroll(phone)
@@ -105,7 +117,7 @@ def test_a_note_written_on_a_phone_is_stored_and_listed(phone, author):
     assert note["title"] == title, note["title"]
 
     open_notes(phone)
-    listed = phone.get_by_role("main").get_by_text(title).first
+    listed = drawer_page(phone).get_by_text(title).first
     expect_reachable(listed)
     listed.tap()
     expect(phone).to_have_url(re.compile(note_id))

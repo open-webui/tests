@@ -18,6 +18,10 @@ a base model): the editor test passes on dev b40891e0a (3 of 3) and fails in a b
 that leaves the system prompt out of the provider payload.
 Retargeted for 9d1b4ef36, whose prompt list no longer shows each prompt's command: the prompt is
 found by its name in the list and its page shows the command.
+Retargeted for da850248d, which opens the workspace as a page tab in the phone's Tabs drawer, over
+the chat: its lists, editor and Create button are found there. The editor test is red on dev
+2547992b8: Save & Create asks to discard unsaved changes and stays in the editor
+(open-webui/open-webui#34087, fix PR #34110).
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from utils.model_selector import model_search
 from utils.phone import (
     PHONE,
     SCREEN,
+    drawer_page,
     expect_on_screen,
     expect_reachable,
     send_by_tapping,
@@ -97,12 +102,12 @@ def test_every_workspace_list_can_be_scrolled_onto_the_screen_and_opened(phone):
     open_workspace(phone)
 
     for name, path in SECTIONS.items():
-        link = phone.get_by_role("link", name=re.compile(rf"^{name}"))
+        link = drawer_page(phone).get_by_role("link", name=re.compile(rf"^{name}"))
         expect_reachable(link)
         link.tap()
         expect(phone).to_have_url(re.compile(rf"{path}$"))
-        expect_on_screen(phone.get_by_role("main").get_by_role("textbox").first)
-        expect_on_screen(phone.get_by_role("main").get_by_role("button", name="Create").first)
+        expect_on_screen(drawer_page(phone).get_by_role("textbox").first)
+        expect_on_screen(drawer_page(phone).get_by_role("button", name="Create").first)
         expect_no_sideways_scroll(phone)
 
 
@@ -110,9 +115,9 @@ def test_a_model_made_in_the_editor_on_a_phone_answers_with_its_system_prompt(ph
     suffix = uuid.uuid4().hex[:6]
     name, system_prompt = f"Ranger {suffix}", f"Answer like a park ranger, trail {suffix}."
     open_workspace(phone)
-    tap_on_screen(phone.get_by_role("main").get_by_role("button", name="Create", exact=True))
+    tap_on_screen(drawer_page(phone).get_by_role("button", name="Create", exact=True))
     expect(phone).to_have_url(re.compile(r"/workspace/models/create"))
-    editor = phone.get_by_role("main")
+    editor = drawer_page(phone)
 
     model_name = editor.get_by_role("textbox", name="Model Name")
     expect_reachable(model_name)
@@ -130,7 +135,7 @@ def test_a_model_made_in_the_editor_on_a_phone_answers_with_its_system_prompt(ph
     save.tap()
 
     expect(phone).to_have_url(re.compile(r"/workspace/models$"))
-    expect_on_screen(phone.get_by_role("main").get_by_text(name, exact=True).first)
+    expect_on_screen(drawer_page(phone).get_by_text(name, exact=True).first)
     phone.goto("/")
     tap_on_screen(phone.get_by_role("button", name=re.compile("^Selected model")))
     choose_model(phone, name)
@@ -145,7 +150,7 @@ def test_a_prompt_made_on_a_phone_is_listed_and_opens_with_its_command(phone):
     command = f"tidepool{uuid.uuid4().hex[:6]}"
     name = f"Tide pools {command}"
     phone.goto("/workspace/prompts")
-    tap_on_screen(phone.get_by_role("main").get_by_role("button", name="Create", exact=True))
+    tap_on_screen(drawer_page(phone).get_by_role("button", name="Create", exact=True))
     creating = phone.get_by_role("dialog").filter(has_text="Create Prompt")
     fields = {
         creating.get_by_role("textbox", name="Prompt Name"): name,
@@ -159,7 +164,7 @@ def test_a_prompt_made_on_a_phone_is_listed_and_opens_with_its_command(phone):
     expect_reachable(save)
     save.tap()
 
-    tap_on_screen(phone.get_by_role("main").get_by_role("link", name=name, exact=True))
-    shown = phone.get_by_role("main").get_by_role("textbox", name="Command")
+    tap_on_screen(drawer_page(phone).get_by_role("link", name=name, exact=True))
+    shown = drawer_page(phone).get_by_role("textbox", name="Command")
     expect_on_screen(shown)
     expect(shown).to_have_value(command)

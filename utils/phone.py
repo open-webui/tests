@@ -7,7 +7,8 @@ it, with nothing scrolled first (a tall area only needs its top on the screen). 
 scrolls it into view first, the way a finger scrolls a list or a tab strip, and fails when that
 took scrolling a box a finger cannot scroll. `expect_off_screen` asserts it is hidden or pushed
 off the screen. `swipe` drags one finger across the screen and `send_by_tapping` types a message
-and taps send.
+and taps send. `drawer_page` is where a phone shows Notes, the workspace and the other pages: a page
+tab in the Tabs drawer, over the chat.
 """
 
 from __future__ import annotations
@@ -123,6 +124,10 @@ def swipe(
         session.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
     finally:
         session.detach()
+
+
+def drawer_page(page: Page) -> Locator:
+    return page.get_by_role("dialog", name="Tabs").get_by_role("tabpanel")
 
 
 def send_button(page: Page) -> Locator:
