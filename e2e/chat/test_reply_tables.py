@@ -5,12 +5,15 @@ button puts the table's markdown on the clipboard, and Export to CSV downloads t
 a CSV file, each cell quoted, a quote inside a cell doubled and a comma kept inside its cell. A
 table wider than the reply scrolls sideways inside its own box while the reply around it stays
 put and the page never scrolls sideways, and bold words, code and links inside cells are drawn
-as such, each cell aligned as its column says.
+as such, each cell aligned as its column says. The header row is shown in capitals, but a
+formula in it keeps its letters as written (open-webui/open-webui#34238): the header style
+used to capitalise the formula too, so γ showed as Γ and a subscript Ed as ED.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose table copy and CSV export write
 nothing the copy and export tests fail. On dev ebc6add67, in its mutation build (the
 `rendering-front` copy: the table's box no longer scrolling) the wide table test goes red and
-the cell test stays green.
+the cell test stays green. The heading formula test fails on dev 2547992b8 (Γ and ED in the
+header) and passes on the fix branch fix/math-table-header-case.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
@@ -140,3 +143,31 @@ def test_inline_markdown_inside_cells_is_drawn(chat_for, make_user, upstream):
     )
     assert cells.last.evaluate("cell => getComputedStyle(cell).textAlign") == "right"
     expect(_table(chat)).not_to_contain_text("**")
+
+
+@pytest.mark.regression
+def test_math_in_a_heading_keeps_its_letter_case_while_the_heading_text_is_capitalised(
+    chat_for, make_user, upstream
+):
+    chat = chat_for(make_user())
+    table = (
+        r"| Value of \(\gamma_{M0}\) | \(M_{\mathrm{Ed}}\) |"
+        "\n| --- | --- |\n"
+        r"| \(\gamma_{M0}\) | \(M_{\mathrm{Ed}}\) |"
+    )
+    upstream.queue(reply.text(f"{table}\n\nFactors done.", match=reply.answering("factor table")))
+    send(chat, "give me a factor table")
+    expect_reply(chat, "Factors done.")
+
+    table_box = _table(chat)
+    heading_math = table_box.get_by_role("columnheader").locator(".katex")
+    cell_math = table_box.get_by_role("cell").locator(".katex")
+    expect(heading_math).to_have_count(2)
+    expect(cell_math).to_have_count(2)
+    expect(table_box.get_by_role("columnheader").first).to_contain_text(
+        "VALUE OF", use_inner_text=True
+    )
+    as_written = [formula.inner_text() for formula in cell_math.all()]
+    assert "γ" in as_written[0] and "Ed" in as_written[1], f"the body cells changed: {as_written}"
+    shown = [formula.inner_text() for formula in heading_math.all()]
+    assert shown == as_written, f"the heading shows {shown} for the formulas {as_written}"
