@@ -12,7 +12,7 @@ model marks each call itself, with the Decisions engine a reviewer model rates i
 Settings > Interface, Auto permissions shows an Engine choice set to Default, and picking Decisions
 API shows its address, model and threshold, saved with the approval policy and shown again after
 a reload. A side chat asks
-before a tool call the same way its chat does. Expected but missing on f659c0d12 (strict xfail):
+before a tool call the same way its chat does. Expected but missing on f659c0d12 (a plain red test):
 an Always allow choice on the approval card that lets the same tool run without asking next time.
 
 The deny, allow, shortcut, full access, kept mode and both Auto tests run in the main chat and in a
@@ -465,13 +465,12 @@ def test_a_side_chat_asks_before_a_tool_call_like_its_chat(
     assert results[-1] != REJECTED
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: the approval card offers only Allow and Deny, no way to always allow a tool",
-)
 def test_a_tool_always_allowed_runs_without_asking_next_time(
     tool_approval_on, page_for, make_user, upstream
 ):
+    """Red: the approval card offers only Allow and Deny, no way to always allow a tool (a gap, no
+    filed issue).
+    """
     page = page_for(make_user())
     set_tool_approval_mode(page, "Ask for approval")
     _ask_for_the_time(page, upstream, "Checked and remembered.")
