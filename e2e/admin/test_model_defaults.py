@@ -23,7 +23,7 @@ picks every default tool, the test of the default tool the user may not use fail
 The default terminal tests pass on a build of the branch adding the Default terminal to Model
 Defaults and fail on dev 782f4b705, whose Model Defaults has no Default terminal and whose new
 model starts with none; the test with no default terminal passes on both.
-The Skills test marks a gap with a strict xfail: Model Defaults has no default skills.
+The Skills test is red for a gap: Model Defaults has no default skills.
 """
 
 from __future__ import annotations
@@ -418,12 +418,10 @@ def test_a_new_model_starts_with_no_terminal_while_model_defaults_has_none(
     expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: Model Defaults sets default tools for every model but no default skills, "
-    "which the model editor offers right beside its tools",
-)
 def test_model_defaults_offers_default_skills_beside_the_tools(page_for, admin):
+    """Red: Model Defaults sets default tools for every model but no default skills, which the
+    model editor offers right beside its tools (a gap, no filed issue).
+    """
     settings = open_model_defaults(page_for(admin))
     expect(selector_row(settings, "Tools")).to_be_visible()
 
