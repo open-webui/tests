@@ -16,8 +16,9 @@ dev 5032e834e build and fails on that build with 83dcc2dbe reverted (one placeho
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the side chat asking
 both default models picked in its own selector for the pair test. In a side chat the two pair
 tests are red on dev c15f28649 and on dev e791cbdde: the shortcut adds the pair to the main chat
-beside it and leaves the side chat empty (issue draft pending; PR open-webui/open-webui#34064
-does not change it). On c15f28649 a side chat also had no Compare (open-webui/open-webui#34030).
+beside it and leaves the side chat empty (open-webui/open-webui#34213, fix PR
+open-webui/open-webui#34214). On c15f28649 a side chat also had no Compare
+(open-webui/open-webui#34030).
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ def asked_about(upstream, prompt: str) -> list[dict]:
 
 
 def test_ctrl_shift_enter_adds_the_pair_without_asking_the_model(ctrl_enter_page, upstream):
-    """In a side chat: issue draft pending (the pair goes to the main chat)."""
+    """In a side chat: open-webui/open-webui#34213, fix PR open-webui/open-webui#34214."""
     chat = ctrl_enter_page
     upstream.queue(reply.text("An unwanted answer", match=reply.answering("pair me")))
     chat.page.keyboard.type("pair me")
@@ -130,7 +131,7 @@ def two_models_page(chat_for, make_user, admin) -> ChatSurface:
 
 @pytest.mark.journey
 def test_the_pair_adds_a_placeholder_reply_for_every_selected_model(two_models_page, upstream):
-    """In a side chat: issue draft pending (the pair goes to the main chat)."""
+    """In a side chat: open-webui/open-webui#34213, fix PR open-webui/open-webui#34214."""
     chat = two_models_page
     chat.page.keyboard.type("pair us both")
 
