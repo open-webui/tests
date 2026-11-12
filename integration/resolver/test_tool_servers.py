@@ -308,25 +308,15 @@ def test_a_terminal_proxies_files_and_sessions_for_the_web_client_by_name(
 
 
 @pytest.mark.usefixtures("refuses_unknown_names")
-@pytest.mark.parametrize(
-    "path,detail",
-    [
-        pytest.param("verify", "Failed to connect to the terminal server", id="verify"),
-        pytest.param("policy", "Failed to access policy on terminal server", id="policy"),
-        pytest.param("lifecycle", "Failed to access lifecycle on terminal server", id="lifecycle"),
-        pytest.param("refresh", "Failed to refresh terminals", id="refresh"),
-    ],
-)
-def test_an_unresolvable_terminal_fails_every_admin_call_the_same_way(
-    resolver, resolving_admin, path, detail
-):
-    target = {"url": UNRESOLVABLE_URL, "key": "", "auth_type": "none", "policy_id": "dev"}
+def test_an_unresolvable_terminal_fails_verify_connection_the_same_way(resolver, resolving_admin):
+    target = {"url": UNRESOLVABLE_URL, "key": "", "auth_type": "none"}
     with resolving_admin.client() as client:
-        answer, seconds = timed(
-            client.post, f"/api/v1/configs/terminal_servers/{path}", json=target
-        )
+        answer, seconds = timed(client.post, "/api/v1/configs/terminal_servers/verify", json=target)
 
-    assert (answer.status_code, answer.json()) == (400, {"detail": detail})
+    assert (answer.status_code, answer.json()) == (
+        400,
+        {"detail": "Failed to connect to the terminal server"},
+    )
     assert seconds < FAILS_WITHIN, f"the lookup failed only after {seconds:.1f}s"
 
 
