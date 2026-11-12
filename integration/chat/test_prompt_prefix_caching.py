@@ -61,6 +61,14 @@ The compact case fails on dev a7b364296 (its call went back re-spaced) and passe
 for open-webui/open-webui#33958; the repaired-arguments test passes on both.
 The own-question test fails on dev a7b364296 (the replayed question carries "header": "Question
 1") and passes with the fix for #33957 applied.
+
+Since PR #34259 (open-webui/open-webui#34257) the skills list, the attached knowledge list and
+recalled memories go out only when they changed or compaction dropped them, so two tests follow
+one chat through a skill added mid-chat, a regenerate, a Continue and a compaction. Both pass on
+dev 2547992b8 and on the fix branch e5e2fbbf0. In backend copies of e5e2fbbf0, a changed list
+written over the earlier one turned the new-skill test red, the context restored after compaction
+placed before the question turned the compaction test red, and context turns sent with empty
+text but replayed with none turned the new-skill test red on its unchanged turn and its Continue.
 """
 
 from __future__ import annotations
@@ -74,7 +82,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
-from harness.chat import ChatTurn, ask, send_message, wait_for_reply
+from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, ask, send_message, wait_for_reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.listener import text_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
@@ -89,7 +97,7 @@ from harness.prompt_caching import (
 )
 from harness.python_tools import EVERYONE_READS
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
-from harness.upstream import Reply, context_results
+from harness.upstream import CONTEXT_TOOLS, Reply, context_results
 from harness.web_retrieval import (
     LOCAL_WEB_FETCH,
     RETRIEVAL_CONFIG,
@@ -181,6 +189,8 @@ class Conversation:
         self.parent_id: str | None = None
         self.opening: str | None = None
         self.generated: dict[str, dict] = {}  # the tool calls the model wrote, by call id
+        self.turn: ChatTurn | None = None
+        self.question_parent: str | None = None  # what the last question follows
 
     def say(self, text: str, *replies: Reply, **options) -> dict:
         message = wait_for_reply(self.client, self.send(text, *replies, **options))
@@ -203,8 +213,57 @@ class Conversation:
             parent_id=self.parent_id,
             **{**self.options, **options},
         )
+        self.question_parent, self.turn = self.parent_id, turn
         self.chat_id, self.parent_id = turn.chat_id, turn.assistant_message_id
         return turn
+
+    def regenerate(self) -> None:
+        """Regenerate the last reply as the web client does; the chat goes on from the new one."""
+        reply_id = self._resend(str(uuid.uuid4()))
+        self.parent_id = reply_id
+        self.turn = ChatTurn(self.turn.chat_id, self.turn.user_message_id, reply_id)
+
+    def continue_reply(self) -> None:
+        """Press Continue on the last reply."""
+        self._resend(self.turn.assistant_message_id, continuing=True)
+
+    def _messages(self) -> dict:
+        return self.client.get(f"/api/v1/chats/{self.chat_id}").json()["chat"]["history"][
+            "messages"
+        ]
+
+    def _resend(self, reply_id: str, continuing: bool = False) -> str:
+        stored = self._messages()[self.turn.user_message_id]
+        marker = f"resent {uuid.uuid4().hex[:6]}"
+        self.upstream.queue(reply.text(marker, match=reply.answering(stored["content"])))
+        payload = {
+            "model": self.model_id,
+            "messages": [{"role": "user", "content": stored["content"]}],
+            "stream": True,
+            "chat_id": self.chat_id,
+            "parent_id": self.question_parent,
+            "id": reply_id,
+            "user_message": {
+                **stored,
+                "childrenIds": sorted({self.turn.assistant_message_id, reply_id}),
+            },
+            "session_id": f"harness-{uuid.uuid4().hex[:8]}",
+            "background_tasks": NO_BACKGROUND_TASKS,
+            **self.options,
+        }
+        if continuing:
+            payload["assistant_message_id"] = reply_id
+        accepted = self.client.post("/api/chat/completions", json=payload)
+        assert accepted.status_code == 200, accepted.text
+        # a continued reply is already marked done, so wait for the new text
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            message = self._messages().get(reply_id, {})
+            if message.get("done") and marker in str(message.get("content")):
+                assert not message.get("error"), message
+                return reply_id
+            time.sleep(0.2)
+        raise AssertionError(f"the resent reply never finished: {message}")
 
     def requests(self) -> list[dict]:
         """The chat's own requests to the provider, without a sub-agent's."""
@@ -648,6 +707,119 @@ def test_skills_only_append(cached_setup, make_user, upstream):
     assert "view_skill" in offered_tools(chat.requests()[0])
     assert "Read the high tide column first." in tool_results(chat.requests()[-1])
     assert_append_only(chat.requests(), chat.generated)
+
+
+@pytest.fixture
+def context_account(cached_setup, admin, make_user):
+    """`(account, add_skill)`: an account with a memory and a skill of its own, on the page's
+    setup with the memory system context switched on; `add_skill(name)` gives it one more."""
+    turn_on_memory_system_context(admin)
+    account, skills = make_user(), []
+
+    def add_skill(name: str) -> None:
+        skill_id = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
+        with admin.client() as client:
+            created = client.post(
+                "/api/v1/skills/create",
+                json={
+                    "id": skill_id,
+                    "name": name,
+                    "description": f"Reads {name.lower()}.",
+                    "content": f"Read the {name.lower()} line by line.",
+                    "meta": {},
+                    "access_grants": [read_grant(account.id)],
+                },
+            )
+        assert created.status_code == 200, f"creating the skill failed: {created.text}"
+        skills.append(skill_id)
+
+    with account.client() as client:
+        added = client.post("/api/v1/memories/add", json={"content": "takes the early ferry"})
+        assert added.status_code == 200, f"adding the memory failed: {added.text}"
+    add_skill("Harbour charts")
+    yield account, add_skill
+    with admin.client() as client:
+        for skill_id in skills:
+            client.delete(f"/api/v1/skills/id/{skill_id}/delete")
+
+
+def missing_context(request: dict) -> list[str]:
+    return [name for name in sorted(CONTEXT_TOOLS) if not context_results(request, name)]
+
+
+def test_the_context_lists_only_append_through_a_new_skill_a_regenerate_and_a_continue(
+    cached_setup, context_account, upstream
+):
+    """open-webui/open-webui#34257 sends each list only when it changed; each step only appends."""
+    account, add_skill = context_account
+    with account.client() as client:
+        chat = Conversation(client, upstream, cached_setup.id, features={"memory": True})
+        chat.say("good morning")
+        chat.say("what about the weather?")
+        add_skill("Tide tables")
+        chat.say("and the tides?")
+        chat.regenerate()
+        chat.continue_reply()
+        chat.say("thanks")
+
+    requests = chat.requests()
+    assert len(requests) == 6, f"expected six provider requests, got {len(requests)}"
+    first, unchanged, new_skill, regenerated, continued, following = requests
+    assert missing_context(first) == [], "the first request did not carry every context list"
+    assert "Tide tables" in context_results(new_skill, "list_available_skills")[-1], (
+        "the skill added mid-chat was never listed"
+    )
+    steps = {
+        "an unchanged turn": (first, unchanged),
+        "the turn after a skill was added": (unchanged, new_skill),
+        "a regenerate": (unchanged, regenerated),
+        "a Continue": (regenerated, continued),
+        "the message after the Continue": (regenerated, following),
+    }
+    broken = {step: first_break(list(pair)) for step, pair in steps.items()}
+    assert not any(broken.values()), "\n".join(
+        f"{step}: {where}" for step, where in broken.items() if where
+    )
+
+
+def test_after_compaction_the_new_prefix_only_appends(
+    cached_setup, context_account, chat_settings, upstream
+):
+    """After a compaction the context lists are listed again once, then every request appends."""
+    summary = "They asked about the morning, the weather and the tides."
+    account, _ = context_account
+    with account.client() as client:
+        chat = Conversation(client, upstream, cached_setup.id, features={"memory": True})
+        for text in ("good morning", "what about the weather?", "and the tides?"):
+            chat.say(text)
+        chat_settings(
+            ENABLE_CONTEXT_COMPACTION=True,
+            CONTEXT_COMPACTION_TOKEN_THRESHOLD=1,
+            CONTEXT_COMPACTION_TOKEN_CAP=1,
+            CONTEXT_COMPACTION_RETENTION_PERCENTAGE=40,
+        )
+        upstream.queue(reply.text(summary, match=lambda body: not body.get("stream")))
+        chat.say("is the ferry on time?")
+        # the summary stays in use; only no second compaction runs
+        chat_settings(
+            CONTEXT_COMPACTION_TOKEN_THRESHOLD=1_000_000, CONTEXT_COMPACTION_TOKEN_CAP=1_000_000
+        )
+        chat.say("and tomorrow?")
+        chat.say("thanks")
+
+    sent = upstream.chat_requests()
+    assert len([body for body in sent if not body.get("stream")]) == 1, "nothing was compacted"
+    requests = [body for body in sent if body.get("stream")]
+    assert len(requests) == 6, f"expected six chat requests, got {len(requests)}"
+    compacted = requests[3]
+    assert summary in str(compacted["messages"][0]["content"]), (
+        f"the compacted request carries no summary: {compacted['messages'][0]}"
+    )
+    assert missing_context(compacted) == [], (
+        f"after compaction the model no longer has {missing_context(compacted)}"
+    )
+    broken = first_break(requests[3:])
+    assert broken is None, f"after compaction a request rewrote the new prefix: {broken}"
 
 
 def test_a_sub_agent_only_appends(cached_setup, make_user, subagents_on, upstream):
