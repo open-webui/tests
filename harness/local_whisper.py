@@ -92,7 +92,8 @@ def save_tiny_whisper(directory: Path) -> Path:
     model = transformers.WhisperForConditionalGeneration(config)
     with torch.no_grad():
         # one fixed decoder output that favours a word, so every decode at any temperature agrees
-        direction = torch.ones(config.d_model)
+        # alternating signs: an int8 product of all ones saturates on CPUs without VNNI
+        direction = torch.tensor([1.0, -1.0]).repeat(config.d_model // 2)
         model.model.decoder.layer_norm.weight.zero_()
         model.model.decoder.layer_norm.bias.copy_(direction)
         model.model.decoder.embed_tokens.weight[vocabulary[WORDS[0]]] = direction
