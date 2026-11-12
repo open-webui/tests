@@ -197,6 +197,8 @@ def test_the_link_opens_the_owners_live_chat_straight_away(page_for, make_user, 
 def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
     page_for, voice_page_for, make_user, upstream
 ):
+    """Red on dev 2547992b8, no issue filed yet: a member who opens the shared chat while a call
+    of their own is running gets a blank Voice tab in front of the chat instead of the chat."""
     owner, member = _accounts(make_user)
     owner_page = page_for(owner)
     chat_id = _start_chat(owner_page, upstream)
@@ -234,10 +236,10 @@ def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
     open_selected(dialog)
     expect(member_page).to_have_url(re.compile(f"/c/{chat_id}"))
     expect(
-        member_page.get_by_role("button", name="End call"),
-        "the call stayed open over the shared chat",
-    ).to_have_count(0)
-    expect(conversation(member_page).get_by_text("One more at noon.")).to_be_visible()
+        conversation(member_page).get_by_text("One more at noon."),
+        "the shared chat is hidden behind the call's Voice tab",
+    ).to_be_visible()
+    expect(member_page.get_by_role("button", name="End call")).to_have_count(0)
 
 
 def test_a_group_member_loses_the_open_chat_when_taken_out_of_the_group(
