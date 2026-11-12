@@ -5,13 +5,11 @@ open-webui 0.12.5 `b420726ff`: with a terminal selected in the chat, the `genera
 file id so two pictures never overwrite each other. The tool result the model reads and the
 image stored on the reply carry the picture's `terminal_path`, so the model can work on it with
 the terminal's tools. A failed copy leaves the picture in the chat and carries a
-`terminal_error` instead; without a terminal nothing is sent to one. A personal terminal, which
-only the user's browser can reach, is handed the upload through the user's open tab.
+`terminal_error` instead; without a terminal nothing is sent to one.
 
-A fake terminal answers the working folder and takes the uploads, a socket client plays the tab
-for the personal terminal, and the image engine is a listener answering as OpenAI's image
-endpoints. The legacy handler that generates before the model answers runs only in Legacy
-function calling mode and is out of scope here.
+A fake terminal answers the working folder and takes the uploads, and the image engine is a
+listener answering as OpenAI's image endpoints. The legacy handler that generates before the
+model answers runs only in Legacy function calling mode and is out of scope here.
 
 New for 0.13.1 (2a0e0100b, titled `refac`, issue open-webui/open-webui#33824): `edit_image` also
 takes an absolute file path on the selected terminal as a source picture. Open WebUI reads the
@@ -22,16 +20,15 @@ engine is called.
 
 Discriminates: passes on dev 05e115366; each mutation below, made in a backend copy, turns
 exactly the named tests red. The `upload_files_to_terminal` calls removed from both image tools
-fail the copy, failure and personal-terminal tests; the uploaded name built from the image's own
-name in place of its file id, and the `directory` query left out of the upload path, each fail
-the copy and personal-terminal tests; the file left out of the tab's `request:terminal` fails
-the personal-terminal test; `upload_files_to_terminal` running without a selected terminal
-fails the no-terminal test. The terminal path tests pass on dev e8c0ad85e and all fail with
-2a0e0100b's `edit_image` change undone (the path is looked up as a stored file: 404); BMP added
-to the accepted formats fails the BMP test, the pixel limit raised to 26 million the
-over-25-megapixels test. A terminal file is read up to 50 MB: one byte more is refused with
-"File exceeds the 52428800-byte limit." On dev c15f28649 in a backend copy, with the limit
-raised by a byte the one-byte-over case fails, and lowered by a byte both cases.
+fail the copy and failure tests; the uploaded name built from the image's own name in place of
+its file id, and the `directory` query left out of the upload path, each fail the copy test;
+`upload_files_to_terminal` running without a selected terminal fails the no-terminal test. The
+terminal path tests pass on dev e8c0ad85e and all fail with 2a0e0100b's `edit_image` change
+undone (the path is looked up as a stored file: 404); BMP added to the accepted formats fails
+the BMP test, the pixel limit raised to 26 million the over-25-megapixels test. A terminal file
+is read up to 50 MB: one byte more is refused with "File exceeds the 52428800-byte limit." On
+dev c15f28649 in a backend copy, with the limit raised by a byte the one-byte-over case fails,
+and lowered by a byte both cases.
 """
 
 from __future__ import annotations
@@ -40,10 +37,8 @@ import base64
 import io
 import json
 import uuid
-from contextlib import contextmanager
 from email.parser import BytesParser
 from email.policy import HTTP
-from typing import Iterator
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -54,7 +49,6 @@ from harness.channel_chat import serve_openai_images
 from harness.chat import ask
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.listener import json_answer
-from harness.socket_client import connected
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     TerminalRequest,
@@ -80,13 +74,6 @@ SPEC = {
             }
         }
     },
-}
-# a personal terminal's address, which only the user's browser can reach
-UNREACHABLE = "http://127.0.0.1:9"
-RUN_COMMAND = {
-    "name": "run_command",
-    "description": "Run a shell command.",
-    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
 }
 UPLOAD_FAILED = "File saved in Open WebUI, but upload to the selected terminal failed."
 TERMINAL_UNAVAILABLE = "File saved in Open WebUI, but the selected terminal is unavailable."
@@ -227,56 +214,6 @@ def test_a_failed_copy_is_reported_and_the_image_still_shows(
     assert told.get("terminal_error") == expected_error, f"the model was told {told}"
     assert stored.get("terminal_error") == expected_error, f"the reply's image: {stored}"
     assert "terminal_path" not in told and "terminal_path" not in stored
-
-
-@contextmanager
-def _browser_tab(actor) -> Iterator[tuple[str, list[dict]]]:
-    """A tab that uploads to the personal terminal for the server; yields its sid and the asks."""
-    asked: list[dict] = []
-
-    def handle(event: dict):
-        data = event.get("data") or {}
-        if data.get("type") != "request:terminal":
-            return None
-        request = data.get("data") or {}
-        asked.append(request)
-        if request.get("path") == "/files/cwd":
-            return {"data": {"cwd": WORKDIR}}
-        if request.get("file"):
-            return {"data": {"path": f"{WORKDIR}/{request['file']['name']}"}}
-        return {"data": None}
-
-    with connected(actor) as session:
-        session.client.on("events", handle)
-        yield session.client.get_sid(namespace="/"), asked
-
-
-@pytest.mark.parametrize("tool", DRAWINGS)
-def test_a_personal_terminal_gets_the_image_through_the_browser(
-    make_user, upstream, image_engine, tool
-):
-    owner = make_user(role="admin")
-    personal = {"url": UNREACHABLE, "key": "", "is_terminal": True, "specs": [RUN_COMMAND]}
-
-    with _browser_tab(owner) as (session_id, asked):
-        told, stored, picture = _draw(
-            owner,
-            upstream,
-            image_engine,
-            tool,
-            session_id=session_id,
-            terminal_id=UNREACHABLE,
-            tool_servers=[personal],
-        )
-
-    assert picture == GENERATED_PNG
-    uploads = [request for request in asked if request.get("file")]
-    assert len(uploads) == 1, f"the tab was not asked once to upload the image: {asked}"
-    assert _upload_directory_of(uploads[0]["path"]) == [WORKDIR], uploads[0]
-    assert uploads[0]["file"] == {"id": told["id"], "name": f"{told['id']}.png"}, uploads[0]
-    expected_path = f"{WORKDIR}/{told['id']}.png"
-    assert told.get("terminal_path") == expected_path, f"the model was not told the path: {told}"
-    assert stored.get("terminal_path") == expected_path, f"the reply's image has no path: {stored}"
 
 
 @pytest.mark.parametrize("tool", DRAWINGS)

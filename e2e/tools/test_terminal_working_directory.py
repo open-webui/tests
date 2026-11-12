@@ -16,25 +16,18 @@ and the menu's search narrows them by name. Since 77d3d1c31 each recent folder's
 an Open folder button that shows the folder in Files, so the menu entry that opens the picker is
 found by the words it shows. Since a9478213a the picker clones a Git repository
 from an HTTP(S) or SSH address into the folder it shows and uses the clone as the directory; an
-address of another kind and a repository that cannot be cloned show the reason. A personal
-terminal, one the person added in their own settings, is reached by the browser only, so the
-browser has to move it to the chosen folder.
-
-The personal terminal test was red on dev f659c0d12: the picked folder was set on the terminal
-without the chat's session and the server leaves personal terminals alone since 5fae57b03, so the
-commands ran in the terminal's home (open-webui/open-webui#33876). Since 21da7627b the page sets
-the folder for the new chat's session itself.
+address of another kind and a repository that cannot be cloned show the reason.
 
 A real Open Terminal serves the files and runs the commands; its `run_command` answer names the
 folder the command ran in, which the test reads from what the model was sent.
 
-Discriminates: passes on the dev f659c0d12 build, except the personal terminal test. With the
-backend's directory call skipped in a backend copy, the picked-folder, recent-folder, folder
-default and personal terminal tests fail. On a build of f659c0d12 whose working directory menu
-leaves the chat's folder unset when one is picked, whose folder dialog saves no working directory
-and whose model editor does not take a default terminal, the picked-folder, recent-folder, folder
-dialog and model tests fail. The missing directory test passes on the dev a072aaf31 build and
-fails on a build of it that sends the message although the terminal refused the directory.
+Discriminates: passes on the dev f659c0d12 build. With the backend's directory call skipped in
+a backend copy, the picked-folder, recent-folder and folder default tests fail. On a build of
+f659c0d12 whose working directory menu leaves the chat's folder unset when one is picked, whose
+folder dialog saves no working directory and whose model editor does not take a default terminal,
+the picked-folder, recent-folder, folder dialog and model tests fail. The missing directory test
+passes on the dev a072aaf31 build and fails on a build of it that sends the message although the
+terminal refused the directory.
 On a copy of the dev e8c0ad85e build: recent folders kept for all people alike, a clone run with a
 bad option and the clone error replaced by a fixed text turn the per-person, clone and both clone
 error tests red; on a second copy, the menu search matching every folder and file:// addresses let
@@ -104,7 +97,6 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 TERMINAL = "Workbench"
 UNAVAILABLE = "Working directory is unavailable"
-PERSONAL = "My laptop"
 SPARE = "Spare shell"
 EVERYONE_READS = grant("user", "*", "read")
 
@@ -502,42 +494,6 @@ def test_switching_to_a_model_without_a_default_terminal_keeps_the_picked_one(
     expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     assert where_pwd_ran(page, upstream) == str(open_terminal.home), (
         "the command did not run on the terminal picked before the model switch"
-    )
-
-
-def save_personal_terminal(person, open_terminal) -> None:
-    """Add the Open Terminal as `person`'s own terminal, as Settings > Integrations does."""
-    personal = {
-        "url": open_terminal.base_url,
-        "key": open_terminal.api_key,
-        "name": PERSONAL,
-        "enabled": False,
-        "auth_type": "bearer",
-        "path": "/openapi.json",
-        "config": {"enable": True},
-    }
-    with person.client() as client:
-        saved = client.post(
-            "/api/v1/users/user/settings/update",
-            json={"ui": {"showChangelog": False, "terminalServers": [personal]}},
-        )
-    assert saved.status_code == 200, saved.text
-
-
-def test_a_personal_terminal_runs_in_the_folder_picked_for_the_chat(
-    page_for, make_user, open_terminal, upstream, direct_integrations
-):
-    direct_integrations(True)
-    person = make_user(role="admin")
-    save_personal_terminal(person, open_terminal)
-    page = page_for(person)
-    pick_terminal(page, PERSONAL)
-    folder = _directory(open_terminal)
-
-    choose_directory(page, folder)
-
-    assert where_pwd_ran(page, upstream) == str(folder), (
-        "the personal terminal ran the command outside the picked folder"
     )
 
 

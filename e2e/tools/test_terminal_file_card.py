@@ -20,10 +20,6 @@ opens in a file tab beside the chat. A file the model rewrites with `write_file`
 the tab that has it open; where the person has unsaved edits in it, their text stays and a notice
 says the file was updated on disk, with Reload to take the model's version.
 
-A terminal a person added in their own settings is called by their browser: the page sends the
-terminal the `display_file` call without the page number, adds `inline: true` under the Inline
-setting and shows the card, and otherwise opens the file tab.
-
 The card keeps the terminal it found when the chat was opened until a reload (finding
 `open-webui-file-card-keeps-terminal-until-reload`); the test that picks the terminal again
 without a reload is red on dev c15f28649 and on 0.13.3, and passes in a frontend copy whose
@@ -34,8 +30,7 @@ copy that breaks what it reads: a name that does not fold the preview, an Open t
 nothing, a refused preview or download without its message, an Open button on an Open WebUI
 file, the Inline setting showing no card or not keeping the file tab closed, the model's
 `display_file` opening no file tab, a rewritten file not read again or read over unsaved
-edits, the page number sent to a personal terminal or `inline` not sent to it. A card that
-reads its terminal whichever one is picked turns the reopened-chat test red.
+edits. A card that reads its terminal whichever one is picked turns the reopened-chat test red.
 """
 
 from __future__ import annotations
@@ -222,18 +217,6 @@ def _switch_terminal(page: Page, picked: str, name: str) -> None:
     open_terminal_menu(page, picked)
     listed_terminal(page, name).click()
     expect(page.get_by_role("menu")).to_have_count(0)
-
-
-def _personal_terminal(server, name: str) -> dict:
-    return {
-        "url": server.base_url,
-        "key": "",
-        "name": name,
-        "enabled": False,
-        "auth_type": "bearer",
-        "path": "/openapi.json",
-        "config": {"enable": True},
-    }
 
 
 def test_a_file_shown_inline_is_a_card_with_its_preview_download_and_open(
@@ -457,41 +440,3 @@ def test_a_file_the_model_rewrites_is_read_again_and_unsaved_edits_are_kept(
 
     expect(files.get_by_text(second)).to_be_visible()
     expect(notice).to_have_count(0)
-
-
-@pytest.mark.parametrize("display", ["inline", "sidebar"])
-def test_a_personal_terminal_is_asked_for_the_file_by_the_persons_browser(
-    page_for, make_user, upstream, direct_integrations, log_text, display
-):
-    direct_integrations(True)
-    owner = make_user(role="admin")
-    name = f"My laptop {uuid.uuid4().hex[:6]}"
-    with serving_terminal() as laptop:
-        laptop.cors = True
-        _serve_files(laptop, {LOG: log_text.encode()})
-        laptop.route("GET", "/skills", json_answer([]))
-        settings = {"terminalServers": [_personal_terminal(laptop, name)]}
-        with owner.client() as client:
-            saved = client.post("/api/v1/users/user/settings/update", json={"ui": settings})
-        assert saved.status_code == 200, saved.text
-        _set_file_display(owner, display)
-        page = page_for(owner)
-        choose_terminal(page, name)
-
-        shown = _show(page, upstream, LOG, page=2)
-
-        files = page.get_by_role("region", name="File browser")
-        if display == "inline":
-            expect(_card_name(shown, "harbour-log.txt")).to_be_visible()
-            expect(shown.get_by_text(log_text)).to_be_visible()
-            expect(files).to_have_count(0)
-        else:
-            expect(files.get_by_text(log_text)).to_be_visible()
-            expect(_card_name(shown, "harbour-log.txt")).to_have_count(0)
-        calls = [call for call in laptop.requests_to("/files/display") if call.method == "POST"]
-        assert [bool(call.headers.get("origin")) for call in calls] == [True], (
-            f"the browser should call the personal terminal's display_file once: {calls}"
-        )
-        expected = {"path": LOG, **({"inline": True} if display == "inline" else {})}
-        asked = json.loads(calls[0].body)
-        assert asked == expected, f"the terminal's display_file got {asked}"

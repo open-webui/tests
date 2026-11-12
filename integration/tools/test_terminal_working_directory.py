@@ -6,9 +6,7 @@ on the selected terminal for a new chat, and the page sends it with the chat's f
 which apply to new chats started in the folder. For a terminal the admin connected, the server
 moves the new chat's terminal session to that folder before the first reply (4955624d2), so every
 command the model runs in the chat runs there and the `run_command` description names it; a
-folder that does not exist refuses the chat with "Working directory is unavailable". A personal
-terminal is reached by the browser only and gets the folder from the browser (fix 5fae57b03,
-open-webui/open-webui#33811, pinned in test_personal_terminal_through_browser.py). An empty
+folder that does not exist refuses the chat with "Working directory is unavailable". An empty
 `terminal_cwd`, the menu's "No folder", keeps a folder chat in the terminal's own directory
 (834c47ee0). The folder's defaults are read only for a folder the user may write to.
 

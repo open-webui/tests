@@ -5,7 +5,7 @@ menu lists the terminals of the admin's connections under Terminals and, for a p
 use Direct Integrations, the terminals from their own settings under Direct. The + beside
 Direct opens the person's Settings on Integrations; the cog beside Terminals, for admins only,
 opens the admin's Integrations settings. The picked terminal carries a check and names the menu's
-button; picking it again unpicks it, and picking a terminal of the other kind unpicks the first.
+button; picking it again unpicks it, and picking another terminal unpicks the first.
 In a saved chat the pick is stored on the chat and is back when the chat is opened again. Since
 d42988f0c a pick shows at once and is saved in the background, so one the server refuses stays
 picked on the page, says why and is not stored: the chat opens again without it (before, a
@@ -24,10 +24,8 @@ Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open T
 On builds of a frontend copy with one change each: the Settings cog shown to everyone, personal
 terminals listed without the permission, and Add Terminal opening the General settings (the
 listed apart test); no terminal carrying the check, the picked terminal kept when it is picked
-again, and the personal terminal left on when one of the admin's is picked (the picked test:
-the model is still offered the personal terminal's tool); the pick not stored on a saved chat,
-a saved chat opened without its terminal, and a refused pick that says nothing (the saved
-chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
+again (the picked test); the pick not stored on a saved chat, a saved chat opened without its
+terminal, and a refused pick that says nothing (the saved chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
 deleted test); the controls never moved into the More menu (the narrow test). The cog's target
 has no mutation of its own.
 """
@@ -237,50 +235,36 @@ def test_terminals_and_personal_terminals_are_listed_apart_and_each_heading_open
 
 
 def test_the_picked_terminal_is_checked_and_named_and_picking_it_again_unpicks_it(
-    page_for, make_user, connect, personal_terminal, direct_integrations, upstream
+    page_for, make_user, connect, upstream
 ):
-    direct_integrations(True)
     person = make_user(role="admin")
-    harbour, quarry, laptop = _names()
+    harbour, quarry, _ = _names()
     connect([harbour, quarry])
-    _add_personal_terminal(person, personal_terminal, laptop)
     page = page_for(person)
     tag = uuid.uuid4().hex[:6]
 
     open_terminal_menu(page)
-    assert _checked(page) == {laptop: "false", harbour: "false", quarry: "false"}
+    assert _checked(page) == {harbour: "false", quarry: "false"}
     _pick(page, harbour, shown=harbour)
     open_terminal_menu(page, picked=harbour)
-    assert _checked(page) == {laptop: "false", harbour: "true", quarry: "false"}, (
+    assert _checked(page) == {harbour: "true", quarry: "false"}, (
         f"with {harbour} picked the menu checks {_checked(page)}"
     )
     close_menu(page)
     ask(page, upstream, f"on the server {tag}", reply.text("On the server."))
     assert _terminal_tools_sent_for(upstream, f"on the server {tag}") == {"run_on_server"}
 
-    # a personal terminal takes the pick from the admin's
+    # another terminal takes the pick
     open_terminal_menu(page, picked=harbour)
-    _pick(page, laptop, shown=laptop)
-    open_terminal_menu(page, picked=laptop)
-    assert _checked(page) == {laptop: "true", harbour: "false", quarry: "false"}, (
-        f"with {laptop} picked the menu checks {_checked(page)}"
-    )
-    close_menu(page)
-    ask(page, upstream, f"on the laptop {tag}", reply.text("On the laptop."))
-    assert _terminal_tools_sent_for(upstream, f"on the laptop {tag}") == {"run_on_laptop"}
-
-    # and one of the admin's takes it back
-    open_terminal_menu(page, picked=laptop)
     _pick(page, quarry, shown=quarry)
-    ask(page, upstream, f"back on the server {tag}", reply.text("Back on the server."))
-    assert _terminal_tools_sent_for(upstream, f"back on the server {tag}") == {"run_on_server"}, (
-        "the personal terminal still reached the model after another terminal was picked"
+    open_terminal_menu(page, picked=quarry)
+    assert _checked(page) == {harbour: "false", quarry: "true"}, (
+        f"with {quarry} picked the menu checks {_checked(page)}"
     )
 
-    open_terminal_menu(page, picked=quarry)
     _pick(page, quarry, shown="Terminal")
     open_terminal_menu(page)
-    assert _checked(page) == {laptop: "false", harbour: "false", quarry: "false"}, (
+    assert _checked(page) == {harbour: "false", quarry: "false"}, (
         f"with the pick taken back the menu checks {_checked(page)}"
     )
     close_menu(page)

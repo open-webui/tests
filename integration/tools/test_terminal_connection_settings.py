@@ -14,9 +14,7 @@ test here, since an automation run on dev 1c010b438 never reaches the model
 
 Whether the user has a shell open is the terminal's answer: since 47a9e7d48 Open WebUI asks the
 terminal for the shell of this user and chat before the turn (Open Terminal answers 404 when there
-is none), where it used to ask the user's browser tab. A personal terminal (one the browser
-calls) carries the setting in the request itself, and reaches the model only while the admin's
-Direct Integrations switch is on.
+is none), where it used to ask the user's browser tab.
 
 Discriminates: passes on dev 1c010b438; with a20b622ba's backend hunks reverted in a backend copy
 the working-directory-off test and both `always` tests fail (the description names the folder; the
@@ -42,7 +40,7 @@ leaves `run_command` without the folder line. Its prompt is read for the person 
 when that read fails or is empty, taken as it was read when the connection was saved; a terminal
 that does not announce a prompt (`features.system` in `/api/config`) is not asked for one. A
 shell check that fails, answers something else than a shell's output or takes more than five
-seconds hides the shell tools. A personal terminal that is not the picked one offers none.
+seconds hides the shell tools.
 
 Discriminates (dev c15f28649, each in a backend copy): the folder line added whatever the
 terminal answered turns the folder test red (and the working-directory-off test); the saved
@@ -50,8 +48,7 @@ prompt never used, the two fallback cases of the prompt test, and the saved prom
 its first case; the `features.system` check dropped, the first two cases of the announce test,
 and the status of `/api/config` ignored, its third; any answer to the shell check taken as an
 open shell, the failed-check test (and the `auto` tests); the five second limit on the check
-removed, the slow test; the note on `read_user_terminal` dropped, the `always` test; the
-picked-terminal condition dropped, the not-picked test.
+removed, the slow test; the note on `read_user_terminal` dropped, the `always` test.
 """
 
 from __future__ import annotations
@@ -109,10 +106,6 @@ SPEC = {
         },
     },
 }
-PERSONAL_SPECS = [
-    {"name": name, "description": name, "parameters": {"type": "object", "properties": {}}}
-    for name in ("run_command", *sorted(SHELL_TOOLS))
-]
 
 
 @pytest.fixture
@@ -260,31 +253,6 @@ def test_user_shell_tools_auto_follows_the_open_shell(admin, terminal, member, u
             assert chat.status_code == 200, (
                 f"the shell check named no chat of the user: {check.headers}"
             )
-
-
-@pytest.mark.parametrize("setting", ["always", "auto"])
-def test_a_personal_terminal_carries_its_user_shell_tools_setting(
-    make_user, upstream, direct_integrations, setting
-):
-    direct_integrations(True)
-    # personal terminals need the direct tool servers permission, which admins have
-    owner = make_user(role="admin")
-    address = f"http://127.0.0.1:9/{uuid.uuid4().hex[:6]}"
-    personal = {
-        "url": address,
-        "key": "",
-        "is_terminal": True,
-        "specs": PERSONAL_SPECS,
-        "config": {"user_shell_tools": setting},
-    }
-
-    request = _chat_request(owner, upstream, terminal_id=address, tool_servers=[personal])
-
-    offered = _offered(request).keys()
-    assert "run_command" in offered
-    assert (SHELL_TOOLS <= offered) is (setting == "always"), (
-        f"a personal terminal set to {setting!r} with its shell closed offered {sorted(offered)}"
-    )
 
 
 def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_key_as_bearer(
@@ -566,26 +534,3 @@ def test_a_shell_check_the_terminal_never_answers_does_not_hold_the_turn(
         answered.set()
 
     assert "run_command" in offered and not SHELL_TOOLS & offered.keys(), sorted(offered)
-
-
-def test_a_personal_terminal_that_is_not_the_picked_one_offers_no_shell_tools(
-    make_user, upstream, direct_integrations
-):
-    direct_integrations(True)
-    owner = make_user(role="admin")
-    address = f"http://127.0.0.1:9/{uuid.uuid4().hex[:6]}"
-    personal = {
-        "url": address,
-        "key": "",
-        "is_terminal": True,
-        "specs": PERSONAL_SPECS,
-        "config": {"user_shell_tools": "always"},
-    }
-
-    picked = _offered(_chat_request(owner, upstream, terminal_id=address, tool_servers=[personal]))
-    not_picked = _offered(_chat_request(owner, upstream, tool_servers=[personal]))
-
-    assert SHELL_TOOLS <= picked.keys(), f"the picked terminal offered {sorted(picked)}"
-    assert "run_command" in not_picked and not SHELL_TOOLS & not_picked.keys(), (
-        f"with no terminal picked the model got {sorted(not_picked)}"
-    )
