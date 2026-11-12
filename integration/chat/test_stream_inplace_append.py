@@ -859,7 +859,7 @@ def test_two_models_answering_at_once_keep_their_own_text(streaming, owner, seco
         {"model_id": reply.MOCK_MODEL_ID, "message_id": first_id, "modelIdx": 0},
         {"model_id": SECOND_MODEL, "message_id": second_id, "modelIdx": 1},
     ]
-    with connected(owner) as socket, owner.client() as client:
+    with connected(owner, in_order=True) as socket, owner.client() as client:
         turn = send_message(client, "both of you", id=first_id, message_ids=message_ids)
         replies = {
             message_id: wait_for_reply(
