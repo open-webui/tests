@@ -242,6 +242,13 @@ def open_pinned_model_tab(page: Page, model_name: str, place: str = SIDE_CHAT) -
     return surface
 
 
+def open_chat_tab_from(page: Page, link: Locator, place: str = SIDE_CHAT) -> ChatSurface:
+    """Click `link`, which opens a new chat in a tab (a `/?model=` link since da850248d)."""
+    before = _panel_ids(page)
+    link.click()
+    return _new_panel(page, before, place)
+
+
 def reload_beside_the_chat(side: ChatSurface, title: str) -> ChatSurface:
     """Reload with the main tab selected and select the saved side tab titled `title` again."""
     page = side.page

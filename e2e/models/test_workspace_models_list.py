@@ -2,8 +2,9 @@
 
 A builder finds a model of their own in Workspace > Models by searching for its name. The name is a
 link to the model's editor, and the arrow beside it, "Try in chat", opens a new chat already on
-that model. The row's Enabled switch, named after the model, stores the model as off or on, and a
-model switched off leaves the chat's model selector straight away, without a reload.
+that model, in a tab beside the list since dev da850248d. The row's Enabled switch, named after
+the model, stores the model as off or on, and a model switched off leaves the chat's model selector
+straight away, without a reload.
 
 Discriminates: in a frontend build with the name linking to a chat again (the editor link gone),
 the editor test goes red; with the arrow, the named switch or the model-list refresh after a
@@ -19,7 +20,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input
+from utils.chat_surface import open_chat_tab_from
 from utils.model_selector import model_options
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -74,11 +75,11 @@ def test_try_in_chat_opens_a_chat_on_that_model(page_for, builder, own_model):
     page = page_for(builder)
     find_in_list(page, own_model)
 
-    page.get_by_role("link", name=f"Try in chat: {own_model['name']}").click()
+    try_in_chat = page.get_by_role("link", name=f"Try in chat: {own_model['name']}")
+    chat = open_chat_tab_from(page, try_in_chat)
 
-    expect(chat_input(page)).to_be_visible()
     expect(page).to_have_url(re.compile(r"\?model=" + own_model["id"]))
-    expect(page.get_by_role("button", name=f"Selected model: {own_model['name']}")).to_be_visible()
+    expect(chat.button(f"Selected model: {own_model['name']}")).to_be_visible()
 
 
 def test_the_rows_switch_turns_the_model_off_and_on_and_the_selector_follows(
@@ -94,12 +95,12 @@ def test_the_rows_switch_turns_the_model_off_and_on_and_the_selector_follows(
     expect(switch).not_to_be_checked()
     expect(switch).to_be_enabled()
     assert stored_is_active(builder, own_model["id"]) is False
-    page.get_by_role("link", name=f"Try in chat: {own_model['name']}").click()
-    expect(chat_input(page)).to_be_visible()
-    expect(model_options(page, MOCK_MODEL_ID)).to_have_count(1)  # the list has loaded
-    expect(model_options(page, own_model["name"])).to_have_count(0)
+    chat = open_chat_tab_from(
+        page, page.get_by_role("link", name=f"Try in chat: {own_model['name']}")
+    )
+    expect(model_options(chat, MOCK_MODEL_ID)).to_have_count(1)  # the list has loaded
+    expect(model_options(chat, own_model["name"])).to_have_count(0)
 
-    page.go_back()
     find_in_list(page, own_model)
     switch = page.get_by_role("switch", name=f"Enabled: {own_model['name']}")
     switch.click()

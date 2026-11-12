@@ -25,7 +25,8 @@ from harness import chat
 from harness import upstream as reply
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, expect_reply, send
+from utils.chat_surface import open_chat_tab_from
+from utils.chat_ui import chat_input
 from utils.notes_page import note_row
 from utils.tooltips import tooltip_button
 
@@ -85,14 +86,15 @@ def test_a_pinned_model_opens_a_chat_with_that_model(page_for, pinned_model, ups
     page.get_by_role("link", name="New Chat").first.click()
     sidebar = _sidebar(page)
 
-    sidebar.get_by_role("link", name=model_id).click()
+    # since dev da850248d the pin opens its new chat in a tab beside the open chat
+    chat = open_chat_tab_from(page, sidebar.get_by_role("link", name=model_id))
 
     expect(page).to_have_url(f"/?model={model_id}")
-    expect(page.get_by_role("button", name=f"Selected model: {model_id}")).to_be_visible()
+    expect(chat.button(f"Selected model: {model_id}")).to_be_visible()
     prompt = "which model is this?"
     upstream.queue(reply.text("answered by the pin", match=reply.answering(prompt)))
-    send(page, prompt)
-    expect_reply(page, "answered by the pin")
+    chat.send(prompt)
+    chat.expect_reply("answered by the pin")
     sent = [body for body in upstream.chat_requests() if reply.answering(prompt)(body)]
     assert PINNED_MODEL_SYSTEM_PROMPT in json.dumps(sent[-1]["messages"])
 
