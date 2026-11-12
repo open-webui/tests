@@ -6,7 +6,7 @@ matching files with their paths, the arrow keys move the pick, Enter opens the p
 tab of its own (or selects its tab when it is already open), Escape or Ctrl+P again closes it
 without opening anything, and a name nothing matches says so. A file opened this way is one of
 the chat's saved tabs and is back after a reload. An empty Quick Open offers nothing yet, where
-an editor's Quick Open starts with the recently opened files; that gap is a strict xfail.
+an editor's Quick Open starts with the recently opened files; that gap is a plain red test.
 
 New File in the New tab menu opens an Untitled tab. It is marked unsaved once typed into; Save
 asks for a name in a Save As dialog, refuses a name with a slash, asks before replacing an
@@ -289,12 +289,10 @@ def test_leaving_the_page_with_an_unsaved_new_file_asks_first(chat, folder):
     expect(panel).to_contain_text("Spring tide notes, not saved yet.")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: an empty Quick Open lists no files, not even the ones just opened, "
-    "where an editor's Quick Open starts with the recently opened files",
-)
 def test_an_empty_quick_open_offers_the_files_opened_recently(chat, folder):
+    """Red: an empty Quick Open lists no files, not even the ones just opened, where an editor's
+    Quick Open starts with the recently opened files (a gap, no filed issue).
+    """
     expect(chat_input(chat)).to_be_focused()
     _open_by_name(chat, folder, "tide-notes.txt")
 
