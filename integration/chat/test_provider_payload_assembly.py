@@ -38,7 +38,9 @@ Nine 0.11.1 fixes land on the request body that reaches the provider:
   were never in the request, and the empty text of their assistant turns let proxies insert
   placeholder text. Now a list goes out only when it changed or is no longer among the messages
   sent (first turn, after compaction), memories already in them are not recalled again, the
-  three tools are declared and those turns carry no text.
+  three tools are declared and those turns carry no text. Memories still go out only with Memory
+  on in the chat and the memories permission, also when a tool of the user's own is named
+  recall_memories.
 
 Stored history is created through the chats API and continued the way the web client
 continues a chat, so the server rebuilds the payload from what it stored.
@@ -63,6 +65,8 @@ without the llama.cpp reasoning format, the second message fails.
 The #34257 once-per-chat, declared-tools and no-text tests fail on dev 2547992b8 (four copies
 each, none of the three tools declared, empty text) and pass on the fix branch
 fix/skills-list-repeated-every-turn (e5e2fbbf0); the new-skill and compaction tests pass on both.
+The own-tool memory test passes on dev 2547992b8 and fails on e5e2fbbf0, which sent the memories
+with Memory off and without the permission whenever a tool named recall_memories was enabled.
 """
 
 from __future__ import annotations
@@ -76,7 +80,7 @@ from harness import second_provider
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.knowledge_bases import knowledge_base
 from harness.listener import Answer, ReceivedRequest, json_answer
-from harness.python_tools import EVERYONE_READS
+from harness.python_tools import EVERYONE_READS, python_tool
 from harness.upstream import CONTEXT_TOOLS, MOCK_MODEL_ID, context_results, conversation
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -801,6 +805,40 @@ def test_compaction_lists_the_context_again(admin, preserve, upstream, context_c
     copies = _context_copies(_last_chat_request(upstream))
     missing = [name for name, count in copies.items() if not count]
     assert not missing, f"after compaction the model no longer has {missing}: {copies}"
+
+
+OWN_RECALL_TOOL = '''
+class Tools:
+    async def recall_memories(self) -> str:
+        """Retrieve all stored memories for the user."""
+        return "nothing stored here"
+'''
+
+
+@pytest.mark.parametrize("gate", ["memory switched off", "memories not permitted"])
+def test_an_own_recall_memories_tool_sends_no_memories_past_the_gate(
+    admin, preserve, upstream, context_chat, gate
+):
+    account, model_id = context_chat
+    features = {"memory": True}
+    if gate == "memory switched off":
+        features = {}
+    else:
+        preserve("permissions")
+        with admin.client() as client:
+            current = client.get("/api/v1/users/default/permissions").json()
+            barred = {**current, "features": {**current["features"], "memories": False}}
+            client.post("/api/v1/users/default/permissions", json=barred).raise_for_status()
+    with (
+        python_tool(admin, OWN_RECALL_TOOL, name="Memory mimic") as tool_id,
+        account.client() as client,
+    ):
+        turn = send_message(client, "hello", model=model_id, tool_ids=[tool_id], features=features)
+        replied = wait_for_reply(client, turn)
+        assert not replied.get("error"), f"the chat failed: {replied}"
+
+    recalled = context_results(_last_chat_request(upstream), "recall_memories")
+    assert recalled == [], f"memories reached the model with {gate}: {recalled}"
 
 
 # --- #28292: memories sharing a timestamp come out in one order ------------------------------
