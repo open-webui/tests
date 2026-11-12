@@ -11,9 +11,10 @@ all reach the model as the tool's result with an `error` in it, and the reply go
 of a timed out call is empty on dev, which leaves the model without a reason (red test, draft
 issue named in it). A terminal whose tool list cannot be read (the document answers an error,
 has no `paths`, or has no operation) fails the reply with "Terminal unavailable: ..." before the
-model is asked; a YAML document is read like a JSON one. A `terminal_id` that is none of the
-person's terminals, and any terminal on a model whose Terminal capability is off, is passed
-over: the model answers without terminal tools.
+model is asked, and so does a `terminal_id` that is none of the person's terminals (since
+44d55bd0f; before, it was passed over); a YAML document is read like a JSON one. Any terminal
+on a model whose Terminal capability is off is passed over: the model answers without terminal
+tools.
 
 Discriminates: passes on dev c15f28649. In a backend copy, each of these turned the named test
 red and left the others green: the bearer key sent for every Auth setting (credential test, none
@@ -24,8 +25,7 @@ returned by the call nor caught around it (gone, slow and refusal tests: the rep
 error; with only the first undone the model is still handed the error); a document without
 `paths` accepted, a terminal without a tool list taken as one with none, and the "has no
 available tools" check dropped (one case each of the unusable tool list test); YAML no longer
-read (YAML test, both cases); the check that the terminal is one of the person's dropped
-(unknown terminal test: the reply fails); the Terminal capability ignored (capability test). The
+read (YAML test, both cases); the Terminal capability ignored (capability test). The
 timed-out test is red on dev c15f28649 and on v0.13.3 (the error is empty) and passes with the
 timeout's name used as the error text.
 """
@@ -384,19 +384,24 @@ def test_a_terminal_that_describes_its_tools_in_yaml_serves_the_model(
     assert len(terminal.requests_to("/execute")) == 1
 
 
-def test_a_terminal_id_that_is_none_of_the_persons_terminals_is_passed_over(
+def test_a_terminal_id_that_is_none_of_the_persons_terminals_fails_the_message(
     admin, terminal, member, upstream
 ):
     terminal_id = _connect(admin, terminal, member)
     known = _plain_turn(member, upstream, terminal_id=terminal_id)
     assert "run_command" in _offered(upstream, known), "the person's own terminal gave no tools"
     terminal.clear()
+    unknown_id = f"terminal-{uuid.uuid4().hex[:8]}"
+    prompt = _prompt()
 
-    unknown = _plain_turn(member, upstream, terminal_id=f"terminal-{uuid.uuid4().hex[:8]}")
+    with member.client() as client:
+        message = wait_for_reply(client, send_message(client, prompt, terminal_id=unknown_id))
 
-    assert "run_command" not in _offered(upstream, unknown), (
-        f"a terminal that does not exist gave the model {_offered(upstream, unknown)}"
+    failure = (message.get("error") or {}).get("content", "")
+    assert failure.startswith("Terminal unavailable:") and unknown_id in failure, (
+        f"the message did not fail on the unknown terminal: {message}"
     )
+    assert not _requests_answering(upstream, prompt), "the model was asked all the same"
     assert not terminal.received, (
         f"the person's terminal was called for another id: {[r.path for r in terminal.received]}"
     )
