@@ -489,7 +489,8 @@ def _as_fast_as(alone: float) -> float:
 )
 def test_file_requests_are_as_fast_with_many_pages_watching_as_with_none(way_to, through, crowd):
     """Watchers must not be able to starve file requests, however many there are
-    (open-webui/open-terminal#230).
+    (open-webui/open-terminal#230; the fix is on
+    Classic298/open-terminal:fix-file-requests-slow-with-many-watchers).
 
     A higher limit is a stopgap: the count must return to baseline.
     """
