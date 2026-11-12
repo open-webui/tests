@@ -71,7 +71,8 @@ def test_at_a_larger_ui_scale_the_conversation_starts_below_the_tab_bar(page_for
 @pytest.mark.parametrize("path", PAGES)
 def test_the_page_top_bar_does_not_blur_the_background(path, page_for, make_user):
     page: Page = page_for(account_with(make_user, backgroundImageUrl=BACKGROUND), path=path)
-    navigation = page.get_by_role("main").locator("nav").first
+    # pages open as tabs beside the chat since dev da850248d, whose own top bar is then hidden
+    navigation = page.get_by_role("main").locator("nav").filter(visible=True).first
     expect(navigation).to_be_visible()
 
     blurs = page.locator("nav").evaluate_all(
