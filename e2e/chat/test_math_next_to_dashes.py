@@ -9,6 +9,14 @@ and after a delimiter (spaces, commas, brackets) and left both dashes out, for `
 Discriminates: passes on the dev b859124f9 build, fails on that build with 8e03389de reverted
 (the formulas touching a dash show as plain text, so fewer rendered formulas than written).
 
+The hyphen U+2010 and the non-breaking hyphen U+2011 were still missing from that list (issue
+open-webui/open-webui#34237). Models such as gpt-oss write U+2011 in most replies, so
+"\\(x^2\\)‑term" stayed plain text, and with a second formula later in the paragraph the text
+between the two went to KaTeX as one red error.
+
+Discriminates: the hyphen cases fail on dev 2547992b8 (only one of the three formulas renders)
+and pass with the fix for #34237.
+
 Every case runs in the main chat and in a side chat, the saved chat dragged into a tab beside a
 new chat (`utils/chat_surface.py`).
 """
@@ -45,4 +53,30 @@ def test_three_formulas_touching_dashes_all_render(chat_for, make_user, form, da
     reply = last_reply(chat)
     expect(reply).to_contain_text("in one equation")
     expect(reply.locator(".katex")).to_have_count(3)
+    expect(reply).not_to_contain_text("\\(")
+
+
+HYPHENS = {"a non-breaking hyphen": chr(0x2011), "a hyphen": chr(0x2010)}
+HYPHEN_FORMS = {
+    "parentheses": "\\(x^2\\)-term\n\\(x^2\\){h}term\npre{h}\\(x^2\\)",
+    "dollars": "$x^2$-term\n$x^2${h}term\npre{h}$x^2$",
+}
+
+
+@pytest.mark.parametrize("form", HYPHEN_FORMS)
+@pytest.mark.parametrize("hyphen", HYPHENS)
+def test_formulas_touching_unicode_hyphens_all_render(chat_for, make_user, form, hyphen):
+    written = HYPHEN_FORMS[form].format(h=HYPHENS[hyphen])
+    owner = make_user()
+    with owner.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [{"role": "user", "content": "Squares?"}, {"role": "assistant", "content": written}],
+        )
+    chat = chat_for(owner, chat_id=chat_id)
+
+    reply = last_reply(chat)
+    expect(reply).to_contain_text(f"pre{HYPHENS[hyphen]}")
+    expect(reply.locator(".katex")).to_have_count(3)
+    expect(reply.locator(".katex-error")).to_have_count(0)
     expect(reply).not_to_contain_text("\\(")
