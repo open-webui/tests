@@ -32,15 +32,12 @@ from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
 from harness.local_voices import local_voices_env, save_tiny_speech, speaker
 from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT, ChatOpener
+from utils.speech_audio import READ_ALOUD_PLAYED
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 ANSWER = "The keeper lights the lamp at dusk."
 FIRST_SPEAKER = speaker(12)
-# each chat has an audio element of its own since da850248d, which took the page's one away
-PLAYED = """() => [...document.querySelectorAll('audio')].some(
-    (audio) => audio.src.startsWith('blob:') && audio.played.length > 0
-)"""
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +89,7 @@ def test_an_answer_is_read_aloud_by_the_local_voice(speaking_chat_for, speaking)
         chat.panel.get_by_role("button", name="Read Aloud").click()
 
     assert spoken.value.ok, spoken.value.text()
-    page.wait_for_function(PLAYED)
+    page.wait_for_function(READ_ALOUD_PLAYED)
     expect(page.get_by_text("Audio playback failed")).to_have_count(0)
 
 
@@ -140,7 +137,7 @@ def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking_
         with page.expect_response(_is_speech) as spoken:
             chat.panel.get_by_role("button", name="Read Aloud").click()
         assert spoken.value.ok, spoken.value.text()
-        page.wait_for_function(PLAYED)
+        page.wait_for_function(READ_ALOUD_PLAYED)
         with owner.client() as client:
             # the same body again is answered from the cache: the speech the browser played
             replayed = client.post(

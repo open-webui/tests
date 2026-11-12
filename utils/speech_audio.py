@@ -7,6 +7,11 @@ import wave
 
 SAMPLE_RATE = 8000
 
+# each chat has an audio element of its own since da850248d, which took the page's one away
+READ_ALOUD_PLAYED = """() => [...document.querySelectorAll('audio')].some(
+    (audio) => audio.src.startsWith('blob:') && audio.played.length > 0
+)"""
+
 
 def silent_wav(seconds: float) -> bytes:
     recording = io.BytesIO()

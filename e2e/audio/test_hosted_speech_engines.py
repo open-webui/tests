@@ -29,7 +29,7 @@ from harness.chat_history import seed_chat
 from harness.hosted_speech import serving_speech_hosts, speech_hosts_env
 from harness.listener import json_answer
 from utils.chat_ui import chat_input, conversation
-from utils.speech_audio import silent_wav
+from utils.speech_audio import READ_ALOUD_PLAYED, silent_wav
 
 pytestmark = [
     pytest.mark.journey,
@@ -43,10 +43,6 @@ DEEPGRAM_KEY = "deepgram-key-0123456789"
 ADMIN_VOICE = "harbour-voice-01"
 OWN_VOICE = "gull-voice-02"
 MODEL = "eleven_multilingual_v2"
-PLAYED = """() => {
-    const audio = document.getElementById('audioElement');
-    return audio.src.startsWith('blob:') && audio.played.length > 0;
-}"""
 
 
 @pytest.fixture(scope="module")
@@ -137,7 +133,7 @@ def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
     expect(page.get_by_text(answer)).to_be_visible()
     page.get_by_role("button", name="Read Aloud").click()
 
-    page.wait_for_function(PLAYED)
+    page.wait_for_function(READ_ALOUD_PLAYED)
     [request] = services.requests_to(f"/v1/text-to-speech/{OWN_VOICE}")
     assert request.headers.get("xi-api-key") == ELEVENLABS_KEY
     assert (request.json()["text"], request.json()["model_id"]) == (answer, MODEL)

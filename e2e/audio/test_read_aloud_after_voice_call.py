@@ -43,11 +43,10 @@ from utils.voice_call import (
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-IS_MUTED = "() => document.getElementById('audioElement').muted"
-IS_PLAYING = """() => {
-    const audio = document.getElementById('audioElement');
-    return !audio.paused && audio.played.length > 0;
-}"""
+# each chat has an audio element of its own since da850248d, so look at whichever one plays
+PLAYING_MUTED = """() => [...document.querySelectorAll('audio')]
+    .filter((audio) => !audio.paused && audio.played.length > 0)
+    .map((audio) => audio.muted)"""
 
 
 def test_read_aloud_plays_unmuted_after_a_call_ends(
@@ -76,9 +75,10 @@ def test_read_aloud_plays_unmuted_after_a_call_ends(
     expect(page.get_by_role("button", name="End call")).to_have_count(0)
     expect_screen_kept_on(page, False)
     # what an ended call did to the shared player before 78613d86f, and anything else may do
-    page.evaluate("() => { document.getElementById('audioElement').muted = true; }")
+    page.evaluate("() => document.querySelectorAll('audio').forEach((a) => { a.muted = true; })")
 
     page.get_by_role("button", name="Read Aloud").last.click()
 
-    page.wait_for_function(IS_PLAYING)
-    assert not page.evaluate(IS_MUTED), "Read Aloud is playing on a muted audio element"
+    page.wait_for_function(f"() => ({PLAYING_MUTED})().length > 0")
+    playing = page.evaluate(PLAYING_MUTED)
+    assert playing == [False], f"Read Aloud is playing on a muted audio element: {playing}"

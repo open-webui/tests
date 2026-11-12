@@ -44,6 +44,7 @@ from harness.audio_engine import (
 from harness.chat_history import seed_chat
 from harness.listener import Listener, json_answer
 from utils.chat_ui import chat_input
+from utils.speech_audio import READ_ALOUD_PLAYED
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -54,10 +55,6 @@ AZURE_VOICE = "de-AT-IngridNeural"
 AZURE_FORMAT = "audio-16khz-32kbitrate-mono-mp3"
 MISTRAL_KEY = "mistral-key-0123456789"
 MISTRAL_VOICE = "storyteller-voice"
-PLAYED = """() => {
-    const audio = document.getElementById('audioElement');
-    return audio.src.startsWith('blob:') && audio.played.length > 0;
-}"""
 COUNT_SPEECH = """() => {
     window.speechCalls = 0;
     const fetchOriginal = window.fetch;
@@ -183,7 +180,7 @@ def read_aloud(page: Page, actor, answer: str) -> None:
     with page.expect_response(_is_speech) as spoken:
         page.get_by_role("button", name="Read Aloud").click()
     assert spoken.value.ok, spoken.value.text()
-    page.wait_for_function(PLAYED)
+    page.wait_for_function(READ_ALOUD_PLAYED)
 
 
 def dictate(page: Page) -> None:
@@ -353,7 +350,7 @@ def test_response_splitting_decides_how_many_speech_requests_a_reply_makes(
     open_answer(page, reader, answer)
     page.get_by_role("button", name="Read Aloud").click()
     page.wait_for_function(f"() => window.speechCalls >= {parts}")
-    page.wait_for_function(PLAYED)
+    page.wait_for_function(READ_ALOUD_PLAYED)
 
     sent = [request["input"] for request in speech_engine.speech_requests()]
     assert sent == expected, f"{split} splitting sent {sent}"
