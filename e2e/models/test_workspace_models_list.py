@@ -57,7 +57,13 @@ def stored_is_active(builder, model_id: str) -> bool:
 
 def find_in_list(page: Page, model: dict) -> None:
     page.goto("/workspace/models")
-    page.get_by_role("textbox", name="Search Models").fill(model["name"])
+
+    def is_search(response) -> bool:
+        return "/api/v1/models/list" in response.url and "query=" in response.url
+
+    # the list reloads when the search answers, which undoes a switch clicked before that
+    with page.expect_response(is_search):
+        page.get_by_role("textbox", name="Search Models").fill(model["name"])
     expect(page.get_by_role("link", name=model["name"], exact=True)).to_be_visible()
 
 

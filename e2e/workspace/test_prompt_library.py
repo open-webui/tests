@@ -136,11 +136,18 @@ def test_a_switched_off_prompt_leaves_the_slash_menu_until_switched_on(page_for,
     add(switched, "Write a short memo.")
     page = page_for(account)
 
+    def is_search(response) -> bool:
+        return "/api/v1/prompts/list" in response.url and "query=" in response.url
+
     def flip(expected: str) -> None:
         page.goto("/workspace/prompts")
-        page.get_by_role("textbox", name="Search Prompts").fill(switched)
+        # the list reloads when the search answers, which undoes a switch clicked before that
+        with page.expect_response(is_search):
+            page.get_by_role("textbox", name="Search Prompts").fill(switched)
         row = item_row(page, f"Prompt {switched}")
-        row.get_by_role("switch").click()
+        # the page does not wait for the toggle, so the next page could still read the old state
+        with page.expect_response(lambda response: response.url.endswith("/toggle")):
+            row.get_by_role("switch").click()
         expect(row.get_by_role("switch")).to_have_attribute("aria-checked", expected)
 
     flip("false")
