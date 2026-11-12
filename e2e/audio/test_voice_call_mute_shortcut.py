@@ -15,7 +15,7 @@ and End call button when the first message saves the chat, and a standard call's
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from utils.chat_ui import chat_input, expect_reply
 from utils.voice_call import (
@@ -38,6 +38,11 @@ def finish_turn(page: Page, speech_engine, turn: int) -> None:
     expect(call_status(page, "Listening...")).to_be_visible(timeout=TURN_TIMEOUT_MS)
 
 
+def hidden_chat_box(page: Page) -> Locator:
+    # the chat's box behind the selected Voice tab, which the shortcut must not type into
+    return page.locator("#chat-input")
+
+
 def test_m_mutes_the_call_after_a_turn(voice_page_for, make_user, speech_engine):
     page = voice_page_for(make_user())
     start_call(page)
@@ -47,7 +52,7 @@ def test_m_mutes_the_call_after_a_turn(voice_page_for, make_user, speech_engine)
 
     expect(call_status(page, "Muted")).to_be_visible()
     expect(page.get_by_role("button", name="Unmute")).to_be_visible()
-    expect(chat_input(page)).to_have_text("")
+    expect(hidden_chat_box(page)).to_have_text("")
 
 
 def test_m_keeps_working_turn_after_turn(voice_page_for, make_user, speech_engine):
@@ -62,7 +67,7 @@ def test_m_keeps_working_turn_after_turn(voice_page_for, make_user, speech_engin
     page.keyboard.press("m")
 
     expect(call_status(page, "Muted")).to_be_visible()
-    expect(chat_input(page)).to_have_text("")
+    expect(hidden_chat_box(page)).to_have_text("")
 
 
 def test_typing_m_into_the_chat_box_during_a_call_still_types(
