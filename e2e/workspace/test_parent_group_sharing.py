@@ -41,6 +41,7 @@ from harness.python_tools import EVERYONE_READS
 from utils.chat_ui import chat_input, open_integrations_menu
 from utils.member_picker import pick_member
 from utils.notes_page import note_rows
+from utils.page_tabs import expect_no_permission
 from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -357,8 +358,9 @@ def test_a_workspace_permission_on_the_parent_lets_a_subgroup_member_create_a_pr
     expect(page).to_have_url(re.compile("/workspace/prompts"))
 
     outsider_page = page_for(outsider, path="/workspace/prompts")
-    expect(chat_input(outsider_page)).to_be_visible()
-    expect(outsider_page).not_to_have_url(re.compile("/workspace"))
+    # a refused workspace page keeps its address and says so since dev da850248d
+    expect_no_permission(outsider_page, "/workspace/prompts")
+    expect(item_row(outsider_page, name)).to_have_count(0)
 
 
 def test_a_subgroup_member_shares_a_note_with_a_members_only_parent(
