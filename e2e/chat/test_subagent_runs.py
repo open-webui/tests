@@ -227,12 +227,13 @@ def test_a_subagent_stops_at_the_iteration_limit_and_says_so(
 
     expect_reply(chat, "It gave up.")
     sub_row(chat, task).click()
-    # since d87837372 the request after the last allowed round withdraws the tools for an answer,
-    # and a call the model still makes there fails with the limit
+    # since d87837372 the request after the last allowed round turns tool calls off for an answer,
+    # and a call the model still makes there fails with the limit; since #34176 it keeps the tools
     expect(last_reply(chat)).to_contain_text("Tool-call iteration limit reached.")
     requests = sub_requests(upstream, task)
     assert len(requests) == 3
-    assert requests[-1].get("tool_choice") == "none" and not requests[-1].get("tools"), requests[-1]
+    assert requests[-1].get("tool_choice") == "none", requests[-1]
+    assert requests[-1].get("tools") == requests[0].get("tools"), requests[-1]
 
 
 def test_a_subagent_answer_longer_than_the_output_limit_is_cut(
