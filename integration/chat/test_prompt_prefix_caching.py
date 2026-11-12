@@ -717,13 +717,14 @@ def context_account(cached_setup, admin, make_user):
     account, skills = make_user(), []
 
     def add_skill(name: str) -> None:
-        skill_id = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}"
+        tag = uuid.uuid4().hex[:6]
+        skill_id = f"{name.lower().replace(' ', '-')}-{tag}"
         with admin.client() as client:
             created = client.post(
                 "/api/v1/skills/create",
                 json={
                     "id": skill_id,
-                    "name": name,
+                    "name": f"{name} {tag}",
                     "description": f"Reads {name.lower()}.",
                     "content": f"Read the {name.lower()} line by line.",
                     "meta": {},
