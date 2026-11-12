@@ -1,13 +1,15 @@
 """Journey: the pull requests of a repository in the Git panel under a chat's Files tab.
 
 When the terminal says a repository's pull requests can be reached (it has the `gh` CLI signed
-in), the Git panel offers a Pull requests view beside Changes and History. A person lists the
-pull requests that are open, closed or all of them, narrows the list by number or title, opens
-one to read its summary, its code, its checks and its activity, starts a new one from the branch
-that is checked out against the repository's default branch, edits one, checks one out, comments
-on it, approves it or asks for changes, merges it the way they pick, marks a draft ready, closes
-it and opens it again. What needs a second thought (merge, close, approve, request changes) asks
-first, and a refusal of the terminal is shown in its own words.
+in), the Git panel offers a Pull requests view beside Changes and History. A person filters the
+list to the pull requests that are open, closed, merged or all of them, narrows it by number or
+title, opens one to read its summary, its code, its checks and its activity, starts a new one
+from the branch that is checked out against the repository's default branch, edits one, checks
+one out, comments on it, approves it or asks for changes, merges it the way they pick from the
+merge button's menu, marks a draft ready, closes it from its actions and opens it again. A
+conflicting pull request offers to resolve the conflicts in the chat instead of a merge. What
+needs a second thought (merge, close, approve, request changes) asks first, and a refusal of the
+terminal is shown in its own words.
 
 A real Open Terminal needs `gh` and a forge for this, so the terminal here is scripted: it keeps
 the pull requests of one repository and answers the `git/pr` calls the way Open Terminal 0.17.7
@@ -23,12 +25,14 @@ asking, a request for changes sent under another name or a comment sent without 
 review test fails; with every merge a squash, or a draft or a conflicting pull request mergeable,
 the merge test fails; with Close not asking, a closed pull request not offered to open again or
 a refusal of the terminal not shown, the close test fails. The test of the list after a rename
-and a close is red on that build (the list is not read again after a change).
+and a close is red on that build, where the list is not read again after a change
+(open-webui/open-webui#34098, fixed by c981f7661).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -118,6 +122,7 @@ def _serve_forge(server, forge: Forge) -> None:
                 wanted = {
                     "open": ("OPEN",),
                     "closed": ("CLOSED", "MERGED"),
+                    "merged": ("MERGED",),
                     "all": ("OPEN", "CLOSED", "MERGED"),
                 }[_query(request, "state")]
                 listed = [pr for pr in forge.pull_requests.values() if pr["state"] in wanted]
@@ -296,30 +301,42 @@ def _pull_requests(page_for, forge: Forge) -> tuple[Page, Locator]:
     return page, git
 
 
+ROW_NUMBER = re.compile(r"#(\d+) · ")
+
+
+def _rows(git: Locator) -> Locator:
+    """The list's rows: the title over `#number · author · ...`."""
+    return git.get_by_role("button").filter(has_text=ROW_NUMBER)
+
+
 def _listed(git: Locator, number: int) -> Locator:
-    return git.get_by_role("button", name=f"#{number} ")
+    return git.get_by_role("button").filter(has_text=f"#{number} · ")
 
 
-def _title_of_opened(git: Locator, text: str) -> Locator:
-    """The title above the opened pull request; its list row can carry the same text."""
-    return git.get_by_text(text, exact=True).and_(git.locator("span"))
+def _title_of_opened(git: Locator, number: int, title: str) -> Locator:
+    """The title above the opened pull request."""
+    return git.get_by_text(f"#{number} · {title}", exact=True)
 
 
 def _listed_numbers(git: Locator) -> list[int]:
-    rows = git.get_by_role("button").filter(has_text="#").all_inner_texts()
-    return [int(row.split()[0].lstrip("#")) for row in rows]
+    return [int(ROW_NUMBER.search(row).group(1)) for row in _rows(git).all_inner_texts()]
 
 
 def _expect_listed(git: Locator, numbers: list[int]) -> None:
-    expect(git.get_by_role("button").filter(has_text="#")).to_have_count(len(numbers))
+    expect(_rows(git)).to_have_count(len(numbers))
     assert _listed_numbers(git) == numbers, (
         f"the list shows the pull requests {_listed_numbers(git)}, expected {numbers}"
     )
 
 
-def _confirm(page: Page, action: str) -> None:
-    dialog = page.get_by_role("dialog").filter(has_text="Confirm pull request action")
-    expect(dialog).to_contain_text(action)
+def _show(page: Page, git: Locator, state: str) -> None:
+    git.get_by_role("button", name="Filter pull requests").click()
+    page.get_by_role("menu").get_by_role("menuitem", name=state, exact=True).click()
+
+
+def _confirm(page: Page, action: str, pull_request: str) -> None:
+    dialog = page.get_by_role("dialog", name=action)
+    expect(dialog).to_contain_text(pull_request)
     dialog.get_by_role("button", name="Confirm").click()
     expect(dialog).to_have_count(0)
 
@@ -347,16 +364,20 @@ def test_pull_requests_show_only_for_a_repository_that_has_them_and_list_by_stat
 
     # the open ones first, newest on top, a draft named as one
     _expect_listed(git, [16, 14, 12])
-    expect(_listed(git, 14)).to_contain_text("Draft")
-    expect(_listed(git, 12)).to_contain_text("ada · OPEN")
+    expect(_listed(git, 14)).to_contain_text("#14 · ada · Draft")
+    expect(_listed(git, 12)).to_contain_text("#12 · ada")
     expect(git.get_by_text("Select a pull request")).to_be_visible()
 
-    git.get_by_role("button", name="Closed", exact=True).click()
+    _show(page, git, "Closed")
     _expect_listed(git, [9, 7])
-    expect(_listed(git, 7)).to_contain_text("MERGED")
-    git.get_by_role("button", name="All", exact=True).click()
+    expect(_listed(git, 9)).to_contain_text("#9 · ada · Closed")
+    expect(_listed(git, 7)).to_contain_text("#7 · ada · Merged")
+    _show(page, git, "Merged")
+    _expect_listed(git, [7])
+    _show(page, git, "All")
     _expect_listed(git, [16, 14, 12, 9, 7])
-    assert [body["state"] for body in forge.asked_to("list")] == ["open", "closed", "all"], (
+    asked = [body["state"] for body in forge.asked_to("list")]
+    assert asked == ["open", "closed", "merged", "all"], (
         f"the terminal was asked for the lists {forge.asked_to('list')}"
     )
 
@@ -370,9 +391,8 @@ def test_pull_requests_show_only_for_a_repository_that_has_them_and_list_by_stat
 
     # a list the terminal cannot get says why, in the terminal's words
     forge.refusals["list"] = "gh: you are not signed in to github.com"
-    git.get_by_role("button", name="Open", exact=True).click()
-    # beside the list and beside the pull request
-    expect(git.get_by_role("alert").first).to_have_text("gh: you are not signed in to github.com")
+    _show(page, git, "Open")
+    expect(git.get_by_role("alert")).to_have_text("gh: you are not signed in to github.com")
 
 
 def test_a_pull_request_is_started_from_the_checked_out_branch_against_the_default_branch(
@@ -422,10 +442,10 @@ def test_an_opened_pull_request_shows_its_summary_its_code_its_checks_and_its_ac
     page, git = _pull_requests(page_for, forge)
     _listed(git, 12).click()
     expect(git.get_by_text("Six metres at low water.")).to_be_visible()
-    expect(git.get_by_text("OPEN · REVIEW_REQUIRED")).to_be_visible()
+    expect(git.get_by_text("Open · Review required")).to_be_visible()
     expect(git.get_by_text("ben", exact=True)).to_be_visible()
     expect(git.get_by_text("charts", exact=True)).to_be_visible()
-    expect(git.get_by_text("MERGEABLE", exact=True)).to_be_visible()
+    expect(git.get_by_text("No conflicts", exact=True)).to_be_visible()
 
     git.get_by_role("button", name="Code", exact=True).click()
     expect(git.get_by_text("east channel: six metres")).to_be_visible()
@@ -434,9 +454,9 @@ def test_an_opened_pull_request_shows_its_summary_its_code_its_checks_and_its_ac
 
     git.get_by_role("button", name="Checks", exact=True).click()
     expect(git.get_by_text("build", exact=True)).to_be_visible()
-    expect(git.get_by_text("SUCCESS", exact=True)).to_be_visible()
+    expect(git.get_by_text("success", exact=True)).to_be_visible()
     expect(git.get_by_text("soundings/lint", exact=True)).to_be_visible()
-    expect(git.get_by_text("FAILURE", exact=True)).to_be_visible()
+    expect(git.get_by_text("failure", exact=True)).to_be_visible()
 
     git.get_by_role("button", name="Activity", exact=True).click()
     expect(git.get_by_text("Checked against the lead line.")).to_be_visible()
@@ -472,7 +492,7 @@ def test_a_pull_request_is_edited_and_checked_out_from_its_actions(page_for, for
     git.get_by_role("button", name="Save", exact=True).click()
 
     expect(git.get_by_text("Six metres, sounded twice.")).to_be_visible()
-    expect(_title_of_opened(git, "#12 Chart the east channel at low water")).to_be_visible()
+    expect(_title_of_opened(git, 12, "Chart the east channel at low water")).to_be_visible()
     sent = forge.asked_to("edit")[-1]
     assert (sent["number"], sent["title"], sent["body"]) == (
         12,
@@ -500,9 +520,6 @@ def test_a_pull_request_is_commented_on_approved_and_sent_back_for_changes(page_
 
     comment.fill("The buoy moved in March.")
     send_comment.click()
-    # the summary shows again after each step; the comment is under Activity
-    expect(git.get_by_text("Six metres at low water.")).to_be_visible()
-    git.get_by_role("button", name="Activity", exact=True).click()
     expect(git.get_by_text("The buoy moved in March.")).to_be_visible()
     expect(comment).to_have_value("")
     sent = forge.asked_to("comment")[-1]
@@ -510,26 +527,27 @@ def test_a_pull_request_is_commented_on_approved_and_sent_back_for_changes(page_
 
     # a review asks first, and Cancel sends nothing
     git.get_by_role("button", name="Approve").click()
-    dialog = page.get_by_role("dialog").filter(has_text="Confirm pull request action")
-    expect(dialog).to_contain_text("approve #12: Chart the east channel")
+    dialog = page.get_by_role("dialog", name="Approve")
+    expect(dialog).to_contain_text("#12 · Chart the east channel")
     dialog.get_by_role("button", name="Cancel").click()
     expect(dialog).to_have_count(0)
     git.get_by_role("button", name="Approve").click()
-    _confirm(page, "approve #12: Chart the east channel")
-    expect(git.get_by_text("OPEN · APPROVED")).to_be_visible()
-    git.get_by_role("button", name="Activity", exact=True).click()
-    expect(git.get_by_text("cleo · APPROVED")).to_be_visible()
+    _confirm(page, "Approve", "#12 · Chart the east channel")
+    expect(git.get_by_text("cleo · Approved")).to_be_visible()
     assert [body["event"] for body in forge.asked_to("review")] == ["approve"], (
         f"the terminal got the reviews {forge.asked_to('review')}"
     )
+    git.get_by_role("button", name="Summary", exact=True).click()
+    expect(git.get_by_text("Open · Approved")).to_be_visible()
 
+    git.get_by_role("button", name="Activity", exact=True).click()
     comment.fill("Sound it again at springs.")
     ask_for_changes.click()
-    _confirm(page, "request-changes #12")
-    expect(git.get_by_text("OPEN · CHANGES_REQUESTED")).to_be_visible()
-    git.get_by_role("button", name="Activity", exact=True).click()
-    expect(git.get_by_text("cleo · CHANGES_REQUESTED")).to_be_visible()
+    _confirm(page, "Request changes", "#12 · Chart the east channel")
+    expect(git.get_by_text("cleo · Changes requested")).to_be_visible()
     expect(git.get_by_text("Sound it again at springs.")).to_be_visible()
+    git.get_by_role("button", name="Summary", exact=True).click()
+    expect(git.get_by_text("Open · Changes requested")).to_be_visible()
     sent = forge.asked_to("review")[-1]
     assert (sent["event"], sent["body"]) == ("request_changes", "Sound it again at springs."), sent
 
@@ -538,32 +556,33 @@ def test_a_pull_request_is_merged_the_way_picked_and_a_draft_or_a_conflict_canno
     page_for, forge
 ):
     page, git = _pull_requests(page_for, forge)
-    ways = [
-        git.get_by_role("button", name=way, exact=True) for way in ("Squash", "Merge", "Rebase")
-    ]
+    squash = git.get_by_role("button", name="Squash and merge", exact=True)
+    rebase = git.get_by_role("button", name="Rebase and merge", exact=True)
 
+    # a conflict is offered to the chat to resolve, never to merge
     _listed(git, 16).click()
-    expect(git.get_by_text("CONFLICTING", exact=True)).to_be_visible()
-    for way in ways:
-        expect(way).to_be_disabled()
+    expect(git.get_by_text("Conflicts", exact=True)).to_be_visible()
+    expect(git.get_by_role("button", name="Resolve conflicts in chat")).to_be_visible()
+    expect(squash).to_have_count(0)
 
     _listed(git, 14).click()
     expect(git.get_by_text("No description")).to_be_visible()
-    for way in ways:
-        expect(way).to_be_disabled()
-    git.get_by_role("button", name="Ready", exact=True).click()
-    for way in ways:
-        expect(way).to_be_enabled()
-    expect(git.get_by_role("button", name="Ready", exact=True)).to_have_count(0)
+    expect(squash).to_have_count(0)
+    git.get_by_role("button", name="Mark ready", exact=True).click()
+    expect(squash).to_be_enabled()
+    expect(git.get_by_role("button", name="Mark ready", exact=True)).to_have_count(0)
     assert [body["number"] for body in forge.asked_to("ready")] == [14]
 
     _listed(git, 12).click()
     expect(git.get_by_text("Six metres at low water.")).to_be_visible()
-    ways[2].click()
-    _confirm(page, "merge #12: Chart the east channel")
-    expect(git.get_by_text("MERGED · REVIEW_REQUIRED")).to_be_visible()
-    for way in ways:
-        expect(way).to_have_count(0)
+    git.get_by_role("button", name="Merge method").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Rebase and merge").click()
+    expect(squash).to_have_count(0)
+    rebase.click()
+    _confirm(page, "Rebase and merge", "#12 · Chart the east channel")
+    expect(git.get_by_text("Merged · Review required")).to_be_visible()
+    expect(rebase).to_have_count(0)
+    expect(git.get_by_role("button", name="Merge method")).to_have_count(0)
     sent = forge.asked_to("merge")
     assert [(body["number"], body["strategy"]) for body in sent] == [(12, "rebase")], (
         f"the terminal was asked to merge {sent}"
@@ -575,26 +594,28 @@ def test_a_pull_request_is_closed_after_a_question_and_opened_again(page_for, fo
     _listed(git, 12).click()
     expect(git.get_by_text("Six metres at low water.")).to_be_visible()
 
-    git.get_by_role("button", name="Close", exact=True).click()
-    _confirm(page, "close #12: Chart the east channel")
-    expect(git.get_by_text("CLOSED · REVIEW_REQUIRED")).to_be_visible()
-    expect(git.get_by_role("button", name="Squash", exact=True)).to_have_count(0)
+    squash = git.get_by_role("button", name="Squash and merge", exact=True)
+
+    _actions(page, git).get_by_role("menuitem", name="Close pull request").click()
+    _confirm(page, "Close pull request", "#12 · Chart the east channel")
+    expect(git.get_by_text("Closed · Review required")).to_be_visible()
+    expect(squash).to_have_count(0)
     assert [body["number"] for body in forge.asked_to("close")] == [12]
 
     git.get_by_role("button", name="Reopen", exact=True).click()
-    expect(git.get_by_text("OPEN · REVIEW_REQUIRED")).to_be_visible()
-    expect(git.get_by_role("button", name="Squash", exact=True)).to_be_enabled()
+    expect(git.get_by_text("Open · Review required")).to_be_visible()
+    expect(squash).to_be_enabled()
     assert [body["number"] for body in forge.asked_to("reopen")] == [12]
 
     # a refused step says why and leaves the pull request as it was
     forge.refusals["update-branch"] = "the branch is already up to date"
-    git.get_by_role("button", name="Update", exact=True).click()
+    _actions(page, git).get_by_role("menuitem", name="Update branch").click()
     expect(git.get_by_role("alert")).to_have_text("the branch is already up to date")
-    expect(git.get_by_text("OPEN · REVIEW_REQUIRED")).to_be_visible()
+    expect(git.get_by_text("Open · Review required")).to_be_visible()
 
 
 def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(page_for, forge):
-    """Red on dev c15f28649 (open-webui/open-webui#34098)."""
+    """Red on dev c15f28649 (open-webui/open-webui#34098, fixed by c981f7661)."""
     page, git = _pull_requests(page_for, forge)
     _listed(git, 12).click()
     expect(git.get_by_text("Six metres at low water.")).to_be_visible()
@@ -603,16 +624,17 @@ def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(
     _actions(page, git).get_by_role("menuitem", name="Edit").click()
     git.get_by_role("textbox", name="Pull request title").fill("Chart both channels")
     git.get_by_role("button", name="Save", exact=True).click()
-    expect(_title_of_opened(git, "#12 Chart both channels")).to_be_visible()
+    expect(_title_of_opened(git, 12, "Chart both channels")).to_be_visible()
     _wait_until(lambda: "Chart both channels" in _row(git, 12))
     if "Chart both channels" not in _row(git, 12):
         stale.append(f"renamed to Chart both channels, listed as {_row(git, 12)!r}")
 
-    git.get_by_role("button", name="Close", exact=True).click()
-    _confirm(page, "close #12: Chart both channels")
-    expect(git.get_by_text("CLOSED · REVIEW_REQUIRED")).to_be_visible()
-    _wait_until(lambda: "OPEN" not in _row(git, 12))
-    if "OPEN" in _row(git, 12):
+    _actions(page, git).get_by_role("menuitem", name="Close pull request").click()
+    _confirm(page, "Close pull request", "#12 · Chart both channels")
+    expect(git.get_by_text("Closed · Review required")).to_be_visible()
+    # the list shows the open ones
+    _wait_until(lambda: not _row(git, 12))
+    if _row(git, 12):
         stale.append(f"closed, listed among the open ones as {_row(git, 12)!r}")
 
     assert not stale, (
@@ -623,8 +645,11 @@ def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(
 
 def _row(git: Locator, number: int) -> str:
     """The list's row of the pull request, empty once it is no longer listed."""
-    rows = git.get_by_role("button").filter(has_text="#").all_inner_texts()
-    return next((" ".join(row.split()) for row in rows if row.split()[0] == f"#{number}"), "")
+    rows = _rows(git).all_inner_texts()
+    return next(
+        (" ".join(row.split()) for row in rows if ROW_NUMBER.search(row).group(1) == str(number)),
+        "",
+    )
 
 
 def _wait_until(condition, seconds: float = 5.0) -> None:
