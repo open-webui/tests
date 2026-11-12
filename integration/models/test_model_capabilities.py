@@ -50,7 +50,7 @@ CATEGORIES = {
         "replace_memory_content",
         "delete_memory",
     },
-    "chats": {"search_chats", "view_chat"},
+    "chats": {"search_chats", "view_chat", "search_users"},
     "notes": {"search_notes", "view_note", "write_note", "replace_note_content"},
     "knowledge": {
         "list_knowledge_bases",
