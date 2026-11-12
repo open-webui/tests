@@ -6,7 +6,8 @@ button (its last button). `folder_link(scope, name)` is the name to click; `fold
 name)` is the whole row, for hovering, dragging and its buttons. `scope` is the sidebar or the
 page. The name carries an unread count after the folder's name when there is one, so `name`
 matches that start. `open_advanced(dialog)` unfolds the folder dialog's Advanced section, which
-holds the default model, the system prompt and the knowledge (70e4b9a52).
+holds the default model, the system prompt and the knowledge (70e4b9a52). `drag(page, source,
+target)` drops a chat or folder row onto a folder or a section.
 
 Retargeted for b704d0613: the folder's name is the trigger of its hover preview, so it is a
 button that opens a dialog, still an anchor to the folder page. Chat rows are buttons as well,
@@ -49,3 +50,18 @@ def open_advanced(dialog: Locator) -> None:
     if toggle.get_attribute("aria-expanded") != "true":
         toggle.click()
     expect(toggle).to_have_attribute("aria-expanded", "true")
+
+
+def drag(page: Page, source: Locator, target: Locator) -> None:
+    """Drag `source` onto `target` with the events a browser fires for a drag and drop.
+
+    A mouse drag across the sidebar rows sometimes never fires the drop. As in a browser the drag
+    ends on the element that was dragged, which the drop may already have moved out of `source`'s
+    reach (a chat dragged out of its folder), so that element is held from the start.
+    """
+    transfer = page.evaluate_handle("() => new DataTransfer()")
+    dragged = source.element_handle()
+    dragged.dispatch_event("dragstart", {"dataTransfer": transfer})
+    target.dispatch_event("dragover", {"dataTransfer": transfer})
+    target.dispatch_event("drop", {"dataTransfer": transfer})
+    dragged.dispatch_event("dragend", {"dataTransfer": transfer})

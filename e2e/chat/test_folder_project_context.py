@@ -31,7 +31,7 @@ from harness import upstream as reply
 from harness.chat_history import seed_chat
 from harness.knowledge_bases import add_text_file, knowledge_base
 from utils.chat_ui import chat_input, conversation, expect_reply, send
-from utils.sidebar_folders import folder_row
+from utils.sidebar_folders import drag, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -109,15 +109,6 @@ def folder_content(sidebar: Locator, folder_id: str) -> Locator:
     """The folder's row with everything filed under it."""
     row = sidebar.locator(f"#folder-{folder_id}-button")
     return row.locator("xpath=ancestor::div[@draggable][1]")
-
-
-def drag(page: Page, source: Locator, target: Locator) -> None:
-    # a synthetic drag: a mouse drag across the sidebar rows sometimes never fires the drop
-    transfer = page.evaluate_handle("() => new DataTransfer()")
-    source.dispatch_event("dragstart", {"dataTransfer": transfer})
-    target.dispatch_event("dragover", {"dataTransfer": transfer})
-    target.dispatch_event("drop", {"dataTransfer": transfer})
-    source.dispatch_event("dragend", {"dataTransfer": transfer})
 
 
 def test_the_folder_prompt_leads_every_turn_in_the_folder_and_no_chat_outside(

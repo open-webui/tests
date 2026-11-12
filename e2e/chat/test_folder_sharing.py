@@ -45,7 +45,7 @@ from harness.access import make_group
 from harness.chat_history import seed_chat
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.sidebar_chats import chat_menu, chat_row
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import drag, folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -258,15 +258,6 @@ def test_a_reading_member_gets_no_message_input_on_the_folders_page(page_for, cr
     member_page = page_for(member, path=f"/folders/{folder_id}")
     expect(member_page.get_by_role("link", name=re.compile(re.escape(title)))).to_be_visible()
     expect(chat_input(member_page)).to_have_count(0)
-
-
-def drag(page: Page, source: Locator, target: Locator) -> None:
-    # a synthetic drag: a mouse drag across the sidebar rows sometimes never fires the drop
-    transfer = page.evaluate_handle("() => new DataTransfer()")
-    source.dispatch_event("dragstart", {"dataTransfer": transfer})
-    target.dispatch_event("dragover", {"dataTransfer": transfer})
-    target.dispatch_event("drop", {"dataTransfer": transfer})
-    source.dispatch_event("dragend", {"dataTransfer": transfer})
 
 
 def own_chat(member, title: str) -> str:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import expect
 
-from utils.sidebar_folders import folder_row
+from utils.sidebar_folders import drag, folder_row
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -46,15 +46,6 @@ def _open_folders_section(page) -> None:
         toggle.click()
 
 
-def _drag(page, source, target) -> None:
-    # A synthetic drag: a mouse drag across the nested rows sometimes never fires the drop.
-    transfer = page.evaluate_handle("() => new DataTransfer()")
-    source.dispatch_event("dragstart", {"dataTransfer": transfer})
-    target.dispatch_event("dragover", {"dataTransfer": transfer})
-    target.dispatch_event("drop", {"dataTransfer": transfer})
-    source.dispatch_event("dragend", {"dataTransfer": transfer})
-
-
 def test_dropping_a_folder_on_its_grandchild_is_refused_and_keeps_the_tree(
     page_for, owner_with_tree
 ):
@@ -66,7 +57,7 @@ def test_dropping_a_folder_on_its_grandchild_is_refused_and_keeps_the_tree(
     expect(page.get_by_text("No chats")).to_have_count(len(FOLDER_NAMES))
 
     with page.expect_response(lambda response: response.url.endswith("/update/parent")):
-        _drag(page, folder_row(page, "projects"), folder_row(page, "q1"))
+        drag(page, folder_row(page, "projects"), folder_row(page, "q1"))
 
     expect(
         page.get_by_text("Cannot move a folder into itself or one of its subfolders")

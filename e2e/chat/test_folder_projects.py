@@ -51,7 +51,13 @@ from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
 from utils.menus import late_menu_entry
-from utils.sidebar_folders import click_folder_menu_button, folder_link, folder_row, open_advanced
+from utils.sidebar_folders import (
+    click_folder_menu_button,
+    drag,
+    folder_link,
+    folder_row,
+    open_advanced,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -147,15 +153,6 @@ def submit_folder_dialog(page: Page, name: str) -> None:
     dialog = page.get_by_role("dialog")
     dialog.get_by_placeholder("Enter folder name").fill(name)
     dialog.get_by_role("button", name="Save").click()
-
-
-def drag(page: Page, source: Locator, target: Locator) -> None:
-    # a synthetic drag: a mouse drag across the sidebar rows sometimes never fires the drop
-    transfer = page.evaluate_handle("() => new DataTransfer()")
-    source.dispatch_event("dragstart", {"dataTransfer": transfer})
-    target.dispatch_event("dragover", {"dataTransfer": transfer})
-    target.dispatch_event("drop", {"dataTransfer": transfer})
-    source.dispatch_event("dragend", {"dataTransfer": transfer})
 
 
 def test_a_folder_and_a_subfolder_created_in_the_sidebar_are_kept(page_for, make_user):
