@@ -197,8 +197,9 @@ def test_the_link_opens_the_owners_live_chat_straight_away(page_for, make_user, 
 def test_a_user_allowed_to_reply_chats_on_and_the_owner_sees_it_live(
     page_for, voice_page_for, make_user, upstream
 ):
-    """Red on dev 2547992b8, no issue filed yet: a member who opens the shared chat while a call
-    of their own is running gets a blank Voice tab in front of the chat instead of the chat."""
+    """Red on dev 2547992b8: a member who opens the shared chat while a call of their own is
+    running gets a blank Voice tab in front of the chat instead of the chat
+    (open-webui/open-webui#34249, fixed by the fix-blank-voice-tab-over-shared-chat branch)."""
     owner, member = _accounts(make_user)
     owner_page = page_for(owner)
     chat_id = _start_chat(owner_page, upstream)
