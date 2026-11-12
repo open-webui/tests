@@ -21,7 +21,9 @@ Open WebUI lists the agent's models in `/api/models` only when asked for that te
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
+import re
 import stat
 import sys
 import tempfile
@@ -54,8 +56,11 @@ OTHER_AGENT_COMMANDS = (
 
 
 def model_id(terminal_id: str, model: str = FAST, provider: str = PROVIDER) -> str:
-    """The id Open WebUI gives a terminal agent's model."""
-    return f"agent:{quote(terminal_id, safe='')}:{provider}:{quote(model, safe='')}"
+    """The id Open WebUI gives a terminal agent's model (`utils/agents/session.py` `model_id`)."""
+    safe_model = re.sub(r"[^a-zA-Z0-9_-]+", "-", model).strip("-")
+    if safe_model != model:
+        safe_model = f"{safe_model}-{hashlib.sha256(model.encode()).hexdigest()[:8]}"
+    return f"agent:{quote(terminal_id, safe='')}:{provider}:{safe_model}"
 
 
 @dataclass
