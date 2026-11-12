@@ -9,9 +9,14 @@ The instance runs its own headless Chromium, as in test_v0114_playwright_media_s
 local page through both loaders: the synchronous one behind an attached link and the async one
 behind web search.
 
+Issue #34272: the same parser drops `<details>` and `<summary>` with everything inside them, so an
+API reference that keeps its parameter descriptions in collapsible sections loaded as its headings
+alone. The loader now unwraps them before extraction, open or closed.
+
 Discriminates: passes on dev 015dbc861; with the unwrapping call removed from both loaders in a
 backend copy the page with two `<main>` elements loads as its menu alone. The single `<main>` case
-passes on both.
+passes on both. The `<details>` case passes on fix 0c715d7b7 and fails on dev
+31a8c5442 (the page loads without the text inside its collapsible sections).
 """
 
 from __future__ import annotations
@@ -41,6 +46,13 @@ TWO_MAINS = f"""<html><body><header><main>{MENU}</main></header>
 <main><h1>Tech specs</h1><p>{SPECS}</p></main><footer>{FOOTER}</footer></body></html>"""
 ONE_MAIN = f"""<html><body><header><p>{MENU}</p></header>
 <main><h1>Tech specs</h1><p>{SPECS}</p></main><footer><p>{FOOTER}</p></footer></body></html>"""
+PARAMETERS = "Parameters"
+STREAM_OPTIONS = "Options for streaming the response, sent only when stream is true"
+TEMPERATURE = "Sampling temperature between 0 and 2"
+COLLAPSIBLES = f"""<html><body><main><h1>Create chat completion</h1>
+<details><summary>{PARAMETERS}</summary><p>{STREAM_OPTIONS}</p>
+<details open><summary>temperature</summary><div><p>{TEMPERATURE}</p></div></details></details>
+</main></body></html>"""
 
 
 @pytest.fixture(scope="module")
@@ -101,3 +113,13 @@ def test_a_page_with_one_main_element_loads_only_that_element(playwright_client,
 
     assert SPECS in text
     assert MENU not in text and FOOTER not in text
+
+
+@LOADERS
+def test_text_inside_collapsible_sections_is_loaded(playwright_client, listener, load):
+    listener.route("GET", "/page", text_answer(COLLAPSIBLES))
+
+    text = load(playwright_client, f"{listener.base_url}/page")
+
+    missing = [part for part in (PARAMETERS, STREAM_OPTIONS, TEMPERATURE) if part not in text]
+    assert not missing, f"the page loaded without its collapsible sections: {text!r} (#34272)"
