@@ -52,8 +52,9 @@ Saving a model asks "Discard unsaved changes?" right after the save", from da850
 default terminal set over the API, a new chat on the model also started without it on dev
 8588bd2a7 (the new chat screen lost the chat's terminal); e791cbdde fixed that before it was filed.
 
-Gap (a plain red test, not a bug in what exists): a folder's Default terminal lists only admin
-terminals, so a person cannot make their own terminal a folder's default.
+A folder's Default terminal lists only admin terminals, so a person cannot make their own terminal
+a folder's default (open-webui/open-webui#34254, fix on the Classic298 branch
+folder-default-terminal-lists-only-admin-terminals); that test is red on dev 2547992b8.
 
 Switching a new chat to a model without a default terminal keeps the terminal picked in it
 (b433aab65, a01b2ed55; the switch turned it off). The test passes on dev e8c0ad85e and fails on a
@@ -547,8 +548,9 @@ def test_a_personal_terminal_runs_in_the_folder_picked_for_the_chat(
 def test_a_folder_can_default_to_the_users_personal_terminal(
     page_for, admin, make_user, open_terminal, direct_integrations, preserve
 ):
-    """Red: a folder's Default terminal lists only admin terminals, never the user's own (a gap, no
-    filed issue).
+    """Red on dev 2547992b8: a folder's Default terminal lists only admin terminals, never the
+    user's own (open-webui/open-webui#34254, fix branch
+    folder-default-terminal-lists-only-admin-terminals).
     """
     preserve(TERMINAL_SERVERS_CONFIG)
     with admin.client() as client:
