@@ -6,7 +6,10 @@ missing from both. A user whose only workspace permission was Skills saw no Work
 opening /workspace sent them home. The fix adds Skills to both lists.
 
 Every workspace section is read from the default-permissions API, so a section added later is
-covered as soon as the backend offers it.
+covered as soon as the backend offers it. Since da850248d the workspace opens as a page tab, and the
+address passes through / before it reaches the section, so the landing is read once the address
+reaches the expected page or the wait for it runs out. A section page the account may not open
+keeps its address and shows a permission message instead of sending the account home.
 
 Twin of unit/frontend/test_workspace_permissions.py.
 
@@ -21,6 +24,9 @@ from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+from utils.page_tabs import expect_no_permission
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -71,10 +77,15 @@ def workspace_entry(page: Page):
     return page.get_by_role("link", name="Workspace", exact=True)
 
 
-def landing_path(page: Page, path: str) -> str:
-    """Where the app settles after opening `path`, once its client-side redirect has run."""
+def landing_path(page: Page, path: str, expected: str) -> str:
+    """Where the app is after opening `path`, once it reached `expected` or the wait ran out."""
     page.goto(path)
-    page.wait_for_url(lambda url: urlparse(url).path != path)
+    try:
+        page.wait_for_url(lambda url: urlparse(url).path == expected)
+    except PlaywrightTimeoutError:
+        pass
+    # the address passes through / on the way to a section, so it has to stay where it is
+    page.wait_for_timeout(1000)
     return urlparse(page.url).path
 
 
@@ -95,17 +106,19 @@ def test_each_section_alone_opens_the_workspace_on_that_section(
         grant_only(section)
         page = open_as_new_user()
         has_entry = workspace_entry(page).is_visible()
-        seen[section] = (has_entry, landing_path(page, "/workspace"))
+        seen[section] = (has_entry, landing_path(page, "/workspace", f"/workspace/{section}"))
 
     assert seen == {section: (True, f"/workspace/{section}") for section in workspace_sections}
 
 
-def test_without_a_section_there_is_no_entry_and_every_workspace_page_sends_you_home(
+def test_without_a_section_there_is_no_entry_and_no_workspace_page_opens(
     workspace_sections, grant_only, open_as_new_user
 ):
     grant_only()
     page = open_as_new_user()
 
     expect(workspace_entry(page)).to_have_count(0)
-    paths = ["/workspace", *(f"/workspace/{section}" for section in workspace_sections)]
-    assert {path: landing_path(page, path) for path in paths} == {path: "/" for path in paths}
+    assert landing_path(page, "/workspace", "/") == "/"
+    for section in workspace_sections:
+        page.goto(f"/workspace/{section}")
+        expect_no_permission(page, f"/workspace/{section}")
