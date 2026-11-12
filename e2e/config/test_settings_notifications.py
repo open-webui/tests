@@ -378,13 +378,12 @@ def test_a_calendar_reminder_shows_a_browser_notification_that_opens_the_calenda
     expect(page).to_have_url(re.compile(r"/calendar$"))
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gap: the browser notification of a thread reply opens the channel, not the thread",
-)
 def test_the_browser_notification_of_a_thread_reply_opens_the_thread_as_the_toast_does(
     page_for, make_user, admin, preserve
 ):
+    """Red: the browser notification of a thread reply opens the channel, not the thread (a gap, no
+    filed issue).
+    """
     preserve("admin_config")
     enable_channels(admin)
     reader, writer = make_user(), make_user()
