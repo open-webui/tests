@@ -26,6 +26,11 @@ to Grid, since the keyboard-focus check added in #33676 also matched a mouse-cli
 moment Shift was pressed (open-webui/open-webui#33714). The Grid case of the Shift delete test
 fails on dev 623257af7. A keyboard user who Tabbed onto a note's menu still keeps it while holding
 Shift (#33676), on dev 623257af7 and with the fix.
+
+Create a new note in the global search, chosen on the Notes page, left the page on a Loading
+spinner and never showed the confirm dialog, since pages opened as tabs read their address only
+when they first appear (open-webui/open-webui#34241, fix PR open-webui/open-webui#34242, branch
+fix/page-to-page-navigation). The search test fails on dev 2547992b8 and passes with 7d43b9863.
 """
 
 from __future__ import annotations
