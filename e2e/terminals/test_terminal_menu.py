@@ -6,8 +6,10 @@ use Direct Integrations, the terminals from their own settings under Direct. The
 Direct opens the person's Settings on Integrations; the cog beside Terminals, for admins only,
 opens the admin's Integrations settings. The picked terminal carries a check and names the menu's
 button; picking it again unpicks it, and picking a terminal of the other kind unpicks the first.
-In a saved chat the pick is stored on the chat and is back when the chat is opened again, and a
-pick the server refuses is not made and says why. A picked terminal that is deleted reads
+In a saved chat the pick is stored on the chat and is back when the chat is opened again. Since
+d42988f0c a pick shows at once and is saved in the background, so one the server refuses stays
+picked on the page, says why and is not stored: the chat opens again without it (before, a
+refused pick was not made). A picked terminal that is deleted reads
 Unavailable terminal for a person with Direct Integrations and is unpicked for everyone else.
 The menu moves into the chat input's More menu when the input is too narrow for it. A side chat
 has the same menu and a pick of its own: it starts from the chat's terminal, picking in one
@@ -32,7 +34,7 @@ terminals listed without the permission, and Add Terminal opening the General se
 listed apart test); no terminal carrying the check, the picked terminal kept when it is picked
 again, and the personal terminal left on when one of the admin's is picked (the picked test:
 the model is still offered the personal terminal's tool); the pick not stored on a saved chat,
-a saved chat opened without its terminal, and a refused pick made without a word (the saved
+a saved chat opened without its terminal, and a refused pick that says nothing (the saved
 chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
 deleted test); the controls never moved into the More menu (the narrow test). The cog's target
 has no mutation of its own. The side chat tests (open-webui/open-webui#34149) fail on the dev
@@ -318,7 +320,7 @@ def test_the_picked_terminal_is_checked_and_named_and_picking_it_again_unpicks_i
     )
 
 
-def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not_made(
+def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not_stored(
     page_for, make_user, connect
 ):
     person = make_user()
@@ -349,7 +351,7 @@ def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not
         f"the unpicked chat is still stored with {_stored_terminal(person, kept)!r}"
     )
 
-    # a pick the server does not store is not made
+    # the pick shows at once; the server refusing to store it says why and the chat keeps none
     refusal = f"The chat could not be saved {tag}"
     page.route(
         f"**/api/v1/chats/{kept}",
@@ -362,9 +364,15 @@ def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not
     open_terminal_menu(page)
     listed_terminal(page, quarry).click()
     expect(page.get_by_text(refusal)).to_be_visible()
-    expect(_terminal_button(page, quarry)).to_have_count(0)
+    expect(_terminal_button(page, quarry)).to_be_visible()
+    assert _stored_terminal(person, kept) is None, (
+        f"the refused pick is stored with the chat as {_stored_terminal(person, kept)!r}"
+    )
+    page.unroute(f"**/api/v1/chats/{kept}")
+    page.goto(f"/c/{kept}")
+    expect_reply(page, "Noted.")
     expect(_terminal_button(page, "Terminal")).to_be_visible()
-    assert _stored_terminal(person, kept) is None
+    expect(_terminal_button(page, quarry)).to_have_count(0)
 
 
 def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_another_is_picked(
