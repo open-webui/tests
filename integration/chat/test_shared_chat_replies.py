@@ -2,12 +2,14 @@
 
 The owner shares a chat with the share dialog's two calls: the link is made with a share mode,
 then the access save names who may open it and whether they get the live chat ("continue") or
-a frozen copy (null, "Clone only"). A user with a grant in continue mode opens the live chat and
-keeps chatting in it; the owner sees each message with its author. Anyone else who can open the
-link, and everyone in Clone only mode, gets the snapshot and cannot send. The owner's private
-settings (params, variables, message meta) never reach a member, a member's turn runs without
-the owner's chat variables, going back to Clone only freezes a fresh snapshot, and cloning a
-shared chat gives the reader a copy without the owner's folder, variables or settings.
+a frozen copy (null, "Clone only"). An opened share says whether the reader may write to it in
+`write_access` (dev 98f94057b); `share_mode` echoes the share's setting. A user with a grant in
+continue mode opens the live chat and keeps chatting in it; the owner sees each message with its
+author. Anyone else who can open the link, and everyone in Clone only mode, gets the snapshot and
+cannot send. The owner's private settings (params, variables, message meta) never reach a
+member, a member's turn runs without the owner's chat variables, going back to Clone only freezes
+a fresh snapshot, and cloning a shared chat gives the reader a copy without the owner's folder,
+variables or settings.
 
 Discriminates: passes on dev b5a20423e; in a backend copy, making the `share_mode == 'continue'`
 branch of `get_accessible_chat_by_id` never match fails the reply, open visitors, settings,
@@ -109,6 +111,7 @@ def test_a_user_granted_allow_replies_answers_in_the_owners_chat(make_user, upst
     assert opened.status_code == 200, opened.text
     assert opened.json()["id"] == chat_id
     assert opened.json()["chat"]["share_mode"] == "continue"
+    assert opened.json()["write_access"] is True
 
     question = f"and the capital of Sweden? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Stockholm.", match=reply.answering(question)))
@@ -146,6 +149,7 @@ def test_clone_only_gives_the_user_a_snapshot_and_no_way_to_reply(make_user, ups
 
     assert opened.status_code == 200, opened.text
     assert opened.json()["chat"]["share_mode"] is None
+    assert opened.json()["write_access"] is False
     assert opened.json()["id"] == share_id != chat_id
     assert "answer to what is the capital of Norway?" in str(opened.json()["chat"])
     assert "HTTP 404" in refused, refused
@@ -176,13 +180,13 @@ def test_open_visitors_get_the_snapshot_while_a_granted_member_gets_the_live_cha
 
     for who, response in seen.items():
         assert response.status_code == 200, f"{who}: {response.text}"
-        assert response.json()["chat"]["share_mode"] is None, who
+        assert response.json()["write_access"] is False, who
         assert response.json()["id"] != chat_id, who
         assert "before sharing" in str(response.json()["chat"]), who
         assert later_question not in str(response.json()["chat"]), who
     assert refused != ""
     assert live.json()["id"] == chat_id
-    assert live.json()["chat"]["share_mode"] == "continue"
+    assert live.json()["write_access"] is True
     assert later_question in str(live.json()["chat"])
 
 
@@ -295,10 +299,12 @@ def test_going_back_to_clone_only_freezes_a_fresh_snapshot(make_user, upstream):
     refused = _try_to_send(member, chat_id, member_reply["id"], "one more from me")
 
     assert frozen["chat"]["share_mode"] is None
+    assert frozen["write_access"] is False
     assert frozen["id"] == share_id != chat_id
     assert member_question in str(frozen["chat"])
     assert later_question not in str(still_frozen["chat"])
     assert still_frozen["chat"]["share_mode"] is None
+    assert still_frozen["write_access"] is False
     assert refused != ""
     assert later_question in str(_stored_chat(owner, chat_id)["chat"])
 
