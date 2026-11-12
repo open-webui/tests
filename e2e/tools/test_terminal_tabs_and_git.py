@@ -28,9 +28,11 @@ The workspace shortcuts (80ddf8e3b) open Files (Ctrl+Shift+E), a shell (Ctrl+`),
 close the active one (Ctrl+W, never the conversation). They do nothing while a menu or a dialog
 is open or with Keyboard Shortcuts switched off; Desktop (Ctrl+Alt+D) does nothing on a terminal
 without a desktop, New Chat Tab (Ctrl+Alt+O) needs the side chat permission and Comments
-(Ctrl+Shift+Y) needs comments switched on. When the file browser is in a Git repository, the
-Git panel under the tabs shows a changed file's diff, stages and commits it, and the commit shows
-in its History and on the disk.
+(Ctrl+Shift+Y) needs comments switched on. A tab closed while its session is still starting
+closes once the start ends, so the test lets the Browser tab start first: where Open Terminal has
+Chrome, the switch to Chrome mode takes up to its 15 s startup limit on a slow runner. When the
+file browser is in a Git repository, the Git panel under the tabs shows a changed file's diff,
+stages and commits it, and the commit shows in its History and on the disk.
 
 Since c24c3d914 each changed file's stage box and Stage all are checkboxes that say whether they
 are ticked, Stage all reading mixed while only some files are staged; Discard changes also deletes
@@ -147,6 +149,7 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from harness.terminals import create_template, share_template
+from utils.browser_tab import browser_view
 from utils.cached_chat import choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, close_menu, expect_reply, send
 from utils.clipboard import copied, loopback_clipboard
@@ -159,6 +162,8 @@ from utils.user_terminals import listed_terminal
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 FILES = HOME_TAB
+# Open Terminal gives a Chrome that does not answer 15 s before it falls back to Proxy mode
+BROWSER_START_MS = 45_000
 
 
 @pytest.fixture
@@ -630,6 +635,8 @@ def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page)
     page.keyboard.press("Control+Shift+B")
     _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1", "Browser"]])
     _selected(page, "Browser")
+    # a close waits until the tab's session has started, so start it before Ctrl+W below
+    expect(browser_view(page)).to_be_visible(timeout=BROWSER_START_MS)
 
     page.keyboard.press("Control+Shift+BracketLeft")
     _selected(page, "Untitled-1")
