@@ -2,7 +2,7 @@
 
 In Admin Panel > Users > Groups an admin opens a group, switches permissions in its Permissions tab
 and saves. Each section reaches the group's members and nobody else: Prompts Access with Import
-Prompts gives a member the Prompts workspace with Import JSON while an outsider is sent home;
+Prompts gives a member the Prompts workspace with Import JSON while an outsider is refused;
 Notes Sharing with Notes Public Sharing offers a member Add Access and Public on their own note
 while an outsider's note has no Access button; Allow Chat Controls gives a member the Controls
 (in the chat input's Model controls) the defaults withdraw; Notes under Features reaches a member
@@ -46,6 +46,7 @@ from harness.upstream import MOCK_MODEL_ID
 from utils.chat_controls import controls_entry
 from utils.chat_ui import chat_input
 from utils.model_selector import model_options, select_model
+from utils.page_tabs import expect_no_permission
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -175,7 +176,8 @@ def test_prompts_access_with_import_reaches_the_members_and_not_an_outsider(
     import_entry = member_page.get_by_role("menu").get_by_role("menuitem", name="Import JSON")
     expect(import_entry).to_be_visible()
     outsider_page = page_for(outsider, path="/workspace/prompts")
-    outsider_page.wait_for_url(lambda url: "/workspace" not in url)
+    # a refused workspace page keeps its address and says so since dev da850248d
+    expect_no_permission(outsider_page, "/workspace/prompts")
 
 
 def _open_own_note(page: Page, owner: Actor) -> None:
