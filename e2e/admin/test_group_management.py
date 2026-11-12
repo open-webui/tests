@@ -1,16 +1,17 @@
 """Journey: an admin manages a group's members and permissions in Admin Panel > Users > Groups.
 
-Unticking a member in the group's Users tab takes them out: the group counts one member fewer
-after a reload. Switching a permission on in the group's Permissions tab reaches its members:
-Models Access opens the Models workspace for a member, while an account outside the group is still
-sent back to the chat. Deleting the group from its General tab takes it off the list and out of
-the member's groups in the Edit User dialog. Each test works as a fresh admin on a group of its
-own.
+Unticking a member in the group's Users tab takes them out: the group counts one member fewer after
+a reload. Switching a permission on in the group's Permissions tab reaches its members: Models
+Access opens the Models workspace for a member, while an account outside the group is still refused
+it. Since dev da850248d the refused page keeps its address and shows a permission message in place
+of the workspace; it sent the account back to the chat before. Deleting the group from its General
+tab takes it off the list and out of the member's groups in the Edit User dialog. Each test works as
+a fresh admin on a group of its own.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, unticking a member calling the add
 route turns the member test red (no removal is sent) and the delete confirmation only closing the
 dialog turns the delete test red (the group stays); in a backend copy, the effective permissions
-leaving out the member's groups turns the permission test red (the member is sent back).
+leaving out the member's groups turns the permission test red (the member is refused).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.page_tabs import expect_no_permission
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -90,7 +92,8 @@ def _expect_models_workspace(page: Page, opens: bool) -> None:
         expect(models_tab).to_have_attribute("aria-current", "page")
         expect(page).to_have_url(re.compile(r"/workspace/models$"))
     else:
-        expect(page).to_have_url(re.compile(r"/$"))
+        expect_no_permission(page, "/workspace/models")
+        expect(page.get_by_role("link", name=re.compile("^Models"))).to_have_count(0)
 
 
 def test_unticking_a_member_takes_them_out_of_the_group(admin_page, member, group_name):

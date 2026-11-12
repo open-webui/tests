@@ -20,8 +20,10 @@
   is typed, though the editor shows no end date. The other editor tests open it at noon, so they
   do not depend on when they run.
 * With Calendar switched off by the admin, or the calendar permission taken away, opening the
-  page sends a user home as Notes and Automations do, issue open-webui/open-webui#32834. It
-  stayed on an empty month grid with a "401 Unauthorized" toast.
+  page refuses a user as Notes and Automations do, issue open-webui/open-webui#32834. It stayed
+  on an empty month grid with a "401 Unauthorized" toast. Since dev da850248d the refused page
+  keeps its address and shows a permission message in place of the calendar; it sent the user
+  home before.
 
 Discriminates: in a frontend build with the editor dropping the location on create, the all-day
 start taken from the time field, the edit saving the old title, the delete never sent, a clicked
@@ -31,7 +33,7 @@ test went red and the rest stayed green; in a backend copy with the calendar too
 as UTC the model's event test went red, and with calendars listed to their owners only the
 sharing test went red at the reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
 The late evening test is red on dev ebc6add67 (open-webui/open-webui#31994, fixed by 69a1c5732).
-Both send-home tests are red on dev ca8f451cc, whose page stays on /calendar
+Both refusal tests are red on dev ca8f451cc, whose page shows the calendar
 (open-webui/open-webui#32834).
 """
 
@@ -58,6 +60,7 @@ from harness.calendar_api import (
 )
 from harness.tool_calls import run_tool
 from utils.calendar_month import day_button, days_showing
+from utils.page_tabs import expect_no_permission
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -444,9 +447,7 @@ def test_another_account_sees_an_event_only_once_its_calendar_is_shared(page_for
 # ---------------------------------------------------------------- calendar not available
 
 
-def test_the_admin_switch_sends_a_user_home_from_the_calendar_page(
-    page_for, make_user, admin, preserve
-):
+def test_the_admin_switch_refuses_a_user_the_calendar_page(page_for, make_user, admin, preserve):
     preserve("admin_config")
     with admin.client() as client:
         current = client.get("/api/v1/auths/admin/config").json()
@@ -457,10 +458,13 @@ def test_the_admin_switch_sends_a_user_home_from_the_calendar_page(
 
     page = page_for(make_user(), path="/calendar")
 
-    expect(page).to_have_url(re.compile(r"/$"))
+    expect_no_permission(page, "/calendar")
+    expect(page.get_by_role("button", name="Create", exact=True)).to_have_count(0)
 
 
-def test_a_user_without_the_calendar_permission_is_sent_home(page_for, make_user, admin, preserve):
+def test_a_user_without_the_calendar_permission_is_refused_the_page(
+    page_for, make_user, admin, preserve
+):
     preserve("permissions")
     with admin.client() as client:
         permissions = client.get("/api/v1/users/default/permissions").json()
@@ -470,4 +474,5 @@ def test_a_user_without_the_calendar_permission_is_sent_home(page_for, make_user
 
     page = page_for(make_user(), path="/calendar")
 
-    expect(page).to_have_url(re.compile(r"/$"))
+    expect_no_permission(page, "/calendar")
+    expect(page.get_by_role("button", name="Create", exact=True)).to_have_count(0)

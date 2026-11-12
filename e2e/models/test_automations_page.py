@@ -4,9 +4,10 @@ The list shows each automation with its schedule and opens it. On its own page a
 title, prompt and schedule is saved and still there after a reload, the new title on its page tab
 as well (since dev da850248d the page opens as a tab named after the automation); pausing and
 resuming from either page sticks the same way; deleting it from the page or from the list's menu
-takes it off the list. A plain account sees no Automations entry and is sent home from the page
-until a group grants the automations permission, and the admin's global switch takes them away
-from an admin too.
+takes it off the list. A plain account sees no Automations entry and is refused the page until
+a group grants the automations permission, and the admin's global switch takes them away from an
+admin too. Since dev da850248d a refused page keeps its address and shows a permission message in
+place of the list; it sent the account home before.
 
 Discriminates: passes on dev 176d31d1d; one frontend copy turns each test red: the list's daily
 schedule without its time, the edit dialog sending the old title, the page's switch not saving,
@@ -23,7 +24,7 @@ from playwright.sync_api import Page, expect
 
 from harness.access import make_group
 from utils.automations_page import automation_row
-from utils.page_tabs import page_tab
+from utils.page_tabs import expect_no_permission, page_tab
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -151,7 +152,8 @@ def test_a_user_without_the_permission_sees_no_automations(page_for, make_user):
     expect(page.get_by_role("menu").get_by_role("menuitem", name="Automations")).to_have_count(0)
 
     page.goto("/automations")
-    expect(page).to_have_url(re.compile(r"/$"))
+    expect_no_permission(page, "/automations")
+    expect(page.get_by_role("textbox", name="Search Automations")).to_have_count(0)
 
 
 def test_a_group_permission_opens_automations_to_a_user(page_for, make_user, admin):
@@ -163,6 +165,7 @@ def test_a_group_permission_opens_automations_to_a_user(page_for, make_user, adm
     page.get_by_role("menu").get_by_role("menuitem", name="Automations").click()
 
     expect(page).to_have_url(re.compile(r"/automations$"))
+    expect(page.get_by_role("textbox", name="Search Automations")).to_be_visible()
     expect(page.get_by_text("No automations found")).to_be_visible()
 
 
@@ -181,4 +184,5 @@ def test_the_admin_switch_takes_automations_away_from_an_admin(
     _open_user_menu(page)
     expect(page.get_by_role("menu").get_by_role("menuitem", name="Automations")).to_have_count(0)
     page.goto("/automations")
-    expect(page).to_have_url(re.compile(r"/$"))
+    expect_no_permission(page, "/automations")
+    expect(page.get_by_role("textbox", name="Search Automations")).to_have_count(0)
