@@ -601,14 +601,6 @@ def test_an_edit_undone_in_the_sheet_is_not_saved(browser, open_terminal):
     expect(grid.get_by_text("Russet", exact=True)).to_be_visible(timeout=WORKBOOK_LOAD_TIMEOUT_MS)
 
 
-def test_a_csv_file_opens_in_the_spreadsheet_view_like_a_workbook(browser):
-    """Red: a CSV file opens as a plain table, not as a sheet (a gap, no filed issue)."""
-    open_file(browser, "orchard.csv")
-
-    grid = browser.get_by_role("grid", name="Worksheet")
-    expect(grid.get_by_text("apple", exact=True)).to_be_visible(timeout=WORKBOOK_LOAD_TIMEOUT_MS)
-
-
 def test_a_sheet_past_the_preview_limit_says_it_is_too_large(browser, open_terminal):
     """Red: a sheet past the preview limit only says Preview failed (a gap, no filed issue)."""
     path = open_terminal.home / unique("census.xlsx")

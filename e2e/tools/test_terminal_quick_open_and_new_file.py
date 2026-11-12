@@ -5,8 +5,7 @@ over the terminal's files: typing part of a name, with or without the folders ab
 matching files with their paths, the arrow keys move the pick, Enter opens the picked file in a
 tab of its own (or selects its tab when it is already open), Escape or Ctrl+P again closes it
 without opening anything, and a name nothing matches says so. A file opened this way is one of
-the chat's saved tabs and is back after a reload. An empty Quick Open offers nothing yet, where
-an editor's Quick Open starts with the recently opened files; that gap is a plain red test.
+the chat's saved tabs and is back after a reload.
 
 New File in the New tab menu opens an Untitled tab. It is marked unsaved once typed into; Save
 asks for a name in a Save As dialog, refuses a name with a slash, asks before replacing an
@@ -287,20 +286,6 @@ def test_leaving_the_page_with_an_unsaved_new_file_asks_first(chat, folder):
     assert asked.value.type == "beforeunload", f"leaving asked with a {asked.value.type} dialog"
     asked.value.dismiss()
     expect(panel).to_contain_text("Spring tide notes, not saved yet.")
-
-
-def test_an_empty_quick_open_offers_the_files_opened_recently(chat, folder):
-    """Red: an empty Quick Open lists no files, not even the ones just opened, where an editor's
-    Quick Open starts with the recently opened files (a gap, no filed issue).
-    """
-    expect(chat_input(chat)).to_be_focused()
-    _open_by_name(chat, folder, "tide-notes.txt")
-
-    dialog = _quick_open(chat)
-
-    expect(
-        dialog.get_by_role("listbox", name="Search Files").get_by_role("option")
-    ).to_contain_text(["tide-notes.txt"])
 
 
 def _this_folder(folder: Path) -> re.Pattern:

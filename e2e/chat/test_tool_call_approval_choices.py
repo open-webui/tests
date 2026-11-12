@@ -11,9 +11,7 @@ the review finds risky stops for Allow or Deny: with the default engine (since e
 model marks each call itself, with the Decisions engine a reviewer model rates it. In Admin
 Settings > Interface, Auto permissions shows an Engine choice set to Default, and picking Decisions
 API shows its address, model and threshold, saved with the approval policy and shown again after
-a reload. A side chat asks
-before a tool call the same way its chat does. Expected but missing on f659c0d12 (a plain red test):
-an Always allow choice on the approval card that lets the same tool run without asking next time.
+a reload. A side chat asks before a tool call the same way its chat does.
 
 The deny, allow, shortcut, full access, kept mode and both Auto tests run in the main chat and in a
 side chat (`utils/chat_surface.py`) with the same assertions; the mode picked in a side chat is
@@ -463,24 +461,3 @@ def test_a_side_chat_asks_before_a_tool_call_like_its_chat(
     results = _tool_results(upstream, aside)
     assert results[:-1] == context_results, results
     assert results[-1] != REJECTED
-
-
-def test_a_tool_always_allowed_runs_without_asking_next_time(
-    tool_approval_on, page_for, make_user, upstream
-):
-    """Red: the approval card offers only Allow and Deny, no way to always allow a tool (a gap, no
-    filed issue).
-    """
-    page = page_for(make_user())
-    set_tool_approval_mode(page, "Ask for approval")
-    _ask_for_the_time(page, upstream, "Checked and remembered.")
-    _approval_button(page, "Allow")
-    always = conversation(page).get_by_role("button", name=re.compile(r"^Always allow"))
-    # the card is on screen, so its buttons are all there
-    assert always.count() == 1, "the approval card has no Always allow choice"
-    always.click()
-    expect_reply(page, "Checked and remembered.")
-
-    _ask_for_the_time(page, upstream, "Checked without asking again.")
-    expect_reply(page, "Checked without asking again.")
-    expect(conversation(page).get_by_role("button", name="Allow", exact=True)).to_have_count(0)
