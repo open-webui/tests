@@ -1,11 +1,12 @@
 """Journey: a person keeps their automations on the Automations pages, and only if allowed to.
 
 The list shows each automation with its schedule and opens it. On its own page an edit to the
-title, prompt and schedule is saved and still there after a reload; pausing and resuming from
-either page sticks the same way; deleting it from the page or from the list's menu takes it off
-the list. A plain account sees no Automations entry and is sent home from the page until a group
-grants the automations permission, and the admin's global switch takes them away from an admin
-too.
+title, prompt and schedule is saved and still there after a reload, the new title on its page tab
+as well (since dev da850248d the page opens as a tab named after the automation); pausing and
+resuming from either page sticks the same way; deleting it from the page or from the list's menu
+takes it off the list. A plain account sees no Automations entry and is sent home from the page
+until a group grants the automations permission, and the admin's global switch takes them away
+from an admin too.
 
 Discriminates: passes on dev 176d31d1d; one frontend copy turns each test red: the list's daily
 schedule without its time, the edit dialog sending the old title, the page's switch not saving,
@@ -22,6 +23,7 @@ from playwright.sync_api import Page, expect
 
 from harness.access import make_group
 from utils.automations_page import automation_row
+from utils.page_tabs import page_tab
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -86,7 +88,7 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     details = page.get_by_role("main")
     expect(details).to_contain_text(new_prompt)
     expect(details).to_contain_text("Hourly")
-    expect(page.get_by_text(new_title)).to_be_visible()
+    expect(page_tab(page, new_title).get_by_text(new_title, exact=True)).to_be_visible()
     expect(details).not_to_contain_text(automation["data"]["prompt"])
 
 

@@ -9,7 +9,8 @@ folder's system prompt reaches the model. The calendar's Scheduled Tasks show an
 automation's coming runs, which open the automation; once paused they are gone, and a run made
 with Run now shows on today and opens its chat.
 
-Renaming an automation in its Edit dialog keeps every schedule the menu can show as it was.
+Renaming an automation in its Edit dialog keeps every schedule the menu can show as it was, and
+the new name shows on its page tab, which since dev da850248d carries the automation's title.
 
 Since 7d205a86d the list and the page word a schedule the same way, with weekdays as the Schedule
 menu names them ("Mo, Th at 8:15 AM", "Monthly 15 at 6:00 PM").
@@ -61,6 +62,7 @@ from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import automation_row
 from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.menus import late_menu_entry
+from utils.page_tabs import page_tab
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -394,7 +396,9 @@ def rename_in_the_edit_dialog(page_for, scheduler, rule: str) -> str:
     name.fill(f"{title} renamed")
     editing.get_by_role("button", name="Save", exact=True).click()
     expect(editing).to_be_hidden()
-    expect(page.get_by_text(f"{title} renamed")).to_be_visible()
+    renamed = f"{title} renamed"
+    # the page tab and the page's header both carry the new name
+    expect(page_tab(page, renamed).get_by_text(renamed, exact=True)).to_be_visible()
     return stored(scheduler, automation_id)["data"]["rrule"]
 
 
