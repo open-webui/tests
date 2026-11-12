@@ -13,11 +13,14 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import signal
 import threading
 import time
 from pathlib import Path
 from typing import Callable, Generator, Iterator
 
+import greenlet
+import psutil
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page, Playwright
 from playwright.sync_api import Error as PlaywrightError
@@ -43,6 +46,7 @@ ARTIFACTS_DIR = Path("test-results")
 LOAD_TRIES = 3
 LOAD_CHECK_MS = 1000
 MICROPHONE_BROWSERS = {"speaking_browser", "capturing_browser"}
+TEARDOWN_LIMIT_S = 120
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -50,6 +54,49 @@ def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
     setattr(item, f"report_{report.when}", report)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item):
+    # a page stuck in a script blocks saving its trace and closing it, until its renderer ends
+    watchdog = threading.Timer(TEARDOWN_LIMIT_S, _end_the_pages)
+    watchdog.start()
+    yield
+    watchdog.cancel()
+
+
+def _end_the_pages() -> None:
+    for process in psutil.Process().children(recursive=True):
+        with contextlib.suppress(psutil.NoSuchProcess):
+            if "--type=renderer" in process.cmdline():
+                process.kill()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_timeout_set_timer(item, settings):
+    yield
+    on_timeout = signal.getsignal(signal.SIGALRM)
+    if callable(on_timeout):
+        signal.signal(signal.SIGALRM, _failing_the_test(on_timeout))
+
+
+def _failing_the_test(on_timeout):
+    """Raise the timeout in the test, outside Playwright's event loop, which it would stop."""
+
+    def fail(signum, frame) -> None:
+        current = greenlet.getcurrent()
+        if current.parent is None:
+            on_timeout(signum, frame)
+            return
+        try:
+            on_timeout(signum, frame)
+        except BaseException as failure:
+            test = current
+            while test.parent is not None:
+                test = test.parent
+            test.throw(failure)
+
+    return fail
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
