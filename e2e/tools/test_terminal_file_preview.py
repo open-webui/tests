@@ -17,8 +17,8 @@ d4e8493cc an Excel workbook opens in a spreadsheet view: each sheet has a tab of
 formula bar shows a selected cell's formula, a double-clicked cell takes an edit that Save writes
 into the workbook while the other sheet stays as it was, a formula cell refuses an edit, a large
 sheet finds a cell far down and scrolls to it, and a sheet past the preview's 200,000 cells says
-the preview failed. A cell with a comment shows the comment and its author on hover, and a legacy
-Excel 2.x .xls sheet shows as a grid too.
+it is too large to preview while the workbook's other sheets still open. A cell with a comment
+shows the comment and its author on hover, and a legacy Excel 2.x .xls sheet shows as a grid too.
 
 test_a_markdown_file_renders_math_alerts_and_diagrams is red on dev f659c0d12: the editor shows
 all three as raw text, a regression from 0.13.0.
@@ -491,19 +491,6 @@ def test_a_large_sheet_shows_its_last_row_and_finds_a_cell(browser, open_termina
     expect(browser.get_by_label("Selected range")).to_have_text("B200")
 
 
-def test_a_sheet_past_the_preview_limit_says_the_preview_failed(browser, open_terminal):
-    path = open_terminal.home / unique("census.xlsx")
-    path.write_bytes(oversized_workbook())
-    browser.get_by_label("Refresh", exact=True).first.click()
-
-    open_file(browser, path.name)
-
-    expect(browser.get_by_text("Preview failed", exact=True)).to_be_visible(
-        timeout=WORKBOOK_LOAD_TIMEOUT_MS
-    )
-    expect(browser.get_by_role("grid", name="Worksheet")).to_have_count(0)
-
-
 def test_a_long_csv_file_shows_every_row(browser, open_terminal):
     lines = ["tree,yield"] + [f"tree-{n},{n}" for n in range(1, 501)]
     path = open_terminal.home / unique("orchard-census.csv")
@@ -602,7 +589,9 @@ def test_an_edit_undone_in_the_sheet_is_not_saved(browser, open_terminal):
 
 
 def test_a_sheet_past_the_preview_limit_says_it_is_too_large(browser, open_terminal):
-    """Red: a sheet past the preview limit only says Preview failed (a gap, no filed issue)."""
+    """Red on dev: a sheet past the preview limit only says Preview failed
+    (open-webui/open-webui#34247, fix on branch fix-oversized-sheet-hides-other-sheets).
+    """
     path = open_terminal.home / unique("census.xlsx")
     path.write_bytes(oversized_workbook())
     browser.get_by_label("Refresh", exact=True).first.click()
@@ -612,11 +601,12 @@ def test_a_sheet_past_the_preview_limit_says_it_is_too_large(browser, open_termi
     expect(browser.get_by_text("too large to preview")).to_be_visible(
         timeout=WORKBOOK_LOAD_TIMEOUT_MS
     )
+    expect(browser.get_by_role("grid", name="Worksheet")).to_have_count(0)
 
 
 def test_the_other_sheets_still_open_when_one_is_past_the_preview_limit(browser, open_terminal):
-    """Red: one sheet past the preview limit hides the workbook's other sheets (a gap, no filed
-    issue).
+    """Red on dev: one sheet past the preview limit hides the workbook's other sheets
+    (open-webui/open-webui#34247, fix on branch fix-oversized-sheet-hides-other-sheets).
     """
     path = open_terminal.home / unique("census.xlsx")
     path.write_bytes(oversized_workbook(also={"Summary": [["parish", "people"], ["Ashby", 412]]}))
