@@ -381,8 +381,9 @@ def test_a_calendar_reminder_shows_a_browser_notification_that_opens_the_calenda
 def test_the_browser_notification_of_a_thread_reply_opens_the_thread_as_the_toast_does(
     page_for, make_user, admin, preserve
 ):
-    """Red: the browser notification of a thread reply opens the channel, not the thread (a gap, no
-    filed issue).
+    """Red: the browser notification of a thread reply opens the channel, not the thread
+    (open-webui/open-webui#34232); passes on the fix branch
+    fix/thread-reply-notification-opens-channel and fails on dev 2547992b8.
     """
     preserve("admin_config")
     enable_channels(admin)
