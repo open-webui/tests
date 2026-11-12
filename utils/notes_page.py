@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from playwright.sync_api import Locator, Page
 
+from utils.workspace_list import item_rows
+
 
 def note_rows(page: Page) -> Locator:
-    return page.get_by_role("main").locator("div[role='presentation']")
+    return item_rows(page)
 
 
 def note_row(page: Page, title: str) -> Locator:

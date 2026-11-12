@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from playwright.sync_api import Locator, Page, expect
 
+from utils.workspace_list import item_rows
+
 
 def automation_row(page: Page, name: str) -> Locator:
-    return page.get_by_role("main").locator("div[role='presentation']").filter(has_text=name)
+    return item_rows(page).filter(has_text=name)
 
 
 def wait_until_loaded(dialog: Locator, save: str = "Create") -> None:
