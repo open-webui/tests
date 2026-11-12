@@ -9,6 +9,10 @@ Two 0.11.4 fixes:
   with Memories switched off or the account barred from them, spending a task-model call on
   writes the memories router then refuses.
 
+Issue #34262 (open, fix on branch `fix-memory-review-temporary-chats`, 5679110c9): the background
+review also read temporary chats and saved memories from them, so a temporary chat left memories
+behind that later chats were given.
+
 The review only runs with `ENABLE_MEMORY_BACKGROUND_REVIEW`, an environment-only setting, so
 this module runs on an instance of its own that reviews after every turn.
 
@@ -16,18 +20,22 @@ Twin of unit/memory/test_memory_switch_gating.py.
 
 Discriminates: passes on dev bbfa876af; dropping the switch from the prompt-context check or
 from the memory-tool gate fails the switched-off test, and reverting `e8c26f839` (the review reads
-neither switch nor permission) fails the switched-off and barred tests.
+neither switch nor permission) fails the switched-off and barred tests. The temporary-chat test
+passes on 5679110c9 and fails on dev 0411edb27 (the temporary chat's fact is stored as a memory).
 """
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 
 import pytest
 
+from harness import upstream as reply
 from harness.actors import admin_of, create_user
-from harness.chat import ask
+from harness.chat import ask, send_message
+from harness.socket_client import connected
 
 pytestmark = [
     pytest.mark.regression,
@@ -156,3 +164,62 @@ def test_an_admin_is_reviewed_even_when_the_default_permission_is_off(review_ins
     surfaces = _chat_with_memory(review_instance, admin_of(review_instance))
 
     assert surfaces.tools and surfaces.review
+
+
+TEMPORARY_PROMPT = "remember that I keep a tortoise named Ada"
+SAVED_PROMPT = "remember that I play the cello"
+
+
+def _reviewer_adds(prompt: str, fact: str) -> reply.Reply:
+    """The review of the chat that asked `prompt` saves `fact`."""
+
+    def reviews_prompt(body: dict) -> bool:
+        return REVIEWER_PROMPT in str(body.get("messages")) and prompt in str(body.get("messages"))
+
+    operations = {"operations": [{"action": "add", "type": "user", "path": "", "content": fact}]}
+    return reply.text(json.dumps(operations), match=reviews_prompt)
+
+
+def _memory_contents(client) -> list[str]:
+    listed = client.get("/api/v1/memories/")
+    assert listed.status_code == 200, listed.text
+    return [memory["content"] for memory in listed.json()]
+
+
+def test_a_temporary_chat_leaves_no_memory_behind(review_instance):
+    account = create_user(review_instance)
+    review_instance.upstream.reset()
+    review_instance.upstream.queue(
+        _reviewer_adds(TEMPORARY_PROMPT, "keeps a tortoise named Ada"),
+        _reviewer_adds(SAVED_PROMPT, "plays the cello"),
+    )
+
+    with connected(account) as socket, account.client() as client:
+        chat_id = socket.temporary_chat_id()
+        send_message(
+            client,
+            TEMPORARY_PROMPT,
+            chat_id=chat_id,
+            session_id=socket.sid,
+            features={"memory": True},
+        )
+        socket.wait_for(chat_id, "chat:completion", done=True)
+        # a saved chat afterwards shows the review runs and its memory lands
+        ask(client, SAVED_PROMPT, features={"memory": True})
+        deadline = time.monotonic() + REVIEW_WAIT
+        while "plays the cello" not in _memory_contents(client) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        memories = _memory_contents(client)
+
+    reviews = [
+        str(body["messages"])
+        for body in review_instance.upstream.chat_requests()
+        if REVIEWER_PROMPT in str(body["messages"])
+    ]
+    assert "plays the cello" in memories, f"the saved chat's review stored nothing: {memories}"
+    assert "keeps a tortoise named Ada" not in memories, (
+        f"a temporary chat left a memory behind: {memories}"
+    )
+    assert not any(TEMPORARY_PROMPT in review for review in reviews), (
+        "the memory review read a temporary chat"
+    )
