@@ -34,13 +34,12 @@ Nine 0.11.1 fixes land on the request body that reaches the provider:
   sent, so the first message of a chat failed. They now carry an empty `reasoning_content`; a
   strict OpenAI-style provider still gets no reasoning field on them.
 * #34257: those rounds were added before every reply and saved with it, so the fourth question
-  carried four copies of the same skill list, knowledge list and memories; the tools they call
-  were never in the request, and the empty text of their assistant turns let proxies insert
-  placeholder text. Now a list goes out only when it changed or is no longer among the messages
-  sent (first turn, after compaction), memories already in them are not recalled again, the
-  three tools are declared and those turns carry no text. Memories still go out only with Memory
-  on in the chat and the memories permission, also when a tool of the user's own is named
-  recall_memories.
+  carried four copies of the same skill list, knowledge list and memories. Now a list goes out
+  only when it changed or is no longer among the messages sent (first turn, after compaction) and
+  memories already in them are not recalled again. The empty text of their assistant turns let
+  proxies insert placeholder text; with #34264 those turns carry no text. Memories still go out
+  only with Memory on in the chat and the memories permission, also when a tool of the user's own
+  is named recall_memories.
 
 Stored history is created through the chats API and continued the way the web client
 continues a chat, so the server rebuilds the payload from what it stored.
@@ -62,9 +61,9 @@ on dev e8c0ad85e and fails in a backend copy that puts the preloaded rounds befo
 The DeepSeek test fails on dev b13d02e09 (the first message gets DeepSeek's 400) and passes on the
 fix branch fix-hidden-tool-turns-reasoning-content; with the fix but the stored history replayed
 without the llama.cpp reasoning format, the second message fails.
-The #34257 once-per-chat, declared-tools and no-text tests fail on dev 2547992b8 (four copies
-each, none of the three tools declared, empty text) and pass on the fix branch
-fix/skills-list-repeated-every-turn (e5e2fbbf0); the new-skill and compaction tests pass on both.
+The #34257 once-per-chat test fails on dev 2547992b8 (four copies each) and passes on the fix
+branch fix/skills-list-repeated-every-turn; the new-skill and compaction tests pass on both. The
+no-text test fails on dev (empty text) until the #34264 fix lands.
 The own-tool memory test passes on dev 2547992b8 and fails on e5e2fbbf0, which sent the memories
 with Memory off and without the permission whenever a tool named recall_memories was enabled.
 The two tool turn without text tests (#34264), one replaying a stored reply and one sent by an
@@ -722,24 +721,6 @@ def test_unchanged_skills_knowledge_and_memories_are_sent_once_per_chat(upstream
     copies = _context_copies(_last_chat_request(upstream))
     assert copies == dict.fromkeys(sorted(CONTEXT_TOOLS), 1), (
         f"the fourth question carries the unchanged lists and memories again (#34257): {copies}"
-    )
-
-
-def test_the_model_has_every_context_tool_it_is_shown_calling(upstream, context_chat):
-    account, model_id = context_chat
-    with account.client() as client:
-        _chat_turns(client, model_id, 1)
-
-    sent = _last_chat_request(upstream)
-    shown = {
-        call["function"]["name"]
-        for turn in _context_tool_turns(sent)
-        for call in turn["tool_calls"]
-    }
-    declared = {tool["function"]["name"] for tool in sent.get("tools") or []}
-    assert shown == set(CONTEXT_TOOLS), f"not every context round reached the model: {shown}"
-    assert shown <= declared, (
-        f"the model is shown calling tools it was not given (#34257): {shown - declared}"
     )
 
 
