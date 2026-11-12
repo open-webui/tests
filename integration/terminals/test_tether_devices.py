@@ -12,7 +12,7 @@ with.
 
 Connecting. The hello names a version (1 or 2), a connection id, a name of 1 to 100 characters,
 a window of at least 64 KiB and the device's services. A hello that breaks one of these rules
-is closed with 4001 and lists nothing; the window is capped at 2 MiB, the name is trimmed, and
+is closed with 4001 and lists nothing; the window is capped at 4 MiB, the name is trimmed, and
 version 1 offers the terminal without saying so. A device that connects again under its
 connection id takes the place of its earlier connection, which is closed with 1000; the same id
 of another account is a device of its own. A connected device renames itself and changes its
@@ -116,8 +116,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 INTERRUPTED = {"code": "tether_interrupted", "outcome": "unknown", "retryable": False}
 SESSIONS = "/api/v1/auths/sessions"
-# the largest window the server grants and the largest answer it buffers
-LARGEST_WINDOW = 2 * 1024 * 1024
+# the largest window the server grants (2 MiB before c67d774d7) and the largest answer it buffers
+LARGEST_WINDOW = 4 * 1024 * 1024
 LARGEST_BUFFERED = 16 * 1024 * 1024
 HOME = "/home/user"
 CWD = {"cwd": f"{HOME}/work", "home": HOME}
