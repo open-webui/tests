@@ -52,7 +52,7 @@ from utils.chat_surface import (
     TEMPORARY_SIDE,
     ChatSurface,
 )
-from utils.chat_ui import expect_reply, last_reply, send
+from utils.chat_ui import artifacts_pane, expect_reply, last_reply, send
 from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -337,7 +337,7 @@ def test_preview_opens_the_html_block_in_the_artifacts_pane(chat_for, make_user,
     saved.raise_for_status()
     chat = chat_for(account)
     box = ask_for(chat, upstream, fenced("html", "<h1>hello preview</h1>"))
-    pane = chat.page.locator("#artifacts-container")
+    pane = artifacts_pane(chat.page)
     expect(pane).to_have_count(0)
 
     button(box, "Preview").click()

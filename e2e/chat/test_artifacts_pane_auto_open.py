@@ -37,7 +37,7 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.plugins import installed_function
 from utils.chat_surface import EVERYWHERE, ChatSurface
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import artifacts_pane, expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -58,7 +58,8 @@ PANE_CLOSINGS = """
 window.paneClosings = 0;
 let paneShown = false;
 new MutationObserver(() => {
-    const shown = document.getElementById('artifacts-container') !== null;
+    const shown = [...document.querySelectorAll('[role="tabpanel"][id^="chat-panel-artifacts"]')]
+        .some((pane) => pane.checkVisibility());
     if (paneShown && !shown) window.paneClosings += 1;
     paneShown = shown;
 }).observe(document, { childList: true, subtree: true });
@@ -68,10 +69,6 @@ new MutationObserver(() => {
 def watching_the_pane(chat: ChatSurface) -> ChatSurface:
     chat.page.evaluate(PANE_CLOSINGS)
     return chat
-
-
-def artifacts_pane(page: Page):
-    return page.locator("#artifacts-container")
 
 
 def shown_artifact(page: Page):

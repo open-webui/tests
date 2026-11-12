@@ -24,7 +24,7 @@ import pytest
 from playwright.sync_api import expect
 
 from harness import upstream as reply
-from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
+from utils.chat_ui import artifacts_pane, expect_reply, expect_split_screen, last_reply, send
 from utils.clipboard import wait_for_text
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -47,7 +47,7 @@ def test_the_shortcut_copies_the_last_code_block_with_the_artifacts_pane_open(
     expect_reply(chat, "That is all.")
     box = last_reply(chat)
     box.get_by_role("button", name="Preview", exact=True).click()
-    pane = chat.page.locator("#artifacts-container")
+    pane = artifacts_pane(chat.page)
     expect(pane.frame_locator("iframe").locator("h1")).to_have_text("artifact card")
     expect_split_screen(chat)
 

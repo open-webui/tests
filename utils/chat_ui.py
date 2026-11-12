@@ -114,6 +114,11 @@ def expect_split_screen(chat: Chat) -> None:
     expect(chat_input(chat)).to_be_visible()
 
 
+def artifacts_pane(page: Page) -> Locator:
+    """The open Artifacts tab; a side chat's own reads "Artifacts · <its title>" (a14385816)."""
+    return page.get_by_role("tabpanel", name="Artifacts")
+
+
 def stop_button(chat: Chat) -> Locator:
     if isinstance(chat, ChatSurface):
         return chat.stop_button

@@ -37,7 +37,14 @@ from playwright.sync_api import Locator, expect
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from utils.chat_surface import ChatSurface
-from utils.chat_ui import REPLY_TIMEOUT_MS, conversation, expect_reply, last_reply, send
+from utils.chat_ui import (
+    REPLY_TIMEOUT_MS,
+    artifacts_pane,
+    conversation,
+    expect_reply,
+    last_reply,
+    send,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -123,7 +130,7 @@ def test_an_html_block_in_the_reasoning_is_no_artifact_of_its_own(
     chat = open_reply(chat_for, make_user(), upstream)
 
     expect_reply(chat, "Page done.")
-    pane = chat.page.locator("#artifacts-container")
+    pane = artifacts_pane(chat.page)
     expect(pane.frame_locator("iframe").locator("h1")).to_have_text("final page")
     expect(pane).to_contain_text("Version 1 of 1")
     last_reply(chat).get_by_text(re.compile(r"^Thought")).click()

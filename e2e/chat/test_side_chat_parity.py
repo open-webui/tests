@@ -69,6 +69,7 @@ from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, main_chat
 from utils.chat_surface import open_sidebar as open_sidebar_once
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
+    artifacts_pane,
     chat_input,
     close_menu,
     conversation,
@@ -577,7 +578,7 @@ def test_an_html_block_in_a_side_chat_reply_opens_as_an_artifact(
         )
     page = page_for(account, path=f"/c/{chat_id}")
     expect_reply(page, "The pass sign.")
-    shown = page.locator("#artifacts-container").frame_locator("iframe").locator("h1")
+    shown = artifacts_pane(page).frame_locator("iframe").locator("h1")
     question = tagged("By the way, draw me two signs for the tunnel")
     first, second = f"Tunnel {uuid.uuid4().hex[:6]}", f"Portal {uuid.uuid4().hex[:6]}"
 

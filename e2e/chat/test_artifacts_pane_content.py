@@ -33,7 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_surface import EVERYWHERE, ChatSurface
-from utils.chat_ui import expect_reply, expect_split_screen, last_reply, send
+from utils.chat_ui import artifacts_pane, expect_reply, expect_split_screen, last_reply, send
 from utils.clipboard import read_text
 from utils.tooltips import tooltip_button
 
@@ -64,10 +64,6 @@ def ask(chat: ChatSurface, upstream, answer: str, prompt: str) -> Locator:
     send(chat, prompt)
     expect_reply(chat, "Artifact done.")
     return last_reply(chat)
-
-
-def artifacts_pane(page: Page) -> Locator:
-    return page.locator("#artifacts-container")
 
 
 def artifact_page(page: Page):

@@ -22,7 +22,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from utils.chat_surface import EVERYWHERE
-from utils.chat_ui import expect_reply, expect_split_screen, send
+from utils.chat_ui import artifacts_pane, expect_reply, expect_split_screen, send
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -30,10 +30,6 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 def html_reply(label: str) -> str:
     return f"Here it is.\n\n```html\n<h1>{label}</h1>\n```\n\nDone with {label}."
-
-
-def artifacts_pane(page: Page):
-    return page.locator("#artifacts-container")
 
 
 def shown_artifact(page: Page):
