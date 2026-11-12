@@ -13,10 +13,16 @@ Issue #34272: the same parser drops `<details>` and `<summary>` with everything 
 API reference that keeps its parameter descriptions in collapsible sections loaded as its headings
 alone. The loader now unwraps them before extraction, open or closed.
 
+Issue #34281: the parser also drops definition lists (`<dl>`, `<dt>`, `<dd>`), `<figure>` and
+`<figcaption>` with their text, so a reference page that documents each entry in a definition list
+loaded without the entries, and figures came back without their captions or tables.
+
 Discriminates: passes on dev 015dbc861; with the unwrapping call removed from both loaders in a
 backend copy the page with two `<main>` elements loads as its menu alone. The single `<main>` case
 passes on both. The `<details>` case passes on fix 0c715d7b7 and fails on dev
-31a8c5442 (the page loads without the text inside its collapsible sections).
+31a8c5442 (the page loads without the text inside its collapsible sections). The definition list
+and figure case passes on fix 8290b2f95 and fails on dev 31a8c5442 (the page loads as its heading
+alone).
 """
 
 from __future__ import annotations
@@ -52,6 +58,14 @@ TEMPERATURE = "Sampling temperature between 0 and 2"
 COLLAPSIBLES = f"""<html><body><main><h1>Create chat completion</h1>
 <details><summary>{PARAMETERS}</summary><p>{STREAM_OPTIONS}</p>
 <details open><summary>temperature</summary><div><p>{TEMPERATURE}</p></div></details></details>
+</main></body></html>"""
+TERM = "max_retries"
+DEFINITION = "How many times a failed request is sent again before giving up"
+FIGURE_CELL = "Median latency 120 ms"
+CAPTION = "Figure 2: latency per region"
+DEFINITIONS_AND_FIGURES = f"""<html><body><main><h1>Client options</h1>
+<dl><dt>{TERM}</dt><dd><p>{DEFINITION}</p></dd></dl>
+<figure><table><tr><td>{FIGURE_CELL}</td></tr></table><figcaption>{CAPTION}</figcaption></figure>
 </main></body></html>"""
 
 
@@ -123,3 +137,13 @@ def test_text_inside_collapsible_sections_is_loaded(playwright_client, listener,
 
     missing = [part for part in (PARAMETERS, STREAM_OPTIONS, TEMPERATURE) if part not in text]
     assert not missing, f"the page loaded without its collapsible sections: {text!r} (#34272)"
+
+
+@LOADERS
+def test_text_inside_definition_lists_and_figures_is_loaded(playwright_client, listener, load):
+    listener.route("GET", "/page", text_answer(DEFINITIONS_AND_FIGURES))
+
+    text = load(playwright_client, f"{listener.base_url}/page")
+
+    missing = [part for part in (TERM, DEFINITION, FIGURE_CELL, CAPTION) if part not in text]
+    assert not missing, f"the page loaded without its definition list or figure: {text!r} (#34281)"
