@@ -32,10 +32,9 @@ On a Terminals terminal with a machine per chat or per model, a shell opened in 
 its file into that chat's machine or into the machine of the chat's model.
 
 `test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed` is red for
-a terminal on Terminals 0.4.1: the second window says "Session no longer available" (finding
-"issue: A shell that is open in another window shows "Session no longer available" on a
-terminal behind Terminals"). It passes with a Terminals image that passes the terminal's close
-code on.
+a terminal on Terminals 0.4.1: the second window says "Session no longer available"
+(open-webui/terminals#80, fix on the Classic298 branch fix-shell-in-second-window-session-gone).
+It passes on that branch, which passes the terminal's close code on.
 
 Not here: a new chat started beside a shell of a saved chat cannot send its first message
 (finding "issue: [dev] The first message of a new chat is not sent while a shell tab from the
@@ -660,7 +659,9 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
 def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed(
     harbour, page_for, upstream
 ):
-    """Red on a terminal on Terminals 0.4.1 (open-webui/terminals#80)."""
+    """Red on a terminal on Terminals 0.4.1 (open-webui/terminals#80, fix branch
+    fix-shell-in-second-window-session-gone).
+    """
     person, name, terminal_id = harbour
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]
