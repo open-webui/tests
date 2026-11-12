@@ -33,6 +33,12 @@ Nine 0.11.1 fixes land on the request body that reaches the provider:
   went out without `reasoning_content`, which DeepSeek's thinking mode rejects whenever tools are
   sent, so the first message of a chat failed. They now carry an empty `reasoning_content`; a
   strict OpenAI-style provider still gets no reasoning field on them.
+* #34257: those rounds were added before every reply and saved with it, so the fourth question
+  carried four copies of the same skill list, knowledge list and memories; the tools they call
+  were never in the request, and the empty text of their assistant turns let proxies insert
+  placeholder text. Now a list goes out only when it changed or is no longer among the messages
+  sent (first turn, after compaction), memories already in them are not recalled again, the
+  three tools are declared and those turns carry no text.
 
 Stored history is created through the chats API and continued the way the web client
 continues a chat, so the server rebuilds the payload from what it stored.
@@ -54,6 +60,9 @@ on dev e8c0ad85e and fails in a backend copy that puts the preloaded rounds befo
 The DeepSeek test fails on dev b13d02e09 (the first message gets DeepSeek's 400) and passes on the
 fix branch fix-hidden-tool-turns-reasoning-content; with the fix but the stored history replayed
 without the llama.cpp reasoning format, the second message fails.
+The #34257 once-per-chat, declared-tools and no-text tests fail on dev 2547992b8 (four copies
+each, none of the three tools declared, empty text) and pass on the fix branch
+fix/skills-list-repeated-every-turn (e5e2fbbf0); the new-skill and compaction tests pass on both.
 """
 
 from __future__ import annotations
@@ -64,7 +73,8 @@ import uuid
 import pytest
 
 from harness import second_provider
-from harness.chat import send_message, wait_for_reply
+from harness.chat import ChatTurn, send_message, wait_for_reply
+from harness.knowledge_bases import knowledge_base
 from harness.listener import Answer, ReceivedRequest, json_answer
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import CONTEXT_TOOLS, MOCK_MODEL_ID, context_results, conversation
@@ -578,7 +588,7 @@ def skilled_chat(admin, make_user):
         )
         assert remembered.status_code == 200, remembered.text
 
-    def chat_model(base_model: str) -> tuple:
+    def chat_model(base_model: str, **meta) -> tuple:
         model_id = f"skilled-{base_model}-{tag}"
         with admin.client() as client:
             if base_model != MOCK_MODEL_ID:
@@ -595,7 +605,7 @@ def skilled_chat(admin, make_user):
                     "id": model_id,
                     "base_model_id": base_model,
                     "name": model_id,
-                    "meta": {"skillIds": [skill_id]},
+                    "meta": {"skillIds": [skill_id], **meta},
                     "params": {"function_calling": "native"},
                     "access_grants": [EVERYONE_READS],
                 },
@@ -658,6 +668,139 @@ def test_a_strict_provider_gets_no_reasoning_field_on_added_tool_rounds(upstream
     assert turns, "the skill list and the memories never reached the model as tool rounds"
     leaked = [sorted({"thinking", "reasoning_content"} & set(turn)) for turn in turns]
     assert leaked == [[]] * len(turns), f"a strict provider got a reasoning field: {leaked}"
+
+
+# --- #34257: unchanged context is sent once, by tools the model has ------------------------------
+
+
+@pytest.fixture
+def context_chat(admin, skilled_chat):
+    """A user with a memory, and a native model with a skill and a knowledge base attached."""
+    name = f"Harbour charts {uuid.uuid4().hex[:6]}"
+    with admin.client() as client, knowledge_base(client, name=name) as kb_id:
+        knowledge = [{"type": "collection", "id": kb_id, "name": "Harbour charts"}]
+        yield skilled_chat(MOCK_MODEL_ID, knowledge=knowledge)
+
+
+def _chat_turns(client, model_id: str, count: int, turn: ChatTurn | None = None) -> ChatTurn:
+    """`count` more questions in the chat of `turn` (a new chat without one); returns the last."""
+    for number in range(count):
+        turn = send_message(
+            client,
+            f"question {number + 1}",
+            model=model_id,
+            chat_id=turn.chat_id if turn else None,
+            parent_id=turn.assistant_message_id if turn else None,
+            features={"memory": True},
+        )
+        replied = wait_for_reply(client, turn)
+        assert not replied.get("error"), f"the chat failed: {replied}"
+    return turn
+
+
+def _last_chat_request(upstream) -> dict:
+    """The chat's own last request, not a compaction summary request."""
+    return [body for body in upstream.chat_requests() if body.get("stream")][-1]
+
+
+def _context_copies(body: dict) -> dict[str, int]:
+    return {name: len(context_results(body, name)) for name in sorted(CONTEXT_TOOLS)}
+
+
+def test_unchanged_skills_knowledge_and_memories_are_sent_once_per_chat(upstream, context_chat):
+    account, model_id = context_chat
+    with account.client() as client:
+        _chat_turns(client, model_id, 4)
+
+    copies = _context_copies(_last_chat_request(upstream))
+    assert copies == dict.fromkeys(sorted(CONTEXT_TOOLS), 1), (
+        f"the fourth question carries the unchanged lists and memories again (#34257): {copies}"
+    )
+
+
+def test_the_model_has_every_context_tool_it_is_shown_calling(upstream, context_chat):
+    account, model_id = context_chat
+    with account.client() as client:
+        _chat_turns(client, model_id, 1)
+
+    sent = _last_chat_request(upstream)
+    shown = {
+        call["function"]["name"]
+        for turn in _context_tool_turns(sent)
+        for call in turn["tool_calls"]
+    }
+    declared = {tool["function"]["name"] for tool in sent.get("tools") or []}
+    assert shown == set(CONTEXT_TOOLS), f"not every context round reached the model: {shown}"
+    assert shown <= declared, (
+        f"the model is shown calling tools it was not given (#34257): {shown - declared}"
+    )
+
+
+def test_context_tool_turns_carry_no_text(upstream, context_chat):
+    account, model_id = context_chat
+    with account.client() as client:
+        _chat_turns(client, model_id, 2)
+
+    turns = _context_tool_turns(_last_chat_request(upstream))
+    assert turns, "the context never reached the model as tool rounds"
+    contents = [turn["content"] for turn in turns]
+    # an empty string is what proxies fill with placeholder text
+    assert contents == [None] * len(turns), f"a context tool turn carries text (#34257): {contents}"
+
+
+def test_a_new_skill_lists_the_skills_again(admin, upstream, context_chat):
+    account, model_id = context_chat
+    tag = uuid.uuid4().hex[:8]
+    with account.client() as client:
+        turn = _chat_turns(client, model_id, 2)
+        with admin.client() as admin_client:
+            created = admin_client.post(
+                "/api/v1/skills/create",
+                json={
+                    "id": f"tide-tables-{tag}",
+                    "name": f"Tide tables {tag}",
+                    "description": "Reads tide tables.",
+                    "content": "Read the tide tables.",
+                    "meta": {},
+                    "access_grants": [EVERYONE_READS],
+                },
+            )
+            assert created.status_code == 200, created.text
+        try:
+            _chat_turns(client, model_id, 1, turn)
+        finally:
+            with admin.client() as admin_client:
+                admin_client.delete(f"/api/v1/skills/id/tide-tables-{tag}/delete")
+
+    listed = context_results(_last_chat_request(upstream), "list_available_skills")
+    assert f"Tide tables {tag}" in listed[-1], (
+        f"the new skill is missing from the latest list: {listed}"
+    )
+
+
+def test_compaction_lists_the_context_again(admin, preserve, upstream, context_chat):
+    account, model_id = context_chat
+    preserve(CHATS_CONFIG)
+    with account.client() as client:
+        turn = _chat_turns(client, model_id, 3)
+        with admin.client() as admin_client:
+            current = admin_client.get(CHATS_CONFIG[0]).json()
+            compacting = {
+                **current,
+                "ENABLE_CONTEXT_COMPACTION": True,
+                "CONTEXT_COMPACTION_TOKEN_THRESHOLD": 1,
+                "CONTEXT_COMPACTION_TOKEN_CAP": 1,
+                "CONTEXT_COMPACTION_RETENTION_PERCENTAGE": 40,
+            }
+            assert admin_client.post(CHATS_CONFIG[1], json=compacting).status_code == 200
+        _chat_turns(client, model_id, 1, turn)
+
+    assert [body for body in upstream.chat_requests() if not body.get("stream")], (
+        "nothing was compacted"
+    )
+    copies = _context_copies(_last_chat_request(upstream))
+    missing = [name for name, count in copies.items() if not count]
+    assert not missing, f"after compaction the model no longer has {missing}: {copies}"
 
 
 # --- #28292: memories sharing a timestamp come out in one order ------------------------------
