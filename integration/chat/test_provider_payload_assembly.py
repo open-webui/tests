@@ -67,6 +67,9 @@ each, none of the three tools declared, empty text) and pass on the fix branch
 fix/skills-list-repeated-every-turn (e5e2fbbf0); the new-skill and compaction tests pass on both.
 The own-tool memory test passes on dev 2547992b8 and fails on e5e2fbbf0, which sent the memories
 with Memory off and without the permission whenever a tool named recall_memories was enabled.
+The two tool turn without text tests (#34264), one replaying a stored reply and one sent by an
+Anthropic client, fail on dev a14385816, which sends that turn with an empty text, and pass on
+the fix branch fix/litellm-placeholder-after-tool-call.
 """
 
 from __future__ import annotations
@@ -750,6 +753,82 @@ def test_context_tool_turns_carry_no_text(upstream, context_chat):
     contents = [turn["content"] for turn in turns]
     # an empty string is what proxies fill with placeholder text
     assert contents == [None] * len(turns), f"a context tool turn carries text (#34257): {contents}"
+
+
+def test_the_models_own_tool_turn_without_text_carries_no_text(make_user, upstream):
+    tool_call = {
+        "type": "function_call",
+        "id": "call_noon",
+        "call_id": "call_noon",
+        "name": "get_current_timestamp",
+        "arguments": "{}",
+        "status": "completed",
+    }
+    tool_result = {
+        "type": "function_call_output",
+        "id": "fco_noon",
+        "call_id": "call_noon",
+        "output": [{"type": "input_text", "text": "noon"}],
+        "status": "completed",
+    }
+    answer = {"type": "message", "content": [{"type": "output_text", "text": "It is noon."}]}
+    with make_user().client() as client:
+        chat_id, last_id = _store_chat(
+            client,
+            [
+                {"role": "user", "content": "what time is it?"},
+                {
+                    "role": "assistant",
+                    "content": "It is noon.",
+                    "output": [tool_call, tool_result, answer],
+                },
+            ],
+        )
+        _continue(client, chat_id, last_id)
+
+    turns = [entry for entry in upstream.chat_requests()[-1]["messages"] if entry.get("tool_calls")]
+    contents = [turn["content"] for turn in turns]
+    # LiteLLM 1.81.14 to 1.108 fills an empty string with placeholder text the model then repeats
+    assert contents == [None], f"the model's own tool turn carries text (#34264): {contents}"
+
+
+def test_a_tool_call_without_text_from_an_anthropic_client_carries_no_text(make_user, upstream):
+    question = f"what time is it? [{uuid.uuid4().hex[:8]}]"
+    request = {
+        "model": MOCK_MODEL_ID,
+        "max_tokens": 64,
+        "tools": [
+            {"name": "get_time", "description": "Current time", "input_schema": {"type": "object"}}
+        ],
+        "messages": [
+            {"role": "user", "content": question},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_noon", "name": "get_time", "input": {}}
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_noon", "content": "noon"}
+                ],
+            },
+        ],
+    }
+    with make_user().client() as client:
+        response = client.post("/api/v1/messages", json=request)
+    assert response.status_code == 200, response.text
+
+    [sent] = [
+        body
+        for body in upstream.chat_requests()
+        if any(message.get("content") == question for message in body.get("messages", []))
+    ]
+    contents = [message["content"] for message in sent["messages"] if message.get("tool_calls")]
+    assert contents == [None], (
+        f"an Anthropic client's tool call turn carries text (#34264): {contents}"
+    )
 
 
 def test_a_new_skill_lists_the_skills_again(admin, upstream, context_chat):
