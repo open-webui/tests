@@ -305,7 +305,8 @@ def test_the_editor_suggests_a_word_already_in_the_file(browser, open_terminal):
     browser.page.keyboard.type("harb")
     suggestion = browser.page.get_by_role("listbox").get_by_role("option", name="harbourmaster")
     expect(suggestion).to_be_visible()
-    browser.page.keyboard.press("Enter")
+    # the editor ignores Enter for a moment after the list opens; a click picks at once
+    suggestion.click()
     browser.page.keyboard.press("Control+s")
 
     assert wait_until(lambda: notes.read_text() == "harbourmaster on duty\nharbourmaster\n", 10), (
