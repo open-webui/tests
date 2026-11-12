@@ -70,6 +70,8 @@ def test_a_reply_that_took_a_while_shows_when_it_finished(page_for, chat_for, ma
     upstream.queue(reply.text("About an hour.", hold=released, match=reply.answering(question)))
     try:
         send(chat, question)
+        # the time the open chat shows once the question is stored, as a reopened chat shows it
+        expect(chat.page).to_have_url(re.compile(r"/c/"))
         sent_at = shown_time(user_message(chat))
         chat.page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
     finally:
@@ -140,6 +142,8 @@ def test_a_failed_reply_shows_its_finish_time_after_a_reload(
     )
     try:
         send(chat, question)
+        # the time the open chat shows once the question is stored, as a reopened chat shows it
+        expect(chat.page).to_have_url(re.compile(r"/c/"))
         sent_at = shown_time(user_message(chat))
         chat.page.wait_for_function(f"Date.now() / 1000 >= {sent_at + GAP_SECONDS}")
     finally:
