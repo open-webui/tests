@@ -164,6 +164,10 @@ def _prepare(person, terminal_id: str, command: str) -> None:
     assert done.json()["exit_code"] == 0, f"preparing the machine failed: {done.json()}"
 
 
+def _system_info(client: httpx.Client, terminal_id: str) -> httpx.Response:
+    return client.get(f"/api/v1/terminals/{terminal_id}/system/info")
+
+
 def _machine_of(person, terminal_id: str, **context) -> dict:
     with person.client() as client:
         return instance_of(client, terminal_id, **context)
@@ -638,10 +642,14 @@ def test_a_message_sent_while_the_machine_is_still_starting_says_so_and_works_wh
     )
 
     first = _ask(person, slow.upstream, reply.text("Too early."), terminal_id=terminal_id)
+    # the person sends again once the machine is up; System Info starts nothing itself
+    with person.client() as client:
+        started = wait_until(lambda: _system_info(client, terminal_id).status_code == 200, 60)
     again = _ask(
         person, slow.upstream, _run("echo started"), reply.text("Ran."), terminal_id=terminal_id
     )
 
+    assert started, f"the machine never finished starting: {terminals.instances()}"
     assert _error_of(first.message).endswith(STILL_STARTING), (
         f"the person was not told the terminal is still starting: {first.message}"
     )
