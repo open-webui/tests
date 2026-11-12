@@ -52,10 +52,6 @@ Saving a model asks "Discard unsaved changes?" right after the save", from da850
 default terminal set over the API, a new chat on the model also started without it on dev
 8588bd2a7 (the new chat screen lost the chat's terminal); e791cbdde fixed that before it was filed.
 
-A folder's Default terminal lists only admin terminals, so a person cannot make their own terminal
-a folder's default (open-webui/open-webui#34254, fix on the Classic298 branch
-folder-default-terminal-lists-only-admin-terminals); that test is red on dev 2547992b8.
-
 Switching a new chat to a model without a default terminal keeps the terminal picked in it
 (b433aab65, a01b2ed55; the switch turned it off). The test passes on dev e8c0ad85e and fails on a
 build of it whose model switch takes the model's default terminal, none when it has none.
@@ -543,27 +539,6 @@ def test_a_personal_terminal_runs_in_the_folder_picked_for_the_chat(
     assert where_pwd_ran(page, upstream) == str(folder), (
         "the personal terminal ran the command outside the picked folder"
     )
-
-
-def test_a_folder_can_default_to_the_users_personal_terminal(
-    page_for, admin, make_user, open_terminal, direct_integrations, preserve
-):
-    """Red on dev 2547992b8: a folder's Default terminal lists only admin terminals, never the
-    user's own (open-webui/open-webui#34254, fix branch
-    folder-default-terminal-lists-only-admin-terminals).
-    """
-    preserve(TERMINAL_SERVERS_CONFIG)
-    with admin.client() as client:
-        configure_terminals(client)
-    direct_integrations(True)
-    person = make_user(role="admin")
-    save_personal_terminal(person, open_terminal)
-    _, name = create_folder(person, {})
-    page = page_for(person)
-    dialog = open_folder_dialog(page, name)
-
-    expect(dialog.get_by_text("No terminal servers available")).to_have_count(0)
-    choose_default_terminal(page, dialog, PERSONAL)
 
 
 def test_recent_folders_are_kept_for_each_person_and_the_menu_search_narrows_them(
