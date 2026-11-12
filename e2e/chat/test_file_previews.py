@@ -1,33 +1,35 @@
 """Journey: opening a file attached to a chat shows what it holds, before and after sending.
 
 A file attached in the composer, and the same file on the sent message, opens a dialog with its
-name, its size and the text the server read out of it. Its Preview tab shows a CSV as a table of
-its rows, each sheet of a spreadsheet on a tab of its own, a Word document as its rendered page and
+name, its size and the text the server read out of it. Its Preview tab shows a CSV as a table of its
+rows, each sheet of a spreadsheet on a tab of its own, a Word document as its rendered page and
 Markdown with its formatting. A PowerPoint slide draws its title where the file aligns it: left,
-right or, when the file leaves it open, centred. A PDF shows its extracted text; the Preview tab's
-PDF viewer says "Failed to load PDF." in the suite's Chromium 131 for any PDF, so it is not driven
-here. An attached picture opens full size from the sent message and downloads as the bytes that were
-uploaded. Switching a long document to Using Entire Document in its dialog sends the model the
-whole text where focused retrieval sends a few pieces of it, and a file's switch shows its own
-mode after another attachment is removed. Since 98f7a6146 a file under the Full Text Threshold goes
-whole without a switch, so those two tests set the threshold to 0 and Top K back to 3, and since
-bd6fc15be a model in native function calling reads attached files through its tools unless File
-Context is ticked. A file under the threshold, or any file with Always Use Full Text on, shows
-Using Entire Document with no switch and says why on hover (c81aca931).
+right or, when the file leaves it open, centred, and a deck with sections shows each slide once. A
+PDF shows its extracted text; the Preview tab's PDF viewer says "Failed to load PDF." in the suite's
+Chromium 131 for any PDF, so it is not driven here. An attached picture opens full size from the
+sent message and downloads as the bytes that were uploaded. Switching a long document to Using
+Entire Document in its dialog sends the model the whole text where focused retrieval sends a few
+pieces of it, and a file's switch shows its own mode after another attachment is removed. Since
+98f7a6146 a file under the Full Text Threshold goes whole without a switch, so those two tests set
+the threshold to 0 and Top K back to 3, and since bd6fc15be a model in native function calling reads
+attached files through its tools unless File Context is ticked. A file under the threshold, or any
+file with Always Use Full Text on, shows Using Entire Document with no switch and says why on hover
+(c81aca931).
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649
 the Entire Document test is red in a side chat: the further New Chat tab it opens never appears,
 as the main chat's message box stays hidden after its tab is selected; it passes on dev e791cbdde.
 
-Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows
-"No content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never
-loads a Word document, shows Markdown as plain text and ignores the Using Entire Document switch,
-and whose picture preview never opens, every test fails. In the pre-fix build of 0.12.4
-(a944564c2 reverted) the remaining file shows the removed file's Using Entire Document. The
-PowerPoint title test fails on the dev 75358502c build (#32873: the left-aligned title starts 42%
-across the slide) and passes with the fix 8fa77c828 (#32876). Both whole-file dialog cases fail in
-a dev f659c0d12 backend copy whose `/api/config` leaves out the threshold (no mode shown at all)
-and the first one in a copy that reads Always Use Full Text as on for every account.
+Discriminates: passes on the dev ebc6add67 build. In a frontend build whose file dialog shows "No
+content" for the text, no longer takes a CSV for a spreadsheet, hides the sheet tabs, never loads a
+Word document, shows Markdown as plain text and ignores the Using Entire Document switch, and whose
+picture preview never opens, every test fails. In the pre-fix build of 0.12.4 (a944564c2 reverted)
+the remaining file shows the removed file's Using Entire Document. The PowerPoint title test fails
+on the dev 75358502c build (#32873: the left-aligned title starts 42% across the slide) and passes
+with the fix 8fa77c828 (#32876). The sections test fails on the dev 31a8c5442 build (#34270: no
+slide shows) and passes with the fix 0d087802c. Both whole-file dialog cases fail in a dev f659c0d12
+backend copy whose `/api/config` leaves out the threshold (no mode shown at all) and the first one
+in a copy that reads Always Use Full Text as on for every account.
 """
 
 from __future__ import annotations
@@ -167,6 +169,28 @@ def titled_deck(*alignments: str | None) -> bytes:
     return buffer.getvalue()
 
 
+def in_one_section(deck: bytes) -> bytes:
+    """The deck with all its slides in one section, stored the way PowerPoint stores sections."""
+    pptx = pytest.importorskip("pptx")
+    from lxml import etree
+
+    presentation = pptx.Presentation(io.BytesIO(deck))
+    slide_ids = "".join(f'<p14:sldId id="{slide.slide_id}"/>' for slide in presentation.slides)
+    presentation.element.append(
+        etree.fromstring(
+            '<p:extLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">'
+            '<p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}">'
+            '<p14:sectionLst xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">'
+            '<p14:section name="Harbour" id="{6F1C5B7E-2D3A-4B8C-9E0F-1A2B3C4D5E6F}">'
+            f"<p14:sldIdLst>{slide_ids}</p14:sldIdLst></p14:section></p14:sectionLst>"
+            "</p:ext></p:extLst>"
+        )
+    )
+    buffer = io.BytesIO()
+    presentation.save(buffer)
+    return buffer.getvalue()
+
+
 def title_ink(dialog: Locator, number: int) -> tuple[float, float]:
     """Where the title's dark pixels start and end on a slide, as % of the slide width."""
     dialog.get_by_role("button", name=f"Slide {number}", exact=True).click()
@@ -215,6 +239,20 @@ def test_a_slide_title_previews_with_the_alignment_the_file_gives_it(chat_for, m
     )
     _, right_end = title_ink(dialog, 3)
     assert right_end > 80, f"a right-aligned title ends {right_end:.0f}% across the slide"
+
+
+def test_a_deck_with_sections_previews_every_slide(chat_for, make_user):
+    """#34270: a deck with sections failed to load, as its section list was read as slides too."""
+    chat = chat_for(make_user())
+    deck = in_one_section(titled_deck("LEFT", "RIGHT"))
+
+    dialog = attach_and_open(chat, "harbour.pptx", deck, PPTX)
+    show_preview(dialog)
+
+    for number in (1, 2):
+        dialog.get_by_role("button", name=f"Slide {number}", exact=True).click()
+        expect(dialog.get_by_role("img", name=f"Slide {number}", exact=True)).to_be_visible()
+    expect(dialog.get_by_role("button", name="Slide 3", exact=True)).to_have_count(0)
 
 
 def test_markdown_previews_with_its_formatting(chat_for, make_user):
