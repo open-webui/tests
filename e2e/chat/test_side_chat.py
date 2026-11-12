@@ -35,7 +35,9 @@ A side chat stays temporary, answered but kept out of the chat list, when the ac
 Temporary Chat in it with `/temporary` before its first message, or when the admin enforces
 temporary chats. Discriminates: both pass on the e8c0ad85e build; in a build of it whose side
 chat starts saved whatever is enforced the enforced test fails, and in one that ignores the
-toggle the toggle test fails.
+toggle the toggle test fails. Leaving the chat and coming back keeps the side tab temporary;
+that test is red on dev 782f4b705 (#34215), where the tab comes back as a new saved chat and its
+next message is saved, and passes on the fix build.
 
 Since dev da850248d the address follows the selected tab, so the tests select the chat's own tab
 before a reload and before reading its address.
@@ -498,6 +500,49 @@ def test_temporary_chat_turned_on_in_a_side_chat_keeps_it_out_of_the_chat_list(
     side.expect_reply(SIDE_ANSWER)
     assert list(listed_chats(account)) == [chat_id], (
         f"a side chat switched to temporary was saved: {listed_chats(account)}"
+    )
+
+
+def test_a_temporary_side_chat_stays_temporary_after_leaving_the_chat_and_coming_back(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    """Red on dev 782f4b705 (open-webui/open-webui#34215): the side tab comes back as a saved
+    chat; the fix is on Classic298:fix/temporary-side-chat-saved-after-coming-back."""
+    account = make_user()
+    parent_title = f"Lienz to Matrei {uuid.uuid4().hex[:8]}"
+    chat_id = seed_titled_chat(
+        account,
+        [{"role": "user", "content": PROMPT}, {"role": "assistant", "content": ANSWER}],
+        parent_title,
+    )
+    page = page_for(account, path=f"/c/{chat_id}")
+    expect_reply(page, ANSWER)
+    side = open_empty_side_chat(page)
+    side.input.click()
+    page.keyboard.type("/temporary")
+    page.get_by_role("button", name=re.compile(r"^Temporary")).click()
+    expect(side.input).to_have_text("")
+    question = tagged(SIDE_QUESTION)
+    upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
+    side.send(question)
+    side.expect_reply(SIDE_ANSWER)
+
+    main = main_chat_view(page)
+    main.show()
+    sidebar = open_sidebar(page)
+    sidebar.get_by_role("link", name="New Chat").last.click()
+    expect(main.replies).to_have_count(0)
+    sidebar.get_by_role("button", name=re.compile(rf"^{re.escape(parent_title)}(?: |$)")).click()
+    expect(main.last_reply).to_contain_text(ANSWER, timeout=REPLY_TIMEOUT_MS)
+    side.show()
+
+    expect(side.panel).to_contain_text("Messages disappear when you close this tab.")
+    second_question = tagged(SECOND_SIDE_QUESTION)
+    upstream.queue(reply.text(SECOND_SIDE_ANSWER, match=reply.answering(second_question)))
+    side.send(second_question)
+    side.expect_reply(SECOND_SIDE_ANSWER)
+    assert list(listed_chats(account)) == [chat_id], (
+        f"the temporary side chat was saved after coming back to it: {listed_chats(account)}"
     )
 
 
