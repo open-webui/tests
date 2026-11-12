@@ -91,7 +91,8 @@ def test_fork_on_a_chat_in_a_folder_shared_for_reading_opens_the_readers_own_cop
 
     page = page_for(reader, path=f"/c/{chat_id}")
     expect_reply(page, answer)
-    expect(chat_input(page)).to_have_count(0)
+    # no message box at all, also none left hidden
+    expect(page.locator("#chat-input")).to_have_count(0)
     with page.expect_response(lambda response: response.url.endswith("/fork")) as forked:
         last_reply(page).locator("xpath=ancestor::*[starts-with(@id, 'message-')][1]").get_by_role(
             "button", name="Fork chat"
