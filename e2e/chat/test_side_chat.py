@@ -39,6 +39,14 @@ toggle the toggle test fails. Leaving the chat and coming back keeps the side ta
 that test is red on dev 782f4b705 (#34215), where the tab comes back as a new saved chat and its
 next message is saved, and passes on the fix build.
 
+A saved side tab brought back by a reload shows only the side exchange, never the chat's
+messages its saved copy starts with (open-webui/open-webui#34002, fixed in b01fe7fae). While a
+reply is written, the tab of the chat that answers shows a spinner read out as "Generating...",
+the chat's own tab and a side tab alike, and the other tab does not (6bd86a161). Discriminates:
+both pass on dev 485103cde; in a frontend copy of it that drops the saved branch point when a
+side chat loads, the first test fails after the reload, and in one without the tab spinner the
+spinner test fails.
+
 Since dev da850248d the address follows the selected tab, so the tests select the chat's own tab
 before a reload and before reading its address.
 """
@@ -47,6 +55,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 
 import pytest
@@ -79,6 +88,10 @@ SIDE_QUESTION = "By the way, how long is that tunnel? ({tag})"
 SIDE_ANSWER = "The Felbertauern tunnel is 5.3 kilometres long."
 SECOND_SIDE_QUESTION = "Unrelated, what is the capital of Carinthia? ({tag})"
 SECOND_SIDE_ANSWER = "Klagenfurt is the capital of Carinthia."
+# a tab spinner reads out this before the tab's title
+GENERATING = "Generating..."
+TOLL = ["The toll ", "for ", "cars ", "is ", "12 euros."]
+SIDE_TOLL = ["It ", "is ", "5.3 ", "kilometres ", "long."]
 OTHER_TITLE = "Packing for the Grossglockner"
 OTHER_CHAT = [
     {"role": "user", "content": "What should I pack for the Grossglockner road?"},
@@ -258,9 +271,62 @@ def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
     expect(main_chat(page).get_by_text(PROMPT)).to_be_visible()
     expect(main_messages.get_by_text(SIDE_ANSWER)).to_have_count(0)
     expect(main_messages.get_by_text(question)).to_have_count(0)
-    # the saved side chat's tab is back after the reload, with its exchange
-    expect(side_chat_panel(page, question)).to_contain_text(SIDE_ANSWER)
+    # the saved side chat's tab is back after the reload, with its exchange and only that (#34002)
+    side_panel = side_chat_panel(page, question)
+    expect(side_panel).to_contain_text(SIDE_ANSWER)
+    expect(
+        side_panel.get_by_text(ANSWER), "the reloaded side tab lists the chat's messages (#34002)"
+    ).to_have_count(0)
+    expect(side_panel.get_by_text(PROMPT)).to_have_count(0)
     expect(chat_row(open_sidebar(page), question)).to_be_visible()
+
+
+def test_the_chat_tab_and_a_side_tab_show_a_spinner_while_they_answer(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    account = make_user()
+    page, _ = open_answered_chat(page_for, account, upstream)
+    chat_tab = main_chat_view(page).tab
+    expect(chat_tab).to_be_visible()
+    expect(chat_tab).not_to_contain_text(GENERATING)
+
+    follow_up = tagged("And what is the toll for the tunnel? ({tag})")
+    release = threading.Event()
+    upstream.queue(reply.text(TOLL, hold=release, hold_after=3, match=reply.answering(follow_up)))
+    try:
+        send(page, follow_up)
+        expect(main_chat(page)).to_contain_text("The toll for", timeout=REPLY_TIMEOUT_MS)
+        expect(
+            chat_tab, "the chat tab shows no spinner while its reply is written"
+        ).to_contain_text(GENERATING)
+    finally:
+        release.set()
+    expect_reply(page, TOLL[-1])
+    expect(chat_tab, "the chat tab still spins after its reply ended").not_to_contain_text(
+        GENERATING
+    )
+
+    question = tagged(SIDE_QUESTION)
+    side_release = threading.Event()
+    upstream.queue(
+        reply.text(SIDE_TOLL, hold=side_release, hold_after=3, match=reply.answering(question))
+    )
+    try:
+        send(page, f"/side {question}")
+        side_tab = side_chat_tab(page, question)
+        expect(side_chat_panel(page, question)).to_contain_text("It is", timeout=REPLY_TIMEOUT_MS)
+        expect(
+            side_tab, "the side tab shows no spinner while its reply is written"
+        ).to_contain_text(GENERATING)
+        expect(chat_tab, "the chat tab spins for the side chat's reply").not_to_contain_text(
+            GENERATING
+        )
+    finally:
+        side_release.set()
+    expect(side_chat_panel(page, question)).to_contain_text(SIDE_TOLL[-1], timeout=REPLY_TIMEOUT_MS)
+    expect(side_tab, "the side tab still spins after its reply ended").not_to_contain_text(
+        GENERATING
+    )
 
 
 def test_a_closed_side_chat_is_gone_and_the_next_one_starts_empty(
