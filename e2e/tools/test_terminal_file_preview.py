@@ -37,6 +37,10 @@ picture tests pass on dev e8c0ad85e and fail on a copy of the dev e8c0ad85e buil
 is refused as too long, the arrow keys move no column edge, sheet protection is ignored and a pasted
 picture is not taken as an image. The second pasted picture test passes on dev c15f28649 and
 fails on a build of it where an upload from the editor keeps the name it was given.
+
+Resetting the zoom from below 10% returns the image to 100% and centres it again (e48c15d87, PR
+open-webui/open-webui#34080, issue #34079). The reset test passes on the dev 485103cde build and
+fails on a build of it with e48c15d87 reverted.
 """
 
 from __future__ import annotations
@@ -373,6 +377,34 @@ def test_an_image_zooms_in_out_and_back(browser):
     browser.get_by_role("button", name="Zoom out").click()
     expect(level).not_to_have_text("100%")
     assert int(level.inner_text().rstrip("%")) < 100
+
+
+def test_resetting_the_zoom_from_below_ten_percent_brings_the_image_back_centred(browser):
+    # open-webui/open-webui#34079: from below 10% the reset left the image where it was
+    open_file(browser, "label.png")
+    image = browser.get_by_role("img", name="label.png")
+    level = browser.get_by_role("button", name="Reset zoom")
+    expect(level).to_have_text("100%")
+    start = image.bounding_box()
+    assert start, "the image has no size"
+
+    for _ in range(30):
+        if int(level.inner_text().rstrip("%")) < 10:
+            break
+        browser.get_by_role("button", name="Zoom out").click()
+    assert int(level.inner_text().rstrip("%")) < 10, f"zooming out stopped at {level.inner_text()}"
+
+    level.click()
+
+    expect(level, "the reset did not return the image to 100%").to_have_text("100%")
+    back = image.bounding_box()
+    assert back, "the image vanished after the reset"
+    centre = (start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
+    now = (back["x"] + back["width"] / 2, back["y"] + back["height"] / 2)
+    assert abs(now[0] - centre[0]) < 2 and abs(now[1] - centre[1]) < 2, (
+        f"the reset image is not back where it started: centre {now}, was {centre}"
+    )
+    assert abs(back["width"] - start["width"]) < 1, (back, start)
 
 
 def test_a_sqlite_database_shows_its_table_and_rows(browser):
