@@ -31,10 +31,11 @@ the pick not stored on a saved chat, a saved chat opened without its terminal, a
 that says nothing (the saved chat test); a lost terminal reading Terminal, and one that stays picked
 for everyone (the deleted test); the controls never moved into the More menu (the narrow test). The
 reply-written test is red on dev 485103cde and on 0.13.3: both buttons stay usable while the reply
-is written (finding "issue: Terminal and working folder can be changed while a reply is still being
-generated"); the lock it expects is in the 0.13.3 release notes, and only the MoA merge sets the
-flag the input reads. The cog's target has no mutation of its own. A person's own terminals, listed
-under Direct, were removed from Open WebUI in 44d55bd0f and 4720ff19e and their test with them.
+is written (#34383); the lock it expects is in the 0.13.3 release notes, and only the MoA merge
+sets the flag the input reads. It passes with the fix on branch
+fix/terminal-folder-unlocked-during-reply (bde3943d3). The cog's target has no mutation of its
+own. A person's own terminals, listed under Direct, were removed from Open WebUI in 44d55bd0f
+and 4720ff19e and their test with them.
 """
 
 from __future__ import annotations
