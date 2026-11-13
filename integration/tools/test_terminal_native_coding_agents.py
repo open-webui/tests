@@ -7,11 +7,11 @@ any agent: their models are offered once the terminal is picked, a turn stores t
 and token use, a tool the agent ran is stored with its result, a request to be allowed something
 waits for the person and follows their answer, a question goes through the question card, a
 failed turn shows its reason, Stop interrupts the agent and the chat goes on, and the next
-message resumes the agent's own conversation. The chat's system prompt and a picture in the
-message reach each agent the way it takes them. Codex models also bring their reasoning efforts
-and service tiers as model controls: the default applies, a pick reaches the turn, and a pick the
-model does not offer is refused. The agents are `harness/fake_native_agent.py`, run by a real
-Open Terminal as its Claude Code, Codex and Pi.
+message resumes the agent's own conversation. The chat's system prompt and the pictures in the
+message, inline or uploaded with the paperclip, reach each agent the way it takes them. Codex
+models also bring their reasoning efforts and service tiers as model controls: the default
+applies, a pick reaches the turn, and a pick the model does not offer is refused. The agents are
+`harness/fake_native_agent.py`, run by a real Open Terminal as its Claude Code, Codex and Pi.
 
 Discriminates: passes on dev c15f28649. Mutations in a backend copy, each turning only the named
 tests red here: model controls no longer built from the catalog (the listing and effort tests);
@@ -20,11 +20,13 @@ tests); every request allowed without asking (the permission tests); the answers
 (the question tests); the failed turn not raised (the failed turn tests); no interrupt sent on
 Stop (the stop tests); `resume` dropped from the session options (the resume tests); the
 instructions dropped (the system prompt tests); pictures dropped (the same tests); the effort and
-tier not passed to the turn (the effort test).
+tier not passed to the turn (the effort test). An uploaded picture is dropped on dev 06491f013
+(#33992, fixed by PR #33993), so the picture tests stay red there until the fix merges.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -48,6 +50,9 @@ PIXEL = (
     "DwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
 PIXEL_DATA = PIXEL.split(",")[1]
+UPLOADED_DATA = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaPgPAAIDAYAkYfWXAAAAAElFTkSuQmCC"
+)
 WHOLE_USAGE = {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
 
 
@@ -395,9 +400,20 @@ def test_the_system_prompt_and_a_picture_reach_the_agent(
     terminal_id = connect(person)
     system = f"Always answer in haiku {uuid.uuid4().hex[:6]}"
     question = "what is on this?"
-    seen = [{"type": "text", "text": question}, {"type": "image_url", "image_url": {"url": PIXEL}}]
 
     with person.client() as client:
+        uploaded = client.post(
+            "/api/v1/files/",
+            files={"file": ("photo.png", base64.b64decode(UPLOADED_DATA), "image/png")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        file_id = uploaded.json()["id"]
+        # The paperclip sends the uploaded picture by its file id, a temporary chat inline.
+        seen = [
+            {"type": "text", "text": question},
+            {"type": "image_url", "image_url": {"url": PIXEL}},
+            {"type": "image_url", "image_url": {"url": file_id}},
+        ]
         reply = _ask(
             client,
             terminal_id,
@@ -409,25 +425,26 @@ def test_the_system_prompt_and_a_picture_reach_the_agent(
     assert "error" not in reply, f"the turn failed: {reply.get('error')}"
     received = native_agent_terminal.messages(native.provider)
     started = native_agent_terminal.started(native.provider)[-1]
+    both = [PIXEL_DATA, UPLOADED_DATA]
     if native is CLAUDE:
         instructions = _option_after(started, "--append-system-prompt")
         blocks = [m for m in received if m.get("type") == "user"][-1]["message"]["content"]
-        picture = {"type": "base64", "media_type": "image/png", "data": PIXEL_DATA}
+        expected = [{"type": "base64", "media_type": "image/png", "data": data} for data in both]
         pictures = [block["source"] for block in blocks if block["type"] == "image"]
     elif native is CODEX:
         thread = [m for m in received if m.get("method") == "thread/start"][-1]["params"]
         turn = [m for m in received if m.get("method") == "turn/start"][-1]["params"]
         instructions = thread.get("developerInstructions")
-        picture = PIXEL
+        expected = [f"data:image/png;base64,{data}" for data in both]
         pictures = [part["url"] for part in turn["input"] if part["type"] == "image"]
     else:
         instructions = _option_after(started, "--append-system-prompt")
-        picture = {"type": "image", "mimeType": "image/png", "data": PIXEL_DATA}
+        expected = [{"type": "image", "mimeType": "image/png", "data": data} for data in both]
         pictures = [m for m in received if m.get("type") == "prompt"][-1]["images"]
     assert instructions == system, (
         f"{native.provider} did not get the system prompt as instructions: {instructions!r}"
     )
-    assert pictures == [picture], f"{native.provider} did not get the picture: {pictures}"
+    assert pictures == expected, f"{native.provider} did not get both pictures (#33992): {pictures}"
 
 
 def test_a_codex_turn_runs_with_the_models_default_effort_or_the_persons_pick(
