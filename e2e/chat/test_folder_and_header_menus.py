@@ -22,6 +22,10 @@ its end. The rename tests pass on dev c5981aaea (frontend build of 05e115366, no
 since); in a frontend copy whose header rename never sends the title, whose blank check is dropped
 and whose menu shows Rename only on writable views, each of the three goes red.
 
+Since 0.13.4 double-clicking the chat's tab starts the same rename, and on a folder's page
+double-clicking the folder's tab turns its name into a text box whose Enter renames the folder.
+Both pass on dev 485103cde and fail in a frontend copy of it whose tab ignores a double-click.
+
 The rename tests also run on a chat in a side tab: a saved chat dragged into a tab, and a chat
 started in every way a side chat starts and every state it can be in (a temporary one has no
 stored title). Its tab must offer the same chat menu and rename the chat it shows; the menu is
@@ -413,3 +417,53 @@ def test_shared_folder_owner_renames_a_members_chat_from_its_header_but_not_the_
     menu = member_page.get_by_role("menu")
     expect(menu.get_by_role("menuitem", name="Copy")).to_be_visible()
     expect(menu.get_by_role("menuitem", name="Rename")).to_have_count(0)
+
+
+def test_double_clicking_the_chat_tab_renames_the_chat(make_user, page_for):
+    account = make_user()
+    suffix = uuid.uuid4().hex[:6]
+    title, renamed = f"Bollard {suffix}", f"Capstan {suffix}"
+    chat_id = _create_chat(account, title)
+    page = page_for(account, path=f"/c/{chat_id}")
+    tab = _shown_title(page)
+    expect(tab).to_have_text(title)
+
+    tab.dblclick()
+    box = _header(page).get_by_role("textbox", name="Title")
+    expect(box, "double-clicking the chat tab offered no title to edit").to_be_focused()
+    expect(box).to_have_value(title)
+    status = _save_title(page, box, chat_id, renamed)
+
+    assert status == 200, f"saving the new title got {status}"
+    expect(_shown_title(page)).to_have_text(renamed)
+    assert _stored_title(account, chat_id) == renamed
+
+
+def test_double_clicking_a_folder_tab_renames_the_folder(make_user, page_for):
+    account = make_user()
+    suffix = uuid.uuid4().hex[:6]
+    name, renamed = f"Quayside {suffix}", f"Dockyard {suffix}"
+    folder_id = _create_folder(account, name)
+    page = page_for(account, path=f"/folders/{folder_id}")
+    tab = _header(page).get_by_role("tab", name=name, exact=True)
+    expect(tab).to_be_visible()
+
+    tab.dblclick()
+    box = _header(page).get_by_role("textbox", name="Folder Name")
+    expect(box, "double-clicking the folder tab offered no name to edit").to_be_focused()
+    expect(box).to_have_value(name)
+    box.fill(renamed)
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/api/v1/folders/{folder_id}/update")
+        )
+    ) as answer:
+        box.press("Enter")
+
+    assert answer.value.status == 200, f"saving the folder name got {answer.value.status}"
+    expect(_header(page).get_by_role("tab", name=renamed, exact=True)).to_be_visible()
+    with account.client() as client:
+        stored = client.get(f"/api/v1/folders/{folder_id}")
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["name"] == renamed, f"the folder is stored as {stored.json()['name']!r}"
