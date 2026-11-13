@@ -402,7 +402,7 @@ def tool_round(listener, name: str, arguments: dict, result: str) -> None:
     assert joined == [
         {
             "role": "assistant",
-            "content": "",
+            "content": None,
             "tool_calls": [{"id": "call_1", "type": "function", "function": called}],
         },
         {"role": "tool", "tool_call_id": "call_1", "content": result},
