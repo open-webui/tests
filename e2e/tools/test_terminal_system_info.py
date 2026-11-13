@@ -7,7 +7,10 @@ the instance: host name, CPU, memory and disk use, cores and the busiest
 processes, its uptime and, folded under Network, each interface with its addresses. When the
 terminal cannot answer, the window says System info unavailable with the reason. A terminal
 that gives every chat its own environment offers no System info in a chat that is not saved yet,
-as it has nothing to report there, and offers it once a message has saved the chat. A local fake
+as it has nothing to report there, and offers it once a message has saved the chat. Since dev
+after 0.13.3 (titled `refac`) a terminal's setup script reports to System info as well: a script
+that failed shows "Setup script failed (exit <code>)" with the end of its log as an alert, one that
+is still running shows "Setup script is running", and one that finished shows nothing. A local fake
 terminal answers with fixed numbers; the per-chat terminal is one scoped to the chat on a real
 Terminals orchestrator on Docker (`harness.terminals`, since 6f2fc7bc7), and its test skips
 without it.
@@ -20,6 +23,8 @@ whose window labels the uptime otherwise and lists no interface addresses.
 The per-chat test passes on the dev c15f28649 build and fails with the terminal list no longer
 telling the browser a terminal's scope, in a backend copy (More options, with System info, is
 offered before the chat is saved).
+The setup script test passes on the dev 485103cde build; its failed and running cases fail on a
+build of it without the setup notice, the finished case passing there as it should.
 Retargeted at the More options menu on dev c15f28649: both window tests were red there on the old
 button and pass again; with the instance answering 404 for `system/info` in a backend copy the
 reports test fails (the window says System info unavailable). The cannot-answer test has no
@@ -144,6 +149,38 @@ def test_system_info_says_when_the_terminal_cannot_answer(
 
     expect(dialog.get_by_role("alert")).to_contain_text("System info unavailable")
     expect(dialog.get_by_role("progressbar")).to_have_count(0)
+
+
+@pytest.mark.parametrize(
+    "setup, role, shown",
+    [
+        (
+            {"status": "failed", "exit_code": 3, "log_tail": "npm ERR! no package.json here\n"},
+            "alert",
+            ["Setup script failed (exit 3)", "npm ERR! no package.json here"],
+        ),
+        ({"status": "running", "started_at": 1_800_000_000}, "status", ["Setup script is running"]),
+        ({"status": "ok", "exit_code": 0}, None, []),
+    ],
+    ids=["failed", "running", "done"],
+)
+def test_a_setup_script_that_failed_or_still_runs_shows_in_system_info(
+    page_for, make_user, admin, preserve, fake_terminal, setup, role, shown
+):
+    fake_terminal.route("GET", "/system/info", json_answer({**SYSTEM_INFO, "setup": setup}))
+    person = make_user()
+    name = _connect(admin, preserve, fake_terminal, person)
+    page = page_for(person)
+
+    dialog = _open_system_info(page, name)
+
+    expect(dialog).to_contain_text("lab-host-7")
+    if not role:
+        expect(dialog.get_by_text("Setup script")).to_have_count(0)
+        return
+    notice = dialog.get_by_role(role).filter(has_text=shown[0])
+    for text in shown:
+        expect(notice).to_contain_text(text)
 
 
 def test_a_per_chat_terminal_offers_no_system_info_before_the_chat_is_saved(

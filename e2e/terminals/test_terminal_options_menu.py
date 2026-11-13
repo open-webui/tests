@@ -3,7 +3,8 @@
 New on dev after 0.13.3 (f4cf2ca0c, titled `refac`). Every terminal in the Terminal menu has a More
 options button. For a terminal the person only uses (a plain Open Terminal behind an admin
 connection, a terminal on a Terminals connection that is only shared with them) it offers System
-info and View files. View files opens "Files on <name>", a file browser of that terminal. For a
+info and View files. View files opens "Files on <name>", a file browser of that terminal, and
+leaves the chat without a terminal picked. For a
 terminal the person manages (on a Terminals connection they may write to) the menu first reads the
 machine the open chat would use: without a running machine it offers Start and Terminal settings;
 with one it offers Restart and Stop, which ask first, System info, View files and Terminal
@@ -27,7 +28,8 @@ the terminal test); Stop not asking, Restart not asking, and Start reporting som
 done (the manager test); a state that cannot be read taken for running (the cannot be read test); a
 per chat terminal taken for reachable before the chat is saved, and the machine actions never
 naming the chat (the per chat test). The toasts of Stop and Restart, built as the one of Start is,
-have no mutation of their own.
+have no mutation of their own. On a build of dev 485103cde whose View files also picks the
+terminal for the chat, the plain test fails (the chat input's Terminal button reads the terminal).
 """
 
 from __future__ import annotations
@@ -218,6 +220,10 @@ def test_a_plain_terminal_offers_its_system_info_and_files_and_nothing_to_manage
     browser.get_by_text("tide.txt", exact=True).click()
     expect(browser.get_by_text("high at six")).to_be_visible()
     _close(dialog)
+    # viewing a terminal's files leaves the chat without a terminal
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name="Terminal", exact=True)).to_be_visible()
+    expect(composer.get_by_role("button", name=name, exact=True)).to_have_count(0)
 
     _choose(page, name, "System info", offered=USES)
     expect(_system_info_dialog(page, name)).to_contain_text(fake_terminal.hostname)
