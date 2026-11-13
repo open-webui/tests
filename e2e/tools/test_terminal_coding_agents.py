@@ -34,6 +34,10 @@ copy that builds no model controls from the catalog (no Model controls row); the
 fails in a backend copy whose `/api/models` does not pass the directory on (the folder's chat is
 offered the agent of the terminal's own directory); the edit and base model test fails on a
 frontend build with the `terminal` checks of the model item menu and the base model list undone.
+
+A Pi agent model pinned to the sidebar opens a new chat on that model (#34168, PR #34171). The
+test passes on the dev 485103cde build and fails in a backend copy that URL-quotes the model name
+in the id again (the chat opens on "Select a model").
 """
 
 from __future__ import annotations
@@ -58,6 +62,7 @@ from harness.terminal_server import (
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
 from utils.chat_controls import choose_model_control, model_control_row
+from utils.chat_surface import open_chat_tab_from, open_sidebar
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -371,3 +376,32 @@ def test_an_agent_model_has_no_edit_entry_and_is_not_offered_as_a_base_model(
     expect(bases.get_by_role("option", name=f"Select {MOCK_MODEL_ID} model")).to_be_visible()
     model_search(page).fill("opencode")
     expect(bases.get_by_role("option")).to_have_count(0)
+
+
+def test_a_pinned_pi_agent_model_opens_a_chat_on_that_model(
+    page_for, make_user, admin, preserve, native_agent_terminal
+):
+    """Regression (open-webui#34168): a Pi or Cursor agent model kept a `/` or brackets in its id,
+    encoded, so its pin opened a new chat on "Select a model". Fixed by PR #34171 (742909319)."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    name = f"Agent box {uuid.uuid4().hex[:6]}"
+    connection = connect_agent_terminal(admin, native_agent_terminal, person, name=name)
+    with person.client() as client:
+        listed = client.get("/api/models", params={"terminal_id": connection["id"]})
+        assert listed.status_code == 200, listed.text
+        # the id as Open WebUI gives it, which the pin stores
+        pi = next(m["id"] for m in listed.json()["data"] if m["name"] == "pi/acme/pi-fake")
+        pinned = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"pinnedModels": [pi]}}
+        )
+    assert pinned.status_code == 200, pinned.text
+    page = page_for(person)
+    choose_terminal(page, name)
+    prompt = f"pinned hello {uuid.uuid4().hex[:6]}"
+
+    sidebar = open_sidebar(page)
+    chat = open_chat_tab_from(page, sidebar.get_by_role("link", name="pi/acme/pi-fake"))
+    expect(chat.button("Selected model: pi/acme/pi-fake")).to_be_visible()
+    chat.send(prompt)
+    chat.expect_reply(f"pi heard: {prompt} [model acme/pi-fake,")
