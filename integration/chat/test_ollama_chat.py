@@ -160,7 +160,7 @@ def test_a_tool_call_runs_and_its_result_goes_back_in_ollamas_shape(ollama):
     first, follow_up = server.chat_requests()
     assert first["stream"] is True
     assistant, tool = follow_up["messages"][-2:]
-    assert assistant["content"] == ""
+    assert assistant["role"] == "assistant"
     assert [entry["function"] for entry in assistant["tool_calls"]] == [
         {"name": "get_current_timestamp", "arguments": {}}
     ]

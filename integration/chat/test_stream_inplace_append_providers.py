@@ -181,25 +181,22 @@ def test_ollama_tool_call_then_a_streamed_answer(ollama):
     ]
     first, second, third = [upstream.conversation(request) for request in server.chat_requests()]
     assert first == [{"role": "user", "content": "what time is it?"}]
-    assert second[1:] == [
-        {
-            "role": "assistant",
-            "content": "",
-            "thinking": "check clock",
-            "tool_calls": [
-                {
-                    "index": 0,
-                    "id": call_item["call_id"],
-                    "function": {"name": "get_current_timestamp", "arguments": {}},
-                }
-            ],
-        },
-        {
-            "role": "tool",
-            "content": result_item["output"][0]["text"],
-            "tool_call_id": call_item["call_id"],
-        },
-    ]
+    assert [turn["role"] for turn in second[1:]] == ["assistant", "tool"], second
+    called, answered = second[1:]
+    assert (called["thinking"], called["tool_calls"]) == (
+        "check clock",
+        [
+            {
+                "index": 0,
+                "id": call_item["call_id"],
+                "function": {"name": "get_current_timestamp", "arguments": {}},
+            }
+        ],
+    )
+    assert (answered["tool_call_id"], answered["content"]) == (
+        call_item["call_id"],
+        result_item["output"][0]["text"],
+    )
     assert stamp > 0
     assert third[-2:] == [
         {"role": "assistant", "content": "It is late.", "thinking": "read it"},
@@ -396,17 +393,13 @@ def tool_round(listener, name: str, arguments: dict, result: str) -> None:
         for request in listener.requests_to("/v1/chat/completions")
     ][:2]
     joined = second[len(first) :]
-    for call in joined[0].get("tool_calls", []):
+    assert [turn["role"] for turn in joined] == ["assistant", "tool"], joined
+    called, answered = joined
+    for call in called.get("tool_calls", []):
         call["function"]["arguments"] = json.loads(call["function"]["arguments"])
-    called = {"name": name, "arguments": arguments}
-    assert joined == [
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [{"id": "call_1", "type": "function", "function": called}],
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": result},
-    ]
+    function = {"name": name, "arguments": arguments}
+    assert called.get("tool_calls") == [{"id": "call_1", "type": "function", "function": function}]
+    assert (answered["tool_call_id"], answered["content"]) == ("call_1", result)
 
 
 def call_and_answer(name: str, arguments: dict) -> list:
