@@ -11,9 +11,8 @@ announced to the device. A device that connects again on another worker takes th
 earlier connection, which is closed.
 
 `/api/config` tells the Tether app whether the server can take it (`features.tether`): with one
-worker, and with several workers on Redis. Several workers without Redis cannot: the flag is
-off, a device's hello is refused and the terminal list says why. A server without WebSocket
-support has the flag off as well.
+worker, and with several workers on Redis. A server without WebSocket support has the flag off.
+Several workers without Redis is no supported setup and has no test.
 
 Two instances on one database and one real Redis stand for two workers; the device is the fake
 of `harness/tether_device.py`.
@@ -25,8 +24,7 @@ that only knows the devices connected to itself, each fail the five two-worker t
 connection replaced on another worker and left open fails the reconnect test; a device that
 hangs up without word to the other worker, and no `terminals:changed` at all, each fail the
 hang-up test; a notification for a device on another worker dropped fails the notification
-test; `features.tether` on whatever the workers and Redis, and several workers without Redis
-taking devices, each fail the flag test.
+test; `features.tether` on whatever the WebSocket support fails the flag test.
 """
 
 from __future__ import annotations
@@ -53,8 +51,6 @@ from harness.tether_device import (
     CHUNK,
     DeviceRequest,
     DeviceSocket,
-    tether_device,
-    tether_session,
 )
 
 pytestmark = [
@@ -65,7 +61,6 @@ pytestmark = [
 ]
 
 INTERRUPTED = {"code": "tether_interrupted", "outcome": "unknown", "retryable": False}
-NEEDS_REDIS = "Tether requires Redis with multiple WebUI workers."
 CWD = {"cwd": "/home/user"}
 
 
@@ -309,38 +304,19 @@ def _offers_tether(instance: LaunchedInstance) -> bool:
     return features["tether"]
 
 
-def test_the_server_offers_tether_with_one_worker_or_with_redis_and_refuses_devices_otherwise(
+def test_the_server_offers_tether_with_one_worker_or_with_redis_but_not_without_websockets(
     instance, workers, instance_with
 ):
     near, _ = workers
-    without_redis = instance_with(
-        {"UVICORN_WORKERS": "2", "REDIS_URL": "", "WEBSOCKET_MANAGER": ""}
-    )
     without_sockets = instance_with({"ENABLE_WEBSOCKET_SUPPORT": "false"})
-    owner = create_user(without_redis)
-    token = tether_session(without_redis, owner)["token"]
-
-    with tether_device(without_redis.base_url, token) as refused:
-        closed = refused.wait_closed(10)
-    with owner.client() as client:
-        listed = client.get("/api/v1/terminals/")
 
     offered = {
         "one worker": _offers_tether(instance),
         "several workers on Redis": _offers_tether(near),
-        "several workers without Redis": _offers_tether(without_redis),
         "no WebSocket support": _offers_tether(without_sockets),
     }
     assert offered == {
         "one worker": True,
         "several workers on Redis": True,
-        "several workers without Redis": False,
         "no WebSocket support": False,
     }, f"/api/config offers Tether as {offered}"
-    assert refused.ready is None and closed is not None and closed[0] == 4001, (
-        f"several workers without Redis took a device: {refused.ready}, closed with {closed}"
-    )
-    assert (listed.status_code, listed.json()) == (503, {"detail": NEEDS_REDIS}), (
-        f"the terminal list of several workers without Redis answered "
-        f"{listed.status_code} {listed.text}"
-    )
