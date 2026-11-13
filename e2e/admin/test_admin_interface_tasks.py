@@ -70,8 +70,9 @@ def tasks_restored(preserve):
     preserve("tasks", CHAT_CONFIG)
 
 
-def open_interface_settings(page: Page) -> Locator:
-    page.goto("/admin/settings/interface")
+def open_interface_settings(page_for, admin: Actor) -> Locator:
+    # opened directly, so the cold load is waited out before the form's own wait starts
+    page = page_for(admin, path="/admin/settings/interface")
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("switch", name="Title Generation")).to_be_visible()
     return settings
@@ -114,7 +115,7 @@ def requests_with(upstream, marker: str) -> list[dict]:
 def test_a_switched_on_title_generation_titles_the_chat_with_the_admins_prompt(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Title Generation", turn_on=True)
     prompt_field(settings, "Title Generation Prompt").fill(TITLE_PROMPT)
     save(settings)
@@ -137,7 +138,7 @@ def test_a_switched_off_title_generation_keeps_the_question_as_the_title(
 ):
     with admin.client() as client:
         set_title_generation(client, turn_on=True)
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Title Generation", turn_on=False)
     save(settings)
     page = page_for(make_user())
@@ -156,7 +157,7 @@ def test_a_switched_off_title_generation_keeps_the_question_as_the_title(
 def test_a_switched_on_follow_up_generation_offers_questions_that_ask_when_pressed(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Follow Up Generation", turn_on=True)
     prompt_field(settings, "Follow Up Generation Prompt").fill(FOLLOW_UP_PROMPT)
     save(settings)
@@ -179,7 +180,7 @@ def test_a_switched_on_follow_up_generation_offers_questions_that_ask_when_press
 def test_a_switched_on_autocomplete_suggests_a_continuation_that_tab_accepts(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Autocomplete Generation", turn_on=True)
     save(settings)
     page = page_for(make_user(), path="/?settings=interface")
@@ -208,7 +209,7 @@ def test_a_switched_on_autocomplete_suggests_a_continuation_that_tab_accepts(
 def test_a_switched_on_tags_generation_files_the_chat_under_the_models_tags(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Tags Generation", turn_on=True)
     prompt_field(settings, "Tags Generation Prompt").fill(TAGS_PROMPT)
     save(settings)
@@ -256,7 +257,7 @@ def test_the_external_task_model_writes_the_title(
 ):
     with admin.client() as client:
         set_title_generation(client, turn_on=True)
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     task_model = settings.get_by_text("External Task Model", exact=True)
     task_model.locator("xpath=following-sibling::div//select").select_option(label=scribe["name"])
     save(settings)
@@ -281,7 +282,7 @@ def test_task_model_parameters_reach_the_title_request_and_not_the_chat(
 ):
     with admin.client() as client:
         set_title_generation(client, turn_on=True)
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     settings.get_by_role("button", name="Task Model Parameters").click()
     setting_button(settings, "Temperature").click()
     settings.get_by_role("spinbutton", name="Temperature").fill("0.15")
@@ -318,7 +319,7 @@ def ask_about_the_upload(page: Page) -> None:
 def test_a_switched_on_retrieval_query_generation_searches_the_upload_with_the_models_queries(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Retrieval Query Generation", turn_on=True)
     prompt_field(settings, "Query Generation Prompt").fill(
         f"{QUERY_MARKER}: {{{{MESSAGES:END:2}}}}"
@@ -348,7 +349,7 @@ def test_a_switched_off_retrieval_query_generation_searches_the_upload_with_the_
             "/api/v1/tasks/config/update",
             json={**current, "ENABLE_RETRIEVAL_QUERY_GENERATION": True},
         ).raise_for_status()
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Retrieval Query Generation", turn_on=False)
     save(settings)
     page = page_for(make_user())
@@ -405,7 +406,7 @@ def streamed_requests(upstream) -> list[dict]:
 def test_a_switched_on_context_compaction_summarises_a_long_chat_with_the_admins_prompt(
     page_for, admin, make_user, upstream, tasks_restored
 ):
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Context Compaction", turn_on=True)
     number_field(settings, "Token Threshold").fill("50")
     number_field(settings, "Token Cap").fill("50")
@@ -435,7 +436,7 @@ def test_a_switched_off_context_compaction_sends_the_whole_long_chat(
 ):
     with admin.client() as client:
         set_compaction(client, turn_on=True)
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Context Compaction", turn_on=False)
     save(settings)
     page = open_long_chat(page_for, make_user())
@@ -461,7 +462,7 @@ def test_switching_tool_permissions_on_offers_approval_in_the_chat_input_menu(
     page_for, admin, make_user, tasks_restored
 ):
     expect(tool_permissions_offered(page_for, make_user())).to_have_count(0)
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Tool Permissions", turn_on=True)
     save(settings)
 
@@ -480,7 +481,7 @@ def test_switching_tool_permissions_off_takes_approval_out_of_the_chat_input_men
             CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True}
         ).raise_for_status()
     expect(tool_permissions_offered(page_for, make_user())).to_be_visible()
-    settings = open_interface_settings(page_for(admin))
+    settings = open_interface_settings(page_for, admin)
     set_switch(settings, "Tool Permissions", turn_on=False)
     save(settings)
 
