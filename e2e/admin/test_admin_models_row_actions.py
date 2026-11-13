@@ -27,6 +27,7 @@ import json
 import re
 import uuid
 from pathlib import Path
+from typing import Callable
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -80,13 +81,13 @@ def presets(admin, preserve):
 
 
 @pytest.fixture
-def admin_page(make_user, page_for) -> Page:
-    """A fresh admin's page, so nothing here touches the shared admin's settings."""
-    return page_for(make_user(role="admin"))
+def models_page(make_user, page_for) -> Callable[[], Page]:
+    """Opens Admin Settings > Models as a fresh admin, so nothing here touches the shared admin's
+    settings. Call it once the test's models exist: the list is read as the page loads."""
+    return lambda: page_for(make_user(role="admin"), path="/admin/settings/models")
 
 
 def _model_row(page: Page, name: str) -> Locator:
-    page.goto("/admin/settings/models")
     settings = page.get_by_role("dialog")
     settings.get_by_role("textbox", name="Search Models").fill(name)
     row = settings.locator("#model-list > div").filter(has_text=name)
@@ -109,9 +110,10 @@ def _choose_view(page: Page, current: str, view: str) -> None:
     page.get_by_role("button", name=view, exact=True).click()
 
 
-def test_a_cloned_model_is_a_second_model_users_can_pick(admin_page, page_for, make_user, presets):
+def test_a_cloned_model_is_a_second_model_users_can_pick(models_page, page_for, make_user, presets):
     preset = presets("Atlas")
     clone_name = f"{preset['name']} (Clone)"
+    admin_page = models_page()
     row = _model_row(admin_page, preset["name"])
 
     _more_menu_entry(admin_page, row, "Clone").click()
@@ -126,10 +128,10 @@ def test_a_cloned_model_is_a_second_model_users_can_pick(admin_page, page_for, m
     expect(_offered_to(page, preset["name"])).to_have_count(1)
 
 
-def test_the_view_filter_lists_only_the_matching_models(admin_page, presets):
+def test_the_view_filter_lists_only_the_matching_models(models_page, presets):
     shown = presets("Atlas")
     hidden = presets("Boreas", hidden=True)
-    admin_page.goto("/admin/settings/models")
+    admin_page = models_page()
     rows = admin_page.get_by_role("dialog").locator("#model-list > div")
     expect(rows.filter(has_text=shown["name"])).to_have_count(1)
     mine = rows.filter(has_text=re.compile(f"{shown['name']}|{hidden['name']}"))
@@ -151,11 +153,11 @@ def test_the_view_filter_lists_only_the_matching_models(admin_page, presets):
     expect(rows.filter(has_text="mock-model")).to_have_count(0)
 
 
-def test_the_list_opens_on_available_models_and_keeps_unavailable_ones_apart(admin_page, presets):
+def test_the_list_opens_on_available_models_and_keeps_unavailable_ones_apart(models_page, presets):
     preset = presets("Atlas")
     # Settings saved the way the panel saves a base model's, for a model no connection offers.
     retired = presets("Retired", base_model_id=None)
-    admin_page.goto("/admin/settings/models")
+    admin_page = models_page()
     settings = admin_page.get_by_role("dialog")
     rows = settings.locator("#model-list > div")
 
@@ -212,8 +214,9 @@ def _settings(page: Page) -> Locator:
 
 
 def test_reset_on_an_available_base_model_clears_its_settings_and_keeps_it_listed(
-    admin_page, admin, served_model
+    models_page, admin, served_model
 ):
+    admin_page = models_page()
     row = _model_row(admin_page, served_model["name"])
 
     _more_menu_entry(admin_page, row, "Reset").click()
@@ -229,10 +232,10 @@ def test_reset_on_an_available_base_model_clears_its_settings_and_keeps_it_liste
     expect(rows.filter(has_text=served_model["name"])).to_have_count(0)
 
 
-def test_delete_on_an_unavailable_model_removes_it_from_unavailable(admin_page, admin, presets):
+def test_delete_on_an_unavailable_model_removes_it_from_unavailable(models_page, admin, presets):
     retired = presets("Retired", base_model_id=None)
     kept = presets("Shelved", base_model_id=None)
-    admin_page.goto("/admin/settings/models")
+    admin_page = models_page()
     settings = _settings(admin_page)
     rows = settings.locator("#model-list > div")
     _choose_view(admin_page, "Available", "Unavailable")
@@ -250,10 +253,11 @@ def test_delete_on_an_unavailable_model_removes_it_from_unavailable(admin_page, 
 
 
 def test_a_private_model_made_public_is_offered_to_users_again(
-    admin_page, page_for, make_user, presets
+    models_page, page_for, make_user, presets
 ):
     preset = presets("Atlas", public=False)
     expect(_offered_to(page_for(make_user()), preset["name"])).to_have_count(0)
+    admin_page = models_page()
     row = _model_row(admin_page, preset["name"])
 
     with admin_page.expect_response(
@@ -265,9 +269,10 @@ def test_a_private_model_made_public_is_offered_to_users_again(
     expect(_offered_to(page_for(make_user()), preset["name"])).to_have_count(1)
 
 
-def test_a_rows_export_downloads_that_one_model(admin_page, presets):
+def test_a_rows_export_downloads_that_one_model(models_page, presets):
     preset = presets("Atlas")
     presets("Boreas")
+    admin_page = models_page()
     row = _model_row(admin_page, preset["name"])
 
     with admin_page.expect_download() as downloaded:
