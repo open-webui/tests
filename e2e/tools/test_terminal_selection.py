@@ -15,9 +15,11 @@ Two fake terminals stand in for two connections of the admin; each names itself 
 its `run_command`, which the test reads from what the model was sent. The skills and attachments
 tests use real Open Terminals.
 
-The reload test is red on dev c15f28649 for a person who cannot add terminals of their own, an
-admin with Direct Integrations off and a user without the Direct Tool Servers permission: finding
-"The terminal picked for a new chat is dropped when the page is reloaded" (since 537e223ed). It
+The reload test was red on dev c15f28649 for a person who could not add terminals of their
+own: finding "The terminal picked for a new chat is dropped when the page is reloaded" (since
+537e223ed). Terminals of one's own in Settings, and the Direct Integrations switch and Direct
+Tool Servers permission that gated them, were removed in 4720ff19e, so every person is now that
+case. It
 needs six reloads to keep the pick, as a user keeps it in one reload of three or four.
 
 Discriminates: passes on the dev c15f28649 build except those two cases. A backend copy that
@@ -51,7 +53,6 @@ from harness import skill_files
 from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import admin_of, create_user
-from harness.fixtures import SETTINGS
 from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -274,16 +275,11 @@ def test_a_chat_started_without_a_terminal_opens_without_one_whatever_is_picked_
 
 
 @pytest.mark.parametrize(
-    "role, own_terminals",
-    [("user", False), ("admin", True)],
-    ids=["user-loses-the-grant", "admin-with-direct-integrations-loses-the-connection"],
+    "role", ["user", "admin"], ids=["user-loses-the-grant", "admin-loses-the-connection"]
 )
 def test_a_chat_whose_terminal_was_taken_away_opens_with_none_picked(
-    page_for, make_user, admin, servers, upstream, direct_integrations, role, own_terminals
+    page_for, make_user, admin, servers, upstream, role
 ):
-    """A person who may add terminals of their own keeps a pick the admin's list does not hold,
-    so for them the chat alone decides that its terminal is gone."""
-    direct_integrations(own_terminals)
     person = make_user(role=role)
     mine = [read_grant(person.id)]
     connect(admin, servers, quay=mine, slip=mine)
@@ -322,44 +318,12 @@ def reload_and_expect_still_picked(page: Page, name: str) -> None:
     expect_terminal(page, name)
 
 
-def allow_direct_tool_servers(admin, allowed: bool) -> None:
-    """The default Direct Tool Servers permission: whether a user may add terminals of their own
-    while Direct Integrations is on."""
-    read_path, write_path = SETTINGS["permissions"]
-    with admin.client() as client:
-        current = client.get(read_path).json()
-        current["features"]["direct_tool_servers"] = allowed
-        saved = client.post(write_path, json=current)
-    assert saved.status_code == 200, saved.text
-
-
-@pytest.mark.parametrize(
-    "role, direct_integrations_on, direct_tool_servers",
-    [("admin", True, False), ("user", True, True), ("admin", False, False), ("user", True, False)],
-    ids=[
-        "admin-with-direct-integrations",
-        "user-with-direct-tool-servers",
-        "admin",
-        "user",
-    ],
-)
+@pytest.mark.parametrize("role", ["admin", "user"])
 def test_the_terminal_picked_for_a_new_chat_is_still_picked_after_a_reload(
-    page_for,
-    make_user,
-    admin,
-    terminals,
-    direct_integrations,
-    preserve,
-    role,
-    direct_integrations_on,
-    direct_tool_servers,
+    page_for, make_user, terminals, role
 ):
-    """Red on dev c15f28649 for a person who cannot add terminals of their own, an admin with
-    Direct Integrations off and a user without the Direct Tool Servers permission: the pick is
-    dropped while the page loads (open-webui/open-webui#34089)."""
-    preserve("permissions")
-    direct_integrations(direct_integrations_on)
-    allow_direct_tool_servers(admin, direct_tool_servers)
+    """Red on dev c15f28649: the pick is dropped while the page loads
+    (open-webui/open-webui#34089)."""
     page = page_for(make_user(role=role))
     choose_terminal(page, QUAY)
 
@@ -475,13 +439,8 @@ def test_a_new_chat_starts_on_the_default_terminal_all_its_models_share(
 
 
 def test_a_models_default_terminal_is_picked_only_for_a_person_who_may_use_it(
-    page_for, make_user, admin, servers, make_model, direct_integrations, preserve
+    page_for, make_user, admin, servers, make_model
 ):
-    """The people may add terminals of their own: the page then keeps a pick the admin's list
-    does not hold, so the model's default alone decides whether it is picked."""
-    preserve("permissions")
-    direct_integrations(True)
-    allow_direct_tool_servers(admin, True)
     allowed, other = make_user(), make_user()
     connections = connect(
         admin,

@@ -11,7 +11,6 @@ from playwright.sync_api import Locator, Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from utils.tool_servers import connection_row
-from utils.user_menu import open_settings
 
 ADMIN_INTEGRATIONS = "/admin/settings/integrations"
 ADMIN_CONNECTIONS = "/api/v1/configs/terminal_servers"
@@ -30,18 +29,6 @@ def terminal_dialog(page: Page, title: str = "Add Terminal Connection") -> Locat
     dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=title))
     expect(dialog).to_be_visible()
     return dialog
-
-
-def personal_terminal_section(page: Page) -> Locator:
-    """A person's own Settings > Integrations, opened from the user menu; returns its Open
-    Terminal section."""
-    open_settings(page)
-    settings = page.get_by_role("dialog")
-    # an admin's settings list the personal tab before the admin tab of the same name
-    settings.get_by_role("tab", name="Integrations", exact=True).first.click()
-    heading = settings.get_by_role("heading", name="Open Terminal", exact=True)
-    expect(heading).to_be_visible()
-    return heading.locator("xpath=../../..")
 
 
 def add_terminal(section: Locator) -> Locator:

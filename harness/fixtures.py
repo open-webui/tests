@@ -127,22 +127,6 @@ def make_user(instance: LaunchedInstance) -> Callable[..., Actor]:
 
 
 @pytest.fixture
-def direct_integrations(admin: Actor, preserve) -> Callable[[bool], None]:
-    """Sets the admin's Direct Integrations switch; the tool servers and terminals a user adds
-    in their own settings reach the model only while it is on."""
-    preserve("connections")
-    read_path, write_path = SETTINGS["connections"]
-
-    def switch(enabled: bool) -> None:
-        with admin.client() as client:
-            current = client.get(read_path).json()
-            saved = client.post(write_path, json={**current, "ENABLE_DIRECT_INTEGRATIONS": enabled})
-        assert saved.status_code == 200, saved.text
-
-    return switch
-
-
-@pytest.fixture
 def preserve(request: pytest.FixtureRequest) -> Generator[Callable[..., None], None, None]:
     """`preserve("permissions", ...)` snapshots those settings and restores them afterwards.
 
