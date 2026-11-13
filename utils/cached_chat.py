@@ -33,6 +33,7 @@ from utils.chat_ui import (
     send,
 )
 from utils.menus import late_menu_entry
+from utils.shell_tab import panel_of_the_added_tab
 from utils.tooltips import tooltip_button
 
 CALL_NUMBERS = itertools.count(1)
@@ -123,10 +124,8 @@ def open_new_terminal(page: Page) -> Locator:
     files_tab = page.locator(f'[id="{files_view.get_attribute("aria-labelledby")}"]')
     files_pane = page.locator("[data-panel-tab-bar]").filter(has=files_tab)
     files_pane.get_by_role("button", name="New tab", exact=True).click()
-    page.get_by_role("menu").get_by_role("menuitem", name="New Terminal").click()
-    shell = page.get_by_role("tabpanel", name=re.compile(r"^Terminal \d+$"))
-    expect(shell).to_be_visible()
-    return shell
+    entry = page.get_by_role("menu").get_by_role("menuitem", name="New Terminal")
+    return panel_of_the_added_tab(page, entry.click)
 
 
 def chat_requests(upstream) -> list[dict]:

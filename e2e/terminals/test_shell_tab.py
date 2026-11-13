@@ -29,7 +29,10 @@ terminal of a Terminals connection: a reload brings back the same shell with its
 its earlier output, two shells of one chat are separate and closing one ends only that one, and
 a shell that is open in a second window waits there and takes over once the first is closed.
 On a Terminals terminal with a machine per chat or per model, a shell opened in a chat writes
-its file into that chat's machine or into the machine of the chat's model.
+its file into that chat's machine or into the machine of the chat's model. Since Open Terminal
+0.17.8 reports the program running, a real shell's tab reads bash once connected, and on
+Terminals it takes the title the image's bash prompt sets, so these tests find a real shell
+through the tab that opened it (`utils.shell_tab`).
 
 `test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed` is red for
 a terminal on Terminals 0.4.1: the second window says "Session no longer available"
@@ -105,12 +108,15 @@ from utils.chat_ui import expect_reply, send
 from utils.shell_tab import (
     READABLE_SHELL,
     RECONNECTING,
+    close_button_of,
     expect_on_screen,
     open_shell,
     screen_of,
     shell_notice,
     shell_panel,
+    shell_panel_by_tab,
     shell_tab,
+    shell_tab_of,
     type_into,
 )
 
@@ -602,8 +608,10 @@ def test_closing_a_shell_asks_first_and_then_stops_it_on_the_terminal(shells, pa
     _wait_until(lambda: _stored_shells(shells.person, chat_id) == [])
     assert _stored_shells(shells.person, chat_id) == [], _stored_tabs(shells.person, chat_id)
 
-    # a shell the terminal has already forgotten closes without a word
+    # the freed number is given out again
     gone = open_shell(page)
+    expect(shell_tab(page)).to_be_visible()
+    # a shell the terminal has already forgotten closes without a word
     shells.connection(1, of="shell-2")
     shells.terminal.route(
         "DELETE", f"{SHELLS}/shell-2", json_answer({"error": "Session not found"}, status=404)
@@ -726,6 +734,7 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]
     chat_id, shell = _shell_with_a_variable(page, upstream, name, tag)
+    tab_id = shell_tab_of(shell).get_attribute("id")
     running = _running_shells(person, terminal_id, chat_id)
     assert len(running) == 1, f"one New Terminal left the terminal running {running}"
     _wait_until(lambda: _stored_shells(person, chat_id) == running)
@@ -733,9 +742,9 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
 
     page.reload()
     # a reload is a cold load
-    expect(shell_tab(page)).to_be_visible(timeout=config.navigation_timeout)
-    shell_tab(page).click()
-    shell = shell_panel(page)
+    shell = shell_panel_by_tab(page, tab_id)
+    expect(shell_tab_of(shell)).to_be_visible(timeout=config.navigation_timeout)
+    shell_tab_of(shell).click()
     # the terminal plays back what the shell printed before
     expect_on_screen(shell, f"before-{tag}")
     _enter(shell, "echo after-$tide")
@@ -756,12 +765,13 @@ def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]
     chat_id, shell = _shell_with_a_variable(page, upstream, name, tag)
+    tab_id = shell_tab_of(shell).get_attribute("id")
     _wait_until(lambda: len(_stored_shells(person, chat_id)) == 1)
     assert len(_stored_shells(person, chat_id)) == 1, _stored_tabs(person, chat_id)
 
     elsewhere = page_for(person, path=f"/c/{chat_id}", init_script=READABLE_SHELL)
-    shell_tab(elsewhere).click()
-    waiting = shell_panel(elsewhere)
+    waiting = shell_panel_by_tab(elsewhere, tab_id)
+    shell_tab_of(waiting).click()
     expect(shell_notice(waiting)).to_have_text(RECONNECTING)
     # the shell stays with the window that has it
     _enter(shell, "echo both-$tide")
@@ -782,28 +792,29 @@ def test_two_shells_of_a_chat_are_shells_of_their_own_and_closing_one_leaves_the
     person, name, terminal_id = harbour
     page = page_for(person, init_script=READABLE_SHELL)
     choose_terminal(page, name)
-    first = open_shell(page, 1)
+    first = open_shell(page)
     tag = uuid.uuid4().hex[:8]
     _enter(first, f"berth=north-{tag}")
-    second = open_shell(page, 2)
+    second = open_shell(page)
+    second_tab = shell_tab_of(second)
     _enter(second, "echo second-${berth:-unset}")
     expect_on_screen(second, "second-unset")
-    shell_tab(page, 1).click()
+    shell_tab_of(first).click()
     _enter(first, "echo first-$berth")
     expect_on_screen(first, f"first-north-{tag}")
     assert len(_running_shells(person, terminal_id)) == 2, _running_shells(person, terminal_id)
 
-    page.get_by_role("button", name="Close Terminal 2", exact=True).click()
+    close_button_of(second_tab).click()
     _stop_dialog(page).get_by_role("button", name="Stop terminal").click()
-    expect(shell_tab(page, 2)).to_have_count(0)
+    expect(second_tab).to_have_count(0)
     _wait_until(lambda: len(_running_shells(person, terminal_id)) == 1)
     assert len(_running_shells(person, terminal_id)) == 1, (
         f"closing one of two shells left {_running_shells(person, terminal_id)} running"
     )
     _enter(first, "echo still-$berth")
     expect_on_screen(first, f"still-north-{tag}")
-    # the freed number is given out again
-    expect(open_shell(page, 2)).to_be_visible()
+    # another shell opens beside the first
+    expect(open_shell(page)).to_be_visible()
     assert len(_running_shells(person, terminal_id)) == 2, _running_shells(person, terminal_id)
 
 

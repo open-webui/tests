@@ -5,7 +5,9 @@ home that is also its working directory, and yields it once it answers; it stops
 The server runs from an environment of its own, so its dependencies never meet the backend's:
 `OPEN_TERMINAL_BIN` names its executable, else `open-terminal` on `PATH` is used, and without
 either the tests that need it skip. `connection(...)` is the admin's connection to it under
-Settings > Integrations, for `configure_terminals` in `harness.terminal_server`.
+Settings > Integrations, for `configure_terminals` in `harness.terminal_server`. Its shells run
+bash, as in the images, so a shell tab is named `SHELL_TAB` once the terminal reports the
+program running.
 
 `serving_full_open_terminal()` runs the full image instead, in a container on a loopback port:
 the Open Terminal that has Chromium for Chrome mode, a desktop with sound and notebook kernels,
@@ -48,6 +50,9 @@ FULL_MEMORY = "2g"
 FULL_CPUS = "2"
 # the Files tab is named after the folder it shows, but Home in the terminal's home (241c8c0e4)
 HOME_TAB = "Home"
+# the shell every terminal here runs (the images set it too); its tab takes the program's name
+SHELL = "/bin/bash"
+SHELL_TAB = "bash"
 BOOT_SECONDS = 60
 SERVER_PORT_IN_A_CONTAINER = 8000
 # each file watcher of Open Terminal is one thread of this name
@@ -202,6 +207,7 @@ def serving_open_terminal(env: dict[str, str] | None = None) -> Iterator[OpenTer
         "XDG_CONFIG_HOME": str(scratch / "config"),
         "XDG_STATE_HOME": str(scratch / "state"),
         "OPEN_TERMINAL_API_KEY": API_KEY,
+        "SHELL": SHELL,
         **(env or {}),
     }
     command = [binary, "run", "--host", "127.0.0.1", "--port", str(port), "--cwd", str(home)]

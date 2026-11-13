@@ -51,7 +51,9 @@ the diff and undo tests stay green on that build as its controls.
 Retargeted for 617618c9e: `test_the_full_width_layout_is_kept_after_a_reload` saved the removed
 full-width switch and is now the split layout test; the reorder test now counts the conversation
 tab. Since 0b7e7b3f7 the Files tab is named after the folder it shows, and since 241c8c0e4
-it reads Home in the terminal's home, where these tests open it.
+it reads Home in the terminal's home, where these tests open it. Since bf0aa05a7 a shell tab is
+named after the program the terminal reports running in it, which Open Terminal does since
+0.17.8: the shell (bash here, `SHELL_TAB`). The saved layout keeps the tab's numbered label.
 
 `test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
 started with nothing pending wedges the chat's layout saving until the next reload
@@ -142,7 +144,7 @@ from harness import upstream as reply
 from harness.access import make_group
 from harness.actors import Actor
 from harness.listener import json_answer
-from harness.open_terminal import HOME_TAB, serving_open_terminal
+from harness.open_terminal import HOME_TAB, SHELL_TAB, serving_open_terminal
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     configure_terminals,
@@ -248,7 +250,9 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     _add_tab(page, "New File")
     strip = _tab_strip(page)
     expect(strip.get_by_role("tab", name="Untitled-1")).to_be_visible()
-    assert _tab_names(page) == ["New Chat", FILES, "Terminal 1", "Untitled-1"], (
+    # the shell's tab takes the shell's name once the terminal reports it running
+    expect(strip.get_by_role("tab", name=SHELL_TAB, exact=True)).to_be_visible()
+    assert _tab_names(page) == ["New Chat", FILES, SHELL_TAB, "Untitled-1"], (
         f"the New tab menu added the tabs as {_tab_names(page)}"
     )
     # the chat is a tab of the full-width workspace, with no switch back to side tabs
@@ -259,10 +263,10 @@ def test_tabs_added_from_the_new_tab_menu_can_be_dragged_into_a_new_order(termin
     _drag(
         page,
         strip.get_by_role("tab", name="Untitled-1"),
-        strip.get_by_role("tab", name="Terminal 1"),
+        strip.get_by_role("tab", name=SHELL_TAB, exact=True),
     )
     expect(strip.get_by_role("tab").nth(2)).to_have_text("Untitled-1")
-    assert _tab_names(page) == ["New Chat", FILES, "Untitled-1", "Terminal 1"], (
+    assert _tab_names(page) == ["New Chat", FILES, "Untitled-1", SHELL_TAB], (
         f"dragging the new file's tab before the shell left the tabs as {_tab_names(page)}"
     )
 
@@ -277,7 +281,7 @@ def test_the_new_tab_menu_opens_tabs_over_plain_http(lan_page_for, terminal_acco
     _add_tab(page, re.compile(r"^New File\b"))
     expect(strip.get_by_role("tab", name="Untitled-1")).to_be_visible()
     _add_tab(page, re.compile(r"^New Terminal\b"))
-    expect(strip.get_by_role("tab", name="Terminal 1")).to_be_visible()
+    expect(strip.get_by_role("tab", name=SHELL_TAB, exact=True)).to_be_visible()
 
 
 def _panes(page: Page) -> list[list[str]]:
@@ -382,26 +386,26 @@ def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_
     page, terminal = terminal_page
     pick_terminal(page, terminal)
     open_new_terminal(page)
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
-    shell = page.get_by_role("tabpanel", name="Terminal 1")
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB]])
+    shell = page.get_by_role("tabpanel", name=SHELL_TAB, exact=True)
 
     area = shell.bounding_box()
     _drag_to(
         page,
-        _tab_strip(page).get_by_role("tab", name="Terminal 1"),
+        _tab_strip(page).get_by_role("tab", name=SHELL_TAB, exact=True),
         area["x"] + area["width"] - 20,
         area["y"] + area["height"] / 2,
     )
-    _expect_panes(page, [["New Chat", FILES], ["Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES], [SHELL_TAB]])
     expect(_divider(page)).to_have_attribute("aria-orientation", "vertical")
-    _selected(page, "Terminal 1")
+    _selected(page, SHELL_TAB)
 
     _drag_to(
         page,
-        _tab_strip(page).get_by_role("tab", name="Terminal 1"),
+        _tab_strip(page).get_by_role("tab", name=SHELL_TAB, exact=True),
         *_empty_part_of_tab_bar(page.get_by_role("tablist", name="Tabs").filter(has_text=FILES)),
     )
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB]])
     expect(_divider(page)).to_have_count(0)
 
     _tab_strip(page).get_by_role("tab", name=FILES).click()
@@ -414,7 +418,7 @@ def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_
     )
     # a drop on the bottom edge stacks the panes, one tab bar above the other
     expect(_divider(page)).to_have_attribute("aria-orientation", "horizontal")
-    _expect_panes(page, [["New Chat", "Terminal 1"], [FILES]])
+    _expect_panes(page, [["New Chat", SHELL_TAB], [FILES]])
     upper, lower = (
         strip.bounding_box() for strip in page.get_by_role("tablist", name="Tabs").all()
     )
@@ -425,7 +429,7 @@ def test_a_tab_dragged_to_a_panes_edge_opens_beside_it_and_onto_a_tab_bar_joins_
     # closing a pane's only tab closes the pane
     _selected(page, FILES)
     page.keyboard.press("Control+W")
-    _expect_panes(page, [["New Chat", "Terminal 1"]])
+    _expect_panes(page, [["New Chat", SHELL_TAB]])
     expect(_divider(page)).to_have_count(0)
 
 
@@ -486,15 +490,16 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     page.keyboard.press("Control+Backslash")
     _tab_strip(page).get_by_role("tab", name=FILES).click()
     page.keyboard.press("Control+Backquote")
-    layout = [[title], [FILES, "Terminal 1"]]
+    layout = [[title], [FILES, SHELL_TAB]]
     _expect_panes(page, layout)
-    _selected(page, "Terminal 1")
+    _selected(page, SHELL_TAB)
     _drag_divider_to(page, 0.3)
     ratio = _divider(page).get_attribute("aria-valuenow")
     assert ratio != "50", "dragging the divider left the panes at half and half"
 
     # wait for the server to hold the layout before reloading; a drag slower than the saves can
     # wedge the saving on dev f659c0d12 (open-webui/open-webui#33892)
+    # the saved tab keeps its numbered label; the program's name is only shown
     held = (int(ratio), "Terminal 1")
     _wait_until(lambda: _layout_of(_saved_view(person, chat_id)) == held)
     assert _layout_of(_saved_view(person, chat_id)) == held, _saved_view(person, chat_id)
@@ -508,18 +513,19 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     _open_from_sidebar(page, title)
     expect(answer).to_be_visible()
     _expect_panes(page, layout)
-    _selected(page, "Terminal 1")
+    _selected(page, SHELL_TAB)
     expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
 
     page.reload()
     # a reload is a cold load, which page_for would otherwise wait out
     expect(answer).to_be_visible(timeout=config.navigation_timeout)
     _expect_panes(page, layout)
-    _selected(page, "Terminal 1")
+    _selected(page, SHELL_TAB)
     expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
 
     elsewhere = page_for(person, path=f"/c/{chat_id}")
-    _expect_panes(elsewhere, layout)
+    # the shell stays with the first window, so this one shows the tab's numbered label
+    _expect_panes(elsewhere, [[title], [FILES, "Terminal 1"]])
     _selected(elsewhere, "Terminal 1")
     expect(_divider(elsewhere)).to_have_attribute("aria-valuenow", ratio)
 
@@ -533,13 +539,13 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
 def test_a_new_chat_started_beside_an_open_shell_sends_its_first_message(
     terminal_account, page_for, upstream
 ):
-    """Red on dev c15f28649 (open-webui/open-webui#34088)."""
+    """Red on dev c15f28649 to 91f16464b (open-webui/open-webui#34088, fix PR #34111)."""
     person, terminal = terminal_account
     page = page_for(person)
     _answered_chat(page, upstream, terminal)
     # a shell opened in the saved chat
     page.keyboard.press("Control+Backquote")
-    expect(page.get_by_role("tabpanel", name="Terminal 1")).to_be_visible()
+    expect(page.get_by_role("tabpanel", name=SHELL_TAB, exact=True)).to_be_visible()
 
     page.keyboard.press("Control+Shift+O")
     conversation = page.get_by_role("tab", name="New Chat", exact=True)
@@ -628,13 +634,13 @@ def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page)
     _expect_panes(page, [["New Chat", FILES]])
     _selected(page, FILES)
     page.keyboard.press("Control+Backquote")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
-    _selected(page, "Terminal 1")
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB]])
+    _selected(page, SHELL_TAB)
     page.keyboard.press("Control+Alt+N")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1"]])
     _selected(page, "Untitled-1")
     page.keyboard.press("Control+Shift+B")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1", "Browser"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1", "Browser"]])
     _selected(page, "Browser")
     # a close waits until the tab's session has started, so start it before Ctrl+W below
     expect(browser_view(page)).to_be_visible(timeout=BROWSER_START_MS)
@@ -650,9 +656,9 @@ def test_the_workspace_shortcuts_open_step_through_and_close_tabs(terminal_page)
     page.keyboard.press("Control+Alt+D")
     page.keyboard.press("Control+Shift+BracketLeft")
     _selected(page, "Browser")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1", "Browser"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1", "Browser"]])
     page.keyboard.press("Control+W")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1"]])
 
 
 def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(terminal_page):
@@ -666,9 +672,9 @@ def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(termina
     page.keyboard.press("Control+Backslash")
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
-    # live again: a shell the menu had let through would make this one Terminal 2
+    # live again: a shell the menu had let through would make this the second shell tab
     page.keyboard.press("Control+Backquote")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB]])
 
     page.keyboard.press("Control+Period")
     settings = page.get_by_role("dialog")
@@ -678,7 +684,7 @@ def test_workspace_shortcuts_do_nothing_while_a_menu_or_a_dialog_is_open(termina
     page.keyboard.press("Escape")
     expect(settings).to_have_count(0)
     page.keyboard.press("Control+Alt+N")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1"]])
 
 
 def test_workspace_shortcuts_do_nothing_with_keyboard_shortcuts_switched_off(
@@ -696,9 +702,9 @@ def test_workspace_shortcuts_do_nothing_with_keyboard_shortcuts_switched_off(
     page.keyboard.press("Control+Backquote")
     page.keyboard.press("Control+Backslash")
     page.keyboard.press("Control+W")
-    # the menu's shell comes after the shortcuts, so it is Terminal 2 if one of them answered
+    # the menu's shell comes after the shortcuts, so it is a second shell tab if one answered
     open_new_terminal(page)
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB]])
 
 
 def _open_git_panel(page: Page, terminal: str, folder) -> Locator:
@@ -1685,12 +1691,12 @@ def test_tabs_are_stepped_through_and_moved_with_the_keyboard(terminal_page):
     open_new_terminal(page)
     _add_tab(page, "New File")
     strip = _tab_strip(page)
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1"]])
 
     strip.get_by_role("tab", name=FILES, exact=True).click()
     page.keyboard.press("ArrowRight")
-    _selected(page, "Terminal 1")
-    expect(strip.get_by_role("tab", name="Terminal 1")).to_be_focused()
+    _selected(page, SHELL_TAB)
+    expect(strip.get_by_role("tab", name=SHELL_TAB, exact=True)).to_be_focused()
     page.keyboard.press("End")
     _selected(page, "Untitled-1")
     # past the last tab the arrow comes round to the first
@@ -1705,12 +1711,12 @@ def test_tabs_are_stepped_through_and_moved_with_the_keyboard(terminal_page):
     expect(page.get_by_role("region", name="File browser")).to_be_visible()
 
     page.keyboard.press("Alt+Shift+ArrowRight")
-    _expect_panes(page, [["New Chat", "Terminal 1", FILES, "Untitled-1"]])
+    _expect_panes(page, [["New Chat", SHELL_TAB, FILES, "Untitled-1"]])
     _selected(page, FILES)
     # the moved tab is clicked again first: the move takes the focus off it (see the next test)
     strip.get_by_role("tab", name=FILES, exact=True).click()
     page.keyboard.press("Alt+Shift+ArrowLeft")
-    _expect_panes(page, [["New Chat", FILES, "Terminal 1", "Untitled-1"]])
+    _expect_panes(page, [["New Chat", FILES, SHELL_TAB, "Untitled-1"]])
     _selected(page, FILES)
 
 
@@ -1726,13 +1732,13 @@ def test_a_tab_moved_with_the_keyboard_keeps_the_focus_for_the_next_move(termina
     expect(files_tab).to_be_focused()
 
     page.keyboard.press("Alt+Shift+ArrowRight")
-    _expect_panes(page, [["New Chat", "Terminal 1", FILES, "Untitled-1"]])
+    _expect_panes(page, [["New Chat", SHELL_TAB, FILES, "Untitled-1"]])
     focused = page.evaluate(
         "document.activeElement.getAttribute('title') || document.activeElement.tagName"
     )
     page.keyboard.press("Alt+Shift+ArrowRight")
-    _wait_until(lambda: _panes(page) == [["New Chat", "Terminal 1", "Untitled-1", FILES]], 5)
-    assert _panes(page) == [["New Chat", "Terminal 1", "Untitled-1", FILES]], (
+    _wait_until(lambda: _panes(page) == [["New Chat", SHELL_TAB, "Untitled-1", FILES]], 5)
+    assert _panes(page) == [["New Chat", SHELL_TAB, "Untitled-1", FILES]], (
         f"the second Alt+Shift+ArrowRight moved nothing: the tabs are {_panes(page)} and after "
         f"the first move the keyboard focus was on {focused!r}, not on the moved tab"
     )
