@@ -46,7 +46,6 @@ async def test_an_image_inside_an_actions_result_is_attached(middleware_module):
             tool_function_name="make_graph",
             tool_result=raw_result,
             tool_type=tool_type,
-            direct_tool=False,
             metadata={"chat_id": "chat-1", "message_id": "message-1", "session_id": "session-1"},
             user=None,
         )

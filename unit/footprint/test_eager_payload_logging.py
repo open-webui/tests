@@ -71,6 +71,7 @@ KNOWN = {
     ("default-level", "result.ids"): (2, "retrieval/utils.py, leak: every chunk id"),
     ("default-level", "result.metadatas"): (2, "retrieval/utils.py, leak: chunk metadata"),
     ("default-level", "result['metadatas']"): (1, "retrieval/utils.py, leak: chunk metadata"),
+    ("default-level", "result"): (1, "routers/openai.py, benign: an exception"),
     ("default-level", "results"): (2, "retrieval/web/external.py, yandex.py, leak: results"),
     ("default-level", "search_results"): (1, "retrieval/web/firecrawl.py, leak: results"),
     ("eager", "batch_urls"): (1, "retrieval/loaders/tavily.py, leak: every URL at ERROR"),
