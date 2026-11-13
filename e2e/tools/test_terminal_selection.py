@@ -50,6 +50,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import skill_files
 from harness import upstream as reply
 from harness.access import grant, make_group
+from harness.actors import admin_of, create_user
 from harness.fixtures import SETTINGS
 from harness.listener import json_answer
 from harness.terminal_server import (
@@ -418,10 +419,11 @@ def test_a_person_added_to_a_group_gets_the_groups_terminal_without_a_reload(
 @pytest.fixture
 def make_model(admin) -> Iterator[Callable[..., dict]]:
     """`make_model(terminal_id)` saves a model every account may use with that default terminal
-    (none without); the models are deleted afterwards."""
-    made: list[str] = []
+    (none without); `by=` the admin of another instance saves it there. The models are deleted
+    afterwards."""
+    made: list[tuple] = []
 
-    def create(terminal_id: str | None = None) -> dict:
+    def create(terminal_id: str | None = None, by=admin) -> dict:
         model_id = f"berth-{uuid.uuid4().hex[:8]}"
         meta: dict = {"capabilities": {"terminal": True}}
         if terminal_id:
@@ -434,15 +436,15 @@ def make_model(admin) -> Iterator[Callable[..., dict]]:
             "params": {},
             "access_grants": [EVERYONE_READS],
         }
-        with admin.client() as client:
+        with by.client() as client:
             created = client.post("/api/v1/models/create", json=model)
         assert created.status_code == 200, created.text
-        made.append(model_id)
+        made.append((by, model_id))
         return model
 
     yield create
-    with admin.client() as client:
-        for model_id in made:
+    for owner, model_id in made:
+        with owner.client() as client:
             client.post("/api/v1/models/model/delete", json={"id": model_id})
 
 
@@ -547,34 +549,42 @@ def test_a_default_terminal_that_is_gone_reads_unavailable_and_none_takes_it_off
     assert meta.get("capabilities", {}).get("terminal") is True, meta
 
 
-def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
-    page_for, make_user, admin, servers, make_model, direct_integrations
-):
-    builder = make_user(role="admin")
-    model = make_model()
-    connect(admin, servers, quay=[EVERYONE_READS])
-    direct_integrations(False)
-    editor = open_model_editor(builder, page_for, model)
-    capability = section(editor, "Capabilities").get_by_role("switch", name="Terminal", exact=True)
-    expect(capability).to_be_checked()
-    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
+def terminal_capability(editor: Locator) -> Locator:
+    return section(editor, "Capabilities").get_by_role("switch", name="Terminal", exact=True)
 
-    # no connection, but people may add terminals of their own
+
+@pytest.mark.slow
+def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
+    page_for, make_user, admin, servers, make_model, instance_with, preserve
+):
+    # no connection, but a Tether device of one's own can bring a terminal
     connect(admin, servers)
-    direct_integrations(True)
-    editor = open_model_editor(builder, page_for, model)
-    capability = section(editor, "Capabilities").get_by_role("switch", name="Terminal", exact=True)
-    expect(capability).to_be_checked()
+    editor = open_model_editor(make_user(role="admin"), page_for, make_model())
+    expect(terminal_capability(editor)).to_be_checked()
     expect(editor.get_by_text("No terminal servers available")).to_be_visible()
     expect(default_terminal(editor)).to_have_count(0)
 
-    direct_integrations(False)
+    # without WebSocket support there is no Tether, so only a connection brings one
+    socketless = instance_with({"ENABLE_WEBSOCKET_SUPPORT": "false"})
+    if not socketless.serves_frontend:
+        pytest.skip("no built frontend (set OPEN_WEBUI_BUILD_DIR)")
+    preserve(TERMINAL_SERVERS_CONFIG, on=socketless)
+    owner = admin_of(socketless)
+    with owner.client() as client:
+        configure_terminals(client)
+    builder = create_user(socketless, role="admin")
+    model = make_model(by=owner)
     editor = open_model_editor(builder, page_for, model)
     capabilities = section(editor, "Capabilities")
     expect(capabilities.get_by_role("switch", name="Vision", exact=True)).to_be_visible()
-    expect(capabilities.get_by_role("switch", name="Terminal", exact=True)).to_have_count(0)
+    expect(terminal_capability(editor)).to_have_count(0)
     expect(editor.get_by_text("No terminal servers available")).to_have_count(0)
     expect(default_terminal(editor)).to_have_count(0)
+
+    connect(owner, servers, quay=[EVERYONE_READS])
+    editor = open_model_editor(builder, page_for, model)
+    expect(terminal_capability(editor)).to_be_checked()
+    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
 
 
 def save_layout(person, chat_id: str, terminal_id: str) -> None:
