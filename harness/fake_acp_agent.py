@@ -13,6 +13,9 @@ by a marker in the prompt text:
 - `[crash]` exits with status 3 halfway through the turn.
 - `[slow]` starts answering, then waits for the client to cancel the turn.
 - anything else thinks once and streams back what it heard, with its model and folder.
+
+Its sessions offer a reasoning effort as a `thought_level` config option, with the efforts of the
+session's model; picking another model announces that model's efforts with `config_option_update`.
 """
 
 import json
@@ -25,6 +28,8 @@ MODELS = [
     {"modelId": "fake-fast", "name": "Fake Fast"},
     {"modelId": "fake-deep", "name": "Fake Deep"},
 ]
+# the reasoning efforts each model takes
+EFFORTS = {"fake-fast": ("low", "medium", "high"), "fake-deep": ("low", "medium", "high", "max")}
 REFUSAL = "The fake agent refused the prompt"
 CRASH_NOTE = "fake agent crashed on purpose"
 
@@ -62,6 +67,21 @@ def update(session_update: str, **fields) -> None:
             },
         }
     )
+
+
+def config_options() -> list[dict]:
+    efforts = [
+        {"value": effort, "name": effort.title()} for effort in EFFORTS.get(state["model"], ())
+    ]
+    effort = {
+        "id": "effort",
+        "name": "Effort",
+        "category": "thought_level",
+        "type": "select",
+        "currentValue": "medium",
+        "options": efforts,
+    }
+    return [effort]
 
 
 def say(text: str) -> None:
@@ -193,13 +213,20 @@ def main() -> None:
             result = {
                 "sessionId": state["session"],
                 "models": {"currentModelId": state["model"], "availableModels": MODELS},
+                "configOptions": config_options(),
             }
         elif method == "session/load":
             state["session"] = params.get("sessionId")
-            result = {"models": {"currentModelId": state["model"], "availableModels": MODELS}}
+            result = {
+                "models": {"currentModelId": state["model"], "availableModels": MODELS},
+                "configOptions": config_options(),
+            }
         elif method == "session/set_model":
             state["model"] = params.get("modelId")
+            update("config_option_update", configOptions=config_options())
             result = {}
+        elif method == "session/set_config_option":
+            result = {"configOptions": config_options()}
         elif method == "session/prompt":
             run_turn(request_id, params)
             continue

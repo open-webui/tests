@@ -15,6 +15,9 @@ What a turn does is chosen by a marker in the prompt, as in `harness/fake_acp_ag
 - `[refuse]` fails the turn the way that agent reports a failed turn.
 - `[slow]` starts answering, then waits to be interrupted.
 - anything else thinks once and streams back what it heard, with its model and folder.
+
+A reasoning effort Open WebUI sets before the turn (Claude Code's `apply_flag_settings`, Pi's
+`set_thinking_level`) is refused with `effort_refusal(...)` when the model does not offer it.
 """
 
 import json
@@ -47,7 +50,22 @@ CODEX_MODELS = [
     },
     {"model": "codex-fake-mini"},
 ]
-PI_MODELS = [{"provider": "acme", "id": "pi-fake", "name": "Fake Pi"}]
+PI_MODELS = [
+    {"provider": "acme", "id": "pi-fake", "name": "Fake Pi"},
+    {"provider": "acme", "id": "pi-fake-1.5", "name": "Fake Pi 1.5"},
+]
+# the reasoning efforts each Claude Code and Pi model takes
+EFFORTS = {
+    "claude-fake-haiku": ("low", "medium", "high"),
+    "claude-fake-sonnet": ("low", "medium", "high", "max"),
+    "acme/pi-fake": ("low", "medium", "high"),
+    "acme/pi-fake-1.5": ("low", "medium", "high", "xhigh"),
+}
+
+
+def effort_refusal(effort: str, model: str) -> str:
+    return f"Effort {effort} is not available for {model}"
+
 
 arguments = sys.argv[1:]
 if arguments[:1] == ["app-server"]:
@@ -161,6 +179,10 @@ def claude() -> None:
         message = receive()
         if message.get("type") == "control_request":
             answer = {"subtype": "success", "request_id": message["request_id"]}
+            settings = (message.get("request") or {}).get("settings") or {}
+            effort, model = settings.get("effortLevel"), argument("--model")
+            if effort and effort not in EFFORTS.get(model, ()):
+                answer = {**answer, "subtype": "error", "error": effort_refusal(effort, model)}
             send(
                 {
                     "type": "control_response",
@@ -310,6 +332,10 @@ def pi() -> None:
             state["model"] = f"{message['provider']}/{message['modelId']}"
         elif kind == "get_state":
             data = {"sessionId": state["session"], "isStreaming": False}
+        elif kind == "set_thinking_level" and message["level"] not in EFFORTS[state["model"]]:
+            refusal = effort_refusal(message["level"], state["model"])
+            send({"type": "response", "id": message.get("id"), "success": False, "error": refusal})
+            continue
         send({"type": "response", "id": message.get("id"), "success": True, "data": data})
         if kind == "prompt":
             turn(message["message"])

@@ -45,6 +45,13 @@ conversation ("Agent history cannot be branched in place"). That commit reads th
 session from the chain of stored messages and dropped the refusal, so its test went with it. The
 page still offers no way to branch an agent conversation, which
 e2e/tools/test_terminal_coding_agents.py pins.
+
+New for 0.13.4: a message sent with another model of the same agent goes on in its session
+(1782e9bc5, in the continue test), and the reasoning effort of the chat's advanced parameters is
+set as the session's `thought_level` option, one the model does not offer ending the reply before
+the prompt (121bc0ec5). Discriminates: pass on dev 485103cde; in a backend copy the continue test
+fails with the model added to the keys a resumed session must match, the effort test with the
+effort never read from the parameters.
 """
 
 from __future__ import annotations
@@ -278,15 +285,32 @@ def test_the_next_message_continues_the_agents_own_session(make_user, connect, a
             ],
         )
         second_reply = wait_for_reply(client, second, REPLY_TIMEOUT)
+        loads = agent_terminal.received("session/load")
+        # another model of the same agent goes on in the same session
+        third = ask_agent(
+            client,
+            terminal["id"],
+            "and in one word?",
+            model=DEEP,
+            chat_id=first.chat_id,
+            parent_id=second.assistant_message_id,
+        )
+        third_reply = wait_for_reply(client, third, REPLY_TIMEOUT)
 
     assert session["cwd"] == str(agent_terminal.terminal.home)
-    loads = agent_terminal.received("session/load")
     assert loads and loads[-1]["sessionId"] == started, (
         f"the second turn did not resume the agent's session {started}: {loads}"
     )
     assert second_reply["content"].startswith("Agent heard: what was the word? ["), (
         f"a resumed session was sent the whole conversation again: {second_reply['content']}"
     )
+    switched = agent_terminal.received("session/load")[len(loads) :]
+    assert [load["sessionId"] for load in switched] == [started], (
+        f"switching to {DEEP} did not resume the agent's session {started}: {switched}"
+    )
+    assert third_reply.get("content", "").startswith(
+        f"Agent heard: and in one word? [model {DEEP}, "
+    ), f"the switched model did not go on in the session: {third_reply}"
 
 
 def test_an_agent_tool_call_is_stored_as_a_tool_call_with_its_result(make_user, connect):
@@ -880,3 +904,45 @@ def test_an_agents_request_is_answered_once_and_only_in_its_own_kind(
     assert reply["content"] == "Permission outcome: allow-it", (
         f"the agent did not get the first answer: {reply}"
     )
+
+
+def _efforts_set(terminal: AgentTerminal) -> list[str]:
+    return [
+        params["value"]
+        for params in terminal.received("session/set_config_option")
+        if params.get("configId") == "effort"
+    ]
+
+
+def test_the_reasoning_effort_reaches_the_agent_and_one_its_model_lacks_stops_the_reply(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person)
+    set_before = len(_efforts_set(agent_terminal))
+
+    def ask(text: str, model: str, effort: str | None = None) -> dict:
+        params = {"reasoning_effort": effort} if effort else {}
+        turn = ask_agent(client, terminal["id"], text, model=model, params=params)
+        return wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    with person.client() as client:
+        plain = ask("no effort set", FAST)
+        set_plain = _efforts_set(agent_terminal)[set_before:]
+        high = ask("think hard", FAST, "high")
+        deep = ask("think harder", DEEP, "max")
+        set_picked = _efforts_set(agent_terminal)[set_before:]
+        prompts_before = len(agent_terminal.received("session/prompt"))
+        lacking = ask("think harder", FAST, "max")
+        prompts_after = len(agent_terminal.received("session/prompt"))
+
+    for reply_ in (plain, high, deep):
+        assert "error" not in reply_, f"a turn failed: {reply_.get('error')}"
+    assert set_plain == [], f"an effort was set without one being picked: {set_plain}"
+    assert set_picked == ["high", "max"], (
+        f"the picked efforts did not reach the agent for their models: {set_picked}"
+    )
+    assert (lacking.get("error") or {}).get("content") == (
+        "Agent does not support the selected reasoning effort for this model"
+    ), f"an effort the model lacks did not stop the reply: {lacking}"
+    assert prompts_after == prompts_before, "the agent was prompted with an effort its model lacks"

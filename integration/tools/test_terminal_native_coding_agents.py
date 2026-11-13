@@ -22,22 +22,41 @@ Stop (the stop tests); `resume` dropped from the session options (the resume tes
 instructions dropped (the system prompt tests); pictures dropped (the same tests); the effort and
 tier not passed to the turn (the effort test). An uploaded picture is dropped on dev 06491f013
 (#33992, fixed by PR #33993), so the picture tests stay red there until the fix merges.
+
+New for 0.13.4. Switching a chat to another model of the same agent goes on in the agent's own
+conversation and folder (1782e9bc5), while switching to another agent starts that agent's own
+conversation with the chat so far. The reasoning effort of the chat's advanced parameters reaches
+Claude Code and Pi (121bc0ec5), none is set when none is picked, and one the model does not offer
+ends the reply with the agent's reason before the prompt. Agent model ids keep only letters,
+digits, dashes and underscores, so a Pi model's `/` no longer breaks its pin (#34168, PR #34171).
+Discriminates: these pass on dev 485103cde. Mutations in a backend copy: the model added to the
+keys a resumed session must match (the switching tests); the effort never read from the
+parameters (the effort tests); the provider dropped from those keys (the other agent test); the
+model name only URL-quoted in the id (the listing test).
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 import pytest
 
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import AgentTerminal, connect_agent_terminal, model_id
-from harness.fake_native_agent import COMMAND, NOTES, QUESTION, REFUSAL, THOUGHT
+from harness.fake_native_agent import (
+    COMMAND,
+    NOTES,
+    QUESTION,
+    REFUSAL,
+    THOUGHT,
+    effort_refusal,
+)
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 
@@ -68,6 +87,7 @@ class Native:
     allowed: str
     denied: str
     question_id: str
+    other_model: str
 
 
 CLAUDE = Native(
@@ -79,6 +99,7 @@ CLAUDE = Native(
     allowed="allow",
     denied="deny",
     question_id=QUESTION,
+    other_model="claude-fake-sonnet",
 )
 CODEX = Native(
     provider="codex",
@@ -92,6 +113,7 @@ CODEX = Native(
     allowed="accept",
     denied="decline",
     question_id="colour",
+    other_model="codex-fake-mini",
 )
 PI = Native(
     provider="pi",
@@ -102,6 +124,7 @@ PI = Native(
     allowed="confirmed",
     denied="declined",
     question_id="value",
+    other_model="acme/pi-fake-1.5",
 )
 NATIVES = [CLAUDE, CODEX, PI]
 each_agent = pytest.mark.parametrize("native", NATIVES, ids=lambda native: native.provider)
@@ -193,7 +216,11 @@ def test_claude_code_codex_and_pi_are_offered_with_their_models_and_codex_with_i
         "codex/codex-fake",
         "codex/codex-fake-mini",
         "pi/acme/pi-fake",
+        "pi/acme/pi-fake-1.5",
     }, f"the three agents' models were not offered as expected: {sorted(offered)}"
+    # a pinned model opens by its id, so the id keeps nothing a link would encode (#34168)
+    unsafe = [id for id in offered if not re.fullmatch(r"[A-Za-z0-9_-]+", id.rsplit(":", 1)[1])]
+    assert not unsafe, f"agent model ids carry characters a link encodes: {unsafe}"
     controls = offered[model_id(terminal_id, "codex-fake", "codex")]["info"]["params"]
     assert controls["model_controls"] == {
         "reasoning_effort": {
@@ -489,3 +516,125 @@ def test_a_codex_turn_runs_with_the_models_default_effort_or_the_persons_pick(
         f"an effort the model does not offer was taken: {refused.text}"
     )
     assert "reasoning_effort" in refused.json()["detail"], refused.text
+
+
+@each_agent
+def test_switching_to_another_model_of_the_same_agent_resumes_its_session_and_folder(
+    native, make_user, connect, native_agent_terminal
+):
+    person = make_user()
+    terminal_id = connect(person)
+    home = native_agent_terminal.terminal.home
+    started_in = home / f"switch-{uuid.uuid4().hex[:6]}"
+    started_in.mkdir()
+
+    with person.client() as client:
+        first = _send(
+            client, terminal_id, native, "remember the word lantern", terminal_cwd=str(started_in)
+        )
+        first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
+        assert "error" not in first_reply, f"the first turn failed: {first_reply.get('error')}"
+        switched = replace(native, model=native.other_model)
+        # the page names the terminal's current folder again with the next message
+        second = _ask(
+            client,
+            terminal_id,
+            switched,
+            "what was the word?",
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+            terminal_cwd=str(home),
+            history=[
+                {"role": "user", "content": "remember the word lantern"},
+                {"role": "assistant", "content": first_reply["content"]},
+            ],
+        )
+
+    assert second.get("content") == (
+        f"{native.provider} heard: what was the word? "
+        f"[model {native.other_model}, folder {started_in}]"
+    ), f"the switched model did not go on in the agent's session and folder: {second}"
+    ran_in = native_agent_terminal.conversations(native.provider)[-2:]
+    assert len(ran_in) == 2 and ran_in[0] == ran_in[1], (
+        f"switching the model started a new conversation of the agent: {ran_in}"
+    )
+
+
+def test_switching_to_another_agent_starts_that_agents_own_conversation(
+    make_user, connect, native_agent_terminal
+):
+    person = make_user()
+    terminal_id = connect(person)
+
+    with person.client() as client:
+        first = _send(client, terminal_id, CLAUDE, "remember the word lantern")
+        first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
+        second = _ask(
+            client,
+            terminal_id,
+            CODEX,
+            "what was the word?",
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+            history=[
+                {"role": "user", "content": "remember the word lantern"},
+                {"role": "assistant", "content": first_reply["content"]},
+            ],
+        )
+
+    claude_session = native_agent_terminal.conversations("claude-code")[-1]
+    codex_thread = native_agent_terminal.conversations("codex")[-1]
+    assert "error" not in second, f"the turn with the other agent failed: {second.get('error')}"
+    assert codex_thread != claude_session, (
+        f"Codex was told to resume Claude Code's conversation {claude_session}"
+    )
+    # a new conversation is given the chat so far
+    assert "remember the word lantern" in second["content"], (
+        f"the other agent did not get the conversation so far: {second['content']!r}"
+    )
+
+
+def _effort_messages(terminal: AgentTerminal, native: Native) -> list[str]:
+    """The reasoning efforts the agent was told to use, oldest first."""
+    received = terminal.messages(native.provider)
+    if native is CLAUDE:
+        requests = [m.get("request") or {} for m in received if m.get("type") == "control_request"]
+        return [
+            r["settings"]["effortLevel"]
+            for r in requests
+            if r.get("subtype") == "apply_flag_settings"
+        ]
+    return [m["level"] for m in received if m.get("type") == "set_thinking_level"]
+
+
+@pytest.mark.parametrize("native", [CLAUDE, PI], ids=lambda native: native.provider)
+def test_the_reasoning_effort_reaches_the_agent_and_one_its_model_lacks_stops_the_reply(
+    native, make_user, connect, native_agent_terminal
+):
+    person = make_user()
+    terminal_id = connect(person)
+    told_before = len(_effort_messages(native_agent_terminal, native))
+
+    with person.client() as client:
+        plain = _ask(client, terminal_id, native, "no effort set")
+        told_plain = _effort_messages(native_agent_terminal, native)[told_before:]
+        picked = _ask(
+            client, terminal_id, native, "think hard", params={"reasoning_effort": "high"}
+        )
+        told_picked = _effort_messages(native_agent_terminal, native)[told_before:]
+        lacking = _ask(
+            client, terminal_id, native, "think harder", params={"reasoning_effort": "max"}
+        )
+
+    assert "error" not in plain and told_plain == [], (
+        f"an effort was set without one being picked: {told_plain}, {plain.get('error')}"
+    )
+    assert "error" not in picked, f"the turn with an effort failed: {picked.get('error')}"
+    assert told_picked == ["high"], f"the picked effort did not reach the agent: {told_picked}"
+    assert picked["content"].startswith(f"{native.provider} heard: think hard ["), picked
+    assert (lacking.get("error") or {}).get("content") == effort_refusal("max", native.model), (
+        f"an effort the model lacks did not stop the reply with the agent's reason: {lacking}"
+    )
+    assert not (lacking.get("content") or "").strip(), (
+        f"the agent answered with an effort its model lacks: {lacking['content']!r}"
+    )
