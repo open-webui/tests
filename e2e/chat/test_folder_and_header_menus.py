@@ -33,6 +33,11 @@ looked for on the chat's own tab, as a side tab can share its bar with the main 
 c15f28649 and, after the side chat swap of open-webui/open-webui#34064, on dev e791cbdde and
 262a8c6f7, a side tab has no chat menu, so every side variant is red
 (open-webui/open-webui#34031); all pass on the fix branch fix/side-tab-title-and-menu.
+
+Since dev 24b8bb0e6 Overview, Artifacts and Comments are no longer in the chat's menu and open from
+the tab bar's New tab menu: Overview its dialog, Artifacts the chat's artifact and Comments the
+comments tab. Passes on dev 485103cde; with Overview taken out of the New tab menu in a frontend
+build it fails.
 """
 
 from __future__ import annotations
@@ -47,12 +52,15 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.access import make_group
 from harness.chat_history import seed_chat
+from harness.comments import switch_comments
 from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface, surface_of
+from utils.chat_ui import artifacts_pane, conversation
 from utils.sidebar_folders import folder_link, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 FOLDER_NAME = "Harbour notes"
+MOVED_ENTRIES = ("Overview", "Artifacts", "Comments")
 
 
 def _create_folder(account, name: str) -> str:
@@ -467,3 +475,53 @@ def test_double_clicking_a_folder_tab_renames_the_folder(make_user, page_for):
         stored = client.get(f"/api/v1/folders/{folder_id}")
     assert stored.status_code == 200, stored.text
     assert stored.json()["name"] == renamed, f"the folder is stored as {stored.json()['name']!r}"
+
+
+ARTIFACT_REPLY = "Here it is.\n\n```html\n<h1>Tide board</h1>\n```\n\nDone."
+
+
+def _new_tab_entry(page: Page, name: str) -> Locator:
+    page.get_by_role("button", name="New tab", exact=True).click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem").first).to_be_visible()
+    # an entry's name ends with its shortcut, where it has one
+    return menu.get_by_role("menuitem", name=re.compile(rf"^{name}\b"))
+
+
+def test_overview_artifacts_and_comments_open_from_the_new_tab_menu_not_the_chat_menu(
+    make_user, page_for, admin, preserve
+):
+    preserve("admin_config")
+    switch_comments(admin, True)
+    owner = make_user()
+    with owner.client() as client:
+        chat_id, _ = seed_chat(
+            client,
+            [
+                {"role": "user", "content": "draw me the tide board"},
+                {"role": "assistant", "content": ARTIFACT_REPLY},
+            ],
+        )
+    page = page_for(owner, path=f"/c/{chat_id}")
+    expect(conversation(page).get_by_text("Done.")).to_be_visible()
+
+    page.get_by_label("Chat actions").click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem", name="Rename")).to_be_visible()
+    moved = {name: menu.get_by_role("menuitem", name=name).count() for name in MOVED_ENTRIES}
+    assert moved == dict.fromkeys(MOVED_ENTRIES, 0), f"the chat menu still holds {moved}"
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
+
+    _new_tab_entry(page, "Overview").click()
+    expect(page.get_by_role("dialog", name="Overview")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("dialog", name="Overview")).to_have_count(0)
+
+    _new_tab_entry(page, "Artifacts").click()
+    expect(artifacts_pane(page).frame_locator("iframe").locator("h1")).to_have_text("Tide board")
+
+    _new_tab_entry(page, "Comments").click()
+    expect(page.get_by_role("tab", name="Comments", exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
