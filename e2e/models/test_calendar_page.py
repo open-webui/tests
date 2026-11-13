@@ -9,6 +9,8 @@
 * A repeating event made in the editor shows on every day its rule names: a weekly one every
   seventh day, a weekday one Monday to Friday in the browser's own zone, which the page hands to
   the server so the occurrences are expanded there.
+* The pencil beside a calendar in the sidebar (#34136) renames it and gives it another color; it
+  stays one calendar with its events.
 * Hiding a calendar in the sidebar hides its events; an event the model made with its calendar
   tool shows at the local time it was given; another account sees an event only once its
   calendar is shared with it.
@@ -34,7 +36,8 @@ as UTC the model's event test went red, and with calendars listed to their owner
 sharing test went red at the reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
 The late evening test is red on dev ebc6add67 (open-webui/open-webui#31994, fixed by 69a1c5732).
 Both refusal tests are red on dev ca8f451cc, whose page shows the calendar
-(open-webui/open-webui#32834).
+(open-webui/open-webui#32834). The rename test passes on dev 485103cde and fails in a frontend build
+whose edit dialog creates a new calendar instead of saving the one it opened.
 """
 
 from __future__ import annotations
@@ -402,6 +405,42 @@ def test_hiding_a_calendar_in_the_sidebar_hides_its_events(page_for, make_user):
     page.get_by_role("button", name=name).click()
     expect(_chip(page, title)).to_have_count(0)
     page.get_by_role("button", name=name).click()
+    expect(_chip(page, title)).to_be_visible()
+
+
+def test_a_calendar_renamed_and_recoloured_from_the_sidebar_keeps_its_events(page_for, make_user):
+    owner = make_user()
+    name, new_name, title = _title("Club"), _title("Sailing club"), _title("Regatta")
+    with owner.client() as client:
+        created = client.post("/api/v1/calendars/create", json={"name": name, "color": "#3b82f6"})
+    assert created.status_code == 200, created.text
+    calendar_id = created.json()["id"]
+    _event(owner, title, _this_month(18, 10), calendar_id=calendar_id)
+    page = page_for(owner, path="/calendar")
+    expect(_chip(page, title)).to_be_visible()
+
+    row = page.get_by_role("button", name=name, exact=True).locator("xpath=..")
+    row.hover()
+    row.get_by_role("button", name="Edit", exact=True).click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog.get_by_placeholder("Calendar name")).to_have_value(name)
+    dialog.get_by_placeholder("Calendar name").fill(new_name)
+    dialog.get_by_role("button", name="#22c55e", exact=True).click()
+    dialog.get_by_role("button", name="Save", exact=True).click()
+
+    expect(page.get_by_role("button", name=new_name, exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
+    with owner.client() as client:
+        calendars = client.get("/api/v1/calendars/").json()
+    saved = [calendar for calendar in calendars if calendar["id"] == calendar_id]
+    assert [(calendar["name"], calendar["color"]) for calendar in saved] == [
+        (new_name, "#22c55e")
+    ], f"the calendar was saved as {saved}"
+    assert len(calendars) == len({calendar["id"] for calendar in calendars})
+    assert [calendar["name"] for calendar in calendars].count(new_name) == 1, (
+        "saving the edit made a second calendar"
+    )
+    page.reload()
     expect(_chip(page, title)).to_be_visible()
 
 
