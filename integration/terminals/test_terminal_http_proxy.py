@@ -2,7 +2,8 @@
 
 The file browser, previews, downloads and the port preview all call the terminal through
 `/api/v1/terminals/<id>/<path>`. This module pins what comes back on a plain terminal: the
-terminal's own status and body, which of its headers are kept, that downloads and live updates
+terminal's own status and body, which of its headers are kept (every cookie it sets among them,
+since edecad351 for open-webui/open-webui#34092), that downloads and live updates
 arrive while the terminal is still sending, what a broken-off answer and a connection without
 an address give, the chat form of the address, and the port preview's rewriting of redirects
 and pages. The request side (credentials, cookies, forged headers, traversal, the admin API)
@@ -22,6 +23,8 @@ Discriminates: passes on dev c15f28649. In backend copies of it, one edit each:
 * every answer streamed: the whole JSON answer test fails (no length, sent as it comes);
 * the check for an address dropped: the empty address test fails (502 in place of 503);
 * the last `except Exception` arm of the proxy dropped: the broken-off answer test fails (500);
+* the terminal's headers collected in a plain dict before the case-insensitive one, as before
+  edecad351: both cases of the cookie test fail on dev 485103cde (only the last cookie arrives);
 * the `Location` rewrite dropped: the port redirect test fails;
 * the page rewrite dropped (`_port_browser_html` not called): the port page test fails.
 """
@@ -166,6 +169,46 @@ def test_the_terminals_own_headers_arrive_except_those_of_its_connection(
     )
     assert len(answered.headers.get_list("date")) == 1, (
         f"the answer carries the terminal's date as well: {answered.headers.get_list('date')}"
+    )
+
+
+class _RepeatedHeaders(list):
+    """Header pairs a terminal sends as they are, a name more than once included."""
+
+    def items(self):
+        return iter(self)
+
+
+@pytest.mark.parametrize(
+    "path, content_type",
+    [("files/session", "application/json"), ("files/download", "application/octet-stream")],
+    ids=["buffered", "streamed"],
+)
+def test_every_cookie_the_terminal_sets_reaches_the_person(
+    person, terminal, terminal_id, path, content_type
+):
+    """Fixed on dev in edecad351 (open-webui/open-webui#34092): only the last cookie arrived."""
+    tag = uuid.uuid4().hex[:8]
+    cookies = [f"workspace={tag}; Path=/", f"layout=split-{tag}; Path=/", "theme=dark; Path=/"]
+    terminal.route(
+        "GET",
+        f"/{path}",
+        (
+            200,
+            _RepeatedHeaders(
+                [("Content-Type", content_type), *(("Set-Cookie", cookie) for cookie in cookies)]
+            ),
+            b"{}",
+        ),
+    )
+
+    with person.client() as client:
+        answered = client.get(f"/api/v1/terminals/{terminal_id}/{path}")
+
+    assert answered.status_code == 200, answered.text
+    assert answered.headers.get_list("set-cookie") == cookies, (
+        f"the terminal set the cookies {cookies}; the person got "
+        f"{answered.headers.get_list('set-cookie')}"
     )
 
 

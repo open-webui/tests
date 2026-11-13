@@ -12,10 +12,10 @@ Every instance here is booted with `AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=1`, 
 timeout that falls back to it shows after one second. The terminal is the fake one, whose
 skill list, the first thing a chat turn asks it for, a test can hold.
 
-Red on dev c15f28649 and on v0.13.3, a product bug that is not filed yet:
-`test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins`. A header of
-`TERMINAL_PROXY_HEADERS` whose name is written in another case than the terminal's is sent
-beside the terminal's own, where the docs say the admin's takes precedence.
+`test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins` was red on dev
+c15f28649 and on v0.13.3 (open-webui/open-webui#34092): a header of `TERMINAL_PROXY_HEADERS`
+whose name is written in another case than the terminal's was sent beside the terminal's own,
+where the docs say the admin's takes precedence. It passes on dev 485103cde (fixed in edecad351).
 
 Discriminates: every other test passes on dev c15f28649. In backend copies of it, one edit each:
 * `terminal_server.connections` defaulting to an empty list: the first-boot test and every
@@ -63,7 +63,7 @@ ADMIN_HEADERS = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
 }
-# named in lower case; red on dev, see the finding in the module docstring
+# named in lower case, see open-webui/open-webui#34092 in the module docstring
 LOWER_CASE_HEADER = {"x-harbour-zone": "admin"}
 STILL_STARTING = "timed out. It may still be starting. Please try again."
 SPEC = {
@@ -293,7 +293,7 @@ def test_the_admins_headers_are_on_every_answer_of_the_terminal_and_win_over_its
 
 
 def test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins(configured):
-    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34092)."""
+    """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34092), fixed in edecad351."""
     with configured.instance.client() as client:
         added = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/list")
         answered = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/zone")
