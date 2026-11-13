@@ -375,6 +375,10 @@ def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
 def test_a_folders_missing_directory_refuses_the_first_message(
     page_for, make_user, terminal, open_terminal, upstream
 ):
+    """Refused message kept in the chat and the box emptied: open-webui/open-webui#34367.
+
+    Fix branch Classic298:fix/refused-first-message-stays-in-chat.
+    """
     person = make_user()
     folder_id, _ = create_folder(
         person,
