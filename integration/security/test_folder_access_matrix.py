@@ -8,9 +8,10 @@ only looks in the caller's own folder tree, so it answers 404 to everyone else, 
 included. After a refused write the owner still sees the same name, parent and grants. With
 folders switched off every route refuses everyone, and without `features.folders` every route
 refuses a user but not the admin. Deleting is pinned by test_folder_delete_ownership.py.
-Since 06491f013 the folder page's people and tag counts follow the same read access, and only a
-chat's owner files it under one of the folder's statuses: the other members and the admin are
-refused on the owner's chat.
+Since 06491f013 the folder page's people and tag counts follow the same read access. Since
+f1d735d80 filing a chat under one of the folder's statuses follows write access: the writer and
+the admin file the owner's chat, the reader is refused. Since 6378f94a6 the folder's automations
+list follows read access.
 
 Since 0.12.4 (226207314) the owner may also rename and move a chat a member started in the
 shared folder. The rename takes a title alone, trimmed, and refuses a blank one with 400 and
@@ -38,7 +39,11 @@ other account's rename row red, and marking the chat read on any move turns the 
 The pin test passes with the fix of #33342 and fails on dev, where any move unpins the chat.
 The rows added for 06491f013 pass on dev 06491f013; in one backend copy of it that answers the
 people, tag and status routes without the read check and files a chat whoever owns it, all six of
-those rows go red: the stranger gets 200 on each, and everyone gets 200 on the status row.
+those rows go red: the stranger gets 200 on each, and everyone gets 200 on the status row. The
+status row as it is now and the automations rows pass on dev 485103cde; in a backend copy of it
+whose status route files only the caller's own chat the writer and admin status rows go red (403),
+and one whose automations list skips the read check turns the stranger's automations row and
+the switched-off automations rows red.
 """
 
 from __future__ import annotations
@@ -133,8 +138,9 @@ MATRIX = [
         {"status": "s_todo"},
         _owner_chat_with_statuses,
         403,
-        OWNER,
+        WRITE,
     ),
+    ("GET", "/api/v1/folders/{id}/automations", None, None, 403, READ),
 ]
 
 

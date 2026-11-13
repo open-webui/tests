@@ -40,6 +40,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 TODO = {"id": "s_todo", "name": "To do", "glyph": "todo", "color": "gray"}
 DOING = {"id": "s_doing", "name": "Doing", "glyph": "in_progress", "color": "amber"}
 DONE = {"id": "s_done", "name": "Done", "glyph": "done", "color": "green"}
+READY_MADE = ("backlog", "todo", "in_progress", "waiting", "done")
 WORKSPACE_PAGE = 50
 OWNERS = "Owner's"
 
@@ -292,15 +293,39 @@ def test_the_activity_filter_separates_unread_from_read_chats(make_user):
     assert _titles(idle) == ["Seen"], idle
 
 
-def _shared_folder(owner: Actor, member: Actor) -> str:
+def test_a_new_folder_offers_the_ready_made_statuses_and_an_empty_list_offers_none(make_user):
+    with make_user().client() as client:
+        ready_made = _folder(client)
+        opted_out = _folder(client, [])
+        chats = {
+            folder_id: _chat(client, folder_id, "Intake") for folder_id in (ready_made, opted_out)
+        }
+
+        filed = {
+            status: _file(client, ready_made, chats[ready_made], status).status_code
+            for status in READY_MADE
+        }
+        done = _listed(client, ready_made, status="done")
+        refused = _file(client, opted_out, chats[opted_out], "todo")
+
+    assert filed == dict.fromkeys(READY_MADE, 200), (
+        f"a folder without statuses of its own refused a ready-made one: {filed}"
+    )
+    assert [(chat["title"], chat["status"]) for chat in done["chats"]] == [("Intake", "done")], done
+    assert refused.status_code == 422, (
+        f"a folder that set no statuses took a ready-made one: {refused.text}"
+    )
+
+
+def _shared_folder(owner: Actor, member: Actor, *permissions: str) -> str:
     with owner.client() as client:
         folder_id = _folder(client, [TODO, DONE])
         shared = client.post(
             f"/api/v1/folders/{folder_id}/access/update",
             json={
                 "access_grants": [
-                    grant("user", member.id, "read"),
-                    grant("user", member.id, "write"),
+                    grant("user", member.id, permission)
+                    for permission in permissions or ("read", "write")
                 ]
             },
         )
@@ -308,26 +333,46 @@ def _shared_folder(owner: Actor, member: Actor) -> str:
     return folder_id
 
 
-def test_a_member_files_their_own_chat_and_reads_the_owners_as_fixed(make_user):
+def test_a_writing_member_files_any_chat_but_tags_only_their_own(make_user):
     owner, member = make_user(), make_user()
     folder_id = _shared_folder(owner, member)
     with owner.client() as client:
-        _chat(client, folder_id, OWNERS)
+        owners = _chat(client, folder_id, OWNERS)
     with member.client() as client:
         own = _chat(client, folder_id, "Member's")
         filed = _file(client, folder_id, own, DONE["id"])
+        filed_owners = _file(client, folder_id, owners, TODO["id"])
         listing = _by_title(_listed(client, folder_id))
 
-    assert filed.status_code == 200, filed.text
-    assert listing["Member's"]["status"] == DONE["id"]
+    assert (filed.status_code, filed_owners.status_code) == (200, 200), (
+        f"a writing member could not file a chat: {filed.text} / {filed_owners.text}"
+    )
+    assert (listing["Member's"]["status"], listing[OWNERS]["status"]) == (DONE["id"], TODO["id"])
     assert (listing["Member's"]["can_edit_status"], listing["Member's"]["can_edit_tags"]) == (
         True,
         True,
     )
     assert (listing[OWNERS]["can_edit_status"], listing[OWNERS]["can_edit_tags"]) == (
+        True,
+        False,
+    ), f"a writing member was offered the wrong controls on the owner's chat: {listing[OWNERS]}"
+
+
+def test_a_reading_member_files_no_chat_and_reads_the_owners_as_fixed(make_user):
+    owner, reader = make_user(), make_user()
+    folder_id = _shared_folder(owner, reader, "read")
+    with owner.client() as client:
+        owners = _chat(client, folder_id, OWNERS)
+    with reader.client() as client:
+        refused = _file(client, folder_id, owners, DONE["id"])
+        listing = _by_title(_listed(client, folder_id))
+
+    assert refused.status_code == 403, f"a reading member filed the owner's chat: {refused.text}"
+    assert listing[OWNERS]["status"] is None, listing[OWNERS]
+    assert (listing[OWNERS]["can_edit_status"], listing[OWNERS]["can_edit_tags"]) == (
         False,
         False,
-    ), f"a member was offered to change the owner's chat: {listing[OWNERS]}"
+    ), f"a reading member was offered to change the owner's chat: {listing[OWNERS]}"
 
 
 def test_the_people_list_counts_chats_and_filters_by_person(make_user):
