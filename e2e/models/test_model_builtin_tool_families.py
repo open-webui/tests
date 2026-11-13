@@ -8,7 +8,9 @@ with a file attached and notes what the model is offered, unticks one category u
 in the model editor and asks again: that category's tools are gone and every other tool is still
 offered. The Time & Calculation category and the Builtin Tools capability as a whole are covered in
 e2e/models/test_model_editor.py, Sub-agents in e2e/admin/test_subagents_settings.py; the Code
-Interpreter is legacy and left out.
+Interpreter is legacy and left out. Visualizations, off by default since 0.13.4, works the other
+way: ticking it offers its one tool and changes nothing else. Since 0.13.4 Chat History also
+offers `search_users`.
 
 Discriminates: passes on the dev ebc6add67 build. In a backend copy whose builtin tools ignore the
 model's unticked categories every case fails (the category's tools are still offered); in a
@@ -16,7 +18,10 @@ frontend build whose editor saves the Builtin Tools categories as they were load
 fails as well.
 Retargeted for 8d0ff76f2, whose Builtin Tools categories are switches in a section that opens on a
 click: passes on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's
-settings as they were loaded every case fails.
+settings as they were loaded every case fails. The Visualizations test fails, before any save,
+in a backend copy of dev 485103cde that offers Visualizations to every model. On the dev
+485103cde build every test here stops at the editor's save, which no longer leaves the editor
+(test drift in the shared `utils/model_editor` helper, which still expects the models list).
 """
 
 from __future__ import annotations
@@ -60,7 +65,7 @@ FAMILIES = {
             "delete_memory",
         },
     ),
-    "chat history": ("Chat History", {"search_chats", "view_chat"}),
+    "chat history": ("Chat History", {"search_chats", "view_chat", "search_users"}),
     "notes": ("Notes", {"search_notes", "view_note", "write_note", "replace_note_content"}),
     "knowledge": (
         "Knowledge Base",
@@ -187,3 +192,19 @@ def test_an_unticked_category_leaves_only_its_tools_out(
     assert not lost and not gained, (
         f"other tools changed: lost {sorted(lost)}, gained {sorted(gained)}"
     )
+
+
+def test_ticking_visualizations_offers_the_drawing_tool_alone(page_for, builder, preset, upstream):
+    page = page_for(builder)
+    before = offered_with_a_file(page, upstream, preset, "draw the tide for me")
+    assert "render_visualization" not in before, "Visualizations was offered before it was ticked"
+
+    editor = open_editor(page, preset)
+    set_checkbox(editor, "Builtin Tools", "Visualizations", True)
+    save(editor)
+
+    after = offered_with_a_file(page, upstream, preset, "draw the tide for me now")
+    assert after - before == {"render_visualization"}, (
+        f"ticking Visualizations offered {sorted(after - before)}"
+    )
+    assert not before - after, f"ticking Visualizations dropped {sorted(before - after)}"
