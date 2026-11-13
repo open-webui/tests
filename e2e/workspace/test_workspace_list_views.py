@@ -18,10 +18,15 @@ ignores the view.
 Paging the prompt list from the keyboard keeps the focus in the page buttons, at the last and
 the first page too (bc14c3767, PR open-webui/open-webui#33743, and a53089365, PR #33748).
 Passes on dev e8c0ad85e and fails on that build with both reverted.
+
+The count beside the Tools tab stays at the account's number of tools while the Tools page loads
+its list; it dropped to 0 for a moment (693da8762, PR open-webui/open-webui#34236). Passes on the
+dev 485103cde build and fails on a build of it with 693da8762 reverted (the count reads 0).
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
@@ -238,3 +243,54 @@ def test_paging_the_prompt_list_from_the_keyboard_keeps_the_focus_in_the_page_bu
         with owner.client() as client:
             for cleanup in cleanups:
                 cleanup(client)
+
+
+def _tools_tab_count(page: Page):
+    """The number beside the Tools tab of the workspace's tab bar."""
+    tab = page.get_by_role("link", name=re.compile(r"^Tools\b"))
+    return tab.locator("span").nth(1)
+
+
+def test_the_tools_tab_count_holds_while_the_tools_page_loads(page_for, make_user):
+    # the count dropped to 0 for a moment when the Tools page opened (PR #34236)
+    owner = make_user(role="admin")
+    name = f"Counter {uuid.uuid4().hex[:6]}"
+    cleanup = _tool(owner, name)
+    try:
+        with owner.client() as client:
+            listed = client.get("/api/v1/tools/list")
+        assert listed.status_code == 200, listed.text
+        expected = str(len(listed.json()))
+        page = page_for(owner, path="/workspace/prompts")
+        count = _tools_tab_count(page)
+        expect(count).to_have_text(expected)
+
+        held: list[Route] = []
+        holding = [True]
+
+        def hold(route: Route) -> None:
+            if holding[0]:
+                held.append(route)
+            else:
+                route.continue_()
+
+        page.route("**/api/v1/tools/list*", hold)
+        page.get_by_role("link", name=re.compile(r"^Tools\b")).click()
+        # the tab bar and the opened page each ask for the list
+        for _ in range(100):
+            if len(held) >= 2:
+                break
+            page.wait_for_timeout(100)
+        assert len(held) >= 2, f"the Tools page did not ask for its list: {len(held)} requests"
+
+        expect(count, "the Tools count changed while the page loaded its list").to_have_text(
+            expected
+        )
+        holding[0] = False
+        for route in held:
+            route.continue_()
+        expect(_listed(page, name)).to_be_visible()
+        expect(count).to_have_text(expected)
+    finally:
+        with owner.client() as client:
+            cleanup(client)
