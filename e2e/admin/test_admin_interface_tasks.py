@@ -7,7 +7,7 @@ with the first question to the model and titles the chat with its answer; switch
 keeps its first message as the title and the model is never asked. Follow Up Generation switched on
 asks the model with the admin's follow-up prompt, puts its suggested questions under the reply and
 pressing one asks it. Tags Generation switched on asks with the admin's tags prompt and files the
-chat under the model's tags, which its menu lists. Autocomplete Generation switched on lets a
+chat under the model's tags, which its tag picker lists. Autocomplete Generation switched on lets a
 person who turns Prompt Autocompletion on in their own settings see the model's continuation of
 what they type, and Tab takes it into the message. Retrieval Query Generation switched on asks the
 model, with the admin's Query Generation Prompt, what to search a file attached to the chat for:
@@ -44,6 +44,7 @@ from harness.chat_history import seed_chat
 from utils.cached_chat import attach
 from utils.chat_ui import chat_input, conversation, expect_reply, open_input_menu, send
 from utils.setting_rows import setting_button
+from utils.tag_picker import open_tag_picker, tag_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -226,11 +227,10 @@ def test_a_switched_on_tags_generation_files_the_chat_under_the_models_tags(
     with asker.client() as client:
         filed = wait_until(lambda: len(client.get(f"/api/v1/chats/{chat_id}/tags").json()) == 2, 30)
     assert filed, "the chat was never filed under the model's two tags"
-    page.get_by_role("button", name="Chat actions").first.click()
+    picker = open_tag_picker(page)
 
-    menu = page.get_by_role("menu")
-    expect(menu.get_by_text("Ferries", exact=True)).to_be_visible()
-    expect(menu.get_by_text("Lake travel", exact=True)).to_be_visible()
+    expect(tag_entry(picker, "Ferries")).to_have_attribute("aria-checked", "true")
+    expect(tag_entry(picker, "Lake travel")).to_have_attribute("aria-checked", "true")
 
 
 @pytest.fixture

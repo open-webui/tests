@@ -4,13 +4,15 @@
 arrow keys, Home and End, but it marked as menu items only the buttons present when the menu
 opened. Entries rendered a moment later stayed plain buttons, which the arrow keys passed over: the
 earlier uploads under the chat input's More, Attach Files, and the tag chips in the chat actions
-menu. Both stayed reachable with Tab, and a click worked.
+menu. Both stayed reachable with Tab, and a click worked. Since 24b8bb0e6 the chat's tags sit in a
+tag picker under the menu's Tags entry, whose Create entry shows only once a name is typed.
 
 Was red on dev 311be1757: entries rendered after the menu opens got no menuitem role, so arrow keys
 skipped them (#33359) (open-webui/open-webui#33374, fixed by 05e115366, #33375).
 
 Discriminates: passes on the build of fix PR #33375 (636d8ec2a), fails on dev 311be1757 (ArrowDown
-from the first entry never reaches the upload or the chip).
+from the first entry never reaches the upload or the chip). The tag picker test passes on dev
+4acf39ec2 and fails in a copy whose tag picker leaves entries drawn after it opened unmarked.
 
 The Attach Files test also runs in a side chat (`utils/chat_surface.py`); the Chat actions menu
 belongs to the page's header.
@@ -24,8 +26,9 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
-from utils.chat_ui import chat_input, open_add_context
+from utils.chat_ui import open_add_context
 from utils.menus import late_menu_entry
+from utils.tag_picker import open_tag_picker, tag_entry
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -102,21 +105,22 @@ def test_arrow_down_reaches_an_earlier_upload_in_attach_files(chat_for, make_use
     )
 
 
-def test_arrow_down_reaches_a_tag_chip_in_the_chat_actions_menu(page_for, make_user):
+def test_arrow_down_reaches_a_late_entry_in_the_chat_actions_tag_picker(page_for, make_user):
     account = make_user()
     tag = f"harbour{uuid.uuid4().hex[:8]}"
     chat_id = tagged_chat(account, tag)
     page = page_for(account, path=f"/c/{chat_id}")
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_label("Chat actions").click()
-    menu = page.get_by_role("menu")
-    chip = late_menu_entry(menu, tag, exact=True)
-    expect(chip).to_be_visible()
+    picker = open_tag_picker(page)
+    first = tag_entry(picker, tag)
+    expect(first).to_have_attribute("aria-checked", "true")
+    # a part of the tag's name keeps it listed and adds an entry to create the typed name
+    picker.get_by_label("Find or create a tag").fill("harbour")
+    create = late_menu_entry(picker, "Create “harbour”", exact=True)
+    expect(create).to_be_visible()
 
-    first = menu.get_by_role("menuitem").first
     first.focus()
     expect(first).to_be_focused()
 
-    assert arrow_down_reaches(page, chip), (
-        f"ArrowDown from the first entry never reached the {tag} chip in the chat actions menu"
+    assert arrow_down_reaches(page, create), (
+        "ArrowDown from the first entry never reached the Create entry in the chat's tag picker"
     )
