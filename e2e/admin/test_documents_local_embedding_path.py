@@ -4,7 +4,8 @@ open-webui/open-webui#33977. With `RAG_EMBEDDING_MODEL` set to a folder on disk 
 downloaded ahead of time and mounted into the container), every Save in the Documents tab raised
 "Model filesystem path detected. Model shortname is required for update, cannot continue." The
 instance itself loads and uses such a model, so the error flagged a setup that works. The Save
-button and the embedding model's own update button now take a model path as they take a name.
+button and the embedding model's own update button now take a model path as they take a name, and
+Save stores the embedding settings such as the batch size, which the error used to skip.
 
 Discriminates: passes on a build with the fix, fails on dev 77d3d1c31 (the error toast shows on
 Save, and the update button sends nothing to the server).
@@ -60,6 +61,7 @@ def test_saving_the_documents_settings_on_a_local_model_path_shows_no_error(
     dialog.get_by_text("Max Upload Count", exact=True).locator(
         "xpath=following-sibling::div//input"
     ).fill("3")
+    dialog.get_by_label("Embedding Batch Size", exact=True).fill("7")
 
     dialog.get_by_role("button", name="Save", exact=True).click()
 
@@ -74,6 +76,9 @@ def test_saving_the_documents_settings_on_a_local_model_path_shows_no_error(
         f"Max Upload Count was not saved: {saved['FILE_MAX_COUNT']}"
     )
     assert embedding["RAG_EMBEDDING_MODEL"] == local_model, embedding["RAG_EMBEDDING_MODEL"]
+    assert embedding["RAG_EMBEDDING_BATCH_SIZE"] == 7, (
+        f"the embedding batch size was skipped on Save: {embedding['RAG_EMBEDDING_BATCH_SIZE']}"
+    )
 
 
 def test_the_update_button_sends_a_local_model_path_to_the_server(settings, local_model):
