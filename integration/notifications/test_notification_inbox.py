@@ -18,17 +18,32 @@ the update in `read_inbox_item` turns the unread count test red, and dropping th
 `notifications.enable` check from `consume_event` and `insert_notifications` turns both
 switched-off tests red.
 
+Since 0.13.4 a model's reply can mention people (the Chat History builtin tool finds them with
+`search_users`): each mentioned person who can open the chat, here through the chat's shared
+folder, gets an entry leading to that reply, and nobody who cannot open it.
+
 Since 7efb494a2, opening a channel (the page tells the server it read up to now) also marks that
 channel's entries in the inbox read. The channel opening test passes on dev e8c0ad85e and fails
 on a backend copy with 7efb494a2 reverted (the mention stays unread).
+
+The chat mention test passes on dev 485103cde and fails on a backend copy whose inbox skips the
+chat access check for a mention and lists every chat's entries (the stranger is told; dropping
+the access check alone keeps it green, as the list hides the entry).
 """
 
 from __future__ import annotations
 
+import json
+import uuid
+
 import pytest
 
+from harness import upstream as scripted
+from harness.access import grant
 from harness.actors import Actor, admin_of, create_user
+from harness.backends import wait_until
 from harness.channel_quotes import enable_channels, group_channel, post_message
+from harness.chat import ChatTurn, ask
 from harness.comments import COMMENTABLE, comment, mention, reply, shared_item, switch_comments
 from harness.socket_client import connected
 
@@ -167,6 +182,64 @@ def test_a_channel_reply_or_mention_reaches_only_the_person_meant(admin, make_us
         assert entries_about(bystander, called) == [], (
             f"a channel mention reached the inbox of {bystander.name}, who was not meant"
         )
+
+
+def _chat_in_shared_folder(owner: Actor, member: Actor, upstream) -> ChatTurn:
+    """The owner's chat with one answered turn, filed in a folder the member may read."""
+    with owner.client() as client:
+        folder = client.post("/api/v1/folders/", json={"name": f"Crew {uuid.uuid4().hex[:8]}"})
+        assert folder.status_code == 200, folder.text
+        folder_id = folder.json()["id"]
+        shared = client.post(
+            f"/api/v1/folders/{folder_id}/access/update",
+            json={"access_grants": [grant("user", member.id, "read")]},
+        )
+        assert shared.status_code == 200, shared.text
+        prompt = f"who is on watch? {uuid.uuid4().hex[:8]}"
+        upstream.queue(scripted.text("Let me check.", match=scripted.answering(prompt)))
+        turn, _ = ask(client, prompt)
+        filed = client.post(f"/api/v1/chats/{turn.chat_id}/folder", json={"folder_id": folder_id})
+        assert filed.status_code == 200, filed.text
+    return turn
+
+
+def _entries_once_written(actor: Actor, object_id: str) -> list[tuple[str, str]]:
+    # the entry is written as the reply is finished, a moment after it is stored as done
+    wait_until(lambda: entries_about(actor, object_id), timeout=10)
+    return entries_about(actor, object_id)
+
+
+def test_a_reply_that_mentions_people_reaches_only_those_who_can_see_the_chat(
+    make_user, upstream, inbox_on
+):
+    owner, member, stranger = make_user(), make_user(), make_user()
+    first = _chat_in_shared_folder(owner, member, upstream)
+    prompt = f"tell the crew {uuid.uuid4().hex[:8]}"
+    upstream.queue(
+        scripted.text(
+            f"<@U:{member.id}> and <@U:{stranger.id}>, the tide turns at six.",
+            match=scripted.answering(prompt),
+        )
+    )
+    with owner.client() as client:
+        turn, stored = ask(
+            client, prompt, chat_id=first.chat_id, parent_id=first.assistant_message_id
+        )
+    assert "the tide turns at six" in json.dumps(stored), stored
+    reply_id = f"{turn.chat_id}-{turn.assistant_message_id}"
+
+    assert _entries_once_written(member, reply_id) == [("chat.mentioned", None)], (
+        "the mentioned reader of the chat's folder was not told"
+    )
+    entry = next(e for e in inbox(member) if e["object_id"] == reply_id)
+    assert (entry["resource_type"], entry["resource_id"]) == ("chat", turn.chat_id), entry
+    assert entry["data"]["message_id"] == turn.assistant_message_id, (
+        f"the entry does not lead to the reply that mentioned them: {entry}"
+    )
+    assert entries_about(stranger, reply_id) == [], (
+        "a mention in a chat reached someone who cannot open the chat"
+    )
+    assert entries_about(owner, reply_id) == [], "the owner, who was not mentioned, was told"
 
 
 def test_opening_the_channel_marks_its_entries_read(admin, make_user, inbox_on):

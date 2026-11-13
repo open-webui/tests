@@ -17,7 +17,10 @@ tools search and read the account's own earlier chats and never the one being an
 default) caps what `view_chat` returns: the newest messages are kept, the oldest one kept is cut
 to fit, and the result says it was cut and how many messages came back. Empty and non-text
 messages are counted as text. The limit is a positive whole number, a save that leaves it out
-keeps it and the env var seeds a fresh instance.
+keeps it and the env var seeds a fresh instance. Since 0.13.4 `search_users` finds people by name
+or email, sorted by name, leaves out accounts still pending and gives each person's mention token
+for the model to copy into its reply (the inbox entry it raises is in
+integration/notifications/test_notification_inbox.py).
 
 The scripted model calls each tool and the test reads the result it was sent back, and the
 stored note or chat.
@@ -40,7 +43,8 @@ test red, and skipping the read-revision check together with the revision sent w
 e8c0ad85e): never reading the limit turned the cut and empty-message tests red, counting
 `len(content)` without the text fallback turned the empty-message test red, the field without
 `gt=0, strict=True` turned the 0, -5 and "500" cases red, dropping the keep-when-omitted pop
-turned the omitted-save test red and the env default ignored turned the env test red.
+turned the omitted-save test red and the env default ignored turned the env test red. For
+`search_users` (dev 485103cde): searching every role turned the search test red.
 """
 
 from __future__ import annotations
@@ -479,6 +483,27 @@ def test_view_chat_returns_the_conversation_in_order(make_user, upstream):
     ]
     assert refused == {"error": "Chat not found or access denied"}
     assert "truncated" not in viewed, f"a chat read with no limit set was cut: {viewed}"
+
+
+def test_search_users_finds_people_by_name_or_email_with_the_mention_to_copy(make_user, upstream):
+    tag = uuid.uuid4().hex[:8]
+    asker = make_user()
+    heron = make_user(name=f"Heron Keeper {tag}", email=f"keeper-{tag}@example.com")
+    egret = make_user(name=f"Egret Keeper {tag}")
+    waiting = make_user(role="pending", name=f"Pending Keeper {tag}")
+
+    by_name = call(asker, upstream, "search_users", query=f"Keeper {tag}")
+    by_email = call(asker, upstream, "search_users", query=f"keeper-{tag}@example")
+    capped = call(asker, upstream, "search_users", query=f"Keeper {tag}", count=1)
+
+    assert [person["id"] for person in by_name] == [egret.id, heron.id], (
+        f"the search by name did not list both people, by name, without the pending one: {by_name}"
+    )
+    assert waiting.id not in {person["id"] for person in by_name}
+    assert by_email == [
+        {"id": heron.id, "name": heron.name, "email": heron.email, "mention": f"<@U:{heron.id}>"}
+    ], f"the search by email did not find exactly that person with their mention: {by_email}"
+    assert len(capped) == 1, f"the count did not cap the results: {capped}"
 
 
 # --- chat read limit (#33695) -------------------------------------------------------------------
