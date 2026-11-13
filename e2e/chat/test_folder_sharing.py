@@ -17,6 +17,7 @@ the shared folder from Rename in its sidebar menu, and drags it into a folder in
 one, while a drag out to a private folder of the owner's is refused and the chat stays. Since
 e22210796 the folder's menu, in the sidebar and on its page, has a Share entry again for an owner
 allowed to share folders; it opens the same Access dialog, while a writing member finds no Share.
+An admin finds Share on their own folder, and an owner whom no permission allows to share does not.
 
 Discriminates: passes on dev ebc6add67, and on dev b5a20423e once the read share test looks for the
 Clone Chat button that replaced the Read only label (c6dd9a451), and on dev f5a26f53a once sharing
@@ -32,7 +33,8 @@ rename or move another account's chat (no menu, not draggable), the rename test 
 refusing the owner in the chat update handler and the drag test in one whose chat move check
 always answers False. The Share entry test passes on the dev 485103cde build and goes red on a
 frontend copy of it whose folder menu never shows the Share entry, where the test of the writing
-member's sidebar editor stays green as a control.
+member's sidebar editor stays green as a control. The admin and plain owner test passes on dev
+485103cde and fails on a frontend build whose folder menus show Share to everyone.
 """
 
 from __future__ import annotations
@@ -395,6 +397,29 @@ def test_the_owner_shares_from_share_in_the_folders_menu_and_a_writing_member_fi
     member_page.keyboard.press("Escape")
     expect(page_menu).to_be_hidden()
     expect(open_row_menu(member_page, name).get_by_role("menuitem", name="Share")).to_have_count(0)
+
+
+@pytest.mark.parametrize("menu", ["sidebar", "folder page"])
+def test_share_is_in_the_folder_menu_of_an_admin_but_not_of_an_owner_not_allowed_to_share(
+    page_for, make_user, admin, preserve, menu
+):
+    # folder sharing off in the defaults, which the suite's instance starts with on
+    preserve("permissions")
+    with admin.client() as client:
+        defaults = client.get("/api/v1/users/default/permissions").json()
+        defaults["sharing"]["folders"] = False
+        saved = client.post("/api/v1/users/default/permissions", json=defaults)
+    assert saved.status_code == 200, saved.text
+
+    seen = {}
+    for who, account in (("an admin", make_user(role="admin")), ("a plain owner", make_user())):
+        name = folder_name()
+        folder_id = create_folder(account, name)
+        page = page_for(account)
+        opened = open_row_menu(page, name) if menu == "sidebar" else open_page_menu(page, folder_id)
+        seen[who] = opened.get_by_role("menuitem", name="Share").count()
+
+    assert seen == {"an admin": 1, "a plain owner": 0}, f"Share entries in the folder menu: {seen}"
 
 
 def test_an_admin_still_finds_access_editing_a_folder_shared_with_them(page_for, crew, make_user):
