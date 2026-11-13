@@ -27,6 +27,19 @@ the merge test fails; with Close not asking, a closed pull request not offered t
 a refusal of the terminal not shown, the close test fails. The test of the list after a rename
 and a close is red on that build, where the list is not read again after a change
 (open-webui/open-webui#34098, fixed by c981f7661).
+
+New for 0.13.4. When the terminal says the repository's issues can be reached, an Issues view
+sits beside Pull requests with the number of open issues. A person lists issues by state, opens
+one to read its labels, assignees and comments, creates, edits and comments on issues, closes one
+as completed or not planned, with or without a comment, and opens it again. Searching issues or
+pull requests asks the terminal to search the whole repository, descriptions included. Work on
+this, Fix, Address feedback and Resolve conflicts in chat write a ready request into the message
+input, after what is already there, without sending it.
+Discriminates: these pass on the dev 485103cde build. In one frontend copy of it with the Issues
+view shown whatever the terminal says (the issue list test), no search sent to the terminal (the
+pull request list test), editing an issue from an empty title (the issue edit test), Close as
+not planned sent as completed (the close test) and the drafts never written into the input (the
+chat buttons test), each named test fails.
 """
 
 from __future__ import annotations
@@ -49,6 +62,7 @@ from harness.terminal_server import (
     serving_terminal,
 )
 from utils.cached_chat import pick_terminal
+from utils.chat_ui import chat_input
 from utils.git_panel import expand_git_panel
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -57,6 +71,8 @@ NAME = "Forge shell"
 HOME = "/home/user"
 LOGBOOK = f"{HOME}/logbook"
 SKETCHES = f"{HOME}/sketches"
+# a repository whose pull requests the terminal reaches, but whose issues are switched off
+CHARTS = f"{HOME}/charts"
 SPEC = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
 DIFF = """diff --git a/channel.txt b/channel.txt
 index 1111111..2222222 100644
@@ -90,11 +106,39 @@ def _pull_request(number: int, title: str, **fields) -> dict:
     }
 
 
+def _issue(number: int, title: str, **fields) -> dict:
+    return {
+        "number": number,
+        "title": title,
+        "state": "OPEN",
+        "body": "",
+        "url": f"https://github.com/example/logbook/issues/{number}",
+        "author": {"login": "ada"},
+        "assignees": [],
+        "labels": [],
+        "comments": [],
+        **fields,
+    }
+
+
+def _found(items: list[dict], search: str) -> list[dict]:
+    """What GitHub's search finds: the number, or the words in the title or the description."""
+    words = search.lower().split()
+    return [
+        item
+        for item in items
+        if search.lstrip("#") == str(item["number"])
+        or all(word in f"{item['title']} {item['body']}".lower() for word in words)
+    ]
+
+
 @dataclass
 class Forge:
-    """The pull requests of the logbook repository, as the scripted terminal keeps them."""
+    """The pull requests and issues of the logbook repository, as the scripted terminal keeps
+    them. Issue calls are named `issue/<action>` in `asked` and `refusals`."""
 
     pull_requests: dict[int, dict] = field(default_factory=dict)
+    issues: dict[int, dict] = field(default_factory=dict)
     checks: dict[int, list[dict]] = field(default_factory=dict)
     branch: str = "east-channel"
     refusals: dict[str, str] = field(default_factory=dict)
@@ -111,27 +155,46 @@ def _query(request, name: str) -> str:
 def _serve_forge(server, forge: Forge) -> None:
     def read(view: str):
         def answer(request):
-            if _query(request, "root") != LOGBOOK:
+            root = _query(request, "root")
+            if view == "capabilities" and root == CHARTS:
+                return json_answer({"available": True, "default_branch": "trunk", "issues": False})
+            if root == CHARTS and view == "list":
+                return json_answer({"items": []})
+            if root != LOGBOOK:
                 return json_answer({"available": False})
             if view in forge.refusals:
                 return json_answer({"detail": forge.refusals[view]}, 502)
-            forge.asked.append((view, {"state": _query(request, "state")}))
+            search = _query(request, "search")
+            forge.asked.append((view, {"state": _query(request, "state"), "search": search}))
             if view == "capabilities":
-                return json_answer({"available": True, "default_branch": "trunk"})
-            if view == "list":
+                open_issues = [i for i in forge.issues.values() if i["state"] == "OPEN"]
+                return json_answer(
+                    {
+                        "available": True,
+                        "default_branch": "trunk",
+                        "issues": True,
+                        "open_issues": len(open_issues),
+                    }
+                )
+            if view in ("list", "issue/list"):
                 wanted = {
                     "open": ("OPEN",),
                     "closed": ("CLOSED", "MERGED"),
                     "merged": ("MERGED",),
                     "all": ("OPEN", "CLOSED", "MERGED"),
                 }[_query(request, "state")]
-                listed = [pr for pr in forge.pull_requests.values() if pr["state"] in wanted]
-                return json_answer({"items": sorted(listed, key=lambda pr: -pr["number"])})
+                kept = forge.pull_requests if view == "list" else forge.issues
+                listed = [item for item in kept.values() if item["state"] in wanted]
+                found = _found(listed, search) if search else listed
+                ordered = sorted(found, key=lambda item: -item["number"])
+                return json_answer({"items": ordered, **({"search": search} if search else {})})
             number = int(_query(request, "number"))
             if view == "diff":
                 return json_answer({"diff": DIFF})
             if view == "checks":
                 return json_answer({"items": forge.checks.get(number, [])})
+            if view == "issue/view":
+                return json_answer(forge.issues[number])
             return json_answer(forge.pull_requests[number])
 
         return answer
@@ -142,6 +205,9 @@ def _serve_forge(server, forge: Forge) -> None:
             forge.asked.append((action, body))
             if action in forge.refusals:
                 return json_answer({"detail": forge.refusals[action]}, 400)
+            if action.startswith("issue/"):
+                _change_issue(forge, action.removeprefix("issue/"), body)
+                return json_answer({"message": ""})
             pull_request = forge.pull_requests.get(body["number"])
             if action == "create":
                 number = max(forge.pull_requests) + 1
@@ -202,6 +268,31 @@ def _serve_forge(server, forge: Forge) -> None:
         "reopen",
     ):
         server.route("POST", f"/git/pr/{action}", write(action))
+    for view in ("list", "view"):
+        server.route("GET", f"/git/issue/{view}", read(f"issue/{view}"))
+    for action in ("create", "edit", "comment", "close", "reopen"):
+        server.route("POST", f"/git/issue/{action}", write(f"issue/{action}"))
+
+
+def _change_issue(forge: Forge, action: str, body: dict) -> None:
+    issue = forge.issues.get(body["number"])
+    comment = {"id": uuid.uuid4().hex, "body": body.get("body", ""), "author": {"login": "cleo"}}
+    if action == "create":
+        number = max(forge.issues) + 1
+        forge.issues[number] = _issue(
+            number, body["title"], body=body["body"], author={"login": "cleo"}
+        )
+    elif action == "edit":
+        issue.update(title=body["title"], body=body["body"])
+    elif action == "comment":
+        issue["comments"].append(comment)
+    elif action in ("close", "reopen"):
+        if body.get("body", "").strip():
+            issue["comments"].append(comment)
+        closing = action == "close"
+        issue["state"] = "CLOSED" if closing else "OPEN"
+        not_planned = body.get("reason") == "not planned"
+        issue["stateReason"] = ("NOT_PLANNED" if not_planned else "COMPLETED") if closing else None
 
 
 def _serve_files(server, forge: Forge) -> None:
@@ -211,7 +302,11 @@ def _serve_files(server, forge: Forge) -> None:
     def listing(request):
         directory = _query(request, "directory").rstrip("/")
         entries = (
-            [{"name": "logbook", "type": "directory"}, {"name": "sketches", "type": "directory"}]
+            [
+                {"name": "logbook", "type": "directory"},
+                {"name": "sketches", "type": "directory"},
+                {"name": "charts", "type": "directory"},
+            ]
             if directory == HOME
             else [{"name": "channel.txt", "type": "file", "size": 52}]
         )
@@ -269,6 +364,18 @@ def forge(admin, make_user, preserve):
         ),
         14: _pull_request(14, "Sketch the west quay", isDraft=True, headRefName="west-quay"),
         16: _pull_request(16, "Redraw the tide gauge", mergeable="CONFLICTING"),
+    }
+    state.issues = {
+        2: _issue(2, "Buoy light out", state="CLOSED", stateReason="NOT_PLANNED"),
+        3: _issue(
+            3,
+            "Soundings missing off the pier",
+            body="The lantern survey skipped the pier head.",
+            labels=[{"name": "survey"}],
+            assignees=[{"login": "ben"}],
+            comments=[{"id": "i1", "body": "Low water is on Friday.", "author": {"login": "ben"}}],
+        ),
+        5: _issue(5, "Wreck marker drifted"),
     }
     state.checks = {
         12: [
@@ -386,6 +493,10 @@ def test_pull_requests_show_only_for_a_repository_that_has_them_and_list_by_stat
     _expect_listed(git, [14])
     search.fill("12")
     _expect_listed(git, [12])
+    # the search runs over the whole repository, descriptions included
+    search.fill("low water")
+    _expect_listed(git, [12])
+    assert forge.asked_to("list")[-1]["search"] == "low water", forge.asked_to("list")[-1]
     search.fill("")
     _expect_listed(git, [16, 14, 12, 9, 7])
 
@@ -657,3 +768,210 @@ def _wait_until(condition, seconds: float = 5.0) -> None:
     deadline = time.monotonic() + seconds
     while not condition() and time.monotonic() < deadline:
         time.sleep(0.1)
+
+
+def _issues(page_for, forge: Forge) -> tuple[Page, Locator]:
+    """A chat page of the person with the logbook's Issues view open."""
+    page = page_for(forge.person)
+    git = _git_panel_in(page, "logbook")
+    git.get_by_role("button", name=re.compile(r"^Issues")).click()
+    expect(_listed(git, 3)).to_be_visible()
+    return page, git
+
+
+def _issue_actions(page: Page, git: Locator) -> Locator:
+    git.get_by_role("button", name="Issue actions").click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem", name="Edit")).to_be_visible()
+    return menu
+
+
+def _show_issues(page: Page, git: Locator, state: str) -> None:
+    git.get_by_role("button", name="Filter issues").click()
+    page.get_by_role("menu").get_by_role("menuitem", name=state, exact=True).click()
+
+
+def test_issues_show_when_the_terminal_offers_them_and_list_by_state_and_search_the_repository(
+    page_for, forge
+):
+    page = page_for(forge.person)
+    git = _git_panel_in(page, "charts")
+    # pull requests reached, issues switched off: no Issues view
+    expect(git.get_by_role("button", name="Pull requests", exact=True)).to_be_visible()
+    expect(git.get_by_role("button", name=re.compile(r"^Issues"))).to_have_count(0)
+
+    files = page.get_by_role("region", name="File browser")
+    files.get_by_role("button", name="Back", exact=True).click()
+    git = expand_git_panel(page, "logbook")
+    issues_view = git.get_by_role("button", name=re.compile(r"^Issues"))
+    # the view names how many issues are open
+    expect(issues_view).to_have_text(re.compile(r"^Issues\s*2$"))
+    issues_view.click()
+
+    _expect_listed(git, [5, 3])
+    expect(git.get_by_text("Select an issue")).to_be_visible()
+    _show_issues(page, git, "Closed")
+    _expect_listed(git, [2])
+    expect(_listed(git, 2)).to_contain_text("#2 · ada · Not planned")
+    _show_issues(page, git, "All")
+    _expect_listed(git, [5, 3, 2])
+    asked = [body["state"] for body in forge.asked_to("issue/list")]
+    assert asked == ["open", "closed", "all"], f"the terminal was asked for the lists {asked}"
+
+    # the search runs over the whole repository, descriptions included
+    search = git.get_by_role("textbox", name="Search issues")
+    search.fill("lantern survey")
+    _expect_listed(git, [3])
+    searched = [body["search"] for body in forge.asked_to("issue/list")]
+    assert searched[-1] == "lantern survey", f"the terminal was asked to search {searched}"
+    search.fill("")
+    _expect_listed(git, [5, 3, 2])
+
+    forge.refusals["issue/list"] = "gh: issues are disabled for this repository"
+    _show_issues(page, git, "Open")
+    expect(git.get_by_role("alert")).to_have_text("gh: issues are disabled for this repository")
+
+
+def test_an_opened_issue_shows_its_details_and_is_created_edited_and_commented_on(page_for, forge):
+    page, git = _issues(page_for, forge)
+    _listed(git, 3).click()
+    expect(git.get_by_text("The lantern survey skipped the pier head.")).to_be_visible()
+    expect(git.get_by_text("survey", exact=True)).to_be_visible()
+    expect(git.get_by_role("definition").filter(has_text=re.compile(r"^ben$"))).to_be_visible()
+    expect(git.get_by_text("Low water is on Friday.")).to_be_visible()
+
+    _issue_actions(page, git).get_by_role("menuitem", name="Edit").click()
+    title = git.get_by_role("textbox", name="Issue title")
+    description = git.get_by_role("textbox", name="Issue description")
+    expect(title).to_have_value("Soundings missing off the pier")
+    expect(description).to_have_value("The lantern survey skipped the pier head.")
+    title.fill("Soundings missing off the north pier")
+    description.fill("Sound the pier head at low water.")
+    git.get_by_role("button", name="Save", exact=True).click()
+    expect(_title_of_opened(git, 3, "Soundings missing off the north pier")).to_be_visible()
+    expect(git.get_by_text("Sound the pier head at low water.")).to_be_visible()
+    sent = forge.asked_to("issue/edit")[-1]
+    assert (sent["number"], sent["title"], sent["body"]) == (
+        3,
+        "Soundings missing off the north pier",
+        "Sound the pier head at low water.",
+    ), f"the terminal was asked to edit {sent}"
+
+    comment = git.get_by_role("textbox", name="Comment")
+    send_comment = git.get_by_role("button", name="Comment", exact=True)
+    expect(send_comment).to_be_disabled()
+    forge.refusals["issue/comment"] = "gh: you cannot comment on a locked issue"
+    comment.fill("Booked the boat.")
+    send_comment.click()
+    # refused: the terminal's reason shows and what was typed stays
+    expect(git.get_by_role("alert")).to_have_text("gh: you cannot comment on a locked issue")
+    expect(comment).to_have_value("Booked the boat.")
+    del forge.refusals["issue/comment"]
+    send_comment.click()
+    expect(git.get_by_text("Booked the boat.", exact=True)).to_be_visible()
+    expect(comment).to_have_value("")
+    sent = forge.asked_to("issue/comment")[-1]
+    assert (sent["number"], sent["body"]) == (3, "Booked the boat."), sent
+
+    git.get_by_role("button", name="New issue").click()
+    title = git.get_by_role("textbox", name="Issue title")
+    create = git.get_by_role("button", name="Create issue")
+    expect(create).to_be_disabled()
+    title.fill("Chart the new mooring")
+    git.get_by_role("textbox", name="Issue description").fill("Two buoys, east side.")
+    create.click()
+    expect(_listed(git, 6)).to_contain_text("Chart the new mooring")
+    expect(title).to_have_count(0)
+    sent = forge.asked_to("issue/create")[-1]
+    assert (sent["root"], sent["title"], sent["body"]) == (
+        LOGBOOK,
+        "Chart the new mooring",
+        "Two buoys, east side.",
+    ), f"the terminal was asked to create {sent}"
+
+
+def test_an_issue_is_closed_the_way_picked_and_opened_again(page_for, forge):
+    page, git = _issues(page_for, forge)
+    issues_view = git.get_by_role("button", name=re.compile(r"^Issues"))
+    _listed(git, 5).click()
+    expect(git.get_by_text("No description")).to_be_visible()
+
+    _issue_actions(page, git).get_by_role("menuitem", name="Close as not planned").click()
+    expect(git.get_by_role("button", name="Reopen", exact=True)).to_be_visible()
+    expect(git.get_by_text("Not planned", exact=True)).to_be_visible()
+    # the open ones listed beside it, and counted on the view, no longer hold it
+    expect(_listed(git, 5)).to_have_count(0)
+    expect(issues_view).to_have_text(re.compile(r"^Issues\s*1$"))
+
+    comment = git.get_by_role("textbox", name="Comment")
+    comment.fill("The marker was found.")
+    git.get_by_role("button", name="Reopen with comment").click()
+    expect(git.get_by_role("button", name="Close issue")).to_be_visible()
+    expect(git.get_by_text("The marker was found.", exact=True)).to_be_visible()
+
+    comment.fill("Moved back into place.")
+    git.get_by_role("button", name="Close with comment").click()
+    expect(git.get_by_role("button", name="Reopen", exact=True)).to_be_visible()
+    expect(git.get_by_text("Closed", exact=True)).to_be_visible()
+
+    closes = [
+        (body["number"], body["reason"], body["body"]) for body in forge.asked_to("issue/close")
+    ]
+    assert closes == [
+        (5, "not planned", ""),
+        (5, "completed", "Moved back into place."),
+    ], f"the terminal was asked to close {closes}"
+    reopens = [(body["number"], body["body"]) for body in forge.asked_to("issue/reopen")]
+    assert reopens == [(5, "The marker was found.")], f"the terminal was asked to reopen {reopens}"
+
+
+def _back_to_the_files(page: Page) -> None:
+    """A drafted request shows the chat; the Files tab beside it holds the Git panel."""
+    files_tab = page.get_by_role("tab", name=re.compile("logbook"))
+    files_tab.click()
+    expect(files_tab).to_have_attribute("aria-selected", "true")
+
+
+def test_the_chat_buttons_write_a_ready_request_into_the_message_input(page_for, forge):
+    page, git = _issues(page_for, forge)
+    box = chat_input(page)
+    _listed(git, 3).click()
+    expect(git.get_by_text("Low water is on Friday.")).to_be_visible()
+    git.get_by_role("button", name="Work on this").click()
+    for line in (
+        "Work on issue #3: Soundings missing off the pier",
+        "https://github.com/example/logbook/issues/3",
+        "The lantern survey skipped the pier head.",
+        "Low water is on Friday.",
+        "Create a branch for it, make the change, and summarize what you changed.",
+    ):
+        expect(box).to_contain_text(line)
+
+    _back_to_the_files(page)
+    git.get_by_role("button", name="Pull requests", exact=True).click()
+    _listed(git, 16).click()
+    git.get_by_role("button", name="Resolve conflicts in chat").click()
+    expect(box).to_contain_text(
+        "Pull request #16 (Redraw the tide gauge) has merge conflicts with trunk."
+    )
+    # what was drafted before stays
+    expect(box).to_contain_text("Work on issue #3: Soundings missing off the pier")
+
+    _back_to_the_files(page)
+    _listed(git, 12).click()
+    git.get_by_role("button", name="Checks", exact=True).click()
+    expect(git.get_by_text("soundings/lint", exact=True)).to_be_visible()
+    git.get_by_role("button", name="Fix", exact=True).click()
+    expect(box).to_contain_text(
+        'The check "soundings/lint" is failing on pull request #12 (Chart the east channel).'
+    )
+    _back_to_the_files(page)
+    git.get_by_role("button", name="Address feedback").click()
+    expect(box).to_contain_text(
+        "Address the open feedback on pull request #12 (Chart the east channel) on the branch"
+        " east-channel."
+    )
+    expect(box).to_contain_text("Checked against the lead line.")
+    # drafted for the person to read, never sent
+    expect(page.get_by_role("button", name="Stop")).to_have_count(0)
+    assert "/c/" not in page.url, f"a drafted request started a chat: {page.url}"
