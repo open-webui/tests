@@ -40,6 +40,10 @@ On copies of the dev c15f28649 build: an address with a space let through turns 
 space-in-address case red, one without a repository name the no-repository-name case, and a
 Cancel that leaves the clone form open the Cancel test.
 
+Since 91f16464b the folder dialog's Default terminal is the chat input's Terminal menu: the
+terminal is picked from its list, and picking the checked one again leaves the folder without
+one (the list had a None entry before).
+
 `test_a_models_default_terminal_is_picked_for_its_new_chats` is red on dev c15f28649: the model is
 saved, then the editor asks "Discard unsaved changes?" and stays open (finding "issue: [dev]
 Saving a model asks "Discard unsaved changes?" right after the save", from da850248d). With the
@@ -244,9 +248,19 @@ def default_terminal(scope: Locator) -> Locator:
 
 
 def choose_default_terminal(page: Page, scope: Locator, name: str) -> None:
+    """Pick `name` in the folder's Default terminal menu, the chat input's Terminal menu."""
     default_terminal(scope).click()
-    page.get_by_role("button", name=name, exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=name, exact=True).click()
     expect(default_terminal(scope)).to_have_accessible_name(f"Default terminal: {name}")
+
+
+def clear_default_terminal(page: Page, scope: Locator, picked: str) -> None:
+    """Pick the folder's terminal `picked` again, which takes it off."""
+    default_terminal(scope).click()
+    entry = page.get_by_role("menu").get_by_role("menuitemradio", name=picked, exact=True)
+    expect(entry).to_be_checked()
+    entry.click()
+    expect(default_terminal(scope)).to_have_accessible_name("Default terminal: None")
 
 
 def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_reload(
@@ -633,7 +647,7 @@ def test_clearing_the_folders_terminal_clears_its_directory(
     page = page_for(person)
     dialog = open_folder_dialog(page, name)
 
-    choose_default_terminal(page, dialog, "None")
+    clear_default_terminal(page, dialog, TERMINAL)
     expect(dialog.get_by_label("Working directory")).to_have_count(0)
     dialog.get_by_role("button", name="Save").click()
     expect(page.get_by_text("Folder updated successfully")).to_be_visible()
