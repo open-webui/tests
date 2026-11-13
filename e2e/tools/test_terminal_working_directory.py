@@ -61,6 +61,23 @@ tests fail; on one that only leaves out the saved settings, the saved-for-the-op
 The folder changed after the first reply passes on the dev 485103cde build and fails on a build
 of it whose folder menu is locked once the chat has an id, as before a518ff163 (the picked-folder
 and temporary chat tests).
+
+New on dev after 0.13.3 (titled `refac`): the Open folder button beside a recent folder opens
+that folder in a new Files tab and leaves the working folder as it is. Browsing in a Files tab
+leaves the working folder alone too, so the chat's commands still run there, and opening Files
+again (Ctrl+Shift+E) shows the existing Files tab where the person left it. On a narrow page a
+Files tab takes the chat's place, so these tests go back to the chat's tab to read its working
+directory button. In a new chat in a folder with a default terminal, a terminal the person turns
+off or swaps for another stays so when they switch to a model with a default terminal of its
+own, and a folder without a default terminal keeps the terminal picked before it was opened
+(open-webui/open-webui#33973; the folder's terminal came back and the picked one was turned
+off). The chat is saved with what the person chose.
+All four pass on the dev 485103cde build. On a build of it with one change each in a frontend
+copy: Open folder opening the working folder (the Open folder test); Files opened again moving its
+tab to the working folder (the browsing test, on its second Files check); a model's default
+terminal applied in a folder's new chat (both cases of the turned-off test); a folder without a
+terminal turning the chat's off (the kept-before test). With the Files tab and the chat sharing
+one working folder, as before, the browsing test fails as well.
 """
 
 from __future__ import annotations
@@ -87,7 +104,7 @@ from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, send
 from utils.model_editor import save
 from utils.model_selector import SELECTOR_BUTTON, select_model
 from utils.sidebar_folders import (
@@ -315,6 +332,82 @@ def test_a_recently_used_folder_and_no_folder_can_be_picked_from_the_menu(
     assert where_pwd_ran(again, upstream) == str(open_terminal.home)
 
 
+def files_tab(page: Page, name: str) -> Locator:
+    return page.get_by_role("tablist", name="Tabs").get_by_role("tab", name=name, exact=True)
+
+
+def back_to_the_chat(page: Page) -> None:
+    """Show the chat's own tab again; on a narrow page a Files tab takes the chat's place."""
+    files_tab(page, "New Chat").click()
+    expect(directory_button(page)).to_be_visible()
+
+
+def shown_browser(page: Page) -> Locator:
+    """The file browser of the Files tab on screen."""
+    return page.get_by_role("region", name="File browser")
+
+
+def test_open_folder_beside_a_recent_folder_opens_it_in_a_new_files_tab(
+    page_for, make_user, terminal, open_terminal
+):
+    person = make_user()
+    working, other = _directory(open_terminal, "harbour"), _directory(open_terminal, "quarry")
+    (working / "tides.txt").write_text("high at six")
+    (other / "stones.txt").write_text("granite")
+    page = page_for(person)
+    pick_terminal(page, TERMINAL)
+    choose_directory(page, other)
+    picker = open_folder_picker(page)
+    # the picker opens in the chat's working folder
+    picker.get_by_role("button", name="Home", exact=True).click()
+    pick_in_picker(picker, working)
+    expect(directory_button(page)).to_contain_text(working.name)
+    page.keyboard.press("Control+Shift+E")
+    expect(files_tab(page, working.name)).to_have_attribute("aria-selected", "true")
+    back_to_the_chat(page)
+
+    directory_button(page).click()
+    row = page.get_by_role("menu").get_by_role("menuitemradio", name=other.name)
+    row.hover()
+    # the button sits beside the folder's entry and shows while the pointer is on it
+    row.locator("xpath=..").get_by_role("menuitem", name="Open folder").click()
+
+    expect(files_tab(page, other.name)).to_have_attribute("aria-selected", "true")
+    expect(shown_browser(page).get_by_text("stones.txt", exact=True)).to_be_visible()
+    expect(files_tab(page, working.name)).to_be_visible()
+    back_to_the_chat(page)
+    expect(directory_button(page)).to_contain_text(working.name)
+
+
+def test_browsing_in_files_leaves_the_working_folder_where_it_is(
+    page_for, make_user, terminal, open_terminal, upstream
+):
+    person = make_user()
+    folder = _directory(open_terminal)
+    (folder / "charts" / "soundings.txt").write_text("forty fathoms")
+    page = page_for(person)
+    pick_terminal(page, TERMINAL)
+    choose_directory(page, folder)
+    page.keyboard.press("Control+Shift+E")
+    expect(files_tab(page, folder.name)).to_have_attribute("aria-selected", "true")
+
+    shown_browser(page).get_by_text("charts", exact=True).click()
+
+    expect(files_tab(page, "charts")).to_have_attribute("aria-selected", "true")
+    expect(shown_browser(page).get_by_text("soundings.txt", exact=True)).to_be_visible()
+    back_to_the_chat(page)
+    expect(directory_button(page)).to_contain_text(folder.name)
+    # opening Files again shows the tab where the person left it
+    page.keyboard.press("Control+Shift+E")
+    expect(files_tab(page, "charts")).to_have_attribute("aria-selected", "true")
+    expect(shown_browser(page).get_by_text("soundings.txt", exact=True)).to_be_visible()
+    expect(files_tab(page, folder.name)).to_have_count(0)
+    back_to_the_chat(page)
+    assert where_pwd_ran(page, upstream) == str(folder), (
+        "the chat's commands ran in the folder the Files tab was browsed to"
+    )
+
+
 def test_a_new_chat_in_a_folder_starts_on_its_terminal_and_directory(
     page_for, make_user, terminal, open_terminal, upstream
 ):
@@ -393,6 +486,88 @@ def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
     expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
     expect(directory_button(page)).to_contain_text(folder.name)
     assert where_pwd_ran(page, upstream) == str(folder), "the saved directory was not used"
+
+
+def switch_terminal(page: Page, picked: str, to: str) -> None:
+    """In the Terminal menu of the picked terminal `picked`, pick `to`; picking `picked` itself
+    again turns the chat's terminal off."""
+    composer = page.get_by_role("main")
+    composer.get_by_role("button", name=picked, exact=True).click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name=to).click()
+    shown = "Terminal" if to == picked else to
+    expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
+    expect(page.get_by_role("menu")).to_have_count(0)
+
+
+@pytest.fixture
+def harbour_model(admin, terminal):
+    """A model whose default terminal is the Open Terminal."""
+    model_id = f"harbour-{uuid.uuid4().hex[:8]}"
+    model = {
+        "id": model_id,
+        "base_model_id": MOCK_MODEL_ID,
+        "name": model_id,
+        "meta": {"capabilities": {"terminal": True}, "terminalId": terminal["id"]},
+        "params": {},
+        "access_grants": [EVERYONE_READS],
+    }
+    with admin.client() as client:
+        created = client.post("/api/v1/models/create", json=model)
+        assert created.status_code == 200, created.text
+        yield model
+        client.post("/api/v1/models/model/delete", json={"id": model_id})
+
+
+@pytest.mark.parametrize("choice", ["off", SPARE])
+def test_a_terminal_turned_off_or_changed_in_a_folder_chat_stays_when_the_model_changes(
+    page_for, make_user, terminal, spare_terminal, open_terminal, harbour_model, upstream, choice
+):
+    """Fixed on dev (open-webui/open-webui#33973): the folder's terminal came back."""
+    person = make_user()
+    folder_id, _ = create_folder(
+        person,
+        {"terminal_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
+    )
+    page = open_folder_page(person, page_for, folder_id)
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
+    switch_terminal(page, TERMINAL, TERMINAL if choice == "off" else SPARE)
+
+    select_model(page, harbour_model["name"])
+
+    expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(harbour_model["name"])
+    shown = "Terminal" if choice == "off" else SPARE
+    expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_have_count(0)
+    prompt = f"which terminal? {uuid.uuid4().hex[:8]}"
+    if choice == "off":
+        upstream.queue(reply.text("none needed", match=reply.answering(prompt)))
+    # the spare stand-in answers no chat turn; the chat is saved with its terminal all the same
+    send(page, prompt)
+    expect(page).to_have_url(re.compile("/c/"), timeout=REPLY_TIMEOUT_MS)
+    expected = None if choice == "off" else spare_terminal["id"]
+    stored, _ = kept_with_the_chat(person, page)
+    assert stored == expected, (
+        f"the folder chat was saved with the terminal {stored!r}; the person chose {expected!r}"
+    )
+
+
+def test_a_folder_without_a_terminal_keeps_the_terminal_picked_before(
+    page_for, make_user, terminal, open_terminal, upstream
+):
+    """Fixed on dev (open-webui/open-webui#33973): the folder turned the terminal off."""
+    person = make_user()
+    _, name = create_folder(person, {})
+    page = page_for(person)
+    choose_terminal(page, TERMINAL)
+
+    open_folder_from_the_sidebar(page, name)
+
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
+    assert where_pwd_ran(page, upstream) == str(open_terminal.home), (
+        "the command did not run on the terminal picked before the folder was opened"
+    )
 
 
 def test_a_folders_missing_directory_refuses_the_first_message(
