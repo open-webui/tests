@@ -27,6 +27,11 @@ search sending no query and the composer's note picker attaching nothing. In the
 build with #30968 reverted, the shared note is gone from the picker once a name is typed. In a
 backend copy, `GET /api/v1/notes/{id}` ignoring write grants turns the writer test red.
 
+A note whose Markdown holds a footnote reference such as `[^1]` failed to open and showed nothing
+(open-webui/open-webui#33986); since 8296c5d08 (PR #33987) it opens with the marker kept in its
+text. The footnote test passes on the dev 485103cde build and fails on a build of it with
+8296c5d08 reverted.
+
 Since dev da850248d a note opens as a tab beside the chat tab, so the enhance test opens the
 note's chat through the shared helper and reads the answer in that chat. It passes five runs in
 a row on dev c15f28649 and fails in a copy of that build whose note editor ignores the model's
@@ -143,6 +148,18 @@ def test_asking_the_note_chat_to_enhance_rewrites_the_open_note(page_for, make_u
         if message["role"] == "system"
     )
     assert f"Current note id: {note_id}" in system
+
+
+def test_a_note_with_a_footnote_reference_opens_with_its_text(page_for, make_user):
+    # open-webui/open-webui#33986: the note failed to open and showed nothing (fix PR #33987)
+    author = make_user()
+    markdown = "Tide tables are posted daily.[^1] Ask at the office.\n\n[^1]: Harbour office"
+    note_id = _create_note(author, _unique("Tides"), markdown)
+    page = page_for(author)
+
+    editor = _open_note(page, note_id, "Tide tables are posted daily.")
+
+    expect(editor, "the footnote marker was dropped").to_contain_text("daily.1 Ask at the office.")
 
 
 # ---------------------------------------------------------------- shared notes
