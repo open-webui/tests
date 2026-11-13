@@ -37,6 +37,12 @@ sidebar left the address on the open folder but showed the plain new chat screen
 there was filed nowhere (open-webui/open-webui#32697, issue #32696, fix db9aa8c9c). In the
 pre-fix build of the 0.12.4 changes (both commits reverted) the New Chat test finds no such entry
 and the delete test sees the folder page gone; both pass on dev with the fixes.
+
+Since the folder caching of 0.13.4 a folder's page and its sidebar row show the chats already
+loaded and refresh them in the background, and both lists follow a chat renamed, archived or
+deleted from the sidebar at once, without a reload; folded shut and open again, the sidebar folder
+lists the chats it holds now. Passes on dev 485103cde; in a frontend build whose folder lists ignore
+the updates sent after a chat changes it fails (the archived chat stays listed).
 """
 
 from __future__ import annotations
@@ -55,6 +61,8 @@ from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
 from utils.folder_page import folder_chat
 from utils.menus import late_menu_entry
+from utils.sidebar_chats import chat_menu
+from utils.sidebar_chats import chat_row as sidebar_chat_row
 from utils.sidebar_folders import (
     click_folder_menu_button,
     drag,
@@ -583,3 +591,42 @@ def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_
     expect(background).to_have_count(1)
     show_folders(sidebar)
     expect(sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor")).to_be_visible()
+
+
+def test_the_folder_lists_follow_a_rename_an_archive_and_a_delete_at_once(page_for, make_user):
+    owner = make_user()
+    suffix = uuid.uuid4().hex[:6]
+    kept, renamed = f"Ferry times {suffix}", f"Ferry timetable {suffix}"
+    archived, deleted = f"Old tides {suffix}", f"Wrong berth {suffix}"
+    folder_id = create_folder(owner, "Logbook")
+    expand_folder(owner, folder_id)
+    for title in (kept, archived, deleted):
+        create_chat(owner, title, folder_id)
+    page = page_for(owner, path=f"/folders/{folder_id}")
+    sidebar = open_sidebar(page)
+    in_folder = folder_content(sidebar, folder_id)
+    for title in (kept, archived, deleted):
+        expect(folder_chat(page, title)).to_be_visible()
+        expect(sidebar_chat_row(in_folder, title)).to_be_visible()
+
+    chat_menu(sidebar, kept).get_by_role("menuitem", name="Rename").click()
+    page.keyboard.press("Control+A")
+    page.keyboard.type(renamed)
+    page.keyboard.press("Enter")
+    chat_menu(sidebar, archived).get_by_role("menuitem", name="Archive").click()
+    chat_menu(sidebar, deleted).get_by_role("menuitem", name="Delete").click()
+    page.get_by_role("dialog", name="Delete chat?").get_by_role("button", name="Confirm").click()
+
+    expect(folder_chat(page, renamed)).to_be_visible()
+    expect(sidebar_chat_row(in_folder, renamed)).to_be_visible()
+    for title in (kept, archived, deleted):
+        expect(folder_chat(page, title)).to_have_count(0)
+        expect(sidebar_chat_row(in_folder, title)).to_have_count(0)
+
+    with page.expect_response(re.compile(f"/folders/{folder_id}/update/expanded")):
+        expand_toggle(sidebar, "Logbook").click()
+    expect(sidebar_chat_row(in_folder, renamed)).to_have_count(0)
+    with page.expect_response(re.compile(f"/folders/{folder_id}/update/expanded")):
+        expand_toggle(sidebar, "Logbook").click()
+    expect(sidebar_chat_row(in_folder, renamed)).to_be_visible()
+    expect(sidebar_chat_row(in_folder, archived)).to_have_count(0)
