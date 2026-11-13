@@ -12,9 +12,9 @@ backend copy whose tool refuses every drawing both tests fail (the script never 
 drawing shows no tide level and its button asks nothing).
 
 Every test runs in the main chat and in a side chat. The question test is red in the side chat on
-dev 485103cde: the click shows no confirmation and sends nothing, since the drawing only asks the
-chat that has the page's address (issue draft "a button in a visualization in a side chat does
-nothing", not filed yet).
+dev 485103cde and 91f16464b: the click shows no confirmation and sends nothing, since the drawing
+only asks the chat that has the page's address (open-webui/open-webui#34382). It passes on the
+build of the fix 99439d150 (branch fix/visualization-question-in-side-chat).
 """
 
 from __future__ import annotations
@@ -100,7 +100,8 @@ def test_a_drawing_shows_under_its_title_and_its_script_runs(
 def test_a_question_from_a_drawing_is_sent_only_once_confirmed(
     chat_for, make_user, upstream, model_id
 ):
-    """Red in the side chat on dev 485103cde: the drawing's question shows no confirmation."""
+    """Red in the side chat on dev 485103cde: the drawing's question shows no confirmation
+    (open-webui/open-webui#34382)."""
     chat = chat_for(make_user())
     question = f"When is low water? ({uuid.uuid4().hex[:8]})"
     asker = (
