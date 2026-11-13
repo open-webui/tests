@@ -11,7 +11,9 @@ that opens on its text; the same search in a chat outside the folder never reads
 file. Each turn is read from the request the scripted provider received.
 
 Turning Temporary Chat on and off on a folder's page left for the home page, so the chat sent
-next was filed nowhere and got no folder prompt (open-webui/open-webui#33448).
+next was filed nowhere and got no folder prompt (open-webui/open-webui#33448). Since b598efb4e a
+folder's page shows temporary mode on its message box alone, without the Temporary Chat label,
+so the test reads the mode from the address the toggle sets.
 
 Discriminates: passes on dev ebc6add67; in a backend copy with the middleware's folder lookup
 returning no folder every test goes red (no prompt, no folder knowledge cited), and with the
@@ -225,14 +227,15 @@ def test_toggling_temporary_chat_on_the_folder_page_keeps_the_folder(page_for, m
     folder_id = create_folder(owner, "Harbour", HARBOUR_PROMPT)
     page = page_for(owner, path=f"/folders/{folder_id}")
     toggle = page.get_by_role("button", name="Temporary Chat")
-    temporary_label = page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)
+    folder_page = page.get_by_role("main").get_by_role("region", name="Folder")
+    expect(folder_page).to_be_visible()
 
     toggle.click()
-    expect(temporary_label).to_be_visible()
-    expect(page).to_have_url(re.compile(f"/folders/{folder_id}"))
+    expect(page).to_have_url(re.compile(rf"/folders/{folder_id}\?temporary-chat=true$"))
+    expect(folder_page).to_be_visible()
     toggle.click()
-    expect(temporary_label).to_have_count(0)
     expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
+    expect(folder_page).to_be_visible()
     ask(page, upstream, "who keeps the harbour log?", "The harbour master.")
 
     expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
