@@ -4,10 +4,10 @@ Since 06491f013 a folder's page lists its chats with a status control and tags o
 person adds a status in the Statuses dialog, reached from a chat's status menu, and picks it for
 the chat from the same menu; the pick is stored and shown after a reload. Under Display options
 the page switches to a board with a column per status, kept after a reload, and a card dragged to
-another column takes that column's status. A tag typed into a chat's tag control is stored on the chat, and the Filter
-menu's Tags entry then narrows the list to the chats carrying it; the folder search narrows the
-list to chats whose title or messages match. A member who may only read the shared folder sees
-the owner's chats with neither a status menu nor a tag control.
+another column takes that column's status. A tag typed into a chat's tag control is stored on the
+chat, and the Filter menu's Tags entry then narrows the list to the chats carrying it; the folder
+search narrows the list to chats whose title or messages match. A member who may only read the
+shared folder sees the owner's chats with neither a status menu nor a tag control.
 
 Discriminates: journey, no fix. All pass on the dev 941bf3674 build. With the dev build on a
 backend copy of it whose status route stores nothing the status pick and board drag tests go red,
