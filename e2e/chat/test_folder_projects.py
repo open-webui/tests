@@ -53,6 +53,7 @@ from harness import upstream as reply
 from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
 from utils.chat_ui import expect_reply, send
+from utils.folder_page import folder_chat
 from utils.menus import late_menu_entry
 from utils.sidebar_folders import (
     click_folder_menu_button,
@@ -445,10 +446,8 @@ def test_the_folder_page_lists_its_chats_and_files_a_new_chat_there(page_for, ma
     page = page_for(owner, path=f"/folders/{folder_id}")
 
     expect(page.get_by_text("Recipes", exact=True).first).to_be_visible()
-    expect(page.get_by_role("link", name=re.compile("Bread starter"))).to_have_attribute(
-        "href", f"/c/{filed_chat_id}"
-    )
-    expect(page.get_by_role("link", name=re.compile("Unfiled musings"))).to_have_count(0)
+    expect(folder_chat(page, "Bread starter")).to_have_attribute("href", f"/c/{filed_chat_id}")
+    expect(folder_chat(page, "Unfiled musings")).to_have_count(0)
 
     upstream.queue(reply.text("Knead for ten minutes", match=reply.answering("how long to knead?")))
     send(page, "how long to knead?")
@@ -458,9 +457,7 @@ def test_the_folder_page_lists_its_chats_and_files_a_new_chat_there(page_for, ma
     assert stored_chat(owner, new_chat_id)["folder_id"] == folder_id
 
     page.goto(f"/folders/{folder_id}")
-    expect(page.get_by_role("link", name=re.compile("how long to knead?"))).to_have_attribute(
-        "href", f"/c/{new_chat_id}"
-    )
+    expect(folder_chat(page, "how long to knead?")).to_have_attribute("href", f"/c/{new_chat_id}")
 
 
 def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
@@ -507,7 +504,7 @@ def test_deleting_another_folder_keeps_the_open_folders_page(page_for, make_user
     expect(
         folder_icon, "deleting another folder closed the open folder's page (#32696)"
     ).to_be_visible()
-    expect(page.get_by_role("link", name=re.compile("Bread starter"))).to_be_visible()
+    expect(folder_chat(page, "Bread starter")).to_be_visible()
     question = f"how long to prove? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Two hours", match=reply.answering(question)))
     send(page, question)

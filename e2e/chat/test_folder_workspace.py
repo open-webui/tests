@@ -24,6 +24,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.folder_page import folder_chat, folder_page
 from utils.menus import late_menu_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -37,7 +38,7 @@ def _folder(owner: Actor, statuses: list[dict] | None = None) -> str:
         created = client.post("/api/v1/folders/", json={"name": f"Yard {uuid.uuid4().hex[:6]}"})
         assert created.status_code == 200, created.text
         folder_id = created.json()["id"]
-        if statuses:
+        if statuses is not None:
             updated = client.post(
                 f"/api/v1/folders/{folder_id}/update", json={"meta": {"statuses": statuses}}
             )
@@ -76,14 +77,6 @@ def _stored_status(owner: Actor, folder_id: str, chat_id: str) -> str | None:
     return chat["status"]
 
 
-def _chat_link(scope: Locator | Page, title: str) -> Locator:
-    return scope.get_by_role("link", name=re.compile(re.escape(title)))
-
-
-def _workspace(page: Page) -> Locator:
-    return page.get_by_role("region", name="Folder", exact=True)
-
-
 def _status_button(page: Page, title: str) -> Locator:
     return page.get_by_role("button", name=re.compile(f"^Status for {re.escape(title)}: "))
 
@@ -96,7 +89,8 @@ def _status_saved(page: Page):
 
 def test_a_status_added_in_the_dialog_is_picked_for_a_chat_and_kept(page_for, make_user):
     owner = make_user()
-    folder_id = _folder(owner)
+    # an empty list opts out of the ready-made statuses a new folder starts with (121bc0ec5)
+    folder_id = _folder(owner, [])
     chat_id = _chat(owner, folder_id, "Hull survey")
     page = page_for(owner, path=f"/folders/{folder_id}")
 
@@ -129,14 +123,15 @@ def test_a_card_dragged_to_another_column_on_the_board_takes_its_status(page_for
     chat_id = _chat(owner, folder_id, "Pier repair")
     _file(owner, folder_id, chat_id, TODO["id"])
     page = page_for(owner, path=f"/folders/{folder_id}")
-    expect(_chat_link(page, "Pier repair")).to_be_visible()
+    expect(folder_chat(page, "Pier repair")).to_be_visible()
 
     page.get_by_role("button", name="Display options").click()
     page.get_by_role("menuitemradio", name="Board").click()
     board = page.get_by_label("Conversation board")
     todo, done = board.get_by_role("region", name="To do"), board.get_by_role("region", name="Done")
-    card = todo.get_by_role("article").filter(has=_chat_link(page, "Pier repair"))
-    expect(card).to_be_visible()
+    expect(folder_chat(todo, "Pier repair")).to_be_visible()
+    card = todo.get_by_role("article")
+    expect(card).to_have_count(1)
     expect(done.get_by_role("article")).to_have_count(0)
 
     with _status_saved(page) as saved:
@@ -144,7 +139,7 @@ def test_a_card_dragged_to_another_column_on_the_board_takes_its_status(page_for
     assert saved.value.status == 200, saved.value.text()
 
     assert _stored_status(owner, folder_id, chat_id) == DONE["id"]
-    expect(done.get_by_role("article").filter(has=_chat_link(page, "Pier repair"))).to_be_visible()
+    expect(folder_chat(done, "Pier repair")).to_be_visible()
     expect(todo.get_by_role("article")).to_have_count(0)
     page.reload()
     expect(
@@ -159,7 +154,7 @@ def test_a_tag_added_on_a_row_is_stored_and_filters_the_list(page_for, make_user
     chat_id = _chat(owner, folder_id, "Anchor log")
     _chat(owner, folder_id, "Buoy log")
     page = page_for(owner, path=f"/folders/{folder_id}")
-    expect(_chat_link(page, "Buoy log")).to_be_visible()
+    expect(folder_chat(page, "Buoy log")).to_be_visible()
 
     page.get_by_role("button", name="Edit tags for Anchor log").click()
     tag_box = page.get_by_label("Find or create a tag")
@@ -174,12 +169,12 @@ def test_a_tag_added_on_a_row_is_stored_and_filters_the_list(page_for, make_user
     assert [entry["name"] for entry in stored] == [tag], stored
     page.keyboard.press("Escape")
 
-    _workspace(page).get_by_role("button", name="Filter").click()
+    folder_page(page).get_by_role("button", name="Filter").click()
     page.get_by_role("menu").get_by_role("menuitem", name="Tags", exact=True).hover()
     page.get_by_role("menuitemcheckbox", name=re.compile(tag)).click()
 
-    expect(_chat_link(page, "Buoy log")).to_have_count(0)
-    expect(_chat_link(page, "Anchor log")).to_be_visible()
+    expect(folder_chat(page, "Buoy log")).to_have_count(0)
+    expect(folder_chat(page, "Anchor log")).to_be_visible()
 
 
 def test_the_folder_search_narrows_the_list_to_matching_chats(page_for, make_user):
@@ -189,15 +184,15 @@ def test_the_folder_search_narrows_the_list_to_matching_chats(page_for, make_use
     _chat(owner, folder_id, "Keeper rota", text=f"who minds the {word} tonight?")
     _chat(owner, folder_id, "Supply run")
     page = page_for(owner, path=f"/folders/{folder_id}")
-    expect(_chat_link(page, "Supply run")).to_be_visible()
+    expect(folder_chat(page, "Supply run")).to_be_visible()
 
-    _workspace(page).get_by_role("button", name="Search", exact=True).click()
+    folder_page(page).get_by_role("button", name="Search", exact=True).click()
     search = page.get_by_label("Search this folder")
     search.fill(word)
     search.press("Enter")
 
-    expect(_chat_link(page, "Supply run")).to_have_count(0)
-    expect(_chat_link(page, "Keeper rota")).to_be_visible()
+    expect(folder_chat(page, "Supply run")).to_have_count(0)
+    expect(folder_chat(page, "Keeper rota")).to_be_visible()
 
 
 def test_a_reading_member_gets_no_status_menu_or_tag_control_on_the_owners_chat(
@@ -221,7 +216,7 @@ def test_a_reading_member_gets_no_status_menu_or_tag_control_on_the_owners_chat(
     owners_page = page_for(owner, path=f"/folders/{folder_id}")
     expect(_status_button(owners_page, "Harbour dues")).to_be_visible()
     members_page = page_for(member, path=f"/folders/{folder_id}")
-    expect(_chat_link(members_page, "Harbour dues")).to_be_visible()
+    expect(folder_chat(members_page, "Harbour dues")).to_be_visible()
 
     expect(_status_button(members_page, "Harbour dues")).to_have_count(0)
     expect(members_page.get_by_role("button", name="Edit tags for Harbour dues")).to_have_count(0)

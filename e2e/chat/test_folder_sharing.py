@@ -44,6 +44,7 @@ from harness import upstream as reply
 from harness.access import make_group
 from harness.chat_history import seed_chat
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.folder_page import folder_chat
 from utils.sidebar_chats import chat_menu, chat_row
 from utils.sidebar_folders import drag, folder_link, folder_row
 
@@ -256,7 +257,7 @@ def test_a_reading_member_gets_no_message_input_on_the_folders_page(page_for, cr
     expect(chat_input(writer_page)).to_be_visible()
 
     member_page = page_for(member, path=f"/folders/{folder_id}")
-    expect(member_page.get_by_role("link", name=re.compile(re.escape(title)))).to_be_visible()
+    expect(folder_chat(member_page, title)).to_be_visible()
     expect(chat_input(member_page)).to_have_count(0)
 
 
@@ -292,7 +293,7 @@ def test_a_writing_member_drags_their_own_chat_into_the_shared_folder(page_for, 
 
     assert stored_folder_id(member, chat_id) == folder_id
     owner_page = page_for(owner, path=f"/folders/{folder_id}")
-    expect(owner_page.get_by_role("link", name=re.compile(re.escape(title)))).to_be_visible()
+    expect(folder_chat(owner_page, title)).to_be_visible()
 
 
 def test_a_reading_member_cannot_drop_a_chat_into_the_shared_folder(page_for, crew):
