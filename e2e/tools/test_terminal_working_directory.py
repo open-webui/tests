@@ -1,22 +1,23 @@
 """Journey: a person picks the folder a chat's terminal works in, for one chat or for a folder.
 
-New in 0.13.1. With a terminal picked in a new chat, the chat input shows a working directory
-button beside the Terminal menu. Its menu lists recently used folders and "No folder", and "Open
-folder" opens a picker where the person walks to a folder and presses "Use this directory"; the
-button then shows the folder's name. Every command the model runs in the chat runs there. Once
-the chat exists the button keeps showing its folder, also when the chat is opened again, and can
-no longer be changed. A folder's Edit dialog holds, under Advanced, a Default terminal and a
-Working directory on it (typed or picked with Browse directories); a new chat in the folder
-starts on that terminal and in that directory, and a directory that does not exist refuses the
-first message with a "Working directory is unavailable" toast before the model is asked (since
-21da7627b the page opens the directory itself; the reply carried the error before). A model's
-editor also offers a Default terminal, which a new chat on the model starts with. The recently
-used folders are kept per person on the terminal, so another person on it sees none of them,
-and the menu's search narrows them by name. Since 77d3d1c31 each recent folder's row also has
-an Open folder button that shows the folder in Files, so the menu entry that opens the picker is
-found by the words it shows. Since a9478213a the picker clones a Git repository
-from an HTTP(S) or SSH address into the folder it shows and uses the clone as the directory; an
-address of another kind and a repository that cannot be cloned show the reason.
+New in 0.13.1. With a terminal picked in a new chat, the chat input shows a working directory button
+beside the Terminal menu. Its menu lists recently used folders and "No folder", and "Open folder"
+opens a picker where the person walks to a folder and presses "Use this directory"; the button then
+shows the folder's name. Every command the model runs in the chat runs there. Once the chat exists
+the button keeps showing its folder, also when the chat is opened again; since 0.13.3 (a518ff163)
+another folder can be picked there after the first reply, in a saved and in a temporary chat, and
+the next command runs in it. A folder's Edit dialog holds, under Advanced, a Default terminal and a
+Working directory on it (typed or picked with Browse directories); a new chat in the folder starts
+on that terminal and in that directory, and a directory that does not exist refuses the first
+message with a "Working directory is unavailable" toast before the model is asked (since 21da7627b
+the page opens the directory itself; the reply carried the error before). A model's editor also
+offers a Default terminal, which a new chat on the model starts with. The recently used folders are
+kept per person on the terminal, so another person on it sees none of them, and the menu's search
+narrows them by name. Since 77d3d1c31 each recent folder's row also has an Open folder button that
+shows the folder in Files, so the menu entry that opens the picker is found by the words it shows.
+Since a9478213a the picker clones a Git repository from an HTTP(S) or SSH address into the folder it
+shows and uses the clone as the directory; an address of another kind and a repository that cannot
+be cloned show the reason.
 
 A real Open Terminal serves the files and runs the commands; its `run_command` answer names the
 folder the command ran in, which the test reads from what the model was sent.
@@ -56,6 +57,10 @@ c15f28649 that creates a chat without the two fields and saves a temporary chat 
 the picked-folder and temporary chat tests fail. On a build that never applies a folder's
 terminal, the replaced pick, saved-for-the-open-folder, folder default and missing directory
 tests fail; on one that only leaves out the saved settings, the saved-for-the-open-folder test.
+
+The folder changed after the first reply passes on the dev 485103cde build and fails on a build
+of it whose folder menu is locked once the chat has an id, as before a518ff163 (the picked-folder
+and temporary chat tests).
 """
 
 from __future__ import annotations
@@ -111,9 +116,10 @@ def terminal(admin, open_terminal, preserve) -> dict:
     return connection
 
 
-def _directory(open_terminal, name: str = "harbour") -> Path:
-    """A fresh folder in the terminal's home with one folder inside, so the picker lists it."""
-    folder = open_terminal.home / f"{name}-{uuid.uuid4().hex[:8]}"
+def _directory(open_terminal, name: str = "harbour", parent: Path | None = None) -> Path:
+    """A fresh folder in the terminal's home, or in `parent`, with one folder inside, so the
+    picker lists it."""
+    folder = (parent or open_terminal.home) / f"{name}-{uuid.uuid4().hex[:8]}"
     (folder / "charts").mkdir(parents=True)
     return folder
 
@@ -241,8 +247,17 @@ def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_rel
     assert kept_with_the_chat(person, page) == (terminal["id"], f"{folder}/")
     reopened = page_for(person, path=urlparse(page.url).path)
     expect(directory_button(reopened)).to_contain_text(folder.name)
-    # a518ff163: the folder can be changed again once the chat has messages
+
+    # a518ff163: the folder can be changed once the chat has messages; the next command runs there
+    # the picker opens in the chat's folder, so the new one is made inside it
+    moved = _directory(open_terminal, "quarry", parent=folder)
     expect(directory_button(reopened)).to_be_enabled()
+    choose_directory(reopened, moved)
+    assert where_pwd_ran(reopened, upstream) == str(moved), "the command ran outside the new folder"
+    terminal_id, stored = kept_with_the_chat(person, reopened)
+    assert (terminal_id, stored.rstrip("/")) == (terminal["id"], str(moved)), (
+        f"the chat is stored with {terminal_id!r} in {stored!r} after the folder was changed"
+    )
 
 
 def test_a_temporary_chat_saved_afterwards_keeps_its_terminal_and_directory(
@@ -251,15 +266,23 @@ def test_a_temporary_chat_saved_afterwards_keeps_its_terminal_and_directory(
     person = make_user()
     page = page_for(person, path="/?temporary-chat=true")
     pick_terminal(page, TERMINAL)
-    folder = _directory(open_terminal)
+    first = _directory(open_terminal)
+    choose_directory(page, first)
+    assert where_pwd_ran(page, upstream) == str(first), "the command ran outside the folder"
+    # a518ff163: a temporary chat's folder can be changed after its first reply as well
+    folder = _directory(open_terminal, "quarry", parent=first)
+    expect(directory_button(page)).to_be_enabled()
     choose_directory(page, folder)
-    assert where_pwd_ran(page, upstream) == str(folder), "the command ran outside the folder"
+    assert where_pwd_ran(page, upstream) == str(folder), "the command ran outside the new folder"
 
     page.get_by_role("button", name="Save Chat").click()
 
     expect(page.get_by_text("Conversation saved successfully")).to_be_visible()
     expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
-    assert kept_with_the_chat(person, page) == (terminal["id"], f"{folder}/")
+    terminal_id, stored = kept_with_the_chat(person, page)
+    assert (terminal_id, stored.rstrip("/")) == (terminal["id"], str(folder)), (
+        f"the saved chat is stored with {terminal_id!r} in {stored!r}"
+    )
     reopened = page_for(person, path=urlparse(page.url).path)
     expect(reopened.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     expect(directory_button(reopened)).to_contain_text(folder.name)
