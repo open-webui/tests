@@ -7,6 +7,9 @@ Leaving the note, closing the tab, losing the grant or leaving the group that he
 person off the list. An account that may not read the note is refused at join, never shows up in
 the list and never receives it, also after its grant is taken away.
 
+Since dev 553b18a34 the list arrives as a message of type `note:presence` on the main `events`
+channel, where custom clients listen; up to v0.13.3 it was an event of its own name.
+
 Discriminates: passes on dev c5981aaea. In a backend copy of it, `publish_note_presence` sending
 nothing fails every test; sending the whole socket session in place of id, name and location fails
 the both writers test; `note:leave` not publishing it fails the leave, grant and group tests;
@@ -14,6 +17,8 @@ the both writers test; `note:leave` not publishing it fails the leave, grant and
 the page fails the both writers, location and stranger tests; the awareness update not recording
 the cursor fails the location test; `note:join` skipping its access check fails the stranger and
 group tests; `leave_room_for_users` leaving the note room without `leave_note` fails the grant test.
+The events channel test passes on dev 485103cde and fails on v0.13.3 (the list comes as a
+`note:presence` event of its own).
 """
 
 from __future__ import annotations
@@ -314,3 +319,28 @@ def test_a_member_removed_from_the_group_drops_off_and_stops_getting_the_list(ad
     assert _lists_for(reopened_lists, note_id) == [], (
         "a member removed from the group opened the note again and received who has it open"
     )
+
+
+def test_a_custom_client_gets_the_list_as_a_typed_message_on_the_events_channel(make_user):
+    owner = make_user()
+    note_id = _create_note(owner)
+
+    with connected(owner) as tab:
+        _open_note(tab, owner, note_id)
+        deadline = time.monotonic() + ARRIVAL_TIMEOUT
+        typed: list[dict] = []
+        while not typed and time.monotonic() < deadline:
+            typed = [
+                message["data"]["data"]
+                for message in list(tab.events)
+                if isinstance(message, dict)
+                and isinstance(message.get("data"), dict)
+                and message["data"].get("type") == "note:presence"
+            ]
+            time.sleep(0.05)
+
+    assert typed, (
+        "no note:presence message arrived on the events channel, where custom clients listen"
+    )
+    assert typed[0]["note_id"] == note_id
+    assert _ids(typed[0]["users"]) == [owner.id]
