@@ -25,6 +25,8 @@ is stored, listed in the sidebar and shown again after the reload). The fork tes
 the #32833 fix and fails on dev ca8f451cc (Fork chat and the / menu's Fork are offered and fail).
 The Notes and folder tests pass with the #34071 fix and fail on dev c15f28649 (after the reload,
 in the folder after the second one, the Temporary Chat label is gone and the message is saved).
+Since b598efb4e a folder's page shows no Temporary Chat label, so the folder test reads the
+address the reloads go by and what was saved.
 On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
 Temporary Chat on (no toggle on a new chat).
 
@@ -65,6 +67,14 @@ def temporary_toggle(page: Page):
 
 def temporary_label(page: Page):
     return page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)
+
+
+# a folder's page shows no Temporary Chat label (b598efb4e), only its address says so
+TEMPORARY_ADDRESS = re.compile(r"/folders/[\w-]+\?temporary-chat=true$")
+
+
+def folder_page(page: Page):
+    return page.get_by_role("region", name="Folder")
 
 
 def new_chat_greeting(page: Page):
@@ -181,15 +191,16 @@ def test_a_temporary_chat_in_a_folder_is_still_temporary_after_two_reloads(
     expect(chat_input(page)).to_be_visible()
 
     temporary_toggle(page).click()
-    expect(temporary_label(page)).to_be_visible()
+    expect(page).to_have_url(TEMPORARY_ADDRESS)
     reload(page)
-    expect(temporary_label(page)).to_be_visible()
+    expect(page).to_have_url(TEMPORARY_ADDRESS)
     reload(page)
 
-    expect(new_chat_greeting(page)).to_be_visible()
-    expect(
-        temporary_label(page), "the folder's new chat is no longer temporary (#34071)"
-    ).to_be_visible()
+    expect(folder_page(page)).to_be_visible()
+    expect(chat_input(page)).to_be_visible()
+    expect(page, "the folder's address no longer opens a temporary chat (#34071)").to_have_url(
+        TEMPORARY_ADDRESS
+    )
     send(page, PROMPT_TWO)
     expect_reply(page, ANSWER_TWO)
     saved = stored_chats(account, "Salzburg")

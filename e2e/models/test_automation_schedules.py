@@ -59,7 +59,7 @@ from harness import upstream as reply
 from harness.backends import wait_until
 from harness.calendar_api import set_timezone
 from harness.upstream import MOCK_MODEL_ID
-from utils.automations_page import automation_row
+from utils.automations_page import automation_row, wait_until_loaded
 from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.menus import late_menu_entry
 from utils.page_tabs import page_tab
@@ -82,6 +82,8 @@ def open_create_dialog(page: Page) -> Locator:
     page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_role("textbox", name="Instructions")).to_be_visible()
+    # a model picked before the dialog finished loading is cleared again
+    wait_until_loaded(dialog)
     return dialog
 
 
@@ -106,7 +108,6 @@ def close_schedule(dialog: Locator, kind: str) -> None:
 def finish(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     """Fill the prompt and title, press Create and return the new automation's id."""
     dialog.get_by_role("textbox", name="Instructions").fill(prompt)
-    # the dialog clears the title once its folders and channels load, so it goes in last
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
@@ -299,9 +300,9 @@ def test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt(
 
     page.goto(f"/folders/{folder_id}")
     expect(chat_input(page)).to_be_visible()
-    expect(page.get_by_role("link", name=re.compile(re.escape(title)))).to_have_attribute(
-        "href", f"/c/{chat_id}"
-    )
+    # the folder's list links each chat by its title
+    listed = page.get_by_role("region", name="Folder").get_by_text(re.compile(re.escape(title)))
+    expect(listed).to_have_attribute("href", f"/c/{chat_id}")
     [request] = requests_for(upstream, prompt)
     assert system_text(request).startswith(HARBOUR_PROMPT), system_text(request)
 

@@ -18,6 +18,9 @@ chat started on the folder page sent without the folder, the expand toggle not b
 icon pick saved empty and the edit dialog saving without the background image. In the a5bc78300
 build with #31368 reverted, the pinned chat dropped on Chats stays under Pinned and the one
 dropped on Pinned ends unpinned.
+The icon test is red on dev 4acf39ec2: since the folder page was rebuilt in 06491f013, an icon
+picked there is stored and shown on the page, but the sidebar keeps showing the folder without it
+until a reload. It passes on dev 3bfc168d6.
 The folder settings test was retargeted for 8d0ff76f2, whose folder dialog picks knowledge and
 uploads files in its Knowledge picker: it passes on dev 76ad6f97c (3 of 3) and fails in a build of
 it whose folder dialog saves without its files. Retargeted again for 70e4b9a52, which moves the
@@ -550,12 +553,17 @@ def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_
 
     page.get_by_label("Change folder icon").click()
     page.get_by_placeholder("Search all emojis").fill("anchor")
-    late_menu_entry(page, "2693", exact=True).click()
-    expect(page.get_by_text("Folder updated successfully")).to_be_visible()
+    with page.expect_response(re.compile(f"/folders/{folder_id}/update$")) as saved:
+        late_menu_entry(page, "2693", exact=True).click()
+    assert saved.value.ok, saved.value.text()
     assert stored_folder(owner, folder_id)["meta"]["icon"] == "anchor"
+    expect(page.get_by_label("Change folder icon").get_by_alt_text("anchor")).to_be_visible()
 
     sidebar = open_sidebar(page)
-    expect(sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor")).to_be_visible()
+    expect(
+        sidebar.locator(f"#folder-{folder_id}-button").get_by_alt_text("anchor"),
+        "the sidebar kept showing the folder without the icon picked on its page",
+    ).to_be_visible()
 
     row = sidebar.locator(f"#folder-{folder_id}-button")
     click_folder_menu_button(row)

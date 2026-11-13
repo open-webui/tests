@@ -18,7 +18,11 @@ fail in the pre-fix build of the 0.12.4 changes, which has that commit reverted.
 Opening a chat in another tab sent a folder's chat list back to page 1
 (open-webui/open-webui#34142): every tab took the chat being marked as read as a reason to reload
 the list from its first page. Discriminates: red on upstream dev `262a8c6f7` (the first tab ends
-on page 1), green with the fix on branch `fix/folder-page-kept-when-chat-opens-elsewhere`.
+on page 1), green with the fix on branch `fix/folder-page-kept-when-chat-opens-elsewhere`. Since
+06491f013 the folder's page loads its next 50 chats as the list's end scrolls into view, so the
+test reads a chat past the first 50 from the top of the list and checks the list still holds every
+chat it had loaded: green on dev 4acf39ec2, red in a frontend copy whose refresh reloads only the
+first page.
 """
 
 from __future__ import annotations
@@ -147,6 +151,11 @@ def test_a_search_in_a_users_chats_reaches_every_match(page_for, make_user):
     ).to_have_count(SEARCHED_SIZE)
 
 
+# the folder's page loads its chats in pages of this many
+FOLDER_PAGE_SIZE = 50
+PAGED_TITLE = re.compile(r"^Paged \d{3}$")
+
+
 def test_opening_a_chat_in_another_tab_keeps_the_folder_page(page_for, make_user):
     # open-webui/open-webui#34142
     owner = make_user()
@@ -155,7 +164,7 @@ def test_opening_a_chat_in_another_tab_keeps_the_folder_page(page_for, make_user
         folder = client.post("/api/v1/folders/", json={"name": f"Pages {uuid.uuid4().hex[:6]}"})
         assert folder.status_code == 200, folder.text
         folder_id = folder.json()["id"]
-        for index in range(25):
+        for index in range(FOLDER_PAGE_SIZE + 5):
             title = f"Paged {index:03d}"
             created = client.post(
                 "/api/v1/chats/new", json={"chat": {"title": title}, "folder_id": folder_id}
@@ -167,19 +176,22 @@ def test_opening_a_chat_in_another_tab_keeps_the_folder_page(page_for, make_user
             assert unread.status_code == 200, unread.text
 
     page = page_for(owner, path=f"/folders/{folder_id}")
-    second_page = page.get_by_role("button", name="Page 2", exact=True)
-    second_page.click()
-    expect(second_page).to_have_attribute("aria-current", "page")
-    row = page.get_by_role("link").filter(has_text=re.compile(r"Paged \d{3}")).first
-    expect(row).to_be_visible()
-    title = re.search(r"Paged \d{3}", row.inner_text()).group(0)
-    unread_dot = page.get_by_role("link").filter(has_text=title).locator(".bg-sky-500")
+    rows = page.get_by_role("listitem").filter(has=page.get_by_text(PAGED_TITLE))
+    expect(rows).to_have_count(FOLDER_PAGE_SIZE)
+    # the list loads its next page as its end scrolls into view
+    rows.last.scroll_into_view_if_needed()
+    expect(rows).to_have_count(len(chat_ids))
+    title = rows.last.get_by_text(PAGED_TITLE).inner_text().strip()
+    row = rows.filter(has=page.get_by_text(title, exact=True))
+    unread_dot = row.get_by_role("status", name="Unread")
     expect(unread_dot).to_have_count(1)
+    # back at the top, so a list cut to its first page does not load the rest again by itself
+    rows.first.scroll_into_view_if_needed()
 
     page_for(owner, path=f"/c/{chat_ids[title]}")
 
     expect(unread_dot, "the first tab never saw the chat being read").to_have_count(0)
     expect(
-        second_page, "opening a chat in another tab sent the folder back to page 1 (#34142)"
-    ).to_have_attribute("aria-current", "page")
-    expect(page.get_by_role("link").filter(has_text=title)).to_be_visible()
+        rows, "opening a chat in another tab sent the folder back to its first page (#34142)"
+    ).to_have_count(len(chat_ids))
+    expect(row).to_be_visible()
