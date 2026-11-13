@@ -216,6 +216,10 @@ def listed_chats(account) -> dict[str, str]:
 def test_a_side_chat_answers_from_the_chat_and_stays_out_of_it(
     page_for, make_user, upstream, side_chat_allowed
 ):
+    """Named after its first message: open-webui/open-webui#34366.
+
+    Fix branch Classic298:fix/side-chat-saved-as-new-chat.
+    """
     account = make_user()
     question = tagged(SIDE_QUESTION)
     page, chat_id = open_answered_chat(page_for, account, upstream)
