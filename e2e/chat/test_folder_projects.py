@@ -543,6 +543,10 @@ def test_a_folder_stays_open_or_shut_across_reloads(page_for, make_user):
 
 
 def test_a_folders_icon_and_background_image_show_and_are_stored(page_for, make_user, tmp_path):
+    """Emoji picked on the folder page missing from the sidebar row: open-webui/open-webui#34374.
+
+    Fix branch Classic298:fix/folder-icon-sidebar.
+    """
     owner = make_user()
     folder_id = create_folder(owner, "Seascapes")
     picture = tmp_path / "backdrop.png"
