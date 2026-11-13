@@ -8,7 +8,8 @@ a reply count that opens the thread panel on the answer; with the admin's reply 
 channel the answer lands in the channel itself for every member. A file attached through "Upload
 Files" posts with the message and the other member sees it on the message and can open its
 content. Typing "#" offers the person's channels; a picked channel posts as a "#<name>" link
-that opens that channel for the other member who clicks it.
+that opens that channel for the other member who clicks it, since cfe0ca0f6 in a tab beside the
+channel it was posted in (it replaced that channel before); a second link to it selects that tab.
 
 A message sent while its file still uploads waits in the input's queue and posts by itself once
 the upload is done, with a file the other member can open; it posted at once with a file nobody
@@ -48,6 +49,8 @@ On dev 3b8205505, in a frontend copy, a queue that takes new messages in front t
 queue tests red; in another copy, Send now that sends the first message in place of the chosen one
 turns the send now test red alone, and a Delete on a queued message that does nothing turns the
 edit test red alone.
+The channel link test passes on dev 3bfc168d6 and fails on a build of b48813189, the commit before
+cfe0ca0f6, where the link replaces the channel it was posted in and no tab of its own opens.
 """
 
 from __future__ import annotations
@@ -85,6 +88,11 @@ def _open_channel(page_for, account, channel_id: str) -> Page:
     page = page_for(account, path=f"/channels/{channel_id}")
     expect(chat_input(page)).to_be_visible()
     return page
+
+
+def _page_tab(page: Page, name: str, **state) -> Locator:
+    tabs = page.get_by_role("tablist", name="Tabs")
+    return tabs.get_by_role("tab", name=name, exact=True, **state)
 
 
 def _message(page: Page, text: str) -> Locator:
@@ -491,6 +499,7 @@ def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
     linked_id = group_channel(sender, member)
     with sender.client() as client:
         linked_name = client.get(f"/api/v1/channels/{linked_id}").json()["name"]
+        channel_name = client.get(f"/api/v1/channels/{channel_id}").json()["name"]
     page = _open_channel(page_for, sender, channel_id)
     member_page = _open_channel(page_for, member, channel_id)
 
@@ -514,10 +523,13 @@ def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
         assert content.startswith(f"<#C:{linked_id}|{linked_name}>"), stored
     link.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
-    member_page.go_back()
+    expect(_page_tab(member_page, f"#{linked_name}", selected=True)).to_be_visible()
+    _page_tab(member_page, f"#{channel_name}").click()
     expect(member_page).to_have_url(re.compile(f"/channels/{channel_id}"))
     typed_link.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
+    expect(_page_tab(member_page, f"#{linked_name}", selected=True)).to_be_visible()
+    expect(_page_tab(member_page, f"#{linked_name}")).to_have_count(1)
 
 
 @pytest.mark.regression
