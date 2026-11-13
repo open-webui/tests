@@ -9,7 +9,9 @@ author. Anyone else who can open the link, and everyone in Clone only mode, gets
 cannot send. The owner's private settings (params, variables, message meta) never reach a
 member, a member's turn runs without the owner's chat variables, going back to Clone only freezes
 a fresh snapshot, and cloning a shared chat gives the reader a copy without the owner's folder,
-variables or settings.
+variables or settings. Since dev 98f94057b a member allowed to reply saves the chat's model,
+terminal and working folder (the page used to drop the choice on reopening), and nothing else of
+the chat; a member with Clone only saves none of them.
 
 Discriminates: passes on dev b5a20423e; in a backend copy, making the `share_mode == 'continue'`
 branch of `get_accessible_chat_by_id` never match fails the reply, open visitors, settings,
@@ -20,7 +22,9 @@ params and variables fails the settings test and both clone tests, the same func
 `meta` on other people's messages fails the settings test, dropping the non-owner
 `chat_variables = {}` override in `chat_completion` fails the variables test, `set_share_mode`
 skipping the re-snapshot fails the freeze test, and the clone route storing `chat.variables` and
-`chat.folder_id` fails the allow-replies clone test.
+`chat.folder_id` fails the allow-replies clone test. The selections test fails on v0.13.3 (the
+member's save is refused) and passes on dev 485103cde; letting any member's save through
+for any field (no field or write access check) fails the nothing-else and clone only tests.
 """
 
 from __future__ import annotations
@@ -307,6 +311,67 @@ def test_going_back_to_clone_only_freezes_a_fresh_snapshot(make_user, upstream):
     assert still_frozen["write_access"] is False
     assert refused != ""
     assert later_question in str(_stored_chat(owner, chat_id)["chat"])
+
+
+SELECTIONS = {
+    "models": ["harbour-model"],
+    "terminal_id": "harbour-terminal",
+    "working_directory": "/home/user/harbour",
+}
+
+
+def test_a_member_allowed_to_reply_saves_the_chats_model_terminal_and_folder(make_user, upstream):
+    owner, member = make_user(), make_user()
+    chat_id, _ = _answered(owner, upstream, "which berth is free?")
+    _share(owner, chat_id, _read_grants(member), "continue")
+
+    with member.client() as client:
+        saved = client.post(f"/api/v1/chats/{chat_id}", json={"chat": SELECTIONS})
+
+    assert saved.status_code == 200, (
+        f"a member allowed to reply could not save the chat's selections: {saved.text}"
+    )
+    for account in (owner, member):
+        stored = _stored_chat(account, chat_id)["chat"]
+        assert {key: stored.get(key) for key in SELECTIONS} == SELECTIONS, account.name
+    assert "which berth is free?" in str(_stored_chat(owner, chat_id)["chat"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"title": "renamed by the member"}, {"params": {"system": "Answer like a pirate."}}],
+    ids=["title", "params"],
+)
+def test_a_member_allowed_to_reply_changes_nothing_else_of_the_chat(make_user, upstream, change):
+    owner, member = make_user(), make_user()
+    chat_id, _ = _answered(owner, upstream, "which berth is taken?")
+    _share(owner, chat_id, _read_grants(member), "continue")
+    before = _stored_chat(owner, chat_id)["chat"]
+
+    with member.client() as client:
+        refused = client.post(f"/api/v1/chats/{chat_id}", json={"chat": {**SELECTIONS, **change}})
+
+    assert refused.status_code == 401, refused.text
+    after = _stored_chat(owner, chat_id)["chat"]
+    assert after.get("title") == before.get("title")
+    assert after.get("params") == before.get("params")
+    assert after.get("models") == before.get("models")
+
+
+def test_a_member_with_clone_only_cannot_change_the_chats_selections(make_user, upstream):
+    owner, member = make_user(), make_user()
+    chat_id, _ = _answered(owner, upstream, "which berth is closed?")
+    _share(owner, chat_id, _read_grants(member), None)
+    before = _stored_chat(owner, chat_id)["chat"]
+
+    with member.client() as client:
+        refused = client.post(f"/api/v1/chats/{chat_id}", json={"chat": SELECTIONS})
+
+    assert refused.status_code == 401, refused.text
+    after = _stored_chat(owner, chat_id)["chat"]
+    assert {key: after.get(key) for key in SELECTIONS} == {
+        key: before.get(key) for key in SELECTIONS
+    }
 
 
 @pytest.mark.parametrize("share_mode", [None, "continue"], ids=["clone-only", "allow-replies"])

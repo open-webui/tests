@@ -19,7 +19,8 @@ question into a new branch (Send, no Save), while the owner's open tab keeps the
 shows with the new branch one switch away. The people with the chat open see each other's
 picture in the top bar (never their own), a picture opens that person's profile card, past three
 people the rest sit in a Collaborators list whose entries open the card too, and the picture goes
-once the other person leaves the chat.
+once the other person leaves the chat. Since dev 98f94057b a model someone replying picks is saved
+to the chat and still picked when they reopen it, where it used to be dropped.
 
 Two tests are red on dev b5a20423e and name the bug. Opening an Allow replies link sends the
 account to the home page, or leaves an empty new chat on the chat's address: the shared page
@@ -52,7 +53,8 @@ The edit and presence tests pass on dev 948432b43. A frontend build whose chat p
 viewers onto an edited branch and keeps one's own picture in the presence list fails all three;
 one showing Regenerate only on one's own replies fails the edit test; a backend copy whose
 `publish_chat_presence` sends nothing fails both presence tests. The Clone test, run as a
-control, passes on every mutant build.
+control, passes on every mutant build. The model test passes on dev 485103cde and fails in a backend
+copy that refuses a member's save of the chat's selections, as v0.13.3 did.
 """
 
 from __future__ import annotations
@@ -68,6 +70,7 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.chat_history import seed_chat
 from harness.socket_client import connected
+from harness.upstream import MOCK_MODEL_ID
 from utils.chat_controls import open_chat_controls
 from utils.chat_ui import (
     chat_input,
@@ -79,6 +82,7 @@ from utils.chat_ui import (
     send,
 )
 from utils.member_picker import pick_member
+from utils.model_selector import select_model
 from utils.search_dialog import open_search_from_sidebar, open_selected, result, search
 from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.voice_call import start_call
@@ -616,3 +620,50 @@ def test_only_the_folders_owner_finds_access_editing_it(page_for, crew):
     owner_page = page_for(owner)
     owner_editor = _folder_editor(owner_page, _folder_page_menu(owner_page, folder_id), name)
     expect(owner_editor.get_by_role("button", name="Access", exact=True)).to_be_visible()
+
+
+@pytest.fixture
+def second_model(admin):
+    """A preset every account may use, beside the scripted model the owner chats with."""
+    suffix = uuid.uuid4().hex[:6]
+    form = {
+        "id": f"pilot-{suffix}",
+        "name": f"Pilot {suffix}",
+        "base_model_id": MOCK_MODEL_ID,
+        "meta": {},
+        "params": {},
+        "access_grants": [grant("user", "*", "read")],
+    }
+    with admin.client() as client:
+        created = client.post("/api/v1/models/create", json=form)
+        assert created.status_code == 200, created.text
+        yield form
+        client.post("/api/v1/models/model/delete", json={"id": form["id"]})
+
+
+def test_a_model_picked_by_someone_replying_is_kept_on_reopening(
+    page_for, make_user, upstream, second_model
+):
+    owner, member = _accounts(make_user)
+    chat_id = _start_chat(page_for(owner), upstream)
+    _share_over_api(owner, chat_id, [grant("user", member.id, "read")], "continue")
+    member_page = page_for(member)
+    _open_live_chat(member_page, chat_id)
+
+    with member_page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith(f"/api/v1/chats/{chat_id}")
+        )
+    ) as saved:
+        select_model(member_page, second_model["name"])
+    assert saved.value.status == 200, f"saving the member's model choice: {saved.value.text()}"
+
+    member_page.reload()
+    expect(conversation(member_page).get_by_text(ANSWER)).to_be_visible()
+    expect(
+        member_page.get_by_role("button", name=f"Selected model: {second_model['name']}"),
+        "the model picked while replying was dropped when the chat was reopened",
+    ).to_be_visible()
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/chats/{chat_id}").json()["chat"]
+    assert stored["models"] == [second_model["id"]], stored.get("models")
