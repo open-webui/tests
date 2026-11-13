@@ -51,7 +51,8 @@ Reconnects. A read (a model list) cut off because the device dropped before answ
 repeated once the device has connected again, and a command (a POST) is never repeated. The
 page's own reads through the terminal proxy are not repeated on dev 485103cde: a body is always
 streamed to the device, so the read counts as one that cannot be sent twice. That test stays
-red (issue draft "a terminal read cut off by a Tether reconnect fails").
+red until open-webui/open-webui#34394 is fixed (fix branch
+Classic298:fix/tether-terminal-read-not-repeated).
 
 Notifications. A reply that finished and a channel's new message are announced to the person's
 devices that asked for notifications, once the person switched Browser Notifications on, and
@@ -1352,8 +1353,8 @@ def test_a_read_cut_off_by_a_reconnect_is_repeated_on_the_new_connection_and_a_c
 
 def test_a_file_read_from_the_page_cut_off_by_a_reconnect_is_repeated(make_user, connect_device):
     # Red on dev 485103cde: the page's calls reach the device with a streamed body even when they
-    # have none, so a read is never repeated (issue draft "a terminal read cut off by a Tether
-    # reconnect fails instead of being repeated").
+    # have none, so a read is never repeated (open-webui/open-webui#34394, fix branch
+    # Classic298:fix/tether-terminal-read-not-repeated).
     owner = make_user()
 
     def read(connection_id: str) -> httpx.Response:
