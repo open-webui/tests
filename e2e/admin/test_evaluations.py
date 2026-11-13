@@ -10,7 +10,8 @@ An arena model the admin adds in the Evaluations settings, limited to one model 
 answers a user through that model, and rating its reply names the model that answered. The admin
 settings decide where evaluations show: switching message rating off removes the thumbs from a
 reply, switching arena models off removes their section from the Evaluations settings and the
-model from the selector.
+model from the selector. Since #34138 an arena model's Clone button opens the arena dialog filled in
+from it under the name with "(Clone)" added, and saving it adds a second arena model.
 
 Two tests stay red on dev ebc6add67. The CSV export reads each rating's chat from the rating data,
 where it is never stored (the chat sits in the rating's meta), so its chat_id column is always
@@ -30,7 +31,8 @@ a rating form without the arena's answer the added arena test. The added arena t
 model public from the Visibility menu that replaced the arena dialog's Private and Public select:
 it passes on dev b40891e0a, and a frontend copy of it whose menu changes nothing turns it red.
 The last rating test passes on dev f659c0d12 and fails in a frontend copy with 88cf7f209
-(#33794) undone (the tab stays on the deleted model and lists nothing).
+(#33794) undone (the tab stays on the deleted model and lists nothing). The clone test passes on
+dev 485103cde and fails in a frontend build whose Clone dialog opens empty.
 """
 
 from __future__ import annotations
@@ -301,6 +303,42 @@ def test_switching_arena_models_off_hides_them_in_the_settings_and_the_selector(
     expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
     expect(_offered_in_selector(page_for(make_user()), arena_model)).to_have_count(0)
+
+
+def test_cloning_an_arena_model_adds_a_second_one_filled_in_from_it(
+    page_for, make_user, arena_model, admin
+):
+    clone_name = f"{arena_model} (Clone)"
+    clone_id = f"{arena_model.lower().replace(' ', '-')}-clone"
+    admin_page = page_for(make_user(role="admin"), path="/admin/settings/evaluations")
+    settings = admin_page.get_by_role("dialog")
+    original = settings.get_by_text(arena_model, exact=True)
+    expect(original).to_be_visible()
+
+    try:
+        # the arena's row holds its name and its own Clone button
+        row = original.locator("xpath=ancestor::div[.//button[@aria-label='Clone']][1]")
+        row.get_by_role("button", name="Clone", exact=True).click()
+        clone = admin_page.get_by_role("dialog").filter(
+            has=admin_page.get_by_placeholder("Model Name")
+        )
+        expect(clone.get_by_placeholder("Model Name")).to_have_value(clone_name)
+        expect(clone.get_by_text(MOCK_MODEL_ID, exact=True)).to_be_visible()
+        clone.get_by_role("button", name="Save", exact=True).click()
+        expect(clone).to_be_hidden()
+
+        expect(settings.get_by_text(clone_name, exact=True)).to_be_visible()
+        expect(settings.get_by_text(arena_model, exact=True)).to_be_visible()
+        with admin.client() as client:
+            stored = client.get("/api/v1/evaluations/config").json()["EVALUATION_ARENA_MODELS"]
+        by_name = {model["name"]: model for model in stored}
+        assert set(by_name) == {arena_model, clone_name}, f"stored arena models: {list(by_name)}"
+        assert by_name[clone_name]["id"] == clone_id
+        assert by_name[clone_name]["meta"]["model_ids"] == [MOCK_MODEL_ID]
+        assert by_name[arena_model]["id"] != clone_id
+    finally:
+        with admin.client() as client:
+            client.post("/api/v1/models/model/delete", json={"id": clone_id})
 
 
 def test_rating_the_first_reply_of_a_comparison_opens_the_rating_form(

@@ -3,7 +3,8 @@
 A row's More menu clones the model: the clone opens in the model editor under the name with
 "(Clone)" added, and once saved it is a second model that users pick next to the first. The Select
 view filter lists only the matching models: Hidden shows the hidden one, Visible the others, and
-Workspace Models the presets without the base models. The list opens on Available (461cc7aff):
+Workspace Models the presets without the base models, and Arena Models (#34137) only the arena
+models of the evaluation settings. The list opens on Available (461cc7aff):
 the models a connection offers and the presets, while settings saved for a model no connection
 offers any more wait under Unavailable. Make Public on a private model brings it back to the
 users' selector. Export in a row's More menu downloads that one model, not the list. Reset in
@@ -18,7 +19,9 @@ red (users still do not see the model) and Export saving an empty list turns the
 With 461cc7aff reverted in a frontend build (the list opens on All, with no Available or
 Unavailable view) the Available test and the view filter test are red, the other three pass.
 On dev 3b8205505, in a frontend copy, a Reset that keeps the saved settings turns the reset test
-red, and a Delete that leaves the list as it was turns the leftover model test red.
+red, and a Delete that leaves the list as it was turns the leftover model test red. The arena
+view test passes on dev 485103cde and fails in a frontend build whose Arena Models view lists
+every model.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -38,6 +41,7 @@ from utils.tooltips import tooltip_button
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
+EVALUATIONS_CONFIG = ("/api/v1/evaluations/config", "/api/v1/evaluations/config")
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
@@ -150,6 +154,39 @@ def test_the_view_filter_lists_only_the_matching_models(models_page, presets):
 
     _choose_view(admin_page, "Base Models", "Workspace Models")
     expect(mine).to_have_count(2)
+    expect(rows.filter(has_text="mock-model")).to_have_count(0)
+
+
+@pytest.fixture
+def arena_model(admin, preserve) -> Iterator[str]:
+    """The name of an arena model in the evaluation settings, with arena models switched on."""
+    preserve(EVALUATIONS_CONFIG)
+    suffix = uuid.uuid4().hex[:8]
+    arena = {
+        "id": f"arena-{suffix}",
+        "name": f"Arena {suffix}",
+        "meta": {"model_ids": ["mock-model"], "access_grants": [EVERYONE_READS]},
+    }
+    with admin.client() as client:
+        saved = client.post(
+            EVALUATIONS_CONFIG[1],
+            json={"ENABLE_EVALUATION_ARENA_MODELS": True, "EVALUATION_ARENA_MODELS": [arena]},
+        )
+        assert saved.status_code == 200, saved.text
+        yield arena["name"]
+        client.post("/api/v1/models/model/delete", json={"id": arena["id"]})
+
+
+def test_the_arena_models_view_lists_only_the_arena_models(models_page, presets, arena_model):
+    preset = presets("Atlas")
+    admin_page = models_page()
+    rows = admin_page.get_by_role("dialog").locator("#model-list > div")
+    expect(rows.filter(has_text=preset["name"])).to_have_count(1)
+
+    _choose_view(admin_page, "Available", "Arena Models")
+
+    expect(rows.filter(has_text=arena_model)).to_have_count(1)
+    expect(rows.filter(has_text=preset["name"])).to_have_count(0)
     expect(rows.filter(has_text="mock-model")).to_have_count(0)
 
 
