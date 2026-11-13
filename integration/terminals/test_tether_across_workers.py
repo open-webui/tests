@@ -8,7 +8,9 @@ there relays both ways and ends with the device's close code, a device that hang
 middle of such a call interrupts it with `tether_interrupted`, the owner's pages on another
 worker are told when the device comes and goes, and a reply that finished on another worker is
 announced to the device. A device that connects again on another worker takes the place of its
-earlier connection, which is closed.
+earlier connection, which is closed. A device that states it works on two calls at once, with
+one on each worker, refuses a third made on the other worker at once with "Tether has too many
+active operations." instead of leaving it to time out.
 
 `/api/config` tells the Tether app whether the server can take it (`features.tether`): with one
 worker, and with several workers on Redis. A server without WebSocket support has the flag off.
@@ -24,7 +26,8 @@ that only knows the devices connected to itself, each fail the five two-worker t
 connection replaced on another worker and left open fails the reconnect test; a device that
 hangs up without word to the other worker, and no `terminals:changed` at all, each fail the
 hang-up test; a notification for a device on another worker dropped fails the notification
-test; `features.tether` on whatever the WebSocket support fails the flag test.
+test; `features.tether` on whatever the WebSocket support fails the flag test. On dev 485103cde,
+a call to a busy device dropped without word by the worker holding it fails the busy test.
 """
 
 from __future__ import annotations
@@ -32,7 +35,9 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import random
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator
 
 import httpx
@@ -320,3 +325,53 @@ def test_the_server_offers_tether_with_one_worker_or_with_redis_but_not_without_
         "several workers on Redis": True,
         "no WebSocket support": False,
     }, f"/api/config offers Tether as {offered}"
+
+
+def _cwd(actor: Actor, device_terminal: str) -> httpx.Response | None:
+    """The device's working folder as `actor` asks for it; None when no answer came in 15 s."""
+    with actor.client() as client:
+        client.timeout = 15
+        try:
+            return client.get(f"/api/v1/terminals/{device_terminal}/files/cwd")
+        except httpx.TimeoutException:
+            return None
+
+
+def test_a_busy_device_refuses_a_call_made_on_another_worker_at_once(workers, connect_device):
+    near, far = workers
+    owner = create_user(near)
+    distant = _on(owner, far)
+    device = connect_device(owner, on=near, hello={"max_concurrent_streams": 2})
+    assert device.ready and device.ready["max_concurrent_streams"] == 2, (
+        f"the device asked to work on 2 calls at once and was granted {device.ready}"
+    )
+    finish = threading.Event()
+
+    def slow(_request: DeviceRequest):
+        finish.wait(60)
+        return json_answer(CWD)
+
+    device.route("GET", "/files/cwd", slow)
+    with ThreadPoolExecutor(2) as callers:
+        try:
+            # one call on each worker, so neither worker alone sees the device busy
+            running = [
+                callers.submit(_cwd, owner, device.terminal_id),
+                callers.submit(_cwd, distant, device.terminal_id),
+            ]
+            assert wait_until(lambda: len(device.requests_to("/files/cwd")) == 2, 20), (
+                f"only {len(device.requests_to('/files/cwd'))} of 2 calls reached the device"
+            )
+            one_more = _cwd(distant, device.terminal_id)
+            reached = len(device.requests_to("/files/cwd"))
+        finally:
+            finish.set()
+        finished = [call.result(timeout=30) for call in running]
+
+    assert one_more is not None, "the third call at once on the other worker was never answered"
+    assert one_more.status_code >= 400, f"{one_more.status_code} {one_more.text}"
+    assert "Tether has too many active operations." in one_more.json()["error"], one_more.text
+    assert reached == 2, "the refused call reached the device"
+    assert [(call.status_code, call.json()) for call in finished if call] == [(200, CWD)] * 2, (
+        f"the two calls the device worked on answered {finished}"
+    )
