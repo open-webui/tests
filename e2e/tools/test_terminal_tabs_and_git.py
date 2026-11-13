@@ -1509,7 +1509,7 @@ def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_d
     _pick_another_terminal(page, "Plain", "Workstation")
     expect(files.get_by_text("workstation-notes.md", exact=True)).to_be_visible()
     _expect_new_tab_entries(
-        page, ["Files", "New File", "New Terminal", "Browser", "Desktop", "Voice Note"]
+        page, ["Files", "New File", "New Terminal", "Voice Note", "Browser", "Desktop"]
     )
     expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
     _wait_until(lambda: _watched(workstation))

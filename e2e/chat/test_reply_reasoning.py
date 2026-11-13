@@ -5,7 +5,8 @@ long it thought. Opening the block shows the reasoning drawn as markdown (bold w
 reload shows the same label with the block folded again. An HTML block written in the reasoning is
 part of the thinking only, in a reply streamed now and in one stored with its thoughts inside its
 text as older versions kept them: the pane the answer's own HTML block opens holds that one page,
-also once the reasoning is opened. Folding on the open chat and Always Expand Details are covered in
+also once the reasoning is opened. A stored reply opens that pane only from the block's Preview
+since 06491f013. Folding on the open chat and Always Expand Details are covered in
 test_chat_journeys.py and test_settings_interface_effects.py.
 
 `test_an_html_block_in_the_reasoning_is_no_artifact_of_its_own` failed on dev 76ad6f97c in CI with
@@ -120,6 +121,9 @@ def reply_stored_earlier(chat_for, account, upstream) -> ChatSurface:
             ],
         )
     chat = chat_for(account, chat_id=chat_id)
+    # only a reply streamed now opens its HTML block by itself
+    expect_reply(chat, "Page done.")
+    last_reply(chat).get_by_role("button", name="Preview", exact=True).click()
     return chat
 
 

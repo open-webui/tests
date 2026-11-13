@@ -10,7 +10,9 @@ d42988f0c a pick shows at once and is saved in the background, so one the server
 picked on the page, says why and is not stored: the chat opens again without it (before, a
 refused pick was not made). A picked terminal that is deleted is unpicked at once for a
 person it was shared with, and reads Unavailable terminal on an admin's page after a reload.
-The menu moves into the chat input's More menu when the input is too narrow for it.
+When the input is too narrow for the menu's button to show the terminal's name, the button keeps
+only its icon and the chat input's More menu offers the menu as well (e4b969f60; before, the
+button left the input).
 
 A local fake terminal stands for the admin's connection; the deleted terminal is one on the
 real Terminals service on Docker (`harness.terminals`), and its test skips without the images or
@@ -329,13 +331,17 @@ def test_a_chat_input_too_narrow_for_the_terminal_offers_it_in_its_more_menu(
     connect([harbour, quarry], person)
     page = page_for(person)
     choose_terminal(page, harbour)
+    shown_name = _terminal_button(page, harbour).get_by_text(harbour, exact=True)
+    expect(shown_name).to_be_visible()
     open_input_menu(page)
     expect(_in_more_menu(page, harbour)).to_have_count(0)
     close_menu(page)
 
     page.set_viewport_size({"width": 400, "height": 800})
 
-    expect(_terminal_button(page, harbour)).to_have_count(0)
+    # the button stays as an icon without the name (e4b969f60)
+    expect(_terminal_button(page, harbour)).to_be_visible()
+    expect(shown_name).to_be_hidden()
     open_input_menu(page)
     _in_more_menu(page, harbour).click()
     listed_terminal(page, quarry).click()

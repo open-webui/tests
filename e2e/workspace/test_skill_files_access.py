@@ -217,8 +217,10 @@ def test_a_stranger_sees_nothing_of_the_skill(page_for, skill_owner, make_user, 
     expect(page.get_by_text("references")).to_have_count(0)
 
 
+SKILLS = "/workspace/skills"
+
+
 def _create_menu_entries(page: Page) -> Locator:
-    page.goto("/workspace/skills")
     expect(
         page.get_by_role("main").get_by_role("button", name="Create", exact=True)
     ).to_be_visible()
@@ -236,16 +238,16 @@ def test_import_entries_follow_the_skills_import_permission(
     grant_permissions(importer, skills_import=True)
     grant_permissions(plain)
 
-    importer_page = page_for(importer)
+    importer_page = page_for(importer, path=SKILLS)
     _open_create_menu(importer_page)
     expect(importer_page.get_by_text("Import", exact=True)).to_be_visible()
     expect(importer_page.get_by_text("Import folder")).to_be_visible()
 
-    plain_page = page_for(plain)
+    plain_page = page_for(plain, path=SKILLS)
     expect(_create_menu_entries(plain_page)).to_have_count(0)
     expect(plain_page.get_by_text("Import")).to_have_count(0)
 
-    admin_page = page_for(admin)
+    admin_page = page_for(admin, path=SKILLS)
     _open_create_menu(admin_page)
     expect(admin_page.get_by_text("Import", exact=True)).to_be_visible()
     expect(admin_page.get_by_text("Import folder")).to_be_visible()
@@ -262,7 +264,7 @@ def test_export_entries_follow_the_skills_export_permission(
         skill = _skill_with_two_versions(account, [])
         expected = 1 if allowed else 0
         try:
-            page = page_for(account)
+            page = page_for(account, path=SKILLS)
             _create_menu_entries(page)
             if allowed:
                 page.get_by_label("Open create menu").click()
