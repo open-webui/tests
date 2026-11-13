@@ -66,6 +66,14 @@ Discriminates: green on the dev c15f28649 build; in frontend copies of it, three
   fails the acknowledge test.
 - E: a sign-in that does not ask for flow control fails the sign-in test; a shell that cannot
   be stopped and does not say why fails the cannot stop test.
+
+Since 0.13.4 a shell tab is named after the title its program sets, or after the program the
+terminal reports running, and shows an icon for well-known programs (Python, Claude Code). With
+no terminal picked for the chat, New tab still offers Files, New File, New Terminal, Voice Note,
+Browser and Desktop; picking one first asks for a terminal in a searchable list, and the picked
+terminal becomes the chat's. Both pass on dev 485103cde. In a frontend copy whose shell tabs keep
+their label the title test fails, in one whose tabs keep the plain icon it fails on the icon,
+and in one that offers nothing while no terminal is picked the picker test fails.
 """
 
 from __future__ import annotations
@@ -210,6 +218,15 @@ def _prints(session: TerminalSession, text: str, start: int, truncated: bool = F
     return end
 
 
+def _tab(page: Page, name: str) -> Locator:
+    return page.get_by_role("tablist", name="Tabs").get_by_role("tab", name=name, exact=True)
+
+
+def _tab_icon(tab: Locator) -> str:
+    """The drawing of the icon in front of a tab's title."""
+    return tab.locator("svg").first.evaluate("icon => icon.innerHTML")
+
+
 def _saved_chat(page: Page, upstream, terminal: str) -> str:
     """Pick the terminal and ask one question; returns the saved chat's id."""
     choose_terminal(page, terminal)
@@ -266,6 +283,79 @@ def test_a_shell_signs_in_for_its_chat_reports_its_size_and_draws_what_the_termi
     assert [message["active"] for message in _said(session, "activity")] == [True, False, True], (
         f"hiding and showing the shell was reported as {_said(session, 'activity')}"
     )
+
+
+def test_a_shell_tab_is_named_after_the_title_its_program_sets_or_the_program_running(
+    shells, page_for, upstream
+):
+    page = page_for(shells.person, init_script=READABLE_SHELL)
+    _saved_chat(page, upstream, shells.name)
+    open_shell(page)
+    session = shells.connection(1)
+    plain = _tab_icon(shell_tab(page))
+
+    session.send(b"\x1b]0;tide-watch: harbour\x07")
+    titled = _tab(page, "tide-watch: harbour")
+    expect(titled, "the shell tab did not take the title its program set").to_be_visible()
+    expect(shell_tab(page)).to_have_count(0)
+    assert _tab_icon(titled) == plain, "a shell titled by an unknown program changed its icon"
+
+    session.send(json.dumps({"type": "process", "name": "python3"}))
+    python = _tab(page, "python3")
+    expect(python, "the shell tab did not take the name of the program running").to_be_visible()
+    python_icon = _tab_icon(python)
+    assert python_icon != plain, "a shell running Python kept the plain terminal icon"
+
+    session.send(json.dumps({"type": "process", "name": "node"}))
+    session.send(b"\x1b]0;\xe2\x9c\xb3 Claude Code\x07")
+    agent = _tab(page, "\u2733 Claude Code")
+    expect(agent).to_be_visible()
+    agent_icon = _tab_icon(agent)
+    assert agent_icon not in (plain, python_icon), (
+        "a shell running Claude Code shows the plain or the Python icon"
+    )
+
+
+def test_with_no_terminal_picked_new_tab_offers_the_terminal_tabs_and_asks_for_a_terminal(
+    shells, page_for
+):
+    page = page_for(shells.person, init_script=READABLE_SHELL)
+    composer = page.get_by_role("main")
+    expect(composer.get_by_role("button", name=shells.name, exact=True)).to_have_count(0)
+
+    new_tab = page.get_by_role("button", name="New tab", exact=True).first
+    expect(new_tab, "with no terminal picked a new chat offers no New tab").to_be_visible()
+    new_tab.click()
+    menu = page.get_by_role("menu")
+    for entry in ("Files", "New File", "New Terminal", "Voice Note", "Browser", "Desktop"):
+        expect(
+            menu.get_by_role("menuitem", name=re.compile(rf"^{entry}\b")),
+            f"with no terminal picked New tab does not offer {entry}",
+        ).to_be_visible()
+    menu.get_by_role("menuitem", name=re.compile(r"^New Terminal\b")).click()
+
+    picker = page.get_by_role("dialog", name="Select a terminal")
+    expect(picker).to_be_visible()
+    search = picker.get_by_role("combobox", name="Select a terminal")
+    options = picker.get_by_role("listbox", name="Terminals").get_by_role("option")
+    expect(options.filter(has_text=shells.name)).to_have_count(1)
+    search.fill(f"no such terminal {uuid.uuid4().hex[:6]}")
+    expect(options).to_have_count(0)
+    expect(picker.get_by_role("status")).to_have_text("No terminals found")
+    search.fill(shells.name.split()[-1])
+    expect(options).to_have_count(1)
+    expect(options).to_have_text(shells.name)
+    search.press("Enter")
+
+    expect(picker).to_have_count(0)
+    expect(shell_panel(page)).to_be_visible()
+    shells.connection(1)
+    assert shells.started == ["shell-1"], f"picking the terminal started {shells.started}"
+    page.get_by_role("tab", name="New Chat", exact=True).click()
+    expect(
+        composer.get_by_role("button", name=shells.name, exact=True),
+        "the terminal picked for the new tab is not the chat's terminal",
+    ).to_be_visible()
 
 
 def test_output_is_acknowledged_and_an_interrupted_shell_resumes_from_where_it_was(
