@@ -14,7 +14,9 @@ the owner or an admin changes a folder's sharing (8145774e3): a writing member w
 editor from its sidebar menu or from the menu on its page finds no Access button there, while the
 owner and an admin still find it. Since 0.12.4 (226207314) the owner renames a member's chat in
 the shared folder from Rename in its sidebar menu, and drags it into a folder inside the shared
-one, while a drag out to a private folder of the owner's is refused and the chat stays.
+one, while a drag out to a private folder of the owner's is refused and the chat stays. Since
+e22210796 the folder's menu, in the sidebar and on its page, has a Share entry again for an owner
+allowed to share folders; it opens the same Access dialog, while a writing member finds no Share.
 
 Discriminates: passes on dev ebc6add67, and on dev b5a20423e once the read share test looks for the
 Clone Chat button that replaced the Read only label (c6dd9a451), and on dev f5a26f53a once sharing
@@ -28,7 +30,9 @@ to everyone the two tests for a writing member go red. The owner's rename and dr
 chat pass on dev 948432b43; both go red in a frontend copy whose folder rows never let the owner
 rename or move another account's chat (no menu, not draggable), the rename test in a backend copy
 refusing the owner in the chat update handler and the drag test in one whose chat move check
-always answers False.
+always answers False. The Share entry test passes on the dev 485103cde build and goes red on a
+frontend copy of it whose folder menu never shows the Share entry, where the test of the writing
+member's sidebar editor stays green as a control.
 """
 
 from __future__ import annotations
@@ -366,6 +370,31 @@ def test_a_writing_member_finds_no_access_button_editing_from_the_folders_page(p
     owner_page = page_for(owner)
     owners_editor = open_editor(owner_page, open_page_menu(owner_page, folder_id), name)
     expect(owners_editor.get_by_role("button", name="Access", exact=True)).to_be_visible()
+
+
+def test_the_owner_shares_from_share_in_the_folders_menu_and_a_writing_member_finds_none(
+    page_for, crew
+):
+    owner, member, group_id, group_name = crew
+    name = folder_name()
+    folder_id = create_folder(owner, name)
+    owner_page = page_for(owner)
+
+    open_page_menu(owner_page, folder_id).get_by_role("menuitem", name="Share").click()
+    dialog = owner_page.get_by_role("dialog", name=f"Access: {name}")
+    expect(dialog.get_by_role("button", name="Add Access")).to_be_visible()
+    add_group(owner_page, dialog, group_name)
+    eventually_grants(owner, folder_id, {("group", group_id, "read"), ("group", group_id, "write")})
+    dialog.get_by_role("button", name="Close").click()
+    expect(dialog).to_be_hidden()
+    expect(open_row_menu(owner_page, name).get_by_role("menuitem", name="Share")).to_be_visible()
+
+    member_page = page_for(member)
+    page_menu = open_page_menu(member_page, folder_id)
+    expect(page_menu.get_by_role("menuitem", name="Share")).to_have_count(0)
+    member_page.keyboard.press("Escape")
+    expect(page_menu).to_be_hidden()
+    expect(open_row_menu(member_page, name).get_by_role("menuitem", name="Share")).to_have_count(0)
 
 
 def test_an_admin_still_finds_access_editing_a_folder_shared_with_them(page_for, crew, make_user):
