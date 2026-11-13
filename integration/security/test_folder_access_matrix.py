@@ -8,6 +8,9 @@ only looks in the caller's own folder tree, so it answers 404 to everyone else, 
 included. After a refused write the owner still sees the same name, parent and grants. With
 folders switched off every route refuses everyone, and without `features.folders` every route
 refuses a user but not the admin. Deleting is pinned by test_folder_delete_ownership.py.
+Since 06491f013 the folder page's people and tag counts follow the same read access, and only a
+chat's owner files it under one of the folder's statuses: the other members and the admin are
+refused on the owner's chat.
 
 Since 0.12.4 (226207314) the owner may also rename and move a chat a member started in the
 shared folder. The rename takes a title alone, trimmed, and refuses a blank one with 400 and
@@ -33,6 +36,9 @@ the two private parent rows red, letting any folder owner pass the tree walk tur
 account's move row red, looking the folder up without its owner in the update handler turns every
 other account's rename row red, and marking the chat read on any move turns the unread test red.
 The pin test passes with the fix of #33342 and fails on dev, where any move unpins the chat.
+The rows added for 06491f013 pass on dev 06491f013; in one backend copy of it that answers the
+people, tag and status routes without the read check and files a chat whoever owns it, all six of
+those rows go red: the stranger gets 200 on each, and everyone gets 200 on the status row.
 """
 
 from __future__ import annotations
@@ -78,6 +84,16 @@ def _owner_chat_inside(owner: Actor, folder_id: str) -> dict:
     return {"chat_id": chat_id}
 
 
+def _owner_chat_with_statuses(owner: Actor, folder_id: str) -> dict:
+    with owner.client() as client:
+        updated = client.post(
+            f"/api/v1/folders/{folder_id}/update",
+            json={"meta": {"statuses": [{"id": "s_todo", "name": "To do"}]}},
+        )
+    assert updated.status_code == 200, updated.text
+    return _owner_chat_inside(owner, folder_id)
+
+
 def _fresh_name(actor: Actor, fields: dict) -> dict:
     return FOLDER.create_body()
 
@@ -109,6 +125,16 @@ MATRIX = [
         OWNER,
     ),
     ("POST", "/api/v1/folders/{id}/access/update", {"access_grants": []}, None, 403, SHARE),
+    ("GET", "/api/v1/folders/{id}/users", None, _owner_chat_inside, 403, READ),
+    ("GET", "/api/v1/folders/{id}/tags", None, _owner_chat_inside, 403, READ),
+    (
+        "PATCH",
+        "/api/v1/folders/{id}/chats/{chat_id}/status",
+        {"status": "s_todo"},
+        _owner_chat_with_statuses,
+        403,
+        OWNER,
+    ),
 ]
 
 
