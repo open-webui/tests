@@ -13,6 +13,9 @@ person it was shared with, and reads Unavailable terminal on an admin's page aft
 When the input is too narrow for the menu's button to show the terminal's name, the button keeps
 only its icon and the chat input's More menu offers the menu as well (e4b969f60; before, the
 button left the input).
+While a reply is being written, the Terminal button and the working directory button beside it
+cannot be used; once it is written both can be changed again, also in a chat that already has
+messages (a518ff163, 0.13.3; before, both stayed locked after the first message).
 
 A local fake terminal stands for the admin's connection; the deleted terminal is one on the
 real Terminals service on Docker (`harness.terminals`), and its test skips without the images or
@@ -21,18 +24,22 @@ test_new_terminal_dialog.py and test_terminal_settings_dialog.py (only for a per
 create terminals), and the menu missing before the first terminal exists is the finding
 `open-webui-no-terminal-menu-before-the-first-terminal`.
 
-Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7.
-On builds of a frontend copy with one change each: the Settings cog shown to everyone (the
-cog test); no terminal carrying the check, the picked terminal kept when it is picked again (the
-picked test); the pick not stored on a saved chat, a saved chat opened without its terminal, and
-a refused pick that says nothing (the saved chat test); a lost terminal reading Terminal, and one
-that stays picked for everyone (the deleted test); the controls never moved into the More menu
-(the narrow test). The cog's target has no mutation of its own. A person's own terminals, listed
+Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7. On
+builds of a frontend copy with one change each: the Settings cog shown to everyone (the cog test);
+no terminal carrying the check, the picked terminal kept when it is picked again (the picked test);
+the pick not stored on a saved chat, a saved chat opened without its terminal, and a refused pick
+that says nothing (the saved chat test); a lost terminal reading Terminal, and one that stays picked
+for everyone (the deleted test); the controls never moved into the More menu (the narrow test). The
+reply-written test is red on dev 485103cde and on 0.13.3: both buttons stay usable while the reply
+is written (finding "issue: Terminal and working folder can be changed while a reply is still being
+generated"); the lock it expects is in the 0.13.3 release notes, and only the MoA merge sets the
+flag the input reads. The cog's target has no mutation of its own. A person's own terminals, listed
 under Direct, were removed from Open WebUI in 44d55bd0f and 4720ff19e and their test with them.
 """
 
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
@@ -50,7 +57,7 @@ from harness.terminal_server import (
 from harness.terminals import create_template, share_template
 from utils.cached_chat import ask, chat_requests, choose_terminal, offered_tools
 from utils.chat_surface import MAIN_CHAT, ChatSurface
-from utils.chat_ui import close_menu, expect_reply, open_input_menu, send
+from utils.chat_ui import close_menu, expect_reply, last_reply, open_input_menu, send
 from utils.tooltips import tooltip_button
 from utils.user_terminals import TEMPLATES, listed_terminal, open_terminal_menu
 
@@ -286,6 +293,42 @@ def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not
     expect_reply(page, "Noted.")
     expect(_terminal_button(page, "Terminal")).to_be_visible()
     expect(_terminal_button(page, quarry)).to_have_count(0)
+
+
+def test_the_terminal_and_its_folder_cannot_be_changed_while_a_reply_is_written(
+    page_for, make_user, connect, upstream
+):
+    person = make_user()
+    harbour, _ = _names()
+    connect([harbour], person)
+    page = page_for(person)
+    open_terminal_menu(page)
+    _pick(page, harbour, shown=harbour)
+    folder = page.get_by_role("main").get_by_role("button", name="Choose working directory")
+    expect(folder).to_be_enabled()
+
+    question = f"take your time {uuid.uuid4().hex[:6]}"
+    released = threading.Event()
+    upstream.queue(
+        reply.text(
+            ["Still writing ", "and done now."],
+            hold=released,
+            hold_after=2,  # the role chunk, then the first piece
+            match=reply.answering(question),
+        )
+    )
+    try:
+        send(page, question)
+        expect(last_reply(page)).to_contain_text("Still writing")
+        expect(_terminal_button(page, harbour)).to_be_disabled()
+        expect(folder).to_be_disabled()
+    finally:
+        released.set()
+
+    expect_reply(page, "and done now.")
+    # a518ff163: once the reply is written both can be changed again
+    expect(_terminal_button(page, harbour)).to_be_enabled()
+    expect(folder).to_be_enabled()
 
 
 def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_another_is_picked(
