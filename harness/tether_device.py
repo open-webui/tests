@@ -14,6 +14,9 @@ request is recorded in `received` (headers lower-cased), unrouted paths answer 4
 handler made for the fake terminal works here unchanged. A WebSocket the server opens becomes a
 `DeviceSocket` in `sockets`, echoed unless `script_sockets` says otherwise. `announce` and
 `reauthenticate` send the device's own updates, `notifications` holds what it was notified of.
+`connections` are the person's own connections the device offers (`own_connection`): an
+OpenAI-compatible provider, an OpenAPI tool server or a terminal, each served under a service of
+its own, which a handler reads as `request.service`.
 
 To misbehave, a handler takes the request's `stream` and returns None, which leaves the
 answer to it: `stream.send("error", message=...)`, a frame number skipped with
@@ -255,9 +258,17 @@ class TetherDevice:
         with self._sending:
             self.socket.send(json.dumps(message))
 
-    def announce(self, services: Iterable[str], name: str | None = None) -> None:
-        """Tell the server which services the device offers now, and its new name if any."""
+    def announce(
+        self,
+        services: Iterable[str],
+        name: str | None = None,
+        connections: Iterable[dict] | None = None,
+    ) -> None:
+        """Tell the server which services and connections the device offers now, and its new name
+        if any; an update without connections withdraws them."""
         update = {"type": "services", "services": list(services)}
+        if connections is not None:
+            update["connections"] = list(connections)
         self.send_json(update if name is None else {**update, "name": name})
 
     def reauthenticate(self, token: str) -> None:
@@ -363,6 +374,12 @@ def _for_path(scripted: dict, path: str):
     return scripted[max(prefixes, key=len)] if prefixes else None
 
 
+def own_connection(kind: str, service: str, name: str) -> dict:
+    """A connection the person added in the Tether app: `kind` is `openai`, `openapi` or
+    `terminal`, `service` the name its calls are relayed under."""
+    return {"type": kind, "service": service, "name": name}
+
+
 def tether_session(instance: LaunchedInstance, account: Actor, name: str | None = None) -> dict:
     """A renewable session of `account`, as Tether holds after its sign-in: `token`,
     `refresh_token` and `session_id`. A device connects with the `token`."""
@@ -388,6 +405,7 @@ def tether_device(
     window: int = DEFAULT_WINDOW,
     notifications: bool = False,
     hello: dict | None = None,
+    connections: Iterable[dict] = (),
 ) -> Iterator[TetherDevice]:
     """Connect a device with a session's access `token` and serve until the block ends.
 
@@ -404,6 +422,7 @@ def tether_device(
         "window": window,
         "services": list(services),
         "notifications": notifications,
+        "connections": list(connections) or None,
         **(hello or {}),
     }
     message = {key: value for key, value in message.items() if value is not None}

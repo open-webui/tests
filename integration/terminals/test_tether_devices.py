@@ -37,6 +37,22 @@ device works on 16 calls at once and the next is refused. An answer the page get
 may be 16 MiB; a download may be larger. An open shell ends with 1011 when its device hangs up,
 and no shell opens while the device is offline (1013, "Tether is offline. Reconnecting.").
 
+Own connections. A person adds their own OpenAI-compatible provider, OpenAPI tool server or
+terminal in the Tether app; the hello lists each with its kind, name and the service its calls
+travel under, and only a connection whose service the device offers counts. The provider's
+models join the owner's model list, tagged "<device> · <connection>", and a chat with one is
+sent down the device under that service with no credential of the owner's; nobody else sees or
+reaches the model, and it leaves the list when the device withdraws the connection. The tool
+server is listed among the owner's tools as `server:tether:<connection id>:<service>` and the
+model's call to it reaches the device. The terminal is listed as
+`tether:<connection id>:<service>` under "<device> · <connection>".
+
+Reconnects. A read (a model list) cut off because the device dropped before answering is
+repeated once the device has connected again, and a command (a POST) is never repeated. The
+page's own reads through the terminal proxy are not repeated on dev 485103cde: a body is always
+streamed to the device, so the read counts as one that cannot be sent twice. That test stays
+red (issue draft "a terminal read cut off by a Tether reconnect fails").
+
 Notifications. A reply that finished and a channel's new message are announced to the person's
 devices that asked for notifications, once the person switched Browser Notifications on, and
 never to the author of the message.
@@ -74,6 +90,10 @@ and one of 8 MiB, each fail the 16 MiB test; an offline device closed like an un
 (4004), and an interrupted shell closed without its reason, each fail the offline-shell test.
 Notifications: every device notified, and the person's setting ignored, each fail the
 finished-reply test; the author notified too, and nobody notified, each fail the channel test.
+Own connections and reconnects, on dev 485103cde: the user's Tether connections never looked up
+fails the model, tool server and terminal tests and the reconnect test; a read never repeated
+fails the reconnect test; the page's file read passes once the terminal proxy sends a body-less
+read without a streamed body.
 """
 
 from __future__ import annotations
@@ -99,6 +119,7 @@ from harness.chat import ask, send_message, wait_for_reply
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.listener import json_answer
 from harness.mfa import new_address
+from harness.openapi_server import openapi_spec
 from harness.socket_client import SocketSession, connected
 from harness.terminal_server import close_of, terminal_session
 from harness.tether_device import (
@@ -107,6 +128,7 @@ from harness.tether_device import (
     DeviceRequest,
     DeviceSocket,
     TetherDevice,
+    own_connection,
     tether_device,
     tether_session,
 )
@@ -1094,3 +1116,261 @@ def test_a_picture_the_model_draws_is_copied_into_the_devices_working_folder(
         f"the model was not told where the picture is on the device: {picture}"
     )
     assert message["content"] == f"drawn {tag}", f"the reply ended as {message}"
+
+
+def _streamed_completion(text: str) -> list[bytes]:
+    """A chat completion as an OpenAI-compatible provider streams it."""
+
+    def chunk(delta: dict, finish_reason: str | None) -> bytes:
+        event = {
+            "id": "chatcmpl-device",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": "device-model",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+        }
+        return f"data: {json.dumps(event)}\n\n".encode()
+
+    return [
+        chunk({"role": "assistant", "content": ""}, None),
+        chunk({"content": text}, None),
+        chunk({}, "stop"),
+        b"data: [DONE]\n\n",
+    ]
+
+
+def _listed_models(actor) -> dict[str, dict]:
+    with actor.client() as client:
+        listed = client.get("/api/models", params={"refresh": "true"})
+    assert listed.status_code == 200, listed.text
+    return {model["id"]: model for model in listed.json()["data"]}
+
+
+def test_a_model_of_a_connection_added_in_tether_is_its_owners_alone_and_answers_through_the_device(
+    make_user, connect_device
+):
+    owner, stranger = make_user(), make_user()
+    tag = uuid.uuid4().hex[:8]
+    own_model, unoffered_model = f"home-model-{tag}", f"unoffered-model-{tag}"
+    device = connect_device(
+        owner,
+        name=f"Laptop {tag}",
+        services=["open_terminal", "home_llm"],
+        connections=[
+            own_connection("openai", "home_llm", "Home LLM"),
+            # declared, but its service is not among those the device offers
+            own_connection("openai", "spare_llm", "Spare LLM"),
+        ],
+    )
+
+    def models(request: DeviceRequest):
+        model_id = own_model if request.service == "home_llm" else unoffered_model
+        return json_answer({"object": "list", "data": [{"id": model_id, "object": "model"}]})
+
+    def completion(request: DeviceRequest):
+        return 200, {"Content-Type": "text/event-stream"}, _streamed_completion(f"hi from {tag}")
+
+    device.route("GET", "/models", models)
+    device.route("POST", "/chat/completions", completion)
+
+    listed = _listed_models(owner)
+    assert own_model in listed, f"the owner's model list lacks the device's model: {sorted(listed)}"
+    assert unoffered_model not in listed, "a connection whose service is not offered was listed"
+    assert {"name": f"Laptop {tag} · Home LLM"} in listed[own_model]["tags"], (
+        f"the device's model is tagged {listed[own_model]['tags']}"
+    )
+    assert own_model not in _listed_models(stranger), "a stranger sees the owner's own model"
+
+    prompt = f"hello laptop {tag}"
+    with owner.client() as client:
+        _, message = ask(client, prompt, model=own_model)
+    with stranger.client() as client:
+        refused = client.post(
+            "/api/chat/completions",
+            json={"model": own_model, "messages": [{"role": "user", "content": "me too"}]},
+        )
+
+    assert message["content"] == f"hi from {tag}", f"the reply ended as {message}"
+    [sent] = device.requests_to("/chat/completions")
+    assert sent.service == "home_llm", f"the chat went to the device's {sent.service!r}"
+    assert sent.json()["model"] == own_model, sent.json()
+    assert prompt in json.dumps(sent.json()["messages"]), sent.json()["messages"]
+    assert owner.token not in json.dumps(sent.headers), (
+        f"the owner's credential reached the device's provider: {sent.headers}"
+    )
+    assert "x-user-id" not in sent.headers, sent.headers
+    assert refused.status_code >= 400, (
+        f"another account's chat with the owner's model answered {refused.status_code}"
+    )
+    assert len(device.requests_to("/chat/completions")) == 1, (
+        "the stranger's chat reached the device"
+    )
+
+    device.announce(["open_terminal"])
+    assert wait_until(lambda: own_model not in _listed_models(owner), 10), (
+        "the model stayed listed after the device withdrew its connection"
+    )
+
+
+def test_a_tool_server_added_in_tether_is_listed_for_its_owner_and_serves_the_models_call(
+    make_user, connect_device, upstream
+):
+    owner, stranger = make_user(), make_user()
+    tag = uuid.uuid4().hex[:8]
+    device = connect_device(
+        owner,
+        name=f"Laptop {tag}",
+        services=["home_tools"],
+        connections=[own_connection("openapi", "home_tools", "Weather")],
+    )
+    device.route("GET", "/openapi.json", json_answer(openapi_spec(f"Weather {tag}", ["forecast"])))
+    device.route("GET", "/forecast", json_answer({"sky": f"sunny {tag}"}))
+    tool_id = f"server:tether:{device.connection_id}:home_tools"
+
+    with owner.client() as client:
+        tools = client.get("/api/v1/tools/")
+    with stranger.client() as client:
+        of_stranger = client.get("/api/v1/tools/")
+    assert tools.status_code == 200 and of_stranger.status_code == 200, tools.text
+    names = {tool["id"]: tool["name"] for tool in tools.json()}
+    assert names.get(tool_id) == f"Laptop {tag} · Weather", (
+        f"the owner's tools list the device's server as {names.get(tool_id)!r}: {names}"
+    )
+    assert tool_id not in {tool["id"] for tool in of_stranger.json()}, (
+        "a stranger sees the owner's tool server"
+    )
+
+    prompt = f"what is the weather {tag}"
+    upstream.queue(
+        reply.tool_call("forecast", {}, match=reply.answering(prompt)),
+        reply.text(f"sunny it is {tag}", match=reply.answering(prompt)),
+    )
+    with owner.client() as client:
+        _, message = ask(client, prompt, tool_ids=[tool_id])
+
+    asked, told = _requests_for(upstream, prompt)
+    offered = {tool["function"]["name"] for tool in asked.get("tools", [])}
+    assert "forecast" in offered, f"the model was offered {sorted(offered)}"
+    [called] = device.requests_to("/forecast")
+    assert called.service == "home_tools", f"the call went to the device's {called.service!r}"
+    assert owner.token not in json.dumps(called.headers), called.headers
+    assert _tool_results(told) == [{"sky": f"sunny {tag}"}], (
+        f"the model was told {_tool_results(told)} of its call"
+    )
+    assert message["content"] == f"sunny it is {tag}", f"the reply ended as {message}"
+
+
+def test_a_terminal_added_in_tether_is_listed_under_its_own_name_and_serves_its_owner_alone(
+    make_user, connect_device
+):
+    owner, stranger = make_user(), make_user()
+    tag = uuid.uuid4().hex[:8]
+    device = connect_device(
+        owner,
+        name=f"Laptop {tag}",
+        services=["lab_box"],
+        connections=[own_connection("terminal", "lab_box", "Lab")],
+    )
+    device.route("GET", "/files/cwd", json_answer(CWD))
+    terminal_id = f"tether:{device.connection_id}:lab_box"
+
+    with owner.client() as client:
+        answered = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+    with stranger.client() as client:
+        refused = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+
+    assert _devices(owner) == {terminal_id: f"Laptop {tag} · Lab"}, (
+        f"the owner's terminal list shows the device as {_devices(owner)}"
+    )
+    assert (answered.status_code, answered.json()) == (200, CWD), answered.text
+    [received] = device.requests_to("/files/cwd")
+    assert received.service == "lab_box", f"the call went to the device's {received.service!r}"
+    assert refused.status_code == 404, (
+        f"another account's call to the terminal answered {refused.status_code} {refused.text}"
+    )
+    assert _devices(stranger) == {}, "a stranger sees the owner's terminal"
+
+
+def _cut_off_then_reconnect(owner, connect_device, method: str, path: str, call, serve):
+    """Run `call` while the device hangs up on its `method path`, connect the device again and
+    return the call's answer and the new connection, which `serve` sets up."""
+    connection_id = str(uuid.uuid4())
+    dropping = connect_device(owner, connection_id=connection_id, **serve.get("options", {}))
+
+    def hang_up(_request: DeviceRequest) -> None:
+        dropping.drop()
+
+    dropping.route(method, path, hang_up)
+    with ThreadPoolExecutor(1) as caller:
+        pending = caller.submit(call, connection_id)
+        assert dropping.wait_closed(20) is not None, "the device never hung up"
+        later = connect_device(owner, connection_id=connection_id, **serve.get("options", {}))
+        for (route_method, route_path), answer in serve["routes"].items():
+            later.route(route_method, route_path, answer)
+        return pending.result(timeout=40), later
+
+
+def test_a_read_cut_off_by_a_reconnect_is_repeated_on_the_new_connection_and_a_command_is_not(
+    make_user, connect_device
+):
+    owner = make_user()
+    tag = uuid.uuid4().hex[:8]
+    own_model = f"home-model-{tag}"
+    llm = {
+        "options": {
+            "services": ["home_llm"],
+            "connections": [own_connection("openai", "home_llm", "Home LLM")],
+        },
+        "routes": {("GET", "/models"): json_answer({"data": [{"id": own_model}]})},
+    }
+    terminal = {"routes": {("POST", "/execute"): json_answer({"output": "ran it again"})}}
+
+    def run(connection_id: str) -> httpx.Response:
+        with owner.client() as client:
+            client.timeout = 40
+            return client.post(
+                f"/api/v1/terminals/tether:{connection_id}/execute", json={"command": "make"}
+            )
+
+    listed, read_again = _cut_off_then_reconnect(
+        owner, connect_device, "GET", "/models", lambda _id: _listed_models(owner), llm
+    )
+    ran, run_again = _cut_off_then_reconnect(
+        owner, connect_device, "POST", "/execute", run, terminal
+    )
+
+    assert own_model in listed, (
+        f"a model list cut off by a reconnect lacks the device's model: {sorted(listed)}"
+    )
+    assert len(read_again.requests_to("/models")) >= 1, "the list was never read from the device"
+    assert ran.status_code == 502, f"{ran.status_code} {ran.text}"
+    assert _without_message(ran) == INTERRUPTED, ran.text
+    assert run_again.requests_to("/execute") == [], (
+        "a command cut off by a reconnect was run again on the new connection"
+    )
+
+
+def test_a_file_read_from_the_page_cut_off_by_a_reconnect_is_repeated(make_user, connect_device):
+    # Red on dev 485103cde: the page's calls reach the device with a streamed body even when they
+    # have none, so a read is never repeated (issue draft "a terminal read cut off by a Tether
+    # reconnect fails instead of being repeated").
+    owner = make_user()
+
+    def read(connection_id: str) -> httpx.Response:
+        with owner.client() as client:
+            client.timeout = 40
+            return client.get(f"/api/v1/terminals/tether:{connection_id}/files/cwd")
+
+    answered, read_again = _cut_off_then_reconnect(
+        owner,
+        connect_device,
+        "GET",
+        "/files/cwd",
+        read,
+        {"routes": {("GET", "/files/cwd"): json_answer(CWD)}},
+    )
+
+    assert (answered.status_code, answered.json()) == (200, CWD), (
+        f"a read cut off by a reconnect answered {answered.status_code} {answered.text}"
+    )
+    assert len(read_again.requests_to("/files/cwd")) == 1, "the read never reached the new device"
