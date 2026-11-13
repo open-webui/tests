@@ -100,8 +100,9 @@ commit's changes, its unpushed mark and Copy commit hash, the link to the reposi
 without credentials, Git unavailable with Retry, live updates followed and their loss shown, and
 the diff of an open changed file from its toolbar. The New tab menu and the panel offer only
 what the picked terminal says it has; a file opened again keeps its one tab, the arrow keys,
-Home and End step through the tabs and Alt+Shift+Arrow moves one, a phone opens the tabs from
-the Tabs button, and a person's own terminal is let go when they lose the permission to use one.
+Home and End step through the tabs and Alt+Shift+Arrow moves one and a phone opens the tabs from
+the Tabs button. A person's own terminal, let go when they lost the permission to use one, was
+removed from Open WebUI in 44d55bd0f and 4720ff19e, and its test with it.
 
 Discriminates for these, in frontend copies of the dev c15f28649 build: the split diff drawn
 unified or Hide whitespace hiding nothing fails the diff test; a branch search that narrows
@@ -117,8 +118,8 @@ live updates not mentioned, a change not followed or the notice kept after they 
 live updates test; a second tab for a file opened again, or its crumbs browsing inside the file
 tab, the file tab test; Alt+Shift+Arrow moving nothing or Home and End selecting nothing, the
 keyboard test; the Tabs button missing for a picked terminal or the drawer opening without the
-files, the phone test; a personal terminal kept picked without the permission, the permission
-test; a changed binary file read as unchanged or Show diff showing nothing, the toolbar diff test.
+files, the phone test; a changed binary file read as unchanged or Show diff showing nothing, the
+toolbar diff test.
 `test_a_tab_moved_with_the_keyboard_keeps_the_focus_for_the_next_move` is red on that build: the
 moved tab loses the keyboard focus, so the next Alt+Shift+Arrow does nothing.
 """
@@ -1767,76 +1768,6 @@ def test_on_a_phone_the_tabs_button_shows_once_a_terminal_is_picked_and_opens_it
     expect(drawer).to_have_count(0)
     expect(chat_input(page)).to_be_visible()
     expect(tabs_button).to_have_attribute("aria-expanded", "false")
-
-
-def _add_personal_terminal(person: Actor, server, name: str) -> None:
-    """The terminal as the person's Settings > Integrations stores it."""
-    terminal = {
-        "url": server.base_url,
-        "key": "",
-        "name": name,
-        "enabled": False,
-        "auth_type": "bearer",
-        "path": "/openapi.json",
-        "config": {"enable": True},
-    }
-    with person.client() as client:
-        saved = client.post(
-            "/api/v1/users/user/settings/update",
-            json={"ui": {"showChangelog": False, "terminalServers": [terminal]}},
-        )
-    assert saved.status_code == 200, saved.text
-
-
-def test_a_picked_terminal_of_the_persons_own_is_let_go_when_they_may_no_longer_use_one(
-    page_for, make_user, admin, preserve, direct_integrations, scripted_terminal
-):
-    preserve("permissions")
-    direct_integrations(True)
-    with admin.client() as client:
-        defaults = client.get("/api/v1/users/default/permissions").json()
-        defaults["features"]["direct_tool_servers"] = False
-        saved = client.post("/api/v1/users/default/permissions", json=defaults)
-    assert saved.status_code == 200, saved.text
-    person = make_user()
-    group_id = make_group(admin, [person], {"features": {"direct_tool_servers": True}})
-    scripted_terminal("Harbour", person, features={})
-    with serving_terminal() as laptop:
-        laptop.cors = True
-        laptop.route("GET", "/openapi.json", json_answer(SCRIPTED_SPEC))
-        laptop.route("GET", "/api/config", json_answer({"features": {"terminal": False}}))
-        laptop.route(
-            "GET", "/files/cwd", json_answer({"cwd": SCRIPTED_HOME, "home": SCRIPTED_HOME})
-        )
-        listed = [{"name": "laptop-notes.md", "type": "file", "size": 12}]
-        laptop.route(
-            "GET",
-            "/files/list",
-            json_answer({"dir": SCRIPTED_HOME, "entries": listed, "writable": True}),
-        )
-        _add_personal_terminal(person, laptop, "Laptop")
-        page = page_for(person)
-        pick_terminal(page, "Laptop")
-        files = page.get_by_role("region", name="File browser")
-        expect(files.get_by_text("laptop-notes.md", exact=True)).to_be_visible()
-        page.keyboard.press("Control+Backslash")
-        composer = page.get_by_role("main")
-        expect(composer.get_by_role("button", name="Laptop", exact=True)).to_be_visible()
-
-        with admin.client() as client:
-            removed = client.post(
-                f"/api/v1/groups/id/{group_id}/users/remove", json={"user_ids": [person.id]}
-            )
-        assert removed.status_code == 200, removed.text
-
-        # the pick is gone and with it the terminal's files; the admin's terminal is still offered
-        expect(composer.get_by_role("button", name="Laptop", exact=True)).to_have_count(0)
-        expect(files).to_have_count(0)
-        unpicked = composer.get_by_role("button", name="Terminal", exact=True)
-        expect(unpicked).to_be_visible()
-        unpicked.click()
-        expect(listed_terminal(page, "Harbour")).to_be_visible()
-        expect(listed_terminal(page, "Laptop")).to_have_count(0)
 
 
 def test_an_open_changed_file_shows_its_diff_from_the_toolbar_and_an_unchanged_one_has_none(

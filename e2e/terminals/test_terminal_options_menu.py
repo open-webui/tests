@@ -1,33 +1,33 @@
 """Journey: a terminal's More options in the chat input's Terminal menu, by the kind of terminal.
 
-New on dev after 0.13.3 (f4cf2ca0c, titled `refac`). Every terminal in the Terminal menu has a
-More options button. For a terminal the person only uses (a plain Open Terminal behind an admin
-connection, one of their own from Settings, a terminal on a Terminals connection that is only
-shared with them) it offers System info and View files. View files opens "Files on <name>", a
-file browser of that terminal. For a terminal the person manages (on a Terminals connection they
-may write to) the menu first reads the machine the open chat would use: without a running
-machine it offers Start and Terminal settings; with one it offers Restart and Stop, which ask
-first, System info, View files and Terminal settings. Each action says in a toast what it does
-and that it is done. When the machine's state cannot be read the menu offers what it offers for
-a machine that is not running. A terminal with a machine per chat has no machine before the chat
-is saved, so a new chat offers Terminal settings alone, and in a saved chat the entries are about
-that chat's machine. An open System info window closes when the person loses the terminal.
+New on dev after 0.13.3 (f4cf2ca0c, titled `refac`). Every terminal in the Terminal menu has a More
+options button. For a terminal the person only uses (a plain Open Terminal behind an admin
+connection, a terminal on a Terminals connection that is only shared with them) it offers System
+info and View files. View files opens "Files on <name>", a file browser of that terminal. For a
+terminal the person manages (on a Terminals connection they may write to) the menu first reads the
+machine the open chat would use: without a running machine it offers Start and Terminal settings;
+with one it offers Restart and Stop, which ask first, System info, View files and Terminal
+settings. Each action says in a toast what it does and that it is done. When the machine's state
+cannot be read the menu offers what it offers for a machine that is not running. A terminal with a
+machine per chat has no machine before the chat is saved, so a new chat offers Terminal settings
+alone, and in a saved chat the entries are about that chat's machine. An open System info window
+closes when the person loses the terminal.
 
-A local fake terminal stands for the plain and the personal terminal. The real Terminals service
+A local fake terminal stands for the plain terminal. The real Terminals service
 runs on Docker (`harness.terminals`); without its images or Docker those tests skip. What a
 person who may only use a terminal on a Terminals connection is offered is in
 test_terminal_settings_dialog.py, and a per chat terminal a reader cannot reach before the chat
-is saved in e2e/tools/test_terminal_system_info.py.
+is saved in e2e/tools/test_terminal_system_info.py. A person's own terminals from Settings were
+removed from Open WebUI in 44d55bd0f, and their test with them.
 
-Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7.
-On builds of a frontend copy with one change each: every terminal taken for one the person
-manages (the plain test: Restart, Stop and Terminal settings are offered); a personal terminal
-offering no View files, and the files window named after no terminal (the personal test);
-System info left open (the loses the terminal test); Stop not asking, Restart not asking, and
-Start reporting something else when done (the manager test); a state that cannot be read taken
-for running (the cannot be read test); a per chat terminal taken for reachable before the chat
-is saved, and the machine actions never naming the chat (the per chat test). The toasts of Stop
-and Restart, built as the one of Start is, have no mutation of their own.
+Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7. On
+builds of a frontend copy with one change each: every terminal taken for one the person manages
+(the plain test: Restart, Stop and Terminal settings are offered); System info left open (the loses
+the terminal test); Stop not asking, Restart not asking, and Start reporting something else when
+done (the manager test); a state that cannot be read taken for running (the cannot be read test); a
+per chat terminal taken for reachable before the chat is saved, and the machine actions never
+naming the chat (the per chat test). The toasts of Stop and Restart, built as the one of Start is,
+have no mutation of their own.
 """
 
 from __future__ import annotations
@@ -221,47 +221,6 @@ def test_a_plain_terminal_offers_its_system_info_and_files_and_nothing_to_manage
 
     _choose(page, name, "System info", offered=USES)
     expect(_system_info_dialog(page, name)).to_contain_text(fake_terminal.hostname)
-
-
-def test_a_personal_terminal_offers_its_system_info_and_files_read_by_the_browser(
-    page_for, make_user, fake_terminal, direct_integrations
-):
-    direct_integrations(True)
-    person = make_user(role="admin")
-    name = f"Laptop {uuid.uuid4().hex[:6]}"
-    terminal = {
-        "url": fake_terminal.base_url,
-        "key": "",
-        "name": name,
-        "enabled": False,
-        "auth_type": "bearer",
-        "path": "/openapi.json",
-        "config": {"enable": True},
-    }
-    with person.client() as client:
-        saved = client.post(
-            "/api/v1/users/user/settings/update",
-            json={"ui": {"showChangelog": False, "terminalServers": [terminal]}},
-        )
-    assert saved.status_code == 200, saved.text
-    page = page_for(person)
-
-    _choose(page, name, "System info", offered=USES)
-    info = _system_info_dialog(page, name)
-    expect(info).to_contain_text(fake_terminal.hostname)
-    _close(info)
-    asked = fake_terminal.requests_to("/system/info")
-    assert asked and all(request.headers.get("origin") for request in asked), (
-        "the personal terminal's system info was not read by the browser itself"
-    )
-
-    _choose(page, name, "View files", offered=USES)
-    browser = _files_dialog(page, name).get_by_role("region", name="File browser")
-    expect(browser.get_by_text("readme.md", exact=True)).to_be_visible()
-    listed = fake_terminal.requests_to("/files/list")
-    assert listed and all(request.headers.get("origin") for request in listed), (
-        "the personal terminal's files were not listed by the browser itself"
-    )
 
 
 def test_an_open_system_info_closes_when_the_person_loses_the_terminal(

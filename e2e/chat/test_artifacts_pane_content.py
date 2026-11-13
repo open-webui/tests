@@ -5,8 +5,10 @@ offers no full screen. HTML, CSS and JavaScript blocks of one reply make one pag
 the HTML and the script runs inside the page's own frame, which cannot reach the chat around it.
 Two HTML blocks in one reply are two versions, and a block's Preview button moves the pane to
 that block's version, also when the pane was closed first. The pane's Copy puts the whole page
-on the clipboard and Download saves it as an HTML file. Versions and full screen of HTML
-artifacts are covered in test_artifacts_versions.py.
+on the clipboard and Download saves it as an HTML file. The Content Security Policy the admin
+set for frames (`IFRAME_CSP`) goes into the page, so a policy without scripts stops its script
+although the frame allows scripts. Versions and full screen of HTML artifacts are covered in
+test_artifacts_versions.py.
 
 Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
 copy: SVG blocks no longer collected as artifacts, CSS and JavaScript blocks left out of the
@@ -22,6 +24,9 @@ tests in every way a side chat starts and every state it can be in. The page has
 pane, which shows the main chat's artifacts, so a side chat answer's blocks never reach it
 (open-webui/open-webui#34026; PR open-webui/open-webui#34064 leaves it as it is): the side chat
 variants are red on dev c15f28649 and on dev e791cbdde.
+
+The frame policy test moved here from the HTML preview of a terminal a person added themselves,
+which Open WebUI removed in 44d55bd0f; it shares the policy step of every framed page.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.actors import create_user
 from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import artifacts_pane, expect_reply, expect_split_screen, last_reply, send
 from utils.clipboard import read_text
@@ -53,6 +59,8 @@ PAGE_BLOCKS = (
     "  document.getElementById('note').textContent += ', chat out of reach';\n"
     "}\n```"
 )
+
+POLICY = "script-src 'none'"
 
 
 def fenced(lang: str, code: str) -> str:
@@ -107,6 +115,26 @@ def test_html_css_and_script_blocks_make_one_styled_page_that_cannot_reach_the_c
     expect(title).to_have_css("color", "rgb(0, 128, 0)")
     expect(artifact_page(page).locator("#note")).to_have_text("script ran, chat out of reach")
     assert page.title() != "changed by the artifact"
+
+
+@pytest.mark.slow
+def test_the_admins_frame_policy_is_put_into_the_page(page_for, instance_with):
+    guarded = instance_with({"IFRAME_CSP": POLICY})
+    page = page_for(create_user(guarded))
+    prompt = "build me a harbour page under the policy"
+    guarded.upstream.queue(
+        reply.text(f"{PAGE_BLOCKS}\n\nArtifact done.", match=reply.answering(prompt))
+    )
+
+    send(page, prompt)
+    expect_reply(page, "Artifact done.")
+
+    expect(artifact_page(page).locator("#title")).to_have_text("Harbour page")
+    policy = artifact_page(page).locator('meta[http-equiv="Content-Security-Policy"]')
+    expect(policy).to_have_attribute("content", POLICY)
+    artifacts_pane(page).locator("iframe").element_handle().content_frame().wait_for_load_state()
+    # the frame allows scripts by default; it is the admin's policy that stops this one
+    expect(artifact_page(page).locator("#note")).to_have_text("waiting")
 
 
 def test_preview_moves_the_pane_to_that_blocks_version(chat_for, make_user, upstream):

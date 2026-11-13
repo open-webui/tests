@@ -1,25 +1,21 @@
 """Journey: what the chat completion request accepts, the way the web client sends a message.
 
-The request names the chat to continue, the models to answer and the user's own tool servers, so
-the server decides what each part may do. Continuing another user's chat is refused and leaves
-that chat as it was, one message sent to two models stores a reply from each, and tool servers
-in the request reach the model only for an account with `features.direct_tool_servers`, and only
-while the admin's Direct Integrations switch is on.
+The request names the chat to continue and the models to answer, so the server decides what
+each part may do. Continuing another user's chat is refused and leaves that chat as it was, and
+one message sent to two models stores a reply from each. Tool servers and terminals the request
+names itself never reach the model, for a user or an admin: a person's own tool servers and
+terminals, which the browser sent with each message, were removed from Open WebUI in 4720ff19e.
 
 Discriminates: in a backend copy, dropping the ownership check on an existing chat in
-`chat_completion` fails the foreign-chat test (the stranger's message is stored in the chat),
-fanning out to the first model only fails the two-model test, and keeping `tool_servers` for
-every caller fails the barred tool server test.
+`chat_completion` fails the foreign-chat test (the stranger's message is stored in the chat), and
+fanning out to the first model only fails the two-model test. On dev 4720ff19e~1 with Direct
+Integrations on, the request's tool server and terminal reach the model and the tool server test
+fails for the admin; it passes on dev 4720ff19e.
 
 The regenerate test pins a fixed bug (PR open-webui/open-webui#32326, fix 99a9f60b9): Regenerate
 after adding a model resends the stored question with both models on it, and the server kept the
 old model list, so a reload laid the replies out as versions of one. It passes on dev 5032e834e
 and fails on a backend copy with 99a9f60b9 reverted (the question keeps one model).
-
-The Direct Integrations test pins a bug fixed by PR open-webui/open-webui#32996: turning the
-switch off only hid the Integrations tab, and the tool servers and terminals users had already
-saved kept reaching the model, for admins and permitted users alike. It fails on dev 2ea6bf436
-(both are offered with the switch off) and passes with the fix.
 """
 
 from __future__ import annotations
@@ -85,22 +81,6 @@ def second_model(admin, upstream) -> Iterator[str]:
     upstream.reset()
     with admin.client() as client:
         client.get("/api/models")
-
-
-@pytest.fixture
-def tool_server_group(admin) -> Iterator[str]:
-    with admin.client() as client:
-        created = client.post(
-            "/api/v1/groups/create",
-            json={
-                "name": f"tool servers {uuid.uuid4().hex[:8]}",
-                "description": "may bring their own tool servers",
-                "permissions": {"features": {"direct_tool_servers": True}},
-            },
-        )
-        assert created.status_code == 200, created.text
-        yield created.json()["id"]
-        client.delete(f"/api/v1/groups/id/{created.json()['id']}/delete")
 
 
 def test_continuing_another_users_chat_is_refused_and_changes_nothing(make_user, upstream):
@@ -203,50 +183,9 @@ def test_a_model_added_on_regenerate_is_stored_on_the_question(make_user, upstre
     assert question_message["content"] == question
 
 
-def test_tool_servers_in_the_request_are_dropped_without_the_permission(make_user, upstream):
-    account = make_user()
-
-    with account.client() as client:
-        ask(client, "what is the weather in Oslo?", tool_servers=[TOOL_SERVER])
-
-    assert "lookup_weather" not in _offered_tools(upstream), (
-        "an account without features.direct_tool_servers had its tool server offered to the model"
-    )
-
-
-def test_tool_servers_in_the_request_reach_the_model_with_the_permission(
-    admin, make_user, upstream, tool_server_group, direct_integrations
-):
-    direct_integrations(True)
-    account = make_user()
-    with admin.client() as client:
-        added = client.post(
-            f"/api/v1/groups/id/{tool_server_group}/users/add", json={"user_ids": [account.id]}
-        )
-    assert added.status_code == 200, added.text
-
-    with account.client() as client:
-        ask(
-            client,
-            "what is the weather in Oslo?",
-            tool_servers=[TOOL_SERVER, PERSONAL_TERMINAL],
-        )
-
-    assert {"lookup_weather", "run_personal_command"} <= _offered_tools(upstream)
-
-
-@pytest.mark.regression
 @pytest.mark.parametrize("role", ["user", "admin"])
-def test_tool_servers_in_the_request_are_dropped_while_direct_integrations_is_off(
-    admin, make_user, upstream, tool_server_group, direct_integrations, role
-):
-    direct_integrations(False)
+def test_tool_servers_and_terminals_in_the_request_never_reach_the_model(make_user, upstream, role):
     account = make_user(role=role)
-    with admin.client() as client:
-        added = client.post(
-            f"/api/v1/groups/id/{tool_server_group}/users/add", json={"user_ids": [account.id]}
-        )
-    assert added.status_code == 200, added.text
 
     with account.client() as client:
         ask(
@@ -257,5 +196,5 @@ def test_tool_servers_in_the_request_are_dropped_while_direct_integrations_is_of
 
     offered = _offered_tools(upstream)
     assert not {"lookup_weather", "run_personal_command"} & offered, (
-        f"the {role}'s tool server or terminal was offered with Direct Integrations off: {offered}"
+        f"the {role}'s request offered the model its own tool server or terminal: {offered}"
     )

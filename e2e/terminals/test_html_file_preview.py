@@ -1,23 +1,22 @@
 """Journey: an HTML page on a terminal opens as a rendered page inside a frame.
 
-Three kinds of terminal show it three ways. A terminal the admin connected: the frame loads the
+Two kinds of terminal show it two ways. A terminal the admin connected: the frame loads the
 page through Open WebUI, and in a saved chat the address names the chat. A terminal of a
 Terminals orchestrator: the page first asks for a link signed for this person, and the frame
 loads the page and the picture beside it from that link, which answers nobody once it is
-altered. A terminal a person added in their own settings: the page reads the file in the browser
-and puts it into the frame, under the Content Security Policy the admin set for frames
-(`IFRAME_CSP`). In each the frame is sandboxed by the person's Interface settings: a page's
-script runs unless they switched scripts off, and it reaches neither the app's storage nor,
-on a connected terminal, the files beside it unless they allowed the same origin (the docs:
-"same-origin requests back to Open WebUI fail"). Source shows the page's text, where an edit is
-saved and then shows in the preview.
+altered. In each the frame is sandboxed by the person's Interface settings: a page's script runs
+unless they switched scripts off, and it reaches neither the app's storage nor, on a connected
+terminal, the files beside it unless they allowed the same origin (the docs: "same-origin
+requests back to Open WebUI fail"). Source shows the page's text, where an edit is saved and then
+shows in the preview. A terminal a person added in their own settings, read by the browser, was
+removed from Open WebUI in 44d55bd0f and its tests with it.
 
 Discriminates: all pass on dev c15f28649 with Terminals 0.4.1 and Open Terminal 0.17.7. On one
 frontend build of it with these mutations each named test fails: a connected terminal's page put
 into the frame as text instead of loaded from Open WebUI, and the chat left out of its address
 (connected terminal); the frame's sandbox always allowing scripts and the same origin (frame
-settings); the signed link never asked for (orchestrator terminal); the admin's policy not put
-into a personal terminal's page (policy); Save missing from an HTML page's source (source).
+settings); the signed link never asked for (orchestrator terminal); Save missing from an HTML
+page's source (source).
 """
 
 from __future__ import annotations
@@ -32,14 +31,12 @@ from playwright.sync_api import Locator, expect
 
 from harness import sample_documents as samples
 from harness import upstream as reply
-from harness.actors import create_user
 from harness.backends import wait_until
-from harness.open_terminal import API_KEY
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import choose_terminal, open_files_tab
 from utils.chat_ui import expect_reply, send, split_screen
 from utils.file_browser import file_browser
-from utils.file_views import connect_for, enter, files_in, files_of, open_file
+from utils.file_views import connect_for, files_in, files_of, open_file
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -54,9 +51,6 @@ REPORT = (
     "</script></body></html>"
 )
 REWRITTEN = "<html><body><h1>Perry report</h1></body></html>"
-POLICY = "script-src 'none'"
-# a terminal a person adds themselves is switched off until they pick it
-OWN_TERMINAL = {"auth_type": "bearer", "path": "/openapi.json", "config": {"enable": True}}
 
 
 @pytest.fixture
@@ -200,67 +194,6 @@ def test_an_html_page_on_an_orchestrator_terminal_loads_from_a_link_signed_for_t
         f"the signed link answered {fetched.status_code} to a client without a session"
     )
     assert refused.status_code == 401, f"an altered link was answered with {refused.status_code}"
-
-
-def _files_of_an_own_terminal(page_for, owner, terminal, folder: str, **ui) -> Locator:
-    """The owner adds the terminal in their own settings, picks it and opens `folder` in Files."""
-    name = f"My laptop {uuid.uuid4().hex[:6]}"
-    own = {**OWN_TERMINAL, "url": terminal.base_url, "key": API_KEY, "name": name, "enabled": False}
-    _save_settings(owner, terminalServers=[own], **ui)
-    page = page_for(owner)
-    choose_terminal(page, name)
-    browser = open_files_tab(page)
-    enter(browser, folder)
-    return browser
-
-
-def test_an_html_page_on_a_terminal_of_ones_own_is_put_into_the_frame_by_the_page(
-    site, page_for, make_user, direct_integrations, open_terminal
-):
-    direct_integrations(True)
-    browser = _files_of_an_own_terminal(page_for, make_user(role="admin"), open_terminal, site.name)
-
-    open_file(browser, "report.html")
-
-    shown = _shown_page(browser)
-    expect(shown.get_by_role("heading", name="Cider report")).to_be_visible()
-    expect(shown.get_by_text("script ran, storage: refused")).to_be_visible()
-    # Open WebUI is not in between: the frame holds the text the browser read from the terminal
-    frame = browser.get_by_title("HTML Preview")
-    assert frame.get_attribute("src") is None, "the personal terminal's page was loaded by address"
-
-
-def test_a_page_on_a_terminal_of_ones_own_runs_no_script_once_scripts_are_switched_off(
-    site, page_for, make_user, direct_integrations, open_terminal
-):
-    direct_integrations(True)
-    browser = _files_of_an_own_terminal(
-        page_for, make_user(role="admin"), open_terminal, site.name, iframeSandboxAllowScripts=False
-    )
-
-    open_file(browser, "report.html")
-
-    shown = _shown_page(browser)
-    expect(shown.get_by_role("heading", name="Cider report")).to_be_visible()
-    expect(shown.get_by_text(re.compile("script ran"))).to_have_count(0)
-
-
-@pytest.mark.slow
-def test_the_admins_frame_policy_is_put_into_a_page_from_a_terminal_of_ones_own(
-    site, page_for, instance_with, open_terminal
-):
-    guarded = instance_with({"IFRAME_CSP": POLICY, "ENABLE_DIRECT_INTEGRATIONS": "true"})
-    owner = create_user(guarded, role="admin")
-    browser = _files_of_an_own_terminal(page_for, owner, open_terminal, site.name)
-
-    open_file(browser, "report.html")
-
-    shown = _shown_page(browser)
-    expect(shown.get_by_role("heading", name="Cider report")).to_be_visible()
-    # the sandbox allows scripts by default; it is the admin's policy that stops this one
-    expect(shown.get_by_text(re.compile("script ran"))).to_have_count(0)
-    policy = shown.locator('meta[http-equiv="Content-Security-Policy"]')
-    expect(policy).to_have_attribute("content", POLICY)
 
 
 def test_the_source_of_an_html_page_is_edited_saved_and_then_shown(

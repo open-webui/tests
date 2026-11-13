@@ -24,9 +24,9 @@
   token, which Anthropic rejects; they now carry `x-api-key` and `anthropic-version`. The check
   matches the host name anywhere in the connection URL, so a listener path of that name stands in.
 
-Twin of unit/models/test_model_registry.py, which keeps the sweep for model pool merges. Its
-per-connection listing tests (`16f118d77a`) are already pinned by
-integration/security/test_connection_listing_roles.py.
+Twin of unit/models/test_model_registry.py, deleted once the direct-connection merges of the model
+pool it swept went with direct connections (4720ff19e). Its per-connection listing tests
+(`16f118d77a`) are already pinned by integration/security/test_connection_listing_roles.py.
 
 Discriminates: passes on dev `bbfa876af`; each narrow test fails with its fix reverted (the alias
 removal, the sync update, the prefix strip, the passthrough timeout, the fallback ordering and the

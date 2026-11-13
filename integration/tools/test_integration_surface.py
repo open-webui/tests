@@ -189,16 +189,6 @@ def test_a_sub_action_of_an_offered_action_runs(make_user, action, model_offerin
     assert len(listener.requests_to("/ran")) == 1
 
 
-def test_an_action_on_a_direct_connection_model_runs(make_user, action, listener):
-    action_id = action()
-    direct_model = {"id": "direct-model", "direct": True, "actions": []}
-
-    response = _run_action(make_user(), action_id, "direct-model", model_item=direct_model)
-
-    assert response.status_code == 200, response.text
-    assert len(listener.requests_to("/ran")) == 1
-
-
 @pytest.mark.slow
 def test_actions_are_refused_while_plugins_are_off(instance_with):
     without_plugins = instance_with({"ENABLE_PLUGINS": "false"})

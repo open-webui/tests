@@ -1,33 +1,32 @@
 """Journey: the chat input's Terminal menu lists a person's terminals and keeps the chat's pick.
 
 Rebuilt on dev after 0.13.3 (3d98e86e2, f4cf2ca0c, c647f3f42, 41179ba85, titled `refac`). The
-menu lists the terminals of the admin's connections under Terminals and, for a person who may
-use Direct Integrations, the terminals from their own settings under Direct. The + beside
-Direct opens the person's Settings on Integrations; the cog beside Terminals, for admins only,
-opens the admin's Integrations settings. The picked terminal carries a check and names the menu's
-button; picking it again unpicks it, and picking another terminal unpicks the first.
+menu lists the terminals of the admin's connections under Terminals; the cog beside
+Terminals, for admins only, opens the admin's Integrations settings. The picked terminal carries
+a check and names the menu's button; picking it again unpicks it, and picking another terminal
+unpicks the first.
 In a saved chat the pick is stored on the chat and is back when the chat is opened again. Since
 d42988f0c a pick shows at once and is saved in the background, so one the server refuses stays
 picked on the page, says why and is not stored: the chat opens again without it (before, a
-refused pick was not made). A picked terminal that is deleted reads
-Unavailable terminal for a person with Direct Integrations and is unpicked for everyone else.
+refused pick was not made). A picked terminal that is deleted is unpicked at once for a
+person it was shared with, and reads Unavailable terminal on an admin's page after a reload.
 The menu moves into the chat input's More menu when the input is too narrow for it.
 
-A local fake terminal stands for the admin's connection and for the personal terminal; the
-deleted terminal is one on the real Terminals service on Docker (`harness.terminals`), and its
-test skips without the images or Docker. New terminal, the third header entry, is in
+A local fake terminal stands for the admin's connection; the deleted terminal is one on the
+real Terminals service on Docker (`harness.terminals`), and its test skips without the images or
+Docker. New terminal, the third header entry, is in
 test_new_terminal_dialog.py and test_terminal_settings_dialog.py (only for a person who may
 create terminals), and the menu missing before the first terminal exists is the finding
 `open-webui-no-terminal-menu-before-the-first-terminal`.
 
 Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open Terminal 0.17.7.
-On builds of a frontend copy with one change each: the Settings cog shown to everyone, personal
-terminals listed without the permission, and Add Terminal opening the General settings (the
-listed apart test); no terminal carrying the check, the picked terminal kept when it is picked
-again (the picked test); the pick not stored on a saved chat, a saved chat opened without its
-terminal, and a refused pick that says nothing (the saved chat test); a lost terminal reading Terminal, and one that stays picked for everyone (the
-deleted test); the controls never moved into the More menu (the narrow test). The cog's target
-has no mutation of its own.
+On builds of a frontend copy with one change each: the Settings cog shown to everyone (the
+cog test); no terminal carrying the check, the picked terminal kept when it is picked again (the
+picked test); the pick not stored on a saved chat, a saved chat opened without its terminal, and
+a refused pick that says nothing (the saved chat test); a lost terminal reading Terminal, and one
+that stays picked for everyone (the deleted test); the controls never moved into the More menu
+(the narrow test). The cog's target has no mutation of its own. A person's own terminals, listed
+under Direct, were removed from Open WebUI in 44d55bd0f and 4720ff19e and their test with them.
 """
 
 from __future__ import annotations
@@ -89,14 +88,6 @@ def fake_terminal():
 
 
 @pytest.fixture
-def personal_terminal():
-    """A terminal the browser reaches itself; the model's tool on it is `run_on_laptop`."""
-    with serving_terminal() as server:
-        _serve(server, "run_on_laptop")
-        yield server
-
-
-@pytest.fixture
 def connect(admin, preserve, fake_terminal):
     """`connect(names, *people)`: the admin connects the fake terminal once per name, for those
     people to use; returns the connections."""
@@ -114,28 +105,9 @@ def connect(admin, preserve, fake_terminal):
     return save
 
 
-def _add_personal_terminal(person, server, name: str) -> None:
-    """The terminal as the person's Settings > Integrations stores it."""
-    terminal = {
-        "url": server.base_url,
-        "key": "",
-        "name": name,
-        "enabled": False,
-        "auth_type": "bearer",
-        "path": "/openapi.json",
-        "config": {"enable": True},
-    }
-    with person.client() as client:
-        saved = client.post(
-            "/api/v1/users/user/settings/update",
-            json={"ui": {"showChangelog": False, "terminalServers": [terminal]}},
-        )
-    assert saved.status_code == 200, saved.text
-
-
-def _names() -> tuple[str, str, str]:
+def _names() -> tuple[str, str]:
     tag = uuid.uuid4().hex[:6]
-    return f"Harbour {tag}", f"Quarry {tag}", f"Laptop {tag}"
+    return f"Harbour {tag}", f"Quarry {tag}"
 
 
 def _menu_lines(menu: Locator) -> list[str]:
@@ -172,10 +144,10 @@ def _pick(page: Page, name: str, shown: str) -> None:
 
 
 def _terminal_tools_sent_for(upstream, prompt: str) -> set[str]:
-    """Which of the two terminals' tools the model was offered with `prompt`."""
+    """Whether the terminal's tool was offered to the model with `prompt`."""
     asked = [request for request in chat_requests(upstream) if reply.answering(prompt)(request)]
     assert asked, f"the provider never got {prompt!r}"
-    return offered_tools(asked[-1]) & {"run_on_server", "run_on_laptop"}
+    return offered_tools(asked[-1]) & {"run_on_server"}
 
 
 def _saved_chat(person, title: str) -> str:
@@ -194,51 +166,36 @@ def _stored_terminal(person, chat_id: str) -> str | None:
     return stored.json()["chat"].get("terminal_id")
 
 
-def test_terminals_and_personal_terminals_are_listed_apart_and_each_heading_opens_its_settings(
-    page_for, make_user, connect, personal_terminal, direct_integrations
+def test_the_terminals_heading_offers_admins_alone_a_cog_to_their_integrations_settings(
+    page_for, make_user, connect
 ):
-    direct_integrations(True)
     owner, person = make_user(role="admin"), make_user()
-    shared, _, laptop = _names()
+    shared, _ = _names()
     connect([shared], person)
-    for account in (owner, person):
-        _add_personal_terminal(account, personal_terminal, laptop)
     page = page_for(owner)
 
     menu = open_terminal_menu(page)
-    assert [line.lower() for line in _menu_lines(menu)] == [
-        "direct",
-        laptop.lower(),
-        "terminals",
-        shared.lower(),
-    ], f"the admin's Terminal menu reads {_menu_lines(menu)}"
-
-    tooltip_button(menu, "Add Terminal", role="menuitem").click()
-    settings = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="Integrations"))
-    expect(_settings_tab(settings, "Personal")).to_have_attribute("aria-selected", "true")
-    expect(settings.get_by_text(laptop)).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(settings).to_be_hidden()
-
-    menu = open_terminal_menu(page)
+    assert [line.lower() for line in _menu_lines(menu)] == ["terminals", shared.lower()], (
+        f"the admin's Terminal menu reads {_menu_lines(menu)}"
+    )
     tooltip_button(menu, "Settings", role="menuitem").click()
+    settings = page.get_by_role("dialog").filter(has=page.get_by_role("tab", name="Integrations"))
     expect(_settings_tab(settings, "Admin")).to_have_attribute("aria-selected", "true")
     expect(settings.get_by_text(shared)).to_be_visible()
 
-    # without the Direct Tool Servers permission a person's own terminals are not listed
     person_page = page_for(person)
     menu = open_terminal_menu(person_page)
     assert [line.lower() for line in _menu_lines(menu)] == ["terminals", shared.lower()], (
         f"a regular person's Terminal menu reads {_menu_lines(menu)}"
     )
-    expect(menu.get_by_role("menuitem")).to_have_text([""])
+    expect(menu.get_by_role("menuitem", name="Settings")).to_have_count(0)
 
 
 def test_the_picked_terminal_is_checked_and_named_and_picking_it_again_unpicks_it(
     page_for, make_user, connect, upstream
 ):
     person = make_user(role="admin")
-    harbour, quarry, _ = _names()
+    harbour, quarry = _names()
     connect([harbour, quarry])
     page = page_for(person)
     tag = uuid.uuid4().hex[:6]
@@ -278,7 +235,7 @@ def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not
     page_for, make_user, connect
 ):
     person = make_user()
-    harbour, quarry, _ = _names()
+    harbour, quarry = _names()
     connections = connect([harbour, quarry], person)
     tag = uuid.uuid4().hex[:6]
     kept, other = _saved_chat(person, f"kept {tag}"), _saved_chat(person, f"other {tag}")
@@ -330,9 +287,8 @@ def test_a_pick_in_a_saved_chat_is_stored_with_the_chat_and_a_refused_one_is_not
 
 
 def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_another_is_picked(
-    page_for, make_user, admin, connect_terminals, direct_integrations
+    page_for, make_user, admin, connect_terminals
 ):
-    direct_integrations(True)
     owner, person = make_user(role="admin"), make_user()
     tag = uuid.uuid4().hex[:6]
     deleted, left = f"Harbour {tag}", f"Quarry {tag}"
@@ -352,7 +308,7 @@ def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_anot
         gone = client.delete(f"{TEMPLATES}/{ids[deleted]}")
     assert gone.status_code in (200, 204), gone.text
 
-    # for a person without Direct Integrations the pick is dropped with the terminal
+    # for the person it was shared with the pick is dropped with the terminal
     expect(_terminal_button(person_page, "Terminal")).to_be_visible()
     expect(_terminal_button(person_page, deleted)).to_have_count(0)
     # only the people the terminal is shared with are told at once; an admin's page keeps
@@ -369,7 +325,7 @@ def test_a_chat_input_too_narrow_for_the_terminal_offers_it_in_its_more_menu(
     page_for, make_user, connect
 ):
     person = make_user()
-    harbour, quarry, _ = _names()
+    harbour, quarry = _names()
     connect([harbour, quarry], person)
     page = page_for(person)
     choose_terminal(page, harbour)
@@ -425,7 +381,7 @@ def test_a_pick_in_a_saved_chat_is_stored_with_it_and_back_after_a_reload(
     chat_for, make_user, connect
 ):
     person = make_user()
-    harbour, _, _ = _names()
+    harbour, _ = _names()
     connections = connect([harbour], person)
     chat_id = _saved_chat(person, f"kept {uuid.uuid4().hex[:6]}")
     chat = chat_for(person, chat_id=chat_id)
@@ -446,7 +402,7 @@ def test_a_terminal_picked_before_the_first_message_is_saved_with_the_new_chat(
     chat_for, make_user, connect, upstream
 ):
     person = make_user()
-    harbour, _, _ = _names()
+    harbour, _ = _names()
     connections = connect([harbour], person)
     chat = chat_for(person)
 

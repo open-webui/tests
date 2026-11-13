@@ -27,20 +27,18 @@ title test passes with the fix for #33970 on dev 553b18a34 and fails on dev 553b
 keeps "New Chat": the agent run skips the post-reply title task).
 
 The rules around a turn: a model id that names no agent model is refused ("Invalid agent model");
-an agent does not run in a temporary chat or for a regenerated reply; model details the client
-sends with an agent model are ignored, so a request cannot claim a direct connection for it; a
-picture sent to an agent that takes none ends the reply with the reason; a request of the agent
-takes one answer, of its own kind. The agent's session belongs to the reply it was stored on: a
-message sent from an earlier reply resumes that reply's session, and a cloned chat starts a
-session of its own that is given the conversation so far. Opening an agent chat whose stored
-chat names no model, terminal or folder fills them in from the session.
+an agent does not run in a temporary chat or for a regenerated reply; a picture sent to an agent
+that takes none ends the reply with the reason; a request of the agent takes one answer, of its own
+kind. The agent's session belongs to the reply it was stored on: a message sent from an earlier
+reply resumes that reply's session, and a cloned chat starts a session of its own that is given the
+conversation so far. Opening an agent chat whose stored chat names no model, terminal or folder
+fills them in from the session.
 Discriminates (these tests): pass on dev c15f28649; each fails alone under its mutation in a
 backend copy: the id shape check dropped; the saved-chat check dropped; the regeneration check
-dropped; the client's model details kept; the ACP image check dropped; the kind check and the
-pending check of an agent request dropped (the once-and-in-kind test, the kind check also the
-question card test); the chat's most recent session resumed wherever the message is sent from
-(the earlier-reply test); a session token of another chat accepted (the clone test); the
-selections not filled on open (the opening test).
+dropped; the ACP image check dropped; the kind check and the pending check of an agent request
+dropped (the once-and-in-kind test, the kind check also the question card test); the chat's most
+recent session resumed wherever the message is sent from (the earlier-reply test); a session token
+of another chat accepted (the clone test); the selections not filled on open (the opening test).
 
 Until dev 1782e9bc5 the server refused a message sent from an earlier point of an agent
 conversation ("Agent history cannot be branched in place"). That commit reads the agent's
@@ -67,7 +65,6 @@ from harness.coding_agent import (
     connect_agent_terminal,
     model_id,
 )
-from harness.direct_connection import direct_model
 from harness.fake_acp_agent import REFUSAL
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
@@ -695,20 +692,6 @@ def test_regenerating_an_agent_reply_over_the_api_is_refused(make_user, connect,
         params for params in agent_terminal.received("session/prompt") if prompt in str(params)
     ]
     assert len(heard) == 1, f"the agent was asked again for the regenerated reply: {heard}"
-
-
-def test_model_details_the_client_sends_are_ignored_for_an_agent_model(make_user, connect):
-    person = make_user()
-    terminal = connect(person)
-    agent = model_id(terminal["id"])
-
-    with person.client() as client:
-        turn = ask_agent(client, terminal["id"], "who answers?", model_item=direct_model(agent))
-        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
-
-    assert reply.get("content", "").startswith("Agent heard: who answers? ["), (
-        f"the agent did not answer a request that claimed a direct connection: {reply}"
-    )
 
 
 def test_a_message_sent_from_an_earlier_reply_resumes_that_replys_agent_session(

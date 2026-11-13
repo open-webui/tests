@@ -15,15 +15,15 @@ two with it off. Each delivery runs on both pairs: an account acts on one instan
 its tabs, or the tabs of the people it shares with, listen on the other (and on the same one), and
 the tabs get the same events in both modes, while a tab that should get nothing gets nothing. That
 covers a chat's live stream and a tool's events, a tool's question to the user's tab and its
-answer, a direct connection answered by the browser, a pushed message event, a read receipt, an
-admin change that drops the account's socket, a tab closing and coming back, a second tab closing
-and a dozen accounts streaming at once; a channel's messages, edits, reactions, thread replies,
-deletions and typing, a direct message, a member removed, a reader's grant revoked, a deleted
-channel and a model answering in a channel; a note's live edits, cursors, joins and leaves, its
-edits followed through `note:join` and a collaborator removed; a model shown as in use; and a
-Redis that drops every subscription or restarts. A test client subscribed to every Redis channel
-records which channel carried a chat's events. That an instance with nobody in the room skips the
-message is only visible as CPU and is not pinned.
+answer, a pushed message event, a read receipt, an admin change that drops the account's socket, a
+tab closing and coming back, a second tab closing and a dozen accounts streaming at once; a
+channel's messages, edits, reactions, thread replies, deletions and typing, a direct message, a
+member removed, a reader's grant revoked, a deleted channel and a model answering in a channel; a
+note's live edits, cursors, joins and leaves, its edits followed through `note:join` and a
+collaborator removed; a model shown as in use; and a Redis that drops every subscription or
+restarts. A test client subscribed to every Redis channel records which channel carried a chat's
+events. That an instance with nobody in the room skips the message is only visible as CPU and is
+not pinned.
 
 An instance whose Redis account is limited to some pub/sub channels is heard and reaches the others
 when the account has the channels its mode needs: `socketio` and `open-webui:*` with the switch off,
@@ -32,26 +32,24 @@ open-webui/open-webui#31617, which kept the old channels working with the switch
 unmerged). With only the old channels and the switch on, Redis refuses the pattern subscription and
 every publish on a room channel (NOPERM) and the instance logs which channels to allow.
 
-Also red on dev b859124f9, in some of its four cases per run: the direct connection answered by the
-browser (open-webui/open-webui#31953, fixed by a1bb3b392). Since 24e30d1cb the socket router checks
-the tab's session token again for every event the tab sends, so the reply's pieces can overtake each
-other while those checks run and the stored reply comes back scrambled or empty. The same change
-leaves the events of a tab opened after a Redis restart unanswered on an instance with the switch
-off, which turns the last Redis loss case red on a Postgres and Redis run. Both pass on dev
-015dbc861 and on b859124f9 with that check taken back out of the router.
+Also red on dev b859124f9 (open-webui/open-webui#31953, fixed by a1bb3b392): since 24e30d1cb the
+socket router checked the tab's session token again for every event the tab sends, which left the
+events of a tab opened after a Redis restart unanswered on an instance with the switch off and
+turned the last Redis loss case red on a Postgres and Redis run. It passes on dev 015dbc861 and on
+b859124f9 with that check taken back out of the router. The direct connection answered by the
+browser went with the feature, which Open WebUI removed in 4720ff19e.
 
-Discriminates: passes on dev 176d31d1d apart from that finding (red with the switch on only). In a
-backend copy: the room listener dropping room channel messages turns every switched-on case that
-crosses instances red and leaves every switched-off one green; the stock manager deaf to other
-instances does the reverse; a remote emit handed to every tab of the instance turns the "gets
-nothing" assertions red in the mode of the manager it was put in only; the room manager ignoring
-the shared channel turns the switched-on event call, dropped socket and subscription drop cases
-red; the room channels not subscribed again on a reconnect turns both Redis loss cases red when on;
-a room's channel forgotten when one of several local members leaves turns the remaining tab, the
-removed member, the revoked reader and the removed collaborator cases red when on; the switch
-ignored (the room manager always) turns the shared channel and the mixed fleet cases red;
-skipping `close_room` turns the deleted channel case red and usage not recorded the in-use case,
-in both modes.
+Discriminates: passes on dev 176d31d1d. In a backend copy: the room listener dropping room channel
+messages turns every switched-on case that crosses instances red and leaves every switched-off one
+green; the stock manager deaf to other instances does the reverse; a remote emit handed to every
+tab of the instance turns the "gets nothing" assertions red in the mode of the manager it was put
+in only; the room manager ignoring the shared channel turns the switched-on event call, dropped
+socket and subscription drop cases red; the room channels not subscribed again on a reconnect turns
+both Redis loss cases red when on; a room's channel forgotten when one of several local members
+leaves turns the remaining tab, the removed member, the revoked reader and the removed collaborator
+cases red when on; the switch ignored (the room manager always) turns the shared channel and the
+mixed fleet cases red; skipping `close_room` turns the deleted channel case red and usage not
+recorded the in-use case, in both modes.
 """
 
 from __future__ import annotations
@@ -74,7 +72,6 @@ from harness.actors import Actor, admin_of, create_user
 from harness.channel_chat import ADMIN_CONFIG, model_reply
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask, send_message, wait_for_reply
-from harness.direct_connection import answering, chunk_line, direct_model
 from harness.instance import LaunchedInstance
 from harness.python_tools import python_tool
 from harness.socket_client import SocketSession, connected, note_text, on_live
@@ -423,28 +420,6 @@ def test_a_tools_events_reach_the_accounts_tabs_on_every_instance(fleet, provide
     [citation] = _of_type(far_events, "citation")
     assert citation["data"]["source"] == {"name": "Atlas"}
     assert far_events == near_events, "the tab on the other instance saw different events"
-
-
-@pytest.mark.parametrize("mode", MODES)
-@pytest.mark.parametrize("tab_on", ["same instance", "other instance"])
-def test_a_direct_connection_is_answered_by_the_users_tab(fleet, mode, tab_on):
-    near, far = pair(fleet, mode)
-    account = create_user(near)
-    listening_on = far if tab_on == "other instance" else near
-    model = "my-own-model"
-    with answering(signed_in_on(account, listening_on)) as tab, account.client() as client:
-        tab.stream(chunk_line({"content": "from "}), chunk_line({"content": "my browser"}))
-        turn = send_message(
-            client,
-            "hello",
-            model=model,
-            model_item=direct_model(model),
-            session_id=tab.session_id,
-        )
-        message = wait_for_reply(client, turn)
-
-    assert len(tab.requests) == 1, "the tab was not asked to run the completion"
-    assert message["content"] == "from my browser", f"reply scrambled (#31953): {message}"
 
 
 def _stored_chat(owner: Actor) -> tuple[str, str]:
@@ -1260,13 +1235,13 @@ def _subscriptions(url: str) -> list[tuple[int, int]]:
         client.close()
 
 
-# What an instance listens on once settled: the socket manager, the event listener and the task
-# command listener each on a channel, and with room channels on the manager also on the channels
+# What an instance listens on once settled: the socket manager and the task command listener
+# each on a channel, and with room channels on the manager also on the channels
 # of the rooms its tabs are in (one per room since 362b01d0b, a pattern before).
 # Right after a loss the counts pass through other values while each listener reconnects (an old
 # connection still open next to its new one, or one not back yet), so they are only compared once
 # settled, never against a count read while an earlier loss was still being reconnected from.
-SETTLED = {"on-a": (3, 1), "on-b": (3, 1), "off-a": (3, 0), "off-b": (3, 0)}
+SETTLED = {"on-a": (2, 1), "on-b": (2, 1), "off-a": (2, 0), "off-b": (2, 0)}
 
 
 def _pair_listens(url: str, fleet: dict, mode: str) -> bool:

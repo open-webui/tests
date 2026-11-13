@@ -8,17 +8,15 @@ provider is sent on the next turn of the same chat. Tool call arguments are comp
 server re-encodes them with its own codec, compact under orjson (the default since #31616). The
 pieces arrive from an Ollama connection (text, thinking and a tool call in lines), a Responses API
 connection (its own events are reduced elsewhere, so only the deltas coalesced into fewer socket
-events reach the append), a direct connection served by the user's own tab, and tool calls whose
-arguments are split across deltas for a workspace Python tool, an OpenAPI tool server, an MCP
-server and a knowledge tool whose result carries a source (since 8e2ba2937, in 0.13.1, its
-source markers follow the result in the tool message instead of going into the prompt). An
-Anthropic connection has no path of its own here: the messages endpoint only converts the
-handler's stream on the way out.
+events reach the append), and tool calls whose arguments are split across deltas for a workspace
+Python tool, an OpenAPI tool server, an MCP server and a knowledge tool whose result carries a
+source (since 8e2ba2937, in 0.13.1, its source markers follow the result in the tool message
+instead of going into the prompt). An Anthropic connection has no path of its own here: the
+messages endpoint only converts the handler's stream on the way out.
 
-The direct connection test pins open-webui/open-webui#31953: since 24e30d1cb the socket router
-checks the tab's session token again for every event the tab sends, and the reply's pieces
-overtook each other while those checks ran, so the stored reply came back scrambled or empty. It
-passes on dev b5a20423e and is red in three runs of three with fix a1bb3b392 (#31979) reverted.
+A direct connection served by the user's own tab (open-webui/open-webui#31953) went with the
+feature, which Open WebUI removed in 4720ff19e; the OpenAI-shaped pieces it streamed are joined in
+test_stream_inplace_append.py.
 
 `test_an_mcp_tool_gets_the_text_streamed_in_pieces` is red on dev 1c010b438: a tool written with the
 official MCP SDK that returns plain text also sends it as structured data, and the model gets the
@@ -41,7 +39,6 @@ from harness import responses_provider as responses_api
 from harness import upstream
 from harness.actors import admin_of
 from harness.chat import send_message, wait_for_reply
-from harness.direct_connection import answering, chunk_line, direct_model
 from harness.listener import json_answer
 from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.ollama_provider import OLLAMA_CONFIG, chat_stream, connect_ollama, serve_ollama
@@ -345,75 +342,6 @@ def test_responses_function_call_arguments_are_coalesced_for_a_python_tool(respo
         },
     ]
     assert responses_api.conversation(provider.sent()[2])[-1]["content"][0]["text"] == "again"
-
-
-# --- direct connection: the user's own tab streams the provider's lines ------------------
-
-
-def test_a_direct_connections_streamed_pieces_are_joined(streaming):
-    admin = admin_of(streaming)
-    function = {"name": "get_current_timestamp", "arguments": ""}
-    clock = {"index": 0, "id": "call_1", "type": "function", "function": function}
-    with answering(admin) as tab, admin.client() as client:
-        tab.stream(
-            chunk_line({"reasoning_content": "check "}),
-            chunk_line({"reasoning_content": "clock"}),
-            chunk_line({"tool_calls": [clock]}),
-            chunk_line({"tool_calls": [{"index": 0, "function": {"arguments": "{"}}]}),
-            chunk_line({"tool_calls": [{"index": 0, "function": {"arguments": "}"}}]}),
-            chunk_line({}, "tool_calls"),
-        )
-        tab.stream(
-            chunk_line({"content": "It is "}),
-            chunk_line({"content": "late."}),
-            chunk_line({}, "stop"),
-        )
-        tab.stream(chunk_line({"content": "fine"}), chunk_line({}, "stop"))
-        replies, deltas = converse(
-            tab.session,
-            client,
-            "my-own-model",
-            ["what time is it?", "again"],
-            model_item=direct_model("my-own-model"),
-            session_id=tab.session_id,
-        )
-
-    [_, _, result_item, _] = without_hidden_calls(replies[0]["output"])
-    result = result_item["output"][0]["text"]
-    assert json.loads(result)["current_timestamp"] > 0
-    assert replies[0]["content"] == "It is late.", "the streamed reply came back scrambled (#31953)"
-    assert shape(replies[0])[:2] == [
-        ("reasoning", "check clock"),
-        ("function_call", "get_current_timestamp", {}),
-    ]
-    assert shape(replies[0])[3] == ("message", "It is late.")
-    assert deltas == [
-        ("response.reasoning_text.delta", "check "),
-        ("response.reasoning_text.delta", "clock"),
-        ("response.function_call_arguments.delta", ""),
-        ("response.function_call_arguments.delta", "{"),
-        ("response.function_call_arguments.delta", "}"),
-        ("response.output_text.delta", "It is "),
-        ("response.output_text.delta", "late."),
-    ]
-    asked = [upstream.conversation(request["form_data"]) for request in tab.requests]
-    called = {"name": "get_current_timestamp", "arguments": "{}"}
-    tool_round = [
-        {"role": "user", "content": "what time is it?"},
-        {
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [{"id": "call_1", "type": "function", "function": called}],
-        },
-        {"role": "tool", "tool_call_id": "call_1", "content": result},
-    ]
-    assert asked[0] == tool_round[:1]
-    assert asked[1] == tool_round
-    assert asked[2] == [
-        *tool_round,
-        {"role": "assistant", "content": "It is late."},
-        {"role": "user", "content": "again"},
-    ]
 
 
 # --- tool sources: calls whose arguments arrive split across deltas ----------------------

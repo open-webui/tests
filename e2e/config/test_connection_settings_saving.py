@@ -1,8 +1,5 @@
-"""Connection settings that were saved wrong: a deleted direct connection, the Add Connection form.
+"""Admin connection settings that were saved wrong: the Add Connection form.
 
-* open-webui/open-webui#31383, fix `0864f8b2d` (PR open-webui/open-webui#31384): deleting one
-  of your own direct connections in Settings only changed the list on screen; nothing was saved
-  unless you also pressed Save, so the connection came back on the next reload.
 * open-webui/open-webui#30957, fix `301aa8c5b` (PR open-webui/open-webui#30958): after a
   connection was added, the Add Connection form cleared its URL, key and a few fields but kept
   the headers, the enabled switch, the connection and API types, the provider and the API
@@ -11,121 +8,32 @@
   connection dialog refused headers that are not a JSON object, its Save button stayed disabled
   with a spinner until the page was reloaded, so the corrected headers could not be saved.
 
-Discriminates: passes on the efe63bd34 build (the headers test on dev a5bc78300); with `0864f8b2d`
-reverted the delete test fails (the connection is still saved), with `301aa8c5b` reverted both add
-tests fail (the second connection carries the first one's headers, provider and API type, or its
-disabled switch), with `e924fa7b5` reverted the headers test fails (Save stays disabled after the
-error).
+Discriminates: passes on the efe63bd34 build (the headers test on dev a5bc78300); with `301aa8c5b`
+reverted the add test fails (the second connection carries the first one's headers, provider and
+API type), with `e924fa7b5` reverted the headers test fails (Save stays disabled after the error).
+
+The tests of a person's own direct connections (#31383 and the switched-off half of #30957) went
+with the feature, which Open WebUI removed in 4720ff19e.
 """
 
 from __future__ import annotations
 
-import time
-
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness.second_provider import OPENAI_CONFIG
-from utils.personal_connections import add_connection_form, open_personal_connections
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-CONNECTIONS_CONFIG = ("/api/v1/configs/connections", "/api/v1/configs/connections")
 # refused at once, so the model lists the app fetches after a save fail fast
 FIRST_URL, SECOND_URL = "http://127.0.0.1:9/first", "http://127.0.0.1:9/second"
 
 
-@pytest.fixture
-def direct_connections_on(admin, preserve) -> None:
-    preserve(CONNECTIONS_CONFIG)
-    with admin.client() as client:
-        current = client.get(CONNECTIONS_CONFIG[0]).json()
-        enabled = {**current, "ENABLE_DIRECT_CONNECTIONS": True}
-        client.post(CONNECTIONS_CONFIG[1], json=enabled).raise_for_status()
-
-
-def is_settings_save(response) -> bool:
-    return "/user/settings/update" in response.url
-
-
-def saved_direct_connections(account) -> dict:
-    with account.client() as client:
-        settings = client.get("/api/v1/users/user/settings")
-    settings.raise_for_status()
-    return settings.json()["ui"]["directConnections"]
-
-
-def saved_urls_settle_on(account, expected: list[str]) -> list[str]:
-    """The saved connection URLs, once they read `expected` or after five seconds."""
-    deadline = time.monotonic() + 5
-    while True:
-        urls = saved_direct_connections(account)["OPENAI_API_BASE_URLS"]
-        if urls == expected or time.monotonic() > deadline:
-            return urls
-        time.sleep(0.2)
-
-
-# --------------------------------------------------------------------------- delete
-
-
-def test_deleting_a_direct_connection_is_saved_at_once(page_for, make_user, direct_connections_on):
-    account = make_user()
-    connections = {
-        "OPENAI_API_BASE_URLS": [FIRST_URL, SECOND_URL],
-        "OPENAI_API_KEYS": ["", ""],
-        "OPENAI_API_CONFIGS": {"0": {"enable": True}, "1": {"enable": True}},
-    }
-    with account.client() as client:
-        client.post(
-            "/api/v1/users/user/settings/update", json={"ui": {"directConnections": connections}}
-        ).raise_for_status()
-    page = page_for(account)
-    tab = open_personal_connections(page)
-
-    tab.get_by_role("button", name="Open modal to configure connection").nth(1).click()
-    editing = page.get_by_role("dialog").filter(
-        has=page.get_by_role("heading", name="Edit Connection")
-    )
-    editing.get_by_role("button", name="Delete").click()
-    page.get_by_role("dialog").get_by_role("button", name="Delete").last.click()
-    expect(tab.get_by_placeholder("API Base URL")).to_have_count(1)
-
-    assert saved_urls_settle_on(account, [FIRST_URL]) == [FIRST_URL], "the deletion was not saved"
-    page.reload()
-    tab = open_personal_connections(page)
-    expect(tab.get_by_placeholder("API Base URL")).to_have_count(1)
-    expect(tab.get_by_placeholder("API Base URL")).to_have_value(FIRST_URL)
-
-
-# --------------------------------------------------------------------------- add form
-
-
-def test_the_next_direct_connection_does_not_inherit_a_switched_off_one(
-    page_for, make_user, direct_connections_on
-):
-    account = make_user()
-    page = page_for(account)
-    tab = open_personal_connections(page)
-
-    tab.get_by_role("button", name="Add Connection").click()
-    form = add_connection_form(page)
-    form.get_by_role("combobox", name="URL").fill(FIRST_URL)
-    form.get_by_role("switch", name="Toggle whether current connection is active.").click()
-    with page.expect_response(is_settings_save):
-        form.get_by_role("button", name="Save").click()
-    expect(form).to_be_hidden()
-
-    tab.get_by_role("button", name="Add Connection").click()
-    form = add_connection_form(page)
-    form.get_by_role("combobox", name="URL").fill(SECOND_URL)
-    with page.expect_response(is_settings_save):
-        form.get_by_role("button", name="Save").click()
-
-    saved = saved_direct_connections(account)
-    assert saved["OPENAI_API_BASE_URLS"] == [FIRST_URL, SECOND_URL]
-    assert saved["OPENAI_API_CONFIGS"]["0"]["enable"] is False
-    assert saved["OPENAI_API_CONFIGS"]["1"]["enable"] is True, "the second one came in switched off"
+def add_connection_form(page: Page) -> Locator:
+    form = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add Connection"))
+    expect(form).to_be_visible()
+    return form
 
 
 def test_the_next_admin_connection_does_not_inherit_the_advanced_settings(
