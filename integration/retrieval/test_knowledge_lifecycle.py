@@ -19,6 +19,11 @@
   on, a handful of watchers used up the pool and every other request failed. Here a file stays
   stuck behind an embedding service that never answers, on an instance whose pool holds eleven
   connections, and more watchers than that must leave the instance answering.
+- A batch of uploads stopped the instance answering (#34369): each file processed in the
+  background held one of the 40 threads a worker serves requests with for as long as it waited on
+  the embedding service, so about 40 files waiting on a slow one left no thread for further
+  uploads or the knowledge list. Here the embedding service holds every file until the test ends,
+  and the upload after 40 others and the knowledge list must still answer.
 - Knowledge base file limits (v0.13.0, 7618df3f5 + 5c4fb61d8, PR #33318):
   `KNOWLEDGE_MAX_FILE_COUNT`, `KNOWLEDGE_MAX_FILE_SIZE` and `KNOWLEDGE_MAX_UPLOAD_COUNT` cap every
   knowledge base, and each base may set its own count and size limit; the stricter one applies.
@@ -33,7 +38,10 @@ writing every provider block fails all three engines and required form fields fa
 block, a reset that deletes no files fails the reset case and an unconditional bearer header
 fails both empty-key cases. On dev ef67cc3fa, taking `Depends(get_async_session)` in either
 stream handler again (ba0c4b393 reverted) fails its watcher case: the next request waits out
-the pool and fails. Every file limit case fails on v0.12.5 (no limits, the extra file is linked),
+the pool and fails. The upload backlog case passes on either fix of #34369 (babbf23b6, embedding
+waits no longer hold a thread; 41e5c17b3, knowledge base uploads are capped at half the thread
+pool) and fails on dev f1d735d80 (upload 42 of 45 gets no answer).
+Every file limit case fails on v0.12.5 (no limits, the extra file is linked),
 and on v0.13.0 letting a base's own limit replace the global one fails both stricter-global cases.
 """
 
@@ -627,6 +635,71 @@ def test_watching_a_knowledge_bases_pending_files_leaves_the_pool_free(stuck_fil
     )
     assert listed == [[file_id]] * WATCHERS, "a watcher was told the stuck file had finished"
     assert answered.status_code == 200, answered.text
+
+
+# --- a backlog of files waiting on embedding leaves the instance answering --------------------
+
+# more files than the 40 threads a worker serves requests with
+BACKLOG = 45
+ANSWER_WITHIN = 5.0
+
+
+@pytest.fixture
+def held_embedding(instance_with, stalled_embedding):
+    """(instance, embedding service): an instance whose stuck files wait until the test ends."""
+    service, released = stalled_embedding
+    released.clear()
+    try:
+        yield instance_with({"RAG_OPENAI_API_BASE_URL": service.base_url}), service
+    finally:
+        released.set()
+
+
+def answered_in_time(send, what: str) -> httpx.Response:
+    try:
+        return send(timeout=ANSWER_WITHIN)
+    except httpx.TimeoutException:
+        pytest.fail(
+            f"{what} got no answer within {ANSWER_WITHIN}s while the files uploaded before it "
+            "waited on the embedding service: each held a server thread (#34369)"
+        )
+
+
+@pytest.mark.slow
+def test_a_backlog_of_files_waiting_on_embedding_leaves_the_instance_answering(held_embedding):
+    instance, service = held_embedding
+    owner = admin_of(instance)
+    knowledge_id = knowledge_base_with(owner)
+    stuck_before = len(stuck_embeddings(service))
+    with owner.client() as client:
+        for number in range(1, BACKLOG + 1):
+            uploaded = answered_in_time(
+                lambda timeout: client.post(
+                    "/api/v1/files/",
+                    files={"file": (f"{number}.md", f"{STUCK_TEXT} {number}".encode())},
+                    data={"metadata": json.dumps({"knowledge_id": knowledge_id})},
+                    timeout=timeout,
+                ),
+                f"upload {number} of {BACKLOG}",
+            )
+            assert uploaded.status_code == 200, uploaded.text
+        deadline = time.monotonic() + 30
+        while len(stuck_embeddings(service)) == stuck_before:
+            assert time.monotonic() < deadline, "no upload reached the embedding service"
+            time.sleep(0.2)
+        listed = answered_in_time(
+            lambda timeout: client.get("/api/v1/knowledge/", timeout=timeout),
+            "the knowledge list",
+        )
+        last = answered_in_time(
+            lambda timeout: client.get(
+                f"/api/v1/files/{uploaded.json()['id']}/process/status", timeout=timeout
+            ),
+            "the last file's processing status",
+        )
+
+    assert listed.status_code == 200, listed.text
+    assert last.json() in STILL_PROCESSING, f"the backlog had already drained: {last.json()}"
 
 
 # --- attaching a shared chat -------------------------------------------------------------------
