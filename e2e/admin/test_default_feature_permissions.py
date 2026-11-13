@@ -4,11 +4,14 @@ Admin Panel > Users > Groups > Default permissions holds, under Features, a swit
 Calendar, Channels, Folders and Memories. With the feature on for the instance and the switch on,
 a user finds it (Notes and Calendar in the user menu, Channels and Folders in the sidebar,
 Memories as the Personalization tab of Settings); switched off in the dialog and saved, it is gone
-from the next account's app while an admin keeps it.
+from the next account's app while an admin keeps it. With sub-agents on for the instance the
+dialog also holds a Sub-agents switch (#34040); saved off, a user's chats are no longer offered
+the delegation tool or the timer, while an admin's still are.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Default permissions dialog
 saves the permissions it opened with, every "withdrawn" test fails while the "offered" and admin
-ones still pass.
+ones still pass. The Sub-agents test passes on dev 485103cde and fails in a backend copy whose tool
+gate skips the permission.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from typing import Callable
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness.tool_calls import offered_tools
 from utils.chat_ui import chat_input
 from utils.user_menu import settings_item
 
@@ -125,3 +129,32 @@ def test_an_admin_keeps_the_feature_when_it_is_switched_off(
     page = page_for(make_user(role="admin"))
 
     expect(FEATURES[switch](page)).to_be_visible()
+
+
+SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
+DELEGATION = {"delegate_task", "timer"}
+
+
+@pytest.fixture
+def sub_agents_on(admin, preserve):
+    preserve(SUBAGENTS, "permissions")
+    with admin.client() as client:
+        current = client.get(SUBAGENTS[0]).json()
+        saved = client.post(SUBAGENTS[1], json={**current, "ENABLE_SUBAGENTS": True})
+    assert saved.status_code == 200, saved.text
+
+
+def test_the_sub_agents_switch_saved_off_withdraws_delegation_from_a_user(
+    page_for, admin, make_user, upstream, sub_agents_on
+):
+    save_default_permission(page_for(admin), "Sub-agents", turn_on=False)
+
+    with admin.client() as client:
+        stored = client.get("/api/v1/users/default/permissions").json()["features"]
+    assert stored["subagents"] is False, f"the dialog saved {stored}"
+    with make_user().client() as client:
+        offered = offered_tools(client, upstream)
+    assert offered, "the model was offered no tools at all, so this shows nothing"
+    assert not DELEGATION & offered, f"a user without the permission was offered {offered}"
+    with make_user(role="admin").client() as client:
+        assert DELEGATION <= offered_tools(client, upstream)

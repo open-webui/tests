@@ -7,6 +7,11 @@ the saved system prompt follows the parent's own system message on the next line
 prompt when it is empty), the max output cuts a long answer short before it reaches the parent,
 and the max iterations stops a sub-agent that keeps calling tools.
 
+Since #34040 (2c8fa823f) the Sub-agents switch under Features in the user permissions decides who
+gets them: with it off in the default permissions an ordinary account is offered neither the
+delegation tool nor the timer, a group that switches it on gives them back to its members, an
+admin keeps them, and USER_PERMISSIONS_FEATURES_SUBAGENTS=false starts an instance with it off.
+
 From de73bb830 the sub-agent tests were red: a chat request whose reply message was already
 stored in the chat, the way sub-agents prepare their reply, was refused with 409
 (open-webui/open-webui#32066, fixed by 641c82df1).
@@ -14,7 +19,9 @@ stored in the chat, the way sub-agents prepare their reply, was refused with 409
 Discriminates: passes on dev 79d376a1f; in a backend copy that offers the delegation tool whatever
 the setting says, or whatever the model's tick says, or that ignores the default settings' tick,
 the availability tests fail, and with the system prompt, the output cap or the iteration cap
-replaced by a constant the matching test fails.
+replaced by a constant the matching test fails. The permission tests pass on dev 485103cde;
+in a backend copy whose tool gate skips the subagents permission the default-off and env tests
+fail, and in one whose permission check ignores groups the group test fails.
 """
 
 from __future__ import annotations
@@ -25,6 +32,8 @@ from typing import Iterator
 import pytest
 
 from harness import upstream as reply
+from harness.access import make_group
+from harness.actors import create_user
 from harness.chat import ask
 from harness.python_tools import EVERYONE_READS
 from harness.tool_calls import offered_tools
@@ -34,6 +43,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
+DEFAULT_PERMISSIONS = "/api/v1/users/default/permissions"
 DELEGATION = {"delegate_task", "timer"}
 PARENT_PROMPT = "You are the harbour master."
 # the chat's system prompt, sent the way the web UI sends it
@@ -107,6 +117,66 @@ def test_a_model_with_sub_agents_unticked_is_offered_no_delegation(
     assert without, "the model was offered no tools at all, so this shows nothing"
     assert not DELEGATION & without
     assert DELEGATION <= plain
+
+
+@pytest.fixture
+def sub_agents_withheld_by_default(sub_agents_on, preserve, admin) -> None:
+    """Sub-agents on for the instance, the Sub-agents permission off in the defaults."""
+    preserve("permissions")
+    with admin.client() as client:
+        current = client.get(DEFAULT_PERMISSIONS).json()
+        features = {**current["features"], "subagents": False}
+        saved = client.post(DEFAULT_PERMISSIONS, json={**current, "features": features})
+    assert saved.status_code == 200, saved.text
+
+
+def test_an_account_without_the_sub_agents_permission_is_offered_no_delegation(
+    sub_agents_withheld_by_default, make_user, upstream
+):
+    with make_user().client() as client:
+        offered = offered_tools(client, upstream)
+
+    assert offered, "the model was offered no tools at all, so this shows nothing"
+    assert not DELEGATION & offered, f"an account without the permission was offered {offered}"
+
+
+def test_a_group_with_the_sub_agents_permission_gives_delegation_back(
+    sub_agents_withheld_by_default, admin, make_user, upstream
+):
+    member = make_user()
+    group_id = make_group(admin, [member], {"features": {"subagents": True}})
+    try:
+        with member.client() as client:
+            offered = offered_tools(client, upstream)
+    finally:
+        with admin.client() as client:
+            client.delete(f"/api/v1/groups/id/{group_id}/delete")
+
+    assert DELEGATION <= offered, f"a member of a group allowed sub-agents was offered {offered}"
+
+
+def test_an_admin_keeps_delegation_without_the_sub_agents_permission(
+    sub_agents_withheld_by_default, make_user, upstream
+):
+    with make_user(role="admin").client() as client:
+        offered = offered_tools(client, upstream)
+
+    assert DELEGATION <= offered, f"an admin was offered {offered}"
+
+
+@pytest.mark.slow
+def test_the_environment_can_start_the_sub_agents_permission_off(instance_with):
+    launched = instance_with(
+        {"ENABLE_SUBAGENTS": "true", "USER_PERMISSIONS_FEATURES_SUBAGENTS": "false"}
+    )
+    account = create_user(launched)
+    with account.client() as client:
+        permissions = client.get("/api/v1/users/permissions").json()
+        offered = offered_tools(client, launched.upstream)
+
+    assert permissions["features"]["subagents"] is False, permissions["features"]
+    assert offered, "the model was offered no tools at all, so this shows nothing"
+    assert not DELEGATION & offered, f"an account without the permission was offered {offered}"
 
 
 @pytest.fixture
