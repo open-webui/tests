@@ -14,6 +14,8 @@ Regression tests for Open WebUI at three distances from the product. `integratio
 
 4. **Extend an existing test first.** Every new test function and every new module costs CI time (setup, accounts, a browser page, often a whole instance), so a new check goes into what already exists, in this order: add the assertion to an existing test that already walks the same path; failing that, add a test function to the existing module of that area so it reuses its fixtures and instance; only when no module fits, write a new module. Extending must keep the existing test's own check intact and its name still true.
 
+5. **No tests for unsupported setups.** Several workers or instances without Redis, and anything else the docs call unsupported, get no test, not even for how Open WebUI refuses them.
+
 Once an integration twin covers a unit test's narrow layer, delete the unit test: two copies of one guard double the repair work and add no coverage.
 
 ## The harness
