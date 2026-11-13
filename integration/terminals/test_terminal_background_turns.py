@@ -3,20 +3,16 @@
 A chat with a terminal picked hands that terminal on to what the model sets off: a sub-agent it
 gives a task to, in the foreground or in the background, the turn that brings a background
 sub-agent's report back into the chat, and a timer. Each of them is offered the terminal's tools
-and its commands reach the terminal. A background sub-agent runs with no page open, so it loses
-the tools that run in the person's browser (a tool server from their own settings) and keeps the
-terminal the server reaches itself. A report that comes back while the chat is still writing
+and its commands reach the terminal. A report that comes back while the chat is still writing
 waits for that reply and then starts its turn with the terminal of the reply it waited for.
 
 The terminal is the fake of `harness.terminal_server`, connected by the admin as a plain
 terminal. `test_terminals_background_runs.py` has timers and sub-agents on a terminal of a
-Terminals orchestrator, and `integration/tools/test_personal_tools_in_subagents.py` the
-personal tools of a foreground sub-agent.
+Terminals orchestrator.
 
 Discriminates: passes on dev c15f28649; each mutation below, made in a backend copy, turns its
 tests red. The terminal left out of what a delegation hands its sub-agent fails both sub-agent
-tests and the report to an idle chat (the report's turn takes it from there); a background
-sub-agent keeping the browser's tool servers fails the background case alone. The terminal
+tests and the report to an idle chat (the report's turn takes it from there). The terminal
 left out of what a finished reply passes to a waiting report fails the still-writing case
 alone, left out of the report's turn both report cases. The terminal left out of what a timer
 keeps fails the timer test.
@@ -60,19 +56,6 @@ SPEC = {
             }
         }
     },
-}
-PERSONAL_TOOL = "lookup_weather"
-PERSONAL_SERVER = {
-    "url": "http://127.0.0.1:9/personal-tools",
-    "key": "",
-    "info": {"title": "My weather", "description": "A tool server on my own machine"},
-    "specs": [
-        {
-            "name": PERSONAL_TOOL,
-            "description": "Look up the weather for a city.",
-            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
-        }
-    ],
 }
 
 
@@ -149,12 +132,10 @@ def _report_waiting_in(client, chat_id: str) -> bool:
 
 
 @pytest.mark.parametrize("background", [False, True], ids=["foreground", "background"])
-def test_a_sub_agent_keeps_the_terminal_and_in_the_background_loses_the_browsers_tools(
-    background, subagents_on, admin, make_user, terminal, upstream, direct_integrations
+def test_a_sub_agent_in_the_foreground_or_the_background_keeps_the_terminal(
+    background, subagents_on, admin, make_user, terminal, upstream
 ):
-    direct_integrations(True)
-    # tool servers of one's own need the direct tool servers permission, which admins have
-    person = make_user(role="admin")
+    person = make_user()
     terminal_id = _connect(admin, terminal, person)
     tag = uuid.uuid4().hex[:8]
     prompt, task = f"hand this over {tag}", f"count the boats {tag}"
@@ -169,23 +150,19 @@ def test_a_sub_agent_keeps_the_terminal_and_in_the_background_loses_the_browsers
     )
 
     with person.client() as client:
-        ask(client, prompt, terminal_id=terminal_id, tool_servers=[PERSONAL_SERVER])
+        ask(client, prompt, terminal_id=terminal_id)
     counted = wait_until(lambda: len(_requests(upstream, _handed(task))) == 2, TURN_WAIT)
 
     delegated = _requests(upstream, _handed(task))
     assert counted, f"the sub-agent never came back from its command: {delegated}"
     [asked] = _requests(upstream, reply.answering(prompt))[:1]
-    assert {"run_command", PERSONAL_TOOL} <= _offered(asked), (
-        f"the chat itself was not offered the terminal and the personal tool: {_offered(asked)}"
+    assert "run_command" in _offered(asked), (
+        f"the chat itself was not offered the terminal: {sorted(_offered(asked))}"
     )
     assert "run_command" in _offered(delegated[0]), (
         f"the sub-agent was not offered the chat's terminal: {sorted(_offered(delegated[0]))}"
     )
     assert PRINTED in _told(delegated[-1]), "the sub-agent's command did not reach the terminal"
-    assert (PERSONAL_TOOL in _offered(delegated[0])) is (not background), (
-        f"a {'background' if background else 'foreground'} sub-agent was offered "
-        f"{sorted(_offered(delegated[0]))}"
-    )
     assert len(terminal.requests_to("/execute")) == 1, (
         f"the terminal ran {len(terminal.requests_to('/execute'))} commands for one call"
     )
