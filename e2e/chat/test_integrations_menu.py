@@ -22,6 +22,11 @@ chips beside + show whatever the setting says the Show Input Selections test fai
 whose Tools and Skills rows show no count the count test fails. The count test also checks that
 no Integrations button sits beside +; in an e8c0ad85e build with such a button put back it fails.
 
+Since cdbe9788c (#34085) the Tools list is grouped by source: the workspace's tools under
+Workspace and an admin's tool server under Tool Servers, with no heading while every tool comes
+from one source. The grouping test passes on dev 485103cde and fails on a build of it whose Tools
+list has no groups.
+
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). A tool picked in a
 side chat reaches the model on dev c15f28649 as well, in every way a side chat starts; what a chat
 opened in a tab lost (open-webui/open-webui#34034) is pinned in test_new_chat_tool_picks.py.
@@ -36,7 +41,11 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.access import grant
 from harness.actors import Actor
+from harness.listener import json_answer
+from harness.mcp_server import TOOL_SERVERS
+from harness.openapi_server import openapi_connection, serve_openapi
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_surface import ChatSurface
@@ -320,3 +329,44 @@ def test_picks_show_beside_the_plus_button_once_show_input_selections_is_on(chat
     chat = chat_for(account)
     pick_from_list(chat, "Tools", f"Tide table {suffix}")
     expect(chat.panel.get_by_role("button", name="Available Tools")).to_have_text("1")
+
+
+def tool_group_of(entry: Locator) -> Locator:
+    """The heading a tool of the Tools list is listed under, grouped by source since cdbe9788c."""
+    return entry.locator(
+        "xpath=ancestor::div[@role='presentation'][1]/preceding-sibling::div[not(@role)][1]"
+    )
+
+
+def test_the_tools_list_groups_workspace_tools_apart_from_tool_servers(
+    chat_for, builder, admin, preserve, listener
+):
+    account, suffix = builder
+    menu = open_list(chat_for(account), "Tools")
+    expect(menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}")).to_be_visible()
+    expect(
+        menu.get_by_text("Workspace", exact=True), "a list from one source was given a heading"
+    ).to_have_count(0)
+
+    preserve(TOOL_SERVERS)
+    server = f"Tide gauge {suffix}"
+    serve_openapi(listener, server, {"get_tides": json_answer({})})
+    with admin.client() as client:
+        current = client.get(TOOL_SERVERS[0])
+        assert current.status_code == 200, current.text
+        connections = current.json()["TOOL_SERVER_CONNECTIONS"]
+        mine = openapi_connection(listener.base_url, server, [grant("user", account.id, "read")])
+        saved = client.post(TOOL_SERVERS[1], json={"TOOL_SERVER_CONNECTIONS": [*connections, mine]})
+        assert saved.status_code == 200, saved.text
+
+    menu = open_list(chat_for(account), "Tools")
+    workspace_tool = menu.get_by_role("menuitemcheckbox", name=f"Puffin counter {suffix}")
+    server_tool = menu.get_by_role("menuitemcheckbox", name=server)
+    expect(server_tool).to_be_visible()
+    tide_tool = menu.get_by_role("menuitemcheckbox", name=f"Tide table {suffix}")
+    expect(tool_group_of(workspace_tool)).to_have_text("Workspace")
+    expect(tool_group_of(tide_tool)).to_have_text("Workspace")
+    server_group = tool_group_of(server_tool)
+    expect(server_group, "the tool server is not listed under Tool Servers").to_have_text(
+        "Tool Servers"
+    )
