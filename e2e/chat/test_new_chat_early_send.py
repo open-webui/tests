@@ -13,6 +13,11 @@ the list arrives. The send waits for its answer while the rest of the setup fini
 Discriminates: fails on the dev ca8f451cc build (the message and its reply vanish and the page
 stays on the new chat), passes with the fix d1511abce and on dev 2b1fb53f4; on 2b1fb53f4 with both
 the held-back input and the fix's reset guard removed it fails the same way.
+
+Since 0.13.4 the first message of a new chat shows at once while the chat is still being
+created. A side chat creates its chat when its first message is sent, so the second test holds
+that creation and expects the message on screen meanwhile. It passes on dev 485103cde and fails
+in a frontend copy of it that creates the chat before showing the message.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from harness import upstream as reply
+from utils.chat_surface import open_new_chat_tab
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -79,3 +85,27 @@ def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, ma
     page.get_by_role("link", name="New Chat").first.click()
     expect(page).not_to_have_url(re.compile(r"/c/"))
     expect(conversation(page).get_by_text(question)).to_have_count(0)
+
+
+def test_the_first_message_of_a_side_chat_shows_while_its_chat_is_still_being_created(
+    page_for, make_user, upstream
+):
+    # an admin may open side chats whatever the default permissions say
+    page = page_for(make_user(role="admin"))
+    side = open_new_chat_tab(page)
+    question = f"instant question {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("instant answer", match=reply.answering(question)))
+
+    creations = hold(page, "**/api/v1/chats/new")
+    try:
+        side.send(question)
+        wait_until_held(page, creations, "the side chat to be created")
+        expect(
+            side.conversation.get_by_text(question),
+            "the first message waited for its chat to be created",
+        ).to_be_visible()
+    finally:
+        for route in creations:
+            route.continue_()
+
+    side.expect_reply("instant answer")
