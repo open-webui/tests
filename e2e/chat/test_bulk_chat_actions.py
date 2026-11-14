@@ -1,6 +1,7 @@
 """Journey: the chat settings' bulk actions archive, list, delete, export and import chats.
 
-Archive All Chats and Delete All Chats each ask for confirmation, and cancelling keeps every chat.
+Archive All Chats and Delete All Chats each ask for confirmation, and cancelling keeps every chat
+(each cancel is the first step of the test that then confirms, on the same page).
 The archived chats list searches by title, and its rows unarchive a chat back into the sidebar or
 delete it for good. Export downloads a file holding the account's chats, archived ones included and
 no one else's, and importing that file into an emptied account brings the chats back. Each result
@@ -99,7 +100,9 @@ def _archived_actions(settings: Locator, title: str) -> Locator:
     return settings.locator("#tab-archived-chats div.flex.w-full").filter(has_text=title)
 
 
-def test_archive_all_moves_every_chat_into_the_archive(owner, make_user, page_for):
+def test_archive_all_moves_every_chat_into_the_archive_only_after_confirmation(
+    owner, make_user, page_for
+):
     stranger = make_user()
     _seed_chats(owner, "Alpha plans", "Beta plans")
     _seed_chats(stranger, "Stranger plans")
@@ -108,6 +111,13 @@ def test_archive_all_moves_every_chat_into_the_archive(owner, make_user, page_fo
     expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
 
     settings = _open_settings_tab(page, "Data Controls")
+    _click_bulk_action(settings, "Archive All Chats").get_by_role("button", name="Cancel").click()
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="Beta plans")).to_be_visible()
+    assert _titles(owner) == {"Alpha plans", "Beta plans"}
+    assert _titles(owner, archived=True) == set()
+
     _click_bulk_action(settings, "Archive All Chats").get_by_role("button", name="Confirm").click()
     expect(sidebar.get_by_role("button", name="Alpha plans")).to_have_count(0)
     expect(sidebar.get_by_role("button", name="Beta plans")).to_have_count(0)
@@ -118,22 +128,6 @@ def test_archive_all_moves_every_chat_into_the_archive(owner, make_user, page_fo
     expect(_archived_row(settings, "Beta plans")).to_be_visible()
     assert _titles(owner) == set()
     assert _titles(stranger) == {"Stranger plans"}
-
-
-def test_cancelling_archive_all_keeps_the_chats_in_the_sidebar(owner, page_for):
-    _seed_chats(owner, "Alpha plans", "Beta plans")
-    page = page_for(owner)
-    sidebar = _open_sidebar(page)
-    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
-
-    settings = _open_settings_tab(page, "Data Controls")
-    _click_bulk_action(settings, "Archive All Chats").get_by_role("button", name="Cancel").click()
-    expect(page.get_by_role("dialog")).to_have_count(1)
-
-    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
-    expect(sidebar.get_by_role("button", name="Beta plans")).to_be_visible()
-    assert _titles(owner) == {"Alpha plans", "Beta plans"}
-    assert _titles(owner, archived=True) == set()
 
 
 def test_archived_chats_are_searched_by_title(owner, page_for):
@@ -228,7 +222,7 @@ def test_a_chat_deleted_from_the_archive_is_gone_for_good(owner, page_for):
     assert _titles(owner, archived=True) == {"Kept in the archive"}
 
 
-def test_delete_all_removes_every_chat_after_confirmation(owner, make_user, page_for):
+def test_delete_all_removes_every_chat_only_after_confirmation(owner, make_user, page_for):
     stranger = make_user()
     _seed_chats(owner, "Alpha plans")
     _seed_chats(owner, "Beta plans", archived=True)
@@ -238,6 +232,12 @@ def test_delete_all_removes_every_chat_after_confirmation(owner, make_user, page
     expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
 
     settings = _open_settings_tab(page, "Data Controls")
+    _click_bulk_action(settings, "Delete All Chats").get_by_role("button", name="Cancel").click()
+    expect(page.get_by_role("dialog")).to_have_count(1)
+    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
+    assert _titles(owner) == {"Alpha plans"}
+    assert _titles(owner, archived=True) == {"Beta plans"}
+
     _click_bulk_action(settings, "Delete All Chats").get_by_role("button", name="Confirm").click()
     expect(sidebar.get_by_role("button", name="Alpha plans")).to_have_count(0)
 
@@ -247,22 +247,6 @@ def test_delete_all_removes_every_chat_after_confirmation(owner, make_user, page
     assert _titles(owner) == set()
     assert _titles(owner, archived=True) == set()
     assert _titles(stranger) == {"Stranger plans"}
-
-
-def test_cancelling_delete_all_keeps_every_chat(owner, page_for):
-    _seed_chats(owner, "Alpha plans")
-    _seed_chats(owner, "Beta plans", archived=True)
-    page = page_for(owner)
-    sidebar = _open_sidebar(page)
-    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
-
-    settings = _open_settings_tab(page, "Data Controls")
-    _click_bulk_action(settings, "Delete All Chats").get_by_role("button", name="Cancel").click()
-    expect(page.get_by_role("dialog")).to_have_count(1)
-
-    expect(sidebar.get_by_role("button", name="Alpha plans")).to_be_visible()
-    assert _titles(owner) == {"Alpha plans"}
-    assert _titles(owner, archived=True) == {"Beta plans"}
 
 
 def _export_chats(page: Page, tmp_path) -> tuple[str, list[dict]]:
