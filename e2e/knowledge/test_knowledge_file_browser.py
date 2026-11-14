@@ -176,6 +176,7 @@ def test_a_search_lists_files_from_every_folder_with_their_folder(page_for, cura
         berths = create_folder(client, knowledge_id, "Berths", harbour)
         assert move_file(client, knowledge_id, files["berth-plan.txt"], berths).status_code == 200
     page = open_base(page_for(curator), knowledge_id)
+    expect(entry(page, "berth-fees.txt")).to_be_visible()  # the list has loaded
     expect(entry(page, "berth-plan.txt")).to_have_count(0)  # folded away inside Harbour
 
     search(page, "berth")
