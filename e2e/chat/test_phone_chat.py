@@ -4,15 +4,15 @@ On a 390 by 844 touch screen the sign-in form fits and leads to the chat with th
 its buttons on the screen. The sidebar is a drawer: its button and a swipe from the left open it
 over the chat, and its close button, a tap on the dimmed chat and a swipe back close it again; a
 vertical drag leaves it shut, and picking a chat in it opens the chat and closes the drawer. Enter
-on a touch keyboard starts a new line, so a message goes with the send button, and the reply
-streams in with Stop on the screen until it is done. The model selector fits the screen and the
-model picked there answers the next message. The + menu attaches a file and, with Capture, a photo
-from the camera, and both reach the model. The buttons under the latest reply sit on the screen;
-its Regenerate menu tries again with a version switcher, Edit saves a corrected reply, and the
-header's chat menu and a chat row's menu in the drawer fit the screen, their Download choices
-too. Every control is tapped only after it is shown to lie on the screen with nothing covering it.
-The buttons under earlier messages and a question's Edit show on hover, which the emulated touch
-screen never sets, so they are left out.
+on a touch keyboard starts a new line, so a message goes with the send button, and the reply streams
+in with Stop on the screen until it is done. The model selector fits the screen and the model picked
+there answers the next message. The + menu attaches a file and, with Capture, a photo from the
+camera, and both reach the model. The buttons under the latest reply sit on the screen; its
+Regenerate menu tries again with a version switcher, Edit saves a corrected reply (that it is stored
+is checked in the desktop edit test), and the header's chat menu and a chat row's menu in the drawer
+fit the screen, their Download choices too. Every control is tapped only after it is shown to lie on
+the screen with nothing covering it. The buttons under earlier messages and a question's Edit show
+on hover, which the emulated touch screen never sets, so they are left out.
 
 Discriminates: passes on the ebc6add67 build apart from the two Download choices tests (red, see
 below). In frontend builds of ebc6add67: with the swipe panel ignoring touch the swipe test goes
@@ -372,8 +372,6 @@ def test_an_edited_reply_is_saved_from_the_phone(phone, upstream):
     editor.fill("Receive")
     tap_on_screen(last_reply(phone).get_by_role("button", name="Save", exact=True))
 
-    expect_reply(phone, "Receive")
-    phone.reload()
     expect_reply(phone, "Receive")
     expect(conversation(phone).get_by_text("Recieve")).to_have_count(0)
 
