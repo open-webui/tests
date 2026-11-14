@@ -5,6 +5,8 @@ more pages as its end scrolls into view, and a short list asks for page 2 at onc
 and stops. After a delete the view reloaded from the page it had reached, page 2, so the chats
 that were left vanished and it read "No results found". It now reloads from page 1.
 
+Deleting the last chat then shows the empty list, a closing step of the same test.
+
 Discriminates: passes on dev efe63bd34; with a7d81ebdc reverted the list is empty after the delete.
 """
 
@@ -59,17 +61,7 @@ def test_the_remaining_chats_stay_listed_after_a_delete(page_for, make_user):
     expect(chats.get_by_role("link", name="Kept chat alpha")).to_be_visible()
     expect(chats.get_by_text("No results found")).to_have_count(0)
 
-
-# ---------------------------------------------------------------- nearby
-
-
-def test_deleting_the_last_chat_shows_the_empty_list(page_for, make_user):
-    owner = make_user()
-    _seed_chats(owner, ["Only chat gamma"])
-    page = page_for(make_user(role="admin"))
-    chats = _open_user_chats(page, owner)
-
-    _delete_from_list(page, chats, "Only chat gamma")
+    _delete_from_list(page, chats, "Kept chat alpha")
 
     expect(chats.get_by_text("No results found")).to_be_visible()
     with owner.client() as client:
