@@ -36,7 +36,8 @@ metadata it also serves. `host` is the address it listens on and `name` the host
 carries (the address by default), so a test can reach it by a name.
 `serving_legacy_mcp(protocol_version)` is a hand-written server from before the 2026-07-28
 protocol: it offers only `echo`, knows only the `initialize` handshake at that one version and
-records every request it received.
+records every request it received. `description` replaces `echo`'s description, and with
+`streamed=True` it sends each answer as a server-sent event instead of plain JSON.
 """
 
 from __future__ import annotations
@@ -398,7 +399,9 @@ class LegacyRequest:
 
 
 @contextlib.contextmanager
-def serving_legacy_mcp(protocol_version: str) -> Iterator[tuple[str, list[LegacyRequest]]]:
+def serving_legacy_mcp(
+    protocol_version: str, description: str = ECHO_DESCRIPTION, streamed: bool = False
+) -> Iterator[tuple[str, list[LegacyRequest]]]:
     """An echo server that knows only the `initialize` handshake at `protocol_version`.
 
     It answers the way an MCP SDK 1.x server does in its default stateful mode: a request
@@ -423,7 +426,7 @@ def serving_legacy_mcp(protocol_version: str) -> Iterator[tuple[str, list[Legacy
                 "properties": {"text": {"type": "string"}},
                 "required": ["text"],
             }
-            tool = {"name": "echo", "description": ECHO_DESCRIPTION, "inputSchema": schema}
+            tool = {"name": "echo", "description": description, "inputSchema": schema}
             return {"tools": [tool]}
         if method == "tools/call" and params.get("name") == "echo":
             text = params["arguments"]["text"]
@@ -437,7 +440,11 @@ def serving_legacy_mcp(protocol_version: str) -> Iterator[tuple[str, list[Legacy
 
         async def respond(status: int, body: dict | None = None, **extra: str) -> None:
             content = json.dumps(body).encode() if body is not None else b""
-            response_headers = [(b"content-type", b"application/json")]
+            content_type = b"application/json"
+            if streamed and status == 200 and body is not None:
+                content = b"event: message\ndata: " + content + b"\n\n"
+                content_type = b"text/event-stream"
+            response_headers = [(b"content-type", content_type)]
             response_headers += [(key.encode(), value.encode()) for key, value in extra.items()]
             await send(
                 {"type": "http.response.start", "status": status, "headers": response_headers}

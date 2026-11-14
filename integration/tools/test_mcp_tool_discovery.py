@@ -13,10 +13,15 @@ falls back to the `initialize` handshake when the server does not answer it. A s
 only an older version (2025-03-26, 2025-06-18 or 2025-11-25) still lists its tools and runs one
 in a chat, and every request after the handshake goes out at the version the server agreed to.
 
+Regression #34201: such a server answers as server-sent events, and since the MCP SDK 2.3.0 bump
+in 0.12.4 the client refused any event over 1 MiB, so a server with a large tool list failed to
+connect and a tool result over 1 MiB failed the call. Plain JSON answers never had that limit.
+
 Discriminates: in a backend copy with the specs route removed, every test goes red (404 where the
 tools should be listed); with the enable check dropped from the MCP connect, the switched-off
 connection lists its tools; with the client pinned to the 2026-07-28 protocol (no fallback to the
-handshake) every older-server case goes red on dev 226dca18c.
+handshake) every older-server case goes red on dev 226dca18c. The two over-1-MiB streamed cases
+pass on the fix e5efa086a and fail on dev 32243bdf7 (the SDK's 1 MiB event limit).
 """
 
 from __future__ import annotations
@@ -198,4 +203,49 @@ def test_a_server_from_before_the_2026_protocol_runs_a_tool_in_a_chat(
     tool_messages = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
     assert tool_messages == ["harbour wall"], (
         f"the model did not get the tool's answer: {follow_up}"
+    )
+
+
+OVER_ONE_MIB = 1024 * 1024 + 1000
+
+
+@pytest.mark.parametrize("description_size", [100, OVER_ONE_MIB])
+def test_a_server_streaming_its_answers_lists_a_tool_list_of_any_size(
+    admin, make_user, preserve, server_id, description_size
+):
+    person = make_user()
+    description = "d" * description_size
+    with serving_legacy_mcp("2025-06-18", description=description, streamed=True) as (url, _):
+        _save(admin, preserve, mcp_connection(url, server_id, [read_grant(person.id)]))
+        answered = _specs(person, server_id)
+
+    assert answered.status_code == 200, (
+        f"a streamed {description_size}-byte tool list was not listed: {answered.text[:300]}"
+    )
+    listed = {spec["name"]: spec["description"] for spec in answered.json()["specs"]}
+    assert listed.keys() == {"echo"}, f"unexpected tools: {list(listed)}"
+    assert len(listed["echo"]) == description_size, "the tool description arrived cut short"
+
+
+def test_a_streamed_tool_result_over_one_mib_reaches_the_model(
+    admin, make_user, preserve, upstream, server_id
+):
+    person = make_user()
+    text = "harbour wall " * (OVER_ONE_MIB // 13 + 1)
+    upstream.queue(
+        reply.tool_call(f"{server_id}_echo", {"text": text}),
+        reply.text("It said harbour wall many times."),
+    )
+    with serving_legacy_mcp("2025-06-18", streamed=True) as (url, received):
+        _save(admin, preserve, mcp_connection(url, server_id, [read_grant(person.id)]))
+        with person.client() as client:
+            ask(client, "echo harbour wall many times", tool_ids=[f"server:mcp:{server_id}"])
+
+    calls = [request for request in received if request.method == "tools/call"]
+    assert len(calls) == 1, f"the tool did not run once: {[r.method for r in received]}"
+    follow_up = reply.conversation(upstream.chat_requests()[-1])
+    tool_messages = [entry["content"] for entry in follow_up if entry["role"] == "tool"]
+    assert len(tool_messages) == 1, f"the model got no tool answer: {follow_up}"
+    assert tool_messages[0] == text, (
+        f"the model got {tool_messages[0][:200]!r} instead of the {len(text)}-character result"
     )
