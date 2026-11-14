@@ -12,7 +12,10 @@ Since 0.12.5 (551b03ff9) Rename in the header menu turns the chat's title into a
 saves the new title, shown on the chat's tab, the sidebar and the stored chat, while a blank title
 is refused with a toast and nothing is sent. The owner of a shared folder sees a member's chat in it
 read-only yet gets Rename there and saves it (f517e528d); a member reading the owner's chat in the
-folder gets no Rename.
+folder gets no Rename. That owner test is red on dev 2fdf4ce6b: since d7b3d08b4 Rename in the menu
+opens nothing on a chat read-only to the viewer (open-webui/open-webui#34419, fix branch
+fix/folder-owner-rename-from-chat-header on the Classic298 fork). It passes on dev c0bd0cb34 and
+on the fix branch.
 
 Discriminates: passes on dev 30f3f6a8f; in a backend copy each test fails when its route answers
 without storing the change: the folder read route marking nothing read, the folder chat list
