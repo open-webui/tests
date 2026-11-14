@@ -7,7 +7,9 @@ connection in Admin Settings > Connections by a host name (`localhost`, a hosts-
 alone and a hosts-file name for another local address), verifies it and saves it, then picks its
 model and gets its reply in a chat; an Ollama connection is added and verified by name the same
 way. A connection whose host name does not resolve shows the same error toast, as quickly, under
-both resolvers. Twin of integration/resolver/test_model_providers.py.
+both resolvers. Twin of integration/resolver/test_model_providers.py, which runs every name form
+for both providers; here the OpenAI test runs `localhost` and the `::1`-only name, and the Ollama
+test runs `localhost` only, under each resolver (the hosts-file name stays in the twin).
 
 Discriminates: on the dev 176d31d1d build, a backend copy whose `env.py` installs a resolver that
 fails every lookup when the flag is on turns every c-ares by-name run red (the verify toast reads
@@ -26,7 +28,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import admin_of
-from harness.host_names import FAILS_WITHIN, RESOLVERS, UNRESOLVABLE, name_forms, serving_by_name
+from harness.host_names import FAILS_WITHIN, RESOLVERS, UNRESOLVABLE, serving_by_name
 from harness.listener import json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, serve_ollama
 from harness.second_provider import OPENAI_CONFIG, sse
@@ -36,6 +38,8 @@ from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
+OPENAI_FORMS = [pytest.param(label, id=label) for label in ("localhost", "ipv6-only")]
+OLLAMA_FORMS = [pytest.param("localhost", id="localhost")]
 NAMED_MODEL = "named-model"
 REPLY = "answered by its host name"
 
@@ -77,7 +81,7 @@ def resolving_admin(resolver, instance_with, preserve):
     return admin_of(resolving)
 
 
-@pytest.mark.parametrize("label", name_forms())
+@pytest.mark.parametrize("label", OPENAI_FORMS)
 def test_a_connection_added_by_host_name_verifies_and_answers(page_for, resolving_admin, label):
     prefix = f"named{uuid.uuid4().hex[:6]}"
     with serving_by_name(label) as provider:
@@ -105,7 +109,7 @@ def test_a_connection_added_by_host_name_verifies_and_answers(page_for, resolvin
     assert provider.requests_to("/v1/chat/completions"), "the provider was never called"
 
 
-@pytest.mark.parametrize("label", name_forms())
+@pytest.mark.parametrize("label", OLLAMA_FORMS)
 def test_an_ollama_connection_added_by_host_name_verifies(page_for, resolving_admin, label):
     with serving_by_name(label) as listener:
         serve_ollama(listener, "named-llama:1b")
