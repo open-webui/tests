@@ -11,7 +11,8 @@ provider is a `listener` added as one more OpenAI connection, whose models the t
 Twin of unit/models/test_base_models_redis_cache.py.
 
 Discriminates: passes on dev ef67cc3fa; with 6609918bf reverted the second instance's selector
-never offers the provider's new model; the first instance's own selector offers it on both.
+never offers the provider's new model; the first instance's own selector, the test's second
+step, offers it on both.
 """
 
 from __future__ import annotations
@@ -110,17 +111,7 @@ def new_model_behind_a_connection_change(workers, provider) -> tuple:
 def test_the_other_instances_selector_offers_the_new_model(
     new_model_behind_a_connection_change, page_for
 ):
-    _first, second = new_model_behind_a_connection_change
+    first, second = new_model_behind_a_connection_change
 
     _expect_offered(page_for(create_user(second, role="admin")), NEW_MODEL)
-
-
-# ---------------------------------------------------------------- nearby
-
-
-def test_the_changed_instances_own_selector_offers_the_new_model(
-    new_model_behind_a_connection_change, page_for
-):
-    first, _second = new_model_behind_a_connection_change
-
     _expect_offered(page_for(create_user(first, role="admin")), NEW_MODEL)
