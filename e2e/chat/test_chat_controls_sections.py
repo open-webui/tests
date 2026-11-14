@@ -5,17 +5,17 @@ A file attached to a message stays with the chat: the model can still read it on
 calling), and the Controls (under the chat input's Model controls) list it under Files. Removed
 there, the model can no longer read it on the next message and it stays removed after a reload.
 The Default permissions an admin keeps under Allow Chat Controls (Allow Chat Valves, Allow Chat
-System Prompt and Allow Chat Params) each take one section from a user's Controls when switched
-off, leaving the others, while an admin keeps all three.
+System Prompt and Allow Chat Params) take their section from a user's Controls when switched off,
+all three together in one test, while an admin keeps all three.
 
 The tests that start their chat from the home page were red from 193cf225f (v0.12.5): the new
 chat stopped syncing with the server, so a removal under Files was never saved
 (open-webui/open-webui#33376, fixed on dev by open-webui/open-webui#33377).
 
 Discriminates: passes on dev ebc6add67. On a build whose Controls ignore the three permissions
-each "withdrawn" case fails; on one whose Files section keeps a removed file both removal tests
-fail; on one whose Controls never save the reload test fails; on one whose Controls show no
-section the offered, admin and listed tests fail.
+the withdrawn test fails; on one whose Files section keeps a removed file the removal test
+fails at the next message; on one whose Controls never save it fails after the reload; on one
+whose Controls show no section the offered, admin and listed tests fail.
 
 A file opened from Files stays open when clicked inside (PR open-webui/open-webui#33831, fix
 d8dcb82cd, issue #33828): every click in its window counted as a click outside the menu and closed
@@ -152,17 +152,6 @@ def test_a_file_opened_under_files_stays_open_when_clicked_inside(chat_for, make
     expect(listed_file(panel, "harbour.md")).to_be_visible()
 
 
-def test_a_file_removed_under_files_is_no_longer_sent(chat_with_a_file, upstream):
-    """Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
-    chat = chat_with_a_file
-    panel = open_chat_controls(chat)
-    remove_listed_file(panel, "harbour.txt")
-    expect(section(panel, "Files")).to_have_count(0)
-    close_menu(chat)
-
-    assert "cormorants" not in ask(chat, upstream)
-
-
 def test_a_file_removed_under_files_stays_removed_after_a_reload(chat_with_a_file, upstream):
     """Red in a side chat on dev c15f28649: no Files section in its Controls (no filed issue)."""
     chat = chat_with_a_file
@@ -170,6 +159,9 @@ def test_a_file_removed_under_files_stays_removed_after_a_reload(chat_with_a_fil
     panel = open_chat_controls(chat)
     with page.expect_response(chat_saved(page)):
         remove_listed_file(panel, "harbour.txt")
+    expect(section(panel, "Files")).to_have_count(0)
+    close_menu(chat)
+    assert "cormorants" not in ask(chat, upstream), "the next message still sent the removed file"
 
     chat = chat.reload()
     expect_reply(chat, "Noted.")
@@ -202,21 +194,18 @@ def test_every_section_is_offered_by_default(chat_for, make_user):
         expect(section(panel, title)).to_be_visible()
 
 
-@pytest.mark.parametrize("withdrawn", SECTIONS)
-def test_a_section_is_withdrawn_once_its_switch_is_off(
-    withdrawn, page_for, chat_for, admin, make_user, preserve
+def test_every_section_is_withdrawn_once_its_switch_is_off(
+    page_for, chat_for, admin, make_user, preserve
 ):
     preserve("permissions")
-    save_default_permission(page_for(admin), SWITCHES[withdrawn], turn_on=False)
+    admin_page = page_for(admin)
+    for switch in SWITCHES.values():
+        save_default_permission(admin_page, switch, turn_on=False)
 
     panel = open_chat_controls(chat_for(make_user()))
 
     for title in SECTIONS:
-        expected = expect(section(panel, title))
-        if title == withdrawn:
-            expected.to_have_count(0)
-        else:
-            expected.to_be_visible()
+        expect(section(panel, title), title).to_have_count(0)
 
 
 def test_an_admin_keeps_every_section_when_they_are_switched_off(
