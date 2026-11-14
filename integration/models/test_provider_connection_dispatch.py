@@ -15,6 +15,8 @@
 * Saving a connection left the previous model list live until a restart; both config updates
   now clear the cached lists.
 * Only the model listing honoured a disabled OpenAI API; a direct chat request still went out.
+* Ollama's OpenAI-compatible chat endpoint refused an assistant tool-call turn without a
+  `content` key, which OpenAI clients send back after a tool call, with a 400 (#34441).
 
 Twin of unit/models/test_provider_connection_dispatch.py. The pipe's unused `models={}` default
 and the disabled `get_all_models` early return (its callee refuses the same way) had no
@@ -26,7 +28,8 @@ the pipe's payload copy, the nullable `user_id`, `strip_provider_model_prefix` b
 reaches the provider, the continuation carries the pipe's seed, the listings answer 500, the
 provider gets `llama3.tuned`, the pulled model is a 400, the new model is missing and the
 disabled request is not refused. The embeddings prefix test passes on dev f36490bf2 and fails
-with c901bc39d reverted (the provider gets `acme.embedder`).
+with c901bc39d reverted (the provider gets `acme.embedder`). The tool-call turn test fails on
+dev fcff23152 for the omitted case (a 400) and passes with the fix for #34441.
 """
 
 from __future__ import annotations
@@ -253,6 +256,65 @@ def test_a_model_ollama_does_not_have_is_still_refused(admin, preserve, listener
 
     assert answered.status_code == 400, answered.text
     assert ollama.chat_requests() == []
+
+
+# ---------------------------------------------------------------- an OpenAI client's tool-call turn
+
+
+TOOL_CALL = {
+    "id": "call_1",
+    "type": "function",
+    "function": {"name": "get_time", "arguments": "{}"},
+}
+TOOL_RESULT = {"role": "tool", "tool_call_id": "call_1", "content": "12:00"}
+OMITTED = object()
+
+
+def _tool_call_history(content) -> list[dict]:
+    turn = {"role": "assistant", "tool_calls": [TOOL_CALL]}
+    if content is not OMITTED:
+        turn["content"] = content
+    return [{"role": "user", "content": "what time is it?"}, turn, TOOL_RESULT]
+
+
+@pytest.mark.parametrize("content", [OMITTED, None, ""], ids=["omitted", "null", "empty"])
+def test_the_ollama_proxy_takes_a_tool_call_turn_without_text(admin, preserve, listener, content):
+    # #34441: a tool-call turn with no `content` key, as OpenAI's spec allows, was a 400
+    preserve(OLLAMA_CONFIG)
+    serve_ollama(listener, "tooler:latest")
+    listener.route("POST", "/v1/chat/completions", json_answer(_completion("tooler:latest")))
+    with admin.client() as client:
+        connect_ollama(client, listener)
+        assert "tooler:latest" in _listed_ids(client)
+        answered = client.post(
+            "/ollama/v1/chat/completions",
+            json={"model": "tooler:latest", "messages": _tool_call_history(content)},
+        )
+
+    assert answered.status_code == 200, f"the tool-call turn was refused: {answered.text}"
+    sent_turn = listener.requests_to("/v1/chat/completions")[-1].json()["messages"][1]
+    assert sent_turn["tool_calls"] == [TOOL_CALL]
+    if content is OMITTED:
+        assert "content" not in sent_turn, f"Ollama was sent a made-up text: {sent_turn}"
+    else:
+        assert sent_turn.get("content") == content, f"Ollama was sent {sent_turn}"
+
+
+def test_the_openai_proxy_takes_a_tool_call_turn_without_text(admin, preserve, listener):
+    preserve(OPENAI_CONFIG)
+    listener.route("GET", "/v1/models", json_answer({"data": [{"id": "tooler"}]}))
+    listener.route("POST", "/v1/chat/completions", json_answer(_completion("tooler")))
+    with admin.client() as client:
+        _add_openai_connection(client, f"{listener.base_url}/v1")
+        assert "tooler" in _listed_ids(client)
+        answered = client.post(
+            "/openai/chat/completions",
+            json={"model": "tooler", "messages": _tool_call_history(OMITTED), "stream": False},
+        )
+
+    assert answered.status_code == 200, f"the tool-call turn was refused: {answered.text}"
+    sent_turn = listener.requests_to("/v1/chat/completions")[-1].json()["messages"][1]
+    assert "content" not in sent_turn, f"the provider was sent a made-up text: {sent_turn}"
 
 
 # ---------------------------------------------------------------- saved connections are live
