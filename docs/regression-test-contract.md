@@ -8,13 +8,15 @@ Regression tests for Open WebUI at three distances from the product. `integratio
 
 ## Choosing where a test lives
 
-1. If the symptom shows over HTTP (a status code, a response body, what a later GET returns, what the model provider or an outside service was sent, a server log line), write an integration test.
-2. If it also shows in the UI, or only there, add a browser test as well. Duplication across the two is fine.
+1. If the symptom shows over HTTP (a status code, a response body, what a later GET returns, what the model provider or an outside service was sent, a server log line), write an integration test. Integration is the default: it runs many times faster than a browser test and survives every redesign.
+2. **Write a browser test only for what the UI itself does.** Rendering, a click, a menu, a drag, the keyboard, focus, a dialog, live updates in an open page: things a person sees or does that HTTP cannot show. Duplication is not fine. A browser test whose steps are a send and whose assertion is a value an integration test already reads back adds a page and no coverage. When a bug shows over both, the integration test pins the value and the browser test pins only the UI step or the on-screen symptom of its own.
 3. **Never write a unit test.** Every new test is an integration or a browser test, with no exceptions. When neither of them can see a bug, the bug gets no new test. The unit tests in `unit/` are left over from before this rule; they only shrink, as integration and browser twins replace them, and none are added or extended.
 
-4. **Extend an existing test first.** Every new test function and every new module costs CI time (setup, accounts, a browser page, often a whole instance), so a new check goes into what already exists, in this order: add the assertion to an existing test that already walks the same path; failing that, add a test function to the existing module of that area so it reuses its fixtures and instance; only when no module fits, write a new module. Extending must keep the existing test's own check intact and its name still true.
+4. **Extend an existing test first.** Every new test function and every new module costs CI time (setup, accounts, a browser page, often a whole instance), so a new check goes into what already exists, in this order: add the assertion to an existing test that already walks the same path; failing that, add a test function to the existing module of that area so it reuses its fixtures and instance; only when no module fits, write a new module. Extending must keep the existing test's own check intact and its name still true. This holds for the nearby layer too: the positive path and the boundary are assertions inside the narrow test, not test functions of their own.
 
 5. **No tests for unsupported setups.** Several workers or instances without Redis, and anything else the docs call unsupported, get no test, not even for how Open WebUI refuses them.
+
+6. **One browser run per behaviour, not per value.** A parameter the page never shows (an engine, a codec, an env toggle, a tool category, a release data set) belongs in the integration twin, which runs every value. The browser test runs the one or two values that change what a person sees or does (a keyed and a keyless engine, a form with one more field) and names them in its `Discriminates:` line. Every parametrize value and every fixture `params` entry is a browser test of its own, with its own account, page and load.
 
 Once an integration twin covers a unit test's narrow layer, delete the unit test: two copies of one guard double the repair work and add no coverage.
 
@@ -81,6 +83,7 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(page_for, ma
 ```
 
 - **Locate the way a person does:** by role, label or visible text. Use a CSS class only when nothing else identifies the element, and find a tooltip-only button through its tooltip text.
+- **Check a matrix on one page.** When several switches, sections or kinds show on the same page, one account with everything on and one with everything off assert all of them in two pages. A test per switch is only for a switch with a regression of its own, named in the docstring.
 - **Tie a scripted reply to its prompt** with `reply.text(..., match=reply.answering(prompt))` when a browser test counts or depends on provider requests: a request left over from an earlier test can otherwise take the reply.
 - **Wait on what appears.** Playwright's `expect` waits by itself, so a sleep belongs only in a bounded check that nothing more happens (a stopped stream stays stopped).
 - **Wait for the page to be ready for what you do.** Keyboard shortcuts bind after the layout loads, so wait for the chat input before pressing them.
@@ -97,7 +100,7 @@ Every fix gets all three; one of them alone is not coverage.
 
 ## Journey tests
 
-A journey test is broad baseline coverage of a feature as a person or a client uses it, pinned to no single issue: an LDAP sign-in, a live note edit, the role every route asks for. It carries `pytest.mark.journey` in place of `regression`. With no fix to undo, it still gets a mutation proof: break the behaviour it guards in a backend copy and name that edit, and what it turned red, in its `Discriminates:` line. `harness/access.py` gives the owner, stranger, reader, writer and admin matrix for a shared resource.
+A journey test is broad baseline coverage of a feature as a person or a client uses it, pinned to no single issue: an LDAP sign-in, a live note edit, the role every route asks for. It carries `pytest.mark.journey` in place of `regression`. With no fix to undo, it still gets a mutation proof: break the behaviour it guards in a backend copy and name that edit, and what it turned red, in its `Discriminates:` line. `harness/access.py` gives the owner, stranger, reader, writer and admin matrix for a shared resource. A journey that already walks a path (a commit in the git panel, a reply edited on a phone) takes the next step of that path (undoing the commit, saving the edit) as a step, not as a second journey.
 
 ## Proving a test discriminates
 
@@ -106,6 +109,7 @@ An unproven regression test is decoration, so every narrow test is shown to fail
 - **Backend fix:** copy `backend/` to a scratch dir, undo the fix there (the smallest edit that reverses the fix commit), and run with `OPEN_WEBUI_SOURCE_DIR` pointing at the copy. The narrow tests go red there and pass on the clean checkout. For browser tests keep `OPEN_WEBUI_BUILD_DIR` on the clean build.
 - **Frontend fix:** copy `src/`, `static/` and the build config files to a scratch dir, symlink the checkout's `node_modules`, undo the fix in `src/`, and build with `npm_package_version=<version> NODE_OPTIONS=--max-old-space-size=6144 npx vite build`. Run the browser test with `OPEN_WEBUI_BUILD_DIR` on that build, plus one unrelated journey test as a control that the build itself works. Unrelated frontend mutations can share one build.
 - **Unit tests that stay:** the same, with the unit command above.
+- **Prove the values you keep.** When a parametrized test is proven on one value, say which; a value proven only by the integration twin is not a browser case and does not stay in the browser test.
 - **A test said to guard nothing** gets the same proof: if it stays green with the fix undone, fix the test or delete it.
 - **Flakes:** run every new module five times on the clean checkout before committing (the browser runs throttled fourfold by default) and once more with two runs of it in parallel, as a busy CI runner is slower than your machine. A test that fails once in five is a failing test.
 
@@ -115,7 +119,7 @@ An unproven regression test is decoration, so every narrow test is shown to fail
 - **Bound every test on the pre-fix ref.** A test for a denial-of-service fix meets unbounded behaviour on the ref before the fix, and a test that wedges CI is worse than no test. Bound it by construction, drive it out of process with a hard timeout, or guard it with a capability check that skips on a checkout lacking the fix.
 - **When a change breaks a test, retarget it.** Point it at the new shape and keep it pinning the original bug. Loosening an assertion until it passes destroys the only thing the test was for.
 - **Skip only for a genuinely absent dependency, and name it.** A blanket `except Exception: pytest.skip(...)` turns real breakage into a green run. When the code a test targets is gone, fail and name what to retarget.
-- **A regression stays red until its fix merges.** Write it as a plain failing test that names the issue and the fix PR, so every run shows it. A strict `xfail` is for a known bug nobody is fixing yet: it flips to XPASS on its own once upstream fixes it. Keep allowlists out of the suite, since an allowlist sits there until someone remembers it.
+- **A regression stays red until its fix merges.** Write it as a plain failing test that names the issue and the fix PR, so every run shows it. A red test that can name no issue is not a regression test; file the issue first or take the question to the maintainers, and until then the test does not go in. A strict `xfail` is for a known bug nobody is fixing yet: it flips to XPASS on its own once upstream fixes it. Keep allowlists out of the suite, since an allowlist sits there until someone remembers it.
 
 ## Writing tests that do not flake
 
@@ -142,7 +146,7 @@ A test that fails without a code change costs a release its trust in the suite. 
 - **Show that something did not wait with a dependency that never answers.** A wall-clock bound on a page load measures the page's speed as well, so it fails on a slow runner. Hold the dependency until the test ends and check that the page got there without it.
 
 - **Never assert an order the database does not guarantee.** A list read without a defined sort (search hits across files) comes back in whatever order the database hands out, and Postgres changes it between runs where SQLite does not. Compare such a list sorted or as a set, and assert an order only where Open WebUI defines one (a documented sort flag, newest first).
-- **Prove the list loaded before checking something is missing.** `to_have_count(0)` passes at once on a list still empty because it is loading. Wait first for an item the same account surely sees (an everyone-read note, its own prompt), then check the absence.
+- **Prove the list loaded before checking something is missing.** `to_have_count(0)` passes at once on a list still empty because it is loading. Wait first for an item the same account surely sees (an everyone-read note, its own prompt), then check the absence. A loaded page is not a loaded list: wait for an item in the same list, selector or reply, not for the chat input or the heading.
 - **Set the starting state; never read it.** Put a setting into the state the test starts from (over the API, after `preserve`) instead of relying on the instance default or branching on what a switch currently shows.
 - **Look for text inside the region that holds it.** A page or dialog can show the same text twice (a search result and its preview, a title and its breadcrumb), and a locator over the whole dialog then matches both. Scope it to the list, row or panel the test is about.
 - **Wait for a filtered list to match its filter.** A search or filter shows the unfiltered items first, so the match is visible before the query has run. Assert the narrowed count first, then what the remaining items hold.
@@ -155,7 +159,7 @@ A test that fails without a code change costs a release its trust in the suite. 
 
 Every test in the suite meets all of these. Check each one against your test before you commit.
 
-1. **It pins one behaviour a person can see.** The name is a sentence about what a user, admin or client sees, and the test fails when that behaviour breaks and for no other reason.
+1. **It pins one behaviour a person can see.** The name is a sentence about what a user, admin or client sees, and the test fails when that behaviour breaks and for no other reason. That a page loads, a heading shows or a tab list reads a fixed set of labels is not a behaviour; it is covered once by the journey that uses the page.
 2. **It is proven.** A narrow test is shown red with its fix undone, a journey test with a named mutation; the `Discriminates:` line says which.
 3. **It asserts on the outside.** HTTP responses, what is stored and read back, what the provider or a local service received, the server log, and in the browser what a person sees, found by role, label or visible text. Never on internal function names, private attributes or CSS classes when anything else identifies the element.
 4. **It cannot pass vacuously.** A loop or `all(...)` over a list first asserts the list is not empty; a check that something did not happen is paired with one showing the same setup does make it happen.
