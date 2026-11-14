@@ -1,7 +1,8 @@
 """Journey: what an admin saves in Admin Settings > General changes what every user gets.
 
 The Features switches there decide whether Notes and Calendar are in a user's menu, whether the
-sidebar has Channels and Folders and whether Settings has the Personalization tab of Memories.
+sidebar has Channels and Folders and whether Settings has the Personalization tab of Memories;
+the two tests switch all five on and all five off at once and walk them on one page.
 Default Interface Settings sets the interface every account starts from, while an account's own
 choice still wins. Memory System Context switched off keeps a person's saved memories out of what
 the model is sent. A Response Watermark is appended to every reply a user copies. The Model
@@ -32,7 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.channel_chat import enable_channels, mention, model_reply
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send
+from utils.chat_ui import chat_input, close_menu, conversation, expect_reply, last_reply, send
 from utils.clipboard import read_text
 from utils.sidebar_folders import click_folder_menu_button, folder_row, open_advanced
 from utils.user_menu import settings_item
@@ -114,34 +115,40 @@ FEATURES = {
 }
 
 
-@pytest.mark.parametrize("feature", FEATURES)
-def test_a_feature_switched_on_is_offered_to_a_user(feature, page_for, admin, make_user, preserve):
+def expect_every_feature(page: Page, offered: bool) -> None:
+    for feature, (_, entry) in FEATURES.items():
+        found = entry(page)
+        if offered:
+            expect(found, f"the {feature} entry").to_be_visible()
+        else:
+            expect(found, f"the {feature} entry").to_have_count(0)
+        close_menu(page)
+
+
+def test_every_feature_switched_on_is_offered_to_a_user(page_for, admin, make_user, preserve):
     preserve("admin_config")
-    setting, entry = FEATURES[feature]
-    set_features(admin, **{setting: False})
+    set_features(admin, **{setting: False for setting, _ in FEATURES.values()})
     settings = open_general_settings(page_for(admin))
-    set_switch(settings, feature, turn_on=True)
+    for feature in FEATURES:
+        set_switch(settings, feature, turn_on=True)
     save(settings)
 
     page = page_for(make_user())
 
-    expect(entry(page)).to_be_visible()
+    expect_every_feature(page, offered=True)
 
 
-@pytest.mark.parametrize("feature", FEATURES)
-def test_a_feature_switched_off_is_withdrawn_from_a_user(
-    feature, page_for, admin, make_user, preserve
-):
+def test_every_feature_switched_off_is_withdrawn_from_a_user(page_for, admin, make_user, preserve):
     preserve("admin_config")
-    setting, entry = FEATURES[feature]
-    set_features(admin, **{setting: True})
+    set_features(admin, **{setting: True for setting, _ in FEATURES.values()})
     settings = open_general_settings(page_for(admin))
-    set_switch(settings, feature, turn_on=False)
+    for feature in FEATURES:
+        set_switch(settings, feature, turn_on=False)
     save(settings)
 
     page = page_for(make_user())
 
-    expect(entry(page)).to_have_count(0)
+    expect_every_feature(page, offered=False)
 
 
 def own_message_label(page: Page, text: str) -> Locator:
