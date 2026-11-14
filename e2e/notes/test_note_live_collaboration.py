@@ -2,11 +2,10 @@
 
 The owner and an account with write access open one note. What one types shows up in the other's
 editor without a reload, both edits are still there after both pages reload and are stored in the
-note, and typing in both pages at once ends with the same text in both. An account that may only
-read the note opens it in an editor that takes no typing; a read-only editor does not join the
-live document (upstream 5078d987f), so a reader who kept the note open sees the writing once they
-reload. Each writer's avatar shows in the other's note header (v0.12.5), and clicking it opens the
-page that writer is on.
+note, and typing in both pages at once ends with the same text in both. A read-only editor does not
+join the live document (upstream 5078d987f), so a reader who kept the note open sees the writing
+once they reload. Each writer's avatar shows in the other's note header (v0.12.5), and clicking it
+opens the page that writer is on.
 
 `test_a_reader_with_the_note_open_sees_the_writing_after_a_reload` failed on dev 1c010b438 in CI:
 the note was saved a few characters short (open-webui/open-webui#31585, fix PR #31596 open).
@@ -18,8 +17,9 @@ merge interleaved the two pages' keystrokes inside a token, so it now types a di
 keystroke and checks each writer's letters in order.
 
 Discriminates: passes on dev 176d31d1d. In a frontend copy, the editor not applying remote Yjs
-updates turns the three writer tests red and the editor staying editable for a reader turns the
-reader typing test red. In a backend copy, `ydoc:document:update` not broadcasting to the room
+updates turns the three writer tests red (the editor staying editable for a reader is pinned by
+`test_a_reader_sees_the_note_read_only` in `test_note_features.py`, which also checks the stored
+note is unchanged). In a backend copy, `ydoc:document:update` not broadcasting to the room
 turns the same three red, and the live document's save handler not writing the note turns the
 stored-edits, typing-at-once and reader reload tests red. On dev c5981aaea, the presence test
 fails with clicking an avatar doing nothing in a frontend copy, and with the note presence list
@@ -181,20 +181,6 @@ def test_typing_in_both_pages_at_once_ends_with_the_same_text(page_for, make_use
     assert _keys_of(final_owner, owner_typed) == owner_typed, final_owner
     assert _keys_of(final_owner, writer_typed) == writer_typed, final_owner
     assert len(final_owner) == len(owner_typed) + len(writer_typed), final_owner
-
-
-def test_a_reader_cannot_type_into_the_note(page_for, make_user):
-    owner, reader = make_user(), make_user()
-    note_id = _create_shared_note(owner, reader, ["read"])
-    page = page_for(reader)
-
-    editor = _open_note(page, note_id, editable=False)
-    editor.click()
-    page.keyboard.type("let me in")
-
-    expect(page.get_by_role("main").get_by_text("Read-Only Access")).to_be_visible()
-    expect(editor).to_have_text("")
-    assert _stored_markdown(owner, note_id) == ""
 
 
 def test_a_reader_with_the_note_open_sees_the_writing_after_a_reload(page_for, make_user):

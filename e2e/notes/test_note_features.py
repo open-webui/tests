@@ -184,6 +184,7 @@ def test_a_reader_sees_the_note_read_only(page_for, make_user):
     editor.click()
     page.keyboard.type(" and nothing more")
     expect(editor).to_have_text(text)
+    assert _stored_markdown(owner, note_id) == text
 
 
 def test_a_writer_in_a_shared_group_edits_the_note(page_for, make_user, admin):
