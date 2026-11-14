@@ -26,6 +26,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from harness.python_tools import EVERYONE_READS
+from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 from utils.tooltips import tooltip_button
@@ -115,6 +116,7 @@ def test_a_pipe_is_listed_by_its_name_private_until_shared_and_answers(page_for,
         expect(model_options(admin_page, name)).to_have_count(1)
         page = page_for(make_user())
         new_chat(page)
+        expect(model_options(page, MOCK_MODEL_ID)).to_have_count(1)  # the list has loaded
         expect(model_options(page, name), "a new pipe is private to admins").to_have_count(0)
 
         with shared_with_everyone(admin, {pipe_id: name}):
