@@ -12,7 +12,9 @@ with Run now shows on today and opens its chat.
 Renaming an automation on its page keeps every schedule the menu can show as it was, and the new
 name shows on its page tab, which since dev da850248d carries the automation's title. Since dev
 9723b3a6a the page is the automation's editor: its Schedule row is the Schedule menu, which names
-only the kind, and Save in its header replaces the Edit dialog.
+only the kind, and Save in its header replaces the Edit dialog. The renames share a page: each
+group of rules is saved as automations over the API and renamed one after the other in one
+signed-in page, and a failure names the rule that was rewritten.
 
 Since 7d205a86d the list words a schedule with weekdays as the Schedule menu names them ("Mo, Th
 at 8:15 AM", "Monthly 15 at 6:00 PM").
@@ -373,7 +375,7 @@ ENDING = {
 }
 
 
-def rename_on_its_page(page_for, scheduler, rule: str) -> str:
+def rename_on_its_page(page: Page, scheduler, rule: str) -> str:
     """Save `rule` as an automation, rename it on its page and return the stored rule."""
     title = unique("Rota")
     with scheduler.client() as client:
@@ -387,7 +389,7 @@ def rename_on_its_page(page_for, scheduler, rule: str) -> str:
         )
     assert created.status_code == 200, created.text
     automation_id = created.json()["id"]
-    page = page_for(scheduler, path=f"/automations/{automation_id}", **IN_ZONE)
+    page.goto(f"/automations/{automation_id}")
     expect(instructions(page)).to_have_value("Post the rota.")
 
     name = name_box(page)
@@ -400,27 +402,33 @@ def rename_on_its_page(page_for, scheduler, rule: str) -> str:
     return stored(scheduler, automation_id)["data"]["rrule"]
 
 
-@pytest.mark.parametrize("label", list(KEPT_ON_RENAME))
-def test_renaming_an_automation_keeps_its_schedule(page_for, scheduler, label):
-    rule = KEPT_ON_RENAME[label]
-    assert rename_on_its_page(page_for, scheduler, rule) == rule
+def test_renaming_an_automation_keeps_its_schedule(page_for, scheduler):
+    page = page_for(scheduler, **IN_ZONE)
+
+    for label, rule in KEPT_ON_RENAME.items():
+        saved = rename_on_its_page(page, scheduler, rule)
+
+        assert saved == rule, f"renaming the {label} automation rewrote {rule!r} as {saved!r}"
 
 
 @pytest.mark.regression
-@pytest.mark.parametrize("label", list(ENDING))
-def test_renaming_an_automation_keeps_the_end_of_its_schedule(page_for, scheduler, label):
-    rule = ENDING[label]
-    saved = rename_on_its_page(page_for, scheduler, rule)
-    assert saved == rule, (
-        f"renaming the automation rewrote its schedule {rule!r} as {saved!r}: it no longer ends "
-        "(open-webui/open-webui#32000)"
-    )
+def test_renaming_an_automation_keeps_the_end_of_its_schedule(page_for, scheduler):
+    page = page_for(scheduler, **IN_ZONE)
+
+    for label, rule in ENDING.items():
+        saved = rename_on_its_page(page, scheduler, rule)
+
+        assert saved == rule, (
+            f"renaming the automation that ends {label} rewrote its schedule {rule!r} as "
+            f"{saved!r}: it no longer ends (open-webui/open-webui#32000)"
+        )
 
 
 @pytest.mark.regression
 def test_renaming_an_automation_keeps_a_later_start(page_for, scheduler):
     # a start date the way the model's automation tool writes it
-    saved = rename_on_its_page(page_for, scheduler, STARTS_LATER)
+    page = page_for(scheduler, **IN_ZONE)
+    saved = rename_on_its_page(page, scheduler, STARTS_LATER)
     assert saved == STARTS_LATER, (
         f"renaming the automation rewrote its schedule {STARTS_LATER!r} as {saved!r}: it no "
         "longer waits for its start date (open-webui/open-webui#34430)"
