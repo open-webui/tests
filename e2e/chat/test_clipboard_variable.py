@@ -10,9 +10,10 @@ Over plain HTTP by address a page cannot read the clipboard at all, so the paste
 secure page. Over plain HTTP the prompt must still go in with the variable left as typed and a
 message, open-webui/open-webui#33937: picking it did nothing at all.
 
-Discriminates: passes on the efe63bd34 build, fails on it with `b233d0d94` reverted (the pasted
-text loses a dollar sign and `$&` turns back into the variable). The plain HTTP test fails on
-0.13.1 and dev b6534c58f (the prompt list stays open and nothing is inserted).
+Discriminates: passes on the efe63bd34 build, fails on it with `b233d0d94` reverted (the pasted text
+loses a dollar sign and `$&` turns back into the variable). The plain clipboard text with no dollar
+sign is a second paste in the same test, so the control stays beside the narrow check. The plain
+HTTP test fails on 0.13.1 and dev b6534c58f (the prompt list stays open and nothing is inserted).
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). The clipboard is
 pasted in the message box, so a side chat does it as the main chat does, also on dev c15f28649.
@@ -79,17 +80,8 @@ def test_the_chat_input_pastes_the_clipboard_exactly(writer, chat_for, upstream)
     sent = reply.conversation(upstream.chat_requests()[-1])[-1]["content"]
     assert sent == f"Run: {COPIED}"
 
-
-# the browser lets a page read the clipboard only in a secure context
-@pytest.mark.secure_context
-def test_plain_clipboard_text_is_pasted_unchanged(writer, chat_for):
-    account, command = writer
-    chat = chat_for(account)
-    expect(chat_input(chat)).to_be_visible()
-    with_clipboard(chat.page, "no dollars here")
-
+    with_clipboard(page, "no dollars here")
     use_prompt(chat, command)
-
     expect(chat_input(chat)).to_have_text("Run: no dollars here")
 
 
