@@ -6,7 +6,8 @@ in the general settings, but the menu on a function in Admin Panel > Functions a
 It now shows Share only while Community Sharing is on.
 
 Discriminates: passes on the dev b859124f9 build, fails on that build with d4a2d11ec reverted
-(the function menu offers Share with Community Sharing off).
+(the function menu offers Share with Community Sharing off). Off and on are two steps of one test
+on one function.
 """
 
 from __future__ import annotations
@@ -43,13 +44,13 @@ def _function_menu(page: Page, function_id: str):
     return menu
 
 
-@pytest.mark.parametrize("enabled", [False, True], ids=["off", "on"])
 def test_the_function_menu_offers_share_only_while_community_sharing_is_on(
-    admin_page, admin, preserve, enabled
+    admin_page, admin, preserve
 ):
     preserve("admin_config")
-    _set_community_sharing(admin, enabled)
     with installed_function(admin, FILTER) as function_id:
-        menu = _function_menu(admin_page, function_id)
+        for enabled in (False, True):
+            _set_community_sharing(admin, enabled)
+            menu = _function_menu(admin_page, function_id)
 
-        expect(menu.get_by_role("menuitem", name="Share")).to_have_count(1 if enabled else 0)
+            expect(menu.get_by_role("menuitem", name="Share")).to_have_count(1 if enabled else 0)
