@@ -115,6 +115,14 @@ def _channel_id_named(actor, name: str) -> str:
     return channel["id"]
 
 
+def _name_of(actor, channel_id: str) -> str:
+    with actor.client() as client:
+        listed = client.get("/api/v1/channels/")
+    listed.raise_for_status()
+    [channel] = [channel for channel in listed.json() if channel["id"] == channel_id]
+    return channel["name"]
+
+
 def _sent_home(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
     expect(page).not_to_have_url(re.compile("/channels/"))
@@ -124,6 +132,7 @@ def test_a_group_channel_created_in_the_modal_opens_and_stays_closed_to_outsider
     channels_on, make_user, page_for
 ):
     owner, outsider = make_user(), make_user()
+    letting_in = group_channel(owner, outsider)
     page = page_for(owner)
     modal = _open_create_modal(page)
 
@@ -138,6 +147,7 @@ def test_a_group_channel_created_in_the_modal_opens_and_stays_closed_to_outsider
     outsider_page = page_for(outsider)
     outsider_page.goto(f"/channels/{_channel_id_named(owner, 'harbour-watch')}")
     _sent_home(outsider_page)
+    expect(_entry(outsider_page, _name_of(owner, letting_in))).to_be_visible()
     expect(_entry(outsider_page, "harbour-watch")).to_have_count(0)
 
 
