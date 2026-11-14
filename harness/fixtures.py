@@ -35,6 +35,9 @@ QUIET_TASKS = {
     "ENABLE_RETRIEVAL_QUERY_GENERATION": "false",
 }
 
+# instances from `instance_with` left running after their module, for the next module to reuse
+IDLE_INSTANCES_KEPT = 2
+
 # Global settings a test may change, by name: (read endpoint, write endpoint).
 SETTINGS = {
     "permissions": ("/api/v1/users/default/permissions", "/api/v1/users/default/permissions"),
@@ -191,15 +194,49 @@ def _instances_by_env() -> Iterator[Callable[[dict[str, str]], LaunchedInstance]
         yield factory
 
 
-@pytest.fixture(scope="module")
-def instance_with() -> Generator[Callable[[dict[str, str]], LaunchedInstance], None, None]:
-    """`instance_with({"ENV": "value"})` boots an instance of its own, once per env set and module.
+Booted = dict[frozenset, tuple[LaunchedInstance, contextlib.ExitStack]]
 
-    Every call resets that instance's provider, so call it before queueing replies. The
-    instances stop with the module, which keeps the suite's memory to a few instances at a time.
+
+def _boot_published(env: dict[str, str]) -> tuple[LaunchedInstance, contextlib.ExitStack]:
+    with contextlib.ExitStack() as stack:
+        provider = stack.enter_context(_serving_upstream())
+        launched = stack.enter_context(contextlib.contextmanager(_launch_published)(provider, env))
+        return launched, stack.pop_all()
+
+
+@pytest.fixture(scope="session")
+def _idle_instances() -> Generator[Booted, None, None]:
+    idle: Booted = {}
+    yield idle
+    for _, stack in idle.values():
+        stack.close()
+
+
+@pytest.fixture(scope="module")
+def instance_with(
+    _idle_instances: Booted,
+) -> Generator[Callable[[dict[str, str]], LaunchedInstance], None, None]:
+    """`instance_with({"ENV": "value"})` boots an instance for that env set, once per env set.
+
+    Every call resets that instance's provider, so call it before queueing replies. After the
+    module the last `IDLE_INSTANCES_KEPT` instances stay up for a later module asking for the same
+    env set, which keeps the suite's memory to a few instances at a time.
     """
-    with _instances_by_env() as factory:
-        yield factory
+    booted: Booted = {}
+
+    def factory(env: dict[str, str]) -> LaunchedInstance:
+        key = frozenset(env.items())
+        if key not in booted:
+            booted[key] = _idle_instances.pop(key, None) or _boot_published(env)
+        launched = booted[key][0]
+        launched.upstream.reset()
+        return launched
+
+    yield factory
+    _idle_instances.update(booted)
+    while len(_idle_instances) > IDLE_INSTANCES_KEPT:
+        _, stack = _idle_instances.pop(next(iter(_idle_instances)))
+        stack.close()
 
 
 @pytest.fixture(scope="package")
