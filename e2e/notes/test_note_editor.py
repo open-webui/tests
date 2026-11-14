@@ -3,8 +3,9 @@
 A fresh account opens a new note and types into it. Selecting text raises a toolbar over it:
 its bold, italic, underline and strikethrough buttons mark the selection, and its heading,
 bullet, ordered, task and code block buttons turn the line into that block; each shows in the
-editor at once, is stored with the note and is still there after a reload. The Formatting switch
-in the note's menu decides whether typed Markdown such as "## Heading" or "**bold**" becomes
+editor at once, is stored with the note and is still there after a reload. Every mark takes its
+own line of one note, and every block its own line of another. The Formatting switch in the
+note's menu decides whether typed Markdown such as "## Heading" or "**bold**" becomes
 formatting or stays as typed characters. Clicking the sparkles button beside the focused title
 asks the model for a title, which fills the field and is stored. Under the title the note shows
 when it was created ("Today at" and the time) and a word and character count that follows the
@@ -89,56 +90,86 @@ def _toolbar_button(page: Page, tooltip: str) -> Locator:
 # ---------------------------------------------------------------- the formatting toolbar
 
 
-@pytest.mark.parametrize(
-    "tooltip, tag, stored_md",
-    [
-        ("Bold", "strong", "**bold words**"),
-        ("Italic", "em", "_bold words_"),
-        ("Underline", "u", "<u>bold words</u>"),
-        ("Strikethrough", "s", "~~bold words~~"),
-    ],
-    ids=["bold", "italic", "underline", "strikethrough"],
+MARKS = [
+    ("Bold", "strong", "bold words"),
+    ("Italic", "em", "italic words"),
+    ("Underline", "u", "underline words"),
+    ("Strikethrough", "s", "strikethrough words"),
+]
+MARKS_MD = "**bold words**\n_italic words_\n<u>underline words</u>\n~~strikethrough words~~"
+BLOCKS = [
+    ("H1", "h1"),
+    ("H2", "h2"),
+    ("H3", "h3"),
+    ("Bullet List", "ul:not([data-type]) li p"),
+    ("Ordered List", "ol li p"),
+    ("Task List", "ul[data-type=taskList] li p"),
+    ("Code Block", "pre > code"),
+]
+BLOCKS_MD = (
+    "# heading one\n\n## heading two\n\n### heading three\n\n*   bullet item\n    \n\n"
+    "1.  ordered item\n    \n\n- [ ] task item\n\n```\ncode line\n```"
 )
-def test_the_toolbar_marks_selected_text(page_for, make_user, tooltip, tag, stored_md):
+BLOCK_LINES = [
+    "heading one",
+    "heading two",
+    "heading three",
+    "bullet item",
+    "ordered item",
+    "task item",
+    "code line",
+]
+
+
+def _type_lines(page: Page, lines: list[str]) -> None:
+    _editor(page).click()
+    for number, line in enumerate(lines):
+        if number:
+            page.keyboard.press("Enter")
+        page.keyboard.type(line)
+
+
+def _select_line(page: Page, line: str) -> None:
+    _editor(page).get_by_text(line, exact=True).click()
+    page.keyboard.press("End")
+    page.keyboard.press("Shift+Home")
+
+
+def test_the_toolbar_marks_selected_text(page_for, make_user):
     author = make_user()
     page = page_for(author)
     note_id = _new_note(page)
-    _type_and_select_line(page, "bold words")
+    _type_lines(page, [text for _, _, text in MARKS])
 
-    _toolbar_button(page, tooltip).click()
+    for tooltip, tag, text in MARKS:
+        _select_line(page, text)
+        _toolbar_button(page, tooltip).click()
+        expect(_editor(page).locator(tag), f"{tooltip} did not mark the line").to_have_text(text)
 
-    expect(_editor(page).locator(tag)).to_have_text("bold words")
-    _wait_until_stored(author, note_id, "md", stored_md)
-    assert f"<{tag}>bold words</{tag}>" in _stored_note(author, note_id)["data"]["content"]["html"]
+    _wait_until_stored(author, note_id, "md", MARKS_MD)
+    html = _stored_note(author, note_id)["data"]["content"]["html"]
+    for _, tag, text in MARKS:
+        assert f"<{tag}>{text}</{tag}>" in html, html
     page.reload()
-    expect(_editor(page).locator(tag)).to_have_text("bold words")
+    for _, tag, text in MARKS:
+        expect(_editor(page).locator(tag)).to_have_text(text)
 
 
-@pytest.mark.parametrize(
-    "tooltip, block, stored_md",
-    [
-        ("H1", "h1", "# a line"),
-        ("H2", "h2", "## a line"),
-        ("H3", "h3", "### a line"),
-        ("Bullet List", "ul:not([data-type]) li p", "*   a line"),
-        ("Ordered List", "ol li p", "1.  a line"),
-        ("Task List", "ul[data-type=taskList] li p", "- [ ] a line"),
-        ("Code Block", "pre > code", "```\na line\n```"),
-    ],
-    ids=["h1", "h2", "h3", "bullet-list", "ordered-list", "task-list", "code-block"],
-)
-def test_the_toolbar_turns_a_line_into_a_block(page_for, make_user, tooltip, block, stored_md):
+def test_the_toolbar_turns_a_line_into_a_block(page_for, make_user):
     author = make_user()
     page = page_for(author)
     note_id = _new_note(page)
-    _type_and_select_line(page, "a line")
+    _type_lines(page, BLOCK_LINES)
 
-    _toolbar_button(page, tooltip).click()
+    for (tooltip, block), line in zip(BLOCKS, BLOCK_LINES):
+        _select_line(page, line)
+        _toolbar_button(page, tooltip).click()
+        expect(_editor(page).locator(block), f"{tooltip} did not turn the line").to_have_text(line)
 
-    expect(_editor(page).locator(block)).to_have_text("a line")
-    _wait_until_stored(author, note_id, "md", stored_md)
+    _wait_until_stored(author, note_id, "md", BLOCKS_MD)
     page.reload()
-    expect(_editor(page).locator(block)).to_have_text("a line")
+    for (_, block), line in zip(BLOCKS, BLOCK_LINES):
+        expect(_editor(page).locator(block)).to_have_text(line)
 
 
 def test_scrolling_the_note_hides_the_toolbar_until_the_selection_changes(page_for, make_user):
