@@ -1,8 +1,9 @@
 """Journey: data written by earlier releases, as its people find it in the app after the upgrade.
 
-The browser twin of integration/migrations/test_upgrade_from_release.py, on the same data sets
-(`harness.upgraded_release`): the checkout boots on what each release wrote, with the environment
-the release ran with, and each account signs in with its old password. Alice's chat opens on the
+The browser twin of integration/migrations/test_upgrade_from_release.py, on two of its data sets
+(`harness.upgraded_release`), the v0.10.2 SQLite one and the newest Postgres one; the twin runs
+all six. The checkout boots on what each release wrote, with the environment the release ran
+with, and each account signs in with its old password. Alice's chat opens on the
 branch she was last on, with her file, the tool call and the other branch one click away, and the
 reply the old server answered from the handbook opens the passage it cited. Her pinned chat, her
 nested folders and her archived chat are where she left them, and she can continue an old chat,
@@ -14,14 +15,14 @@ channel keeps its message, reaction and thread. Alice's old skill opens in the e
 instructions and saves a new version on top of the one the skill history migration gave it,
 and Bob, who reads it through the group, mentions it in a new chat and the model gets it.
 
-Discriminates: passes on dev ebc6add67 for every data set; with the last migration of a copy of it
+Discriminates: passes on dev ebc6add67 for both data sets; with the last migration of a copy of it
 mangling one kind of data on the v0.10.2 SQLite set, each test fails on its kind: assistant replies
 blanked (the branch, cited reply and continuation tests), the regenerated branch dropped (the
 branch test), stored sources dropped (the citation test), pins, folder nesting, the chat's folder
 or the archive flag cleared, the note emptied, user settings reset, group and default permissions
 reset, prompt commands renamed, the knowledge base's grants dropped, the tool's source broken, the
 filter switched off and the channel's reactions and thread links dropped. With the skill history
-migration (`d6a8c3f912ab`) of a copy setting no `version_id`, the editor test fails on every set
+migration (`d6a8c3f912ab`) of a copy setting no `version_id`, the editor test fails on both sets
 (the save is refused as a conflict); with it writing `SKILL.md` empty, the editor opens the skill
 without its instructions.
 """
@@ -60,7 +61,12 @@ RELEASE_ENVIRONMENT = {
 }
 
 
-@pytest.fixture(scope="module", params=data_set_params())
+KEPT_DATA_SETS = {"v0.10.2-sqlite", "v0.11.4-postgres"}
+
+
+@pytest.fixture(
+    scope="module", params=[param for param in data_set_params() if param.id in KEPT_DATA_SETS]
+)
 def upgraded(request, tmp_path_factory) -> Iterator[Upgraded]:
     backend = resolve_backend()
     build = resolve_frontend_build(backend) if backend else None
