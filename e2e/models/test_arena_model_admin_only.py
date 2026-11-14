@@ -6,7 +6,8 @@ model selector never offered it. It is now admin-only: the admin is offered it a
 it, a user is not offered it. Twin of integration/models/test_arena_model_admin_only.py.
 
 Discriminates: passes on dev b859124f9, fails with 8c34af303 reverted (the admin's selector finds
-no such model).
+no such model). The user's selector not offering the model, the security half, is the test's
+first step; the admin chatting with it is the second.
 """
 
 from __future__ import annotations
@@ -59,9 +60,13 @@ def private_arena(restricted, preserve) -> Iterator[str]:
     yield name
 
 
-def test_an_admin_is_offered_and_chats_with_a_private_arena_model(
+def test_a_private_arena_model_is_offered_to_an_admin_and_not_to_a_user(
     page_for, restricted, private_arena
 ):
+    user_page = page_for(create_user(restricted))
+    expect(model_options(user_page, MOCK_MODEL_ID)).to_be_visible()
+    expect(model_options(user_page, private_arena)).to_have_count(0)
+
     restricted.upstream.queue(reply.text("from the arena", match=reply.answering("hello arena")))
     page = page_for(admin_of(restricted))
 
@@ -69,13 +74,3 @@ def test_an_admin_is_offered_and_chats_with_a_private_arena_model(
     send(page, "hello arena")
 
     expect_reply(page, "from the arena")
-
-
-# ---------------------------------------------------------------- nearby
-
-
-def test_a_user_is_not_offered_a_private_arena_model(page_for, restricted, private_arena):
-    page = page_for(create_user(restricted))
-
-    expect(model_options(page, MOCK_MODEL_ID)).to_be_visible()
-    expect(model_options(page, private_arena)).to_have_count(0)
