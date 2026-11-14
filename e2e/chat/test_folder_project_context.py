@@ -1,19 +1,21 @@
 """Journey: what a folder's project settings do to the turns of the chats in it, and only those.
 
-A folder's system prompt goes in front of every turn of a chat filed in it, the first and the
-later ones, and in front of no chat outside it. A chat moved into the folder from the chat
-header's Move menu takes the prompt from its next turn, and dragged back onto Chats in the sidebar
-it loses it again. Nested folders do not merge their settings: a chat in a subfolder gets the
-subfolder's prompt and not its parent's, and a subfolder dragged under another folder takes its
-chats along and keeps its own prompt for them. The folder's knowledge base and uploaded file are
-what the model's knowledge search reads in the folder, and the answer shows each as a citation
-that opens on its text; the same search in a chat outside the folder never reads the folder's
-file. Each turn is read from the request the scripted provider received.
+A folder's system prompt goes in front of every turn of a chat filed in it, the first and the later
+ones, and in front of no chat outside it (the Temporary Chat test below walks both, after a chat
+started from the folder's page). A chat moved into the folder from the chat header's Move menu takes
+the prompt from its next turn, and dragged back onto Chats in the sidebar it loses it again. Nested
+folders do not merge their settings: a chat in a subfolder gets the subfolder's prompt and not its
+parent's, and a subfolder dragged under another folder takes its chats along and keeps its own
+prompt for them. The folder's knowledge base and uploaded file are what the model's knowledge search
+reads in the folder, and the answer shows each as a citation that opens on its text; the same search
+in a chat outside the folder never reads the folder's file. Each turn is read from the request the
+scripted provider received.
 
-Turning Temporary Chat on and off on a folder's page left for the home page, so the chat sent
-next was filed nowhere and got no folder prompt (open-webui/open-webui#33448). Since b598efb4e a
-folder's page shows temporary mode on its message box alone, without the Temporary Chat label,
-so the test reads the mode from the address the toggle sets.
+Turning Temporary Chat on and off on a folder's page left for the home page, so the chat sent next
+was filed nowhere and got no folder prompt (open-webui/open-webui#33448). The same test then sends a
+second turn, and one from the home page. Since b598efb4e a folder's page shows temporary mode on its
+message box alone, without the Temporary Chat label, so the test reads the mode from the address the
+toggle sets.
 
 Discriminates: passes on dev ebc6add67; in a backend copy with the middleware's folder lookup
 returning no folder every test goes red (no prompt, no folder knowledge cited), and with the
@@ -111,28 +113,6 @@ def folder_content(sidebar: Locator, folder_id: str) -> Locator:
     """The folder's row with everything filed under it."""
     row = sidebar.locator(f"#folder-{folder_id}-button")
     return row.locator("xpath=ancestor::div[@draggable][1]")
-
-
-def test_the_folder_prompt_leads_every_turn_in_the_folder_and_no_chat_outside(
-    page_for, make_user, upstream
-):
-    owner = make_user()
-    folder_id = create_folder(owner, "Harbour", HARBOUR_PROMPT)
-    page = page_for(owner, path=f"/folders/{folder_id}")
-
-    ask(page, upstream, "when is high tide?", "High tide at noon.")
-    expect(page).to_have_url(re.compile("/c/"))
-    ask(page, upstream, "and low tide?", "Low tide at six.")
-    page.goto("/")
-    ask(page, upstream, "what is for lunch?", "Soup.")
-
-    assert system_sent(upstream, "when is high tide?").startswith(HARBOUR_PROMPT)
-    assert system_sent(upstream, "and low tide?").startswith(HARBOUR_PROMPT), (
-        "the folder's prompt was left off the chat's second turn"
-    )
-    assert HARBOUR_PROMPT not in system_sent(upstream, "what is for lunch?"), (
-        "a chat outside the folder was sent the folder's prompt"
-    )
 
 
 def test_a_chat_moved_in_takes_the_prompt_and_dragged_out_loses_it(page_for, make_user, upstream):
@@ -243,6 +223,17 @@ def test_toggling_temporary_chat_on_the_folder_page_keeps_the_folder(page_for, m
     assert stored_folder_id(owner, chat_id) == folder_id, "the chat was not filed in the folder"
     assert system_sent(upstream, "who keeps the harbour log?").startswith(HARBOUR_PROMPT), (
         "the chat was not sent the folder's prompt"
+    )
+
+    ask(page, upstream, "and who keeps the tide log?", "The pilot.")
+    page.goto("/")
+    ask(page, upstream, "what is for lunch?", "Soup.")
+
+    assert system_sent(upstream, "and who keeps the tide log?").startswith(HARBOUR_PROMPT), (
+        "the folder's prompt was left off the chat's second turn"
+    )
+    assert HARBOUR_PROMPT not in system_sent(upstream, "what is for lunch?"), (
+        "a chat outside the folder was sent the folder's prompt"
     )
 
 
