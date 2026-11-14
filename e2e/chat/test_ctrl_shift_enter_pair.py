@@ -9,9 +9,11 @@ Ctrl+Enter still sends.
 With two models chosen, the pair gets a placeholder reply from each of them, side by side, also
 after a reload (feature 83dcc2dbe, PR open-webui/open-webui#32309); that test is a journey.
 
-Discriminates: passes on the dev b859124f9 build, fails on that build with 41ca360cc reverted
-(the model receives the typed message after Ctrl+Shift+Enter). The two-model test passes on the
-dev 5032e834e build and fails on that build with 83dcc2dbe reverted (one placeholder reply).
+Discriminates: passes on the dev b859124f9 build, fails on that build with 41ca360cc reverted (the
+model receives the typed message after Ctrl+Shift+Enter). The same test goes on to show that plain
+Enter only breaks the line and Ctrl+Enter still sends, so the controls share one page. The two-model
+test passes on the dev 5032e834e build and fails on that build with 83dcc2dbe reverted (one
+placeholder reply).
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), the side chat asking
 both default models picked in its own selector for the pair test. In a side chat the two pair
@@ -61,7 +63,9 @@ def asked_about(upstream, prompt: str) -> list[dict]:
     return [request for request in upstream.chat_requests() if reply.answering(prompt)(request)]
 
 
-def test_ctrl_shift_enter_adds_the_pair_without_asking_the_model(ctrl_enter_page, upstream):
+def test_ctrl_shift_enter_adds_the_pair_and_plain_enter_and_ctrl_enter_keep_their_meaning(
+    ctrl_enter_page, upstream
+):
     """In a side chat: open-webui/open-webui#34213, fix PR open-webui/open-webui#34214."""
     chat = ctrl_enter_page
     upstream.queue(reply.text("An unwanted answer", match=reply.answering("pair me")))
@@ -76,28 +80,18 @@ def test_ctrl_shift_enter_adds_the_pair_without_asking_the_model(ctrl_enter_page
     assert asked_about(upstream, "pair me") == []
     expect(conversation(chat).get_by_text("An unwanted answer")).to_have_count(0)
 
-
-def test_ctrl_enter_still_sends_the_message(ctrl_enter_page, upstream):
-    chat = ctrl_enter_page
-    upstream.queue(reply.text("Sent and answered", match=reply.answering("send me")))
-    chat.page.keyboard.type("send me")
-
-    chat.page.keyboard.press("Control+Enter")
-
-    expect_reply(chat, "Sent and answered")
-    assert len(asked_about(upstream, "send me")) == 1
-
-
-def test_plain_enter_does_not_send_with_the_setting_on(ctrl_enter_page, upstream):
-    chat = ctrl_enter_page
+    chat_input(chat).click()
     chat.page.keyboard.type("first line")
-
     chat.page.keyboard.press("Enter")
     chat.page.keyboard.type("second line")
-
     expect(chat_input(chat)).to_contain_text("second line")
     chat.page.wait_for_timeout(1000)  # bounded: an Enter that sent would have reached the provider
     assert asked_about(upstream, "first line") == []
+
+    upstream.queue(reply.text("Sent and answered", match=reply.answering("second line")))
+    chat.page.keyboard.press("Control+Enter")
+    expect_reply(chat, "Sent and answered")
+    assert len(asked_about(upstream, "second line")) == 1
 
 
 @pytest.fixture
