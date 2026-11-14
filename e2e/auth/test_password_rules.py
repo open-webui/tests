@@ -6,11 +6,12 @@ visitor signing up on the auth page stays on the form and no account appears. An
 its password in Settings > Account stays signed in and its old password still signs in. An admin
 adding a user in Admin Panel > Users keeps the dialog open and no account appears. The admin's
 Edit User with a new password leaves the account's old password working. A password that meets
-the rule on the sign-up page lands the visitor in the chat.
+the rule lands the visitor in the chat, as the second step of the refused sign-up on the same page.
 
 Discriminates: passes on dev ebc6add67; in a backend copy where the password check skips the
 pattern (the length limit stays), the four refusal tests go red (the visitor lands in the chat,
-the old password stops working or the account exists) and the control stays green.
+the old password stops working or the account exists); the first test goes red at its refusal and
+its closing step, the sign-up that fits, shows the form still lets a good password in.
 """
 
 from __future__ import annotations
@@ -143,7 +144,7 @@ def _user_list(page: Page):
     return users
 
 
-def test_a_sign_up_with_a_password_that_breaks_the_rule_shows_the_hint_and_creates_no_account(
+def test_a_sign_up_that_breaks_the_rule_shows_the_hint_and_creates_no_account_until_one_fits(
     open_page, ruled
 ):
     page = open_page()
@@ -155,11 +156,6 @@ def test_a_sign_up_with_a_password_that_breaks_the_rule_shows_the_hint_and_creat
     expect(page.get_by_role("button", name="Create Account")).to_be_visible()
     expect(chat_input(page)).to_be_hidden()
     assert _accounts_named(ruled, email) == []
-
-
-def test_a_sign_up_with_a_password_that_meets_the_rule_lands_in_the_chat(open_page, ruled):
-    page = open_page()
-    name, email = _new_visitor()
 
     _sign_up(page, name, email, FITTING)
 
