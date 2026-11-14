@@ -11,9 +11,14 @@ one switch that starts off: without it the / menu has no Side chat and a typed `
 the account may not use it, nothing reaches the model; with it, or as an admin, `/side` opens one,
 named after its question since 3b1a95383 saves it as a chat.
 
+The fourteen controls share one page: the offered test walks all of them, and the withdrawn and
+admin tests save all of them off in one dialog and walk them again, so a switch that does nothing
+shows by name in the failure. Export, own-message Edit, Side Chat and file upload keep a test of
+their own.
+
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Default permissions dialog
-saves the permissions it opened with, every "withdrawn" test and the file upload refusal fail
-while the "offered" and admin ones still pass. In the pre-fix build of 0.12.4 (a21335bdd and
+saves the permissions it opened with, the withdrawn test and the file upload refusal fail
+while the offered and admin tests still pass. In the pre-fix build of 0.12.4 (a21335bdd and
 c9936e81e reverted) the export test fails with the permission withheld: the folder menu offers
 Export, and with the folder check skipped, so does Archived Chats. On dev ca8f451cc (before the
 #32832 fix) the own-message Edit test fails with the permission withheld: the user's own
@@ -48,6 +53,7 @@ from utils.chat_controls import controls_entry
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
+    close_menu,
     last_reply,
     replies,
     send,
@@ -66,16 +72,22 @@ FOLLOW_UP = "And how high does it climb?"
 FOLLOW_UP_ANSWER = "It climbs to 2504 metres at the Edelweissspitze."
 
 
-def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
+def save_default_permissions(page: Page, switches: dict[str, bool]) -> None:
+    """Set each switch in the Default permissions dialog and save once."""
     page.goto("/admin/users/groups")
     page.get_by_role("button", name="Default permissions").click()
     dialog = page.get_by_role("dialog")
-    target = dialog.get_by_role("switch", name=switch, exact=True)
-    if (target.get_attribute("aria-checked") == "true") != turn_on:
-        target.click()
-    expect(target).to_have_attribute("aria-checked", "true" if turn_on else "false")
+    for switch, turn_on in switches.items():
+        target = dialog.get_by_role("switch", name=switch, exact=True)
+        if (target.get_attribute("aria-checked") == "true") != turn_on:
+            target.click()
+        expect(target).to_have_attribute("aria-checked", "true" if turn_on else "false")
     dialog.get_by_role("button", name="Save").click()
     expect(page.get_by_text("Default permissions updated successfully")).to_be_visible()
+
+
+def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
+    save_default_permissions(page, {switch: turn_on})
 
 
 def open_answered_chat(page_for, account, upstream) -> Page:
@@ -149,35 +161,42 @@ CONTROLS = {
 }
 
 
-@pytest.mark.parametrize("switch", CONTROLS)
-def test_the_control_is_offered_by_default(switch, page_for, make_user, upstream):
+def expect_every_control(page: Page, offered: bool) -> None:
+    for switch, locate in CONTROLS.items():
+        control = locate(page)
+        if offered:
+            expect(control, f"the {switch} control").to_be_visible()
+        else:
+            expect(control, f"the {switch} control").to_have_count(0)
+        close_menu(page)
+
+
+def test_every_control_is_offered_by_default(page_for, make_user, upstream):
     page = open_answered_chat(page_for, make_user(), upstream)
 
-    expect(CONTROLS[switch](page)).to_be_visible()
+    expect_every_control(page, offered=True)
 
 
-@pytest.mark.parametrize("switch", CONTROLS)
-def test_the_control_is_withdrawn_once_switched_off(
-    switch, page_for, admin, make_user, upstream, preserve
+def test_every_control_is_withdrawn_once_switched_off(
+    page_for, admin, make_user, upstream, preserve
 ):
     preserve("permissions")
-    save_default_permission(page_for(admin), switch, turn_on=False)
+    save_default_permissions(page_for(admin), dict.fromkeys(CONTROLS, False))
 
     page = open_answered_chat(page_for, make_user(), upstream)
 
-    expect(CONTROLS[switch](page)).to_have_count(0)
+    expect_every_control(page, offered=False)
 
 
-@pytest.mark.parametrize("switch", ["Allow Chat Delete", "Allow Regenerate Response"])
-def test_an_admin_keeps_the_control_when_it_is_switched_off(
-    switch, page_for, admin, upstream, preserve
+def test_an_admin_keeps_every_control_when_they_are_switched_off(
+    page_for, admin, upstream, preserve
 ):
     preserve("permissions")
-    save_default_permission(page_for(admin), switch, turn_on=False)
+    save_default_permissions(page_for(admin), dict.fromkeys(CONTROLS, False))
 
     page = open_answered_chat(page_for, admin, upstream)
 
-    expect(CONTROLS[switch](page)).to_be_visible()
+    expect_every_control(page, offered=True)
 
 
 def create_folder(account) -> str:
