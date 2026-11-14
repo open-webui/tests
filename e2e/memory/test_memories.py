@@ -6,24 +6,22 @@ list, and it stays gone after the settings are opened again. Switching Memory of
 keeps a stored memory out of the next chat, and stays off after a reload, while another account's
 memory still reaches the model. Clear memory in the Actions menu empties the list for good and
 keeps every memory out of the next chat, and the search box narrows the list. A memory the model
-saves with its memory tool during a chat is listed in the tab, and a memory the model reads back
-with its memory tool reaches it in the tool's result.
+saves with its memory tool during a chat is listed in the tab. A memory the model reads back with
+its list_memories tool is pinned in integration/memory/test_memory_tool_payload.py.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with
 `POST /api/v1/memories/{id}/update` answering without storing the new text the edited memory
 never shows, and with `DELETE /api/v1/memories/{id}` answering true without deleting the memory
 is listed again once the settings are reopened; in a frontend copy, a chat sending the memory
 feature whatever the account's Memory switch says turns the switch test red. On dev ebc6add67,
-a backend copy whose `DELETE /api/v1/memories/delete/user` answers true without deleting, whose
-add_memory tool answers success without storing and whose list_memories tool lists nothing turns
-the clear, saved-in-a-chat and read-by-the-tool tests red, and a frontend copy whose memory
-search ignores its text turns the search test red.
+a backend copy whose `DELETE /api/v1/memories/delete/user` answers true without deleting, and
+whose add_memory tool answers success without storing, turns the clear and saved-in-a-chat tests
+red, and a frontend copy whose memory search ignores its text turns the search test red.
 
-The two tests whose subject is the model's memory tool (saving a memory and reading one back) run
-in the main chat and in a side chat; the saved memory is then looked up in the settings dialog
-of the page. The others walk the Personalization settings dialog and the Memory switch, which are
-page things, and stay on the main chat. The side chat variants are green on dev c15f28649 and on
-head e791cbdde.
+The test whose subject is the model's memory tool (saving a memory) runs in the main chat and in a
+side chat; the saved memory is then looked up in the settings dialog of the page. The others walk
+the Personalization settings dialog and the Memory switch, which are page things, and stay on the
+main chat. The side chat variants are green on dev c15f28649 and on head e791cbdde.
 """
 
 from __future__ import annotations
@@ -190,19 +188,3 @@ def test_a_memory_the_model_saves_during_a_chat_is_listed(chat_for, make_user, u
     settings = _personalization(chat.page)
     expect(settings.get_by_text(LATER)).to_be_visible()
     assert _stored_memories(account) == [LATER]
-
-
-def test_the_model_reads_a_memory_through_its_memory_tool(chat_for, make_user, upstream):
-    chat = chat_for(_remembering(make_user, FIRST))
-    question = "check your notes: what is on my roof?"
-    upstream.queue(
-        reply.tool_call("list_memories", {}, match=reply.answering(question)),
-        reply.text("Your notes say bees.", match=reply.answering(question)),
-    )
-    send(chat, question)
-    expect_reply(chat, "Your notes say bees.")
-
-    answered = list(filter(reply.answering(question), upstream.chat_requests()))
-    tool_results = [entry for entry in answered[-1]["messages"] if entry["role"] == "tool"]
-    assert tool_results, "the memory tool's result never reached the model"
-    assert FIRST in str(tool_results[0]["content"]), "the memory tool did not return the memory"
