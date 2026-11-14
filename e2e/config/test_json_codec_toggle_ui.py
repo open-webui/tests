@@ -13,6 +13,11 @@ written with the switch off, and two long Cyrillic user variables saved from the
 were refused with it off and saved with it on (both explained in
 integration/config/test_json_codec_toggle.py).
 
+Data that crosses the switch is checked in the two crossing directions only (written with the
+switch off and read with it on, and the other way round); the same-codec pairs and the CJK tag
+spelling are left to integration/config/test_json_codec_toggle.py, which runs every pairing. The
+tag case runs once, written with the switch off and with the capitalised spelling.
+
 Discriminates: passes on dev a5bc78300; on dev 176d31d1d the two differences named above fail (the
 tag case only on Postgres). In backend copies of dev 176d31d1d, the orjson codec writing mojibake
 or orjson request parsing that mangles non-ASCII turns the cases with an orjson side red, and the
@@ -44,7 +49,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 GERMAN, ARABIC, CHINESE, EMOJI, HEBREW = (
     MIXED_TEXT[key] for key in ("german", "arabic", "chinese", "emoji", "hebrew")
 )
-CROSSING_IDS = [f"{writer}-then-{reader}" for writer, reader in CROSSINGS]
+SWITCHES = [(writer, reader) for writer, reader in CROSSINGS if writer != reader]
+SWITCH_IDS = [f"{writer}-then-{reader}" for writer, reader in SWITCHES]
 
 TOOL_SOURCE = '''class Tools:
     def look_up_greeting(self, topic: str) -> dict:
@@ -105,7 +111,7 @@ def test_a_mixed_prompt_and_streamed_reply_show_and_survive_a_reload(page_for, p
 # ---------------------------------------------------------------- stored chat
 
 
-@pytest.mark.parametrize(("writer", "reader"), CROSSINGS, ids=CROSSING_IDS)
+@pytest.mark.parametrize(("writer", "reader"), SWITCHES, ids=SWITCH_IDS)
 def test_a_chat_stored_with_mixed_text_shows_in_the_sidebar_and_opens(
     page_for, pair, writer, reader
 ):
@@ -180,7 +186,7 @@ def test_a_tool_result_of_mixed_text_shows_its_values_when_expanded(page_for, pa
 # ---------------------------------------------------------------- notes, presets, prompts
 
 
-@pytest.mark.parametrize(("writer", "reader"), CROSSINGS, ids=CROSSING_IDS)
+@pytest.mark.parametrize(("writer", "reader"), SWITCHES, ids=SWITCH_IDS)
 def test_a_note_with_mixed_text_opens_and_shows_it(page_for, pair, writer, reader):
     title = f"{GERMAN} {_unique('note')}"
     person = create_user(pair[writer])
@@ -203,16 +209,15 @@ def test_a_note_with_mixed_text_opens_and_shows_it(page_for, pair, writer, reade
 
 # a capitalised non-ASCII tag stored escaped was missed on Postgres before #31615 (integration
 # twin in integration/config/test_json_codec_toggle.py)
-TAG_SPELLINGS = {"cjk": "报告", "capitalised": "Überblick"}
+CAPITALISED_TAG = "Überblick"
 
 
-@pytest.mark.parametrize("spelling", sorted(TAG_SPELLINGS))
-@pytest.mark.parametrize(("writer", "reader"), CROSSINGS, ids=CROSSING_IDS)
+@pytest.mark.parametrize(("writer", "reader"), [("stdlib", "orjson")], ids=["stdlib-then-orjson"])
 def test_a_preset_with_a_non_ascii_name_and_tag_is_listed_and_found_by_its_tag(
-    page_for, pair, writer, reader, spelling
+    page_for, pair, writer, reader
 ):
     suffix = uuid.uuid4().hex[:6]
-    tag = f"{TAG_SPELLINGS[spelling]}-{suffix}"
+    tag = f"{CAPITALISED_TAG}-{suffix}"
     tagged, plain = f"Übersicht 请总结 {suffix}", f"Schlicht {suffix}"
     admin = create_user(pair[writer], role="admin")
     with admin.client() as client:
@@ -244,7 +249,7 @@ def test_a_preset_with_a_non_ascii_name_and_tag_is_listed_and_found_by_its_tag(
     ).to_be_visible()
 
 
-@pytest.mark.parametrize(("writer", "reader"), CROSSINGS, ids=CROSSING_IDS)
+@pytest.mark.parametrize(("writer", "reader"), SWITCHES, ids=SWITCH_IDS)
 def test_a_prompt_with_a_mixed_text_title_shows_in_the_library(page_for, pair, writer, reader):
     suffix = uuid.uuid4().hex[:6]
     name = f"{GERMAN} {CHINESE} {suffix}"
