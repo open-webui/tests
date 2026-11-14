@@ -31,6 +31,10 @@ account setting fails the three account tests. On dev 948432b43, a backend copy 
 replaces the chat's stored settings with the sent one fails the two tabs test (the system prompt
 is gone).
 
+A decimal typed into a whole-number parameter there (num_ctx 32.767, Seed) is sent rounded, while
+a fractional one (Temperature) keeps its decimals. Red on dev 32243bdf7, which saved and sent
+32.767 as is (open-webui/open-webui#34416).
+
 The tests of one chat's values and of the account's parameters run in the main chat and in a side
 chat (`utils/chat_surface.py`); the account's parameters are saved in a page of their own first.
 The new chat, sidebar and system prompt tests go to another chat through the sidebar and the two
@@ -333,6 +337,31 @@ def test_the_accounts_saved_parameters_reach_a_new_chat(
     request = _ask(chat, upstream)
 
     assert (request.get("temperature"), request.get("max_tokens")) == (0.6, 200)
+
+
+def test_a_decimal_typed_into_a_whole_number_parameter_is_sent_as_a_whole_number(
+    page_for, chat_for, tuned_account, upstream
+):
+    """#34416: num_ctx typed as 32.767 was saved and sent to the model as is."""
+    page = page_for(tuned_account)
+    _save_account_parameters(
+        page,
+        {
+            "num_ctx (Ollama)": "32.767",
+            "max_tokens": "200.4",
+            "Seed": "41.6",
+            "Temperature": "0.65",
+        },
+    )
+    chat = chat_for(tuned_account)
+
+    request = _ask(chat, upstream)
+
+    sent = tuple(request.get(key) for key in ("num_ctx", "max_tokens", "seed", "temperature"))
+    assert sent == (33, 200, 42, 0.65), (
+        f"num_ctx 32.767, max_tokens 200.4, Seed 41.6 and Temperature 0.65 were sent as {sent} "
+        "(open-webui/open-webui#34416)"
+    )
 
 
 def test_a_chat_value_wins_over_the_accounts_saved_one(page_for, chat_for, tuned_account, upstream):
