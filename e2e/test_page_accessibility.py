@@ -1,11 +1,15 @@
 """
 Page Accessibility Tests for Open WebUI
 
-These tests verify that all pages in Open WebUI:
-1. Load successfully (HTTP 200 or appropriate redirect)
-2. Have proper page structure (title, main content)
-3. Don't produce JavaScript console errors
-4. Are accessible within reasonable timeouts
+One smoke test each walks the public, the signed-in user's and the admin's pages and checks that
+each:
+1. Loads successfully (HTTP 200 or appropriate redirect)
+2. Has a visible body
+3. Shows no JavaScript console errors (public pages)
+
+An unauthenticated visit to a protected page is sent to /auth, and a regular user is sent away
+from /admin. Each route list is walked in one test on one page, so one failure names every page
+that broke.
 
 Usage:
     # Run all page tests
@@ -154,26 +158,22 @@ class TestPublicPages:
     """Tests for pages that don't require authentication."""
 
     @pytest.mark.public
-    @pytest.mark.parametrize("path,description", PUBLIC_ROUTES)
-    def test_public_page_loads(
-        self,
-        page: Page,
-        path: str,
-        description: str,
-    ):
-        """Test that public pages load successfully."""
-        result = check_page_accessibility(page, path, description)
+    def test_public_pages_load(self, page: Page):
+        """Test that every public page loads successfully."""
+        failures: list[str] = []
 
-        # Assert page loaded
-        assert result.success, (
-            f"Page '{description}' ({path}) failed to load: {result.error_message}"
-        )
+        for path, description in PUBLIC_ROUTES:
+            result = check_page_accessibility(page, path, description)
+            if not result.success:
+                failures.append(f"'{description}' ({path}) failed to load: {result.error_message}")
+                continue
+            # warnings are okay
+            critical_errors = [e for e in result.console_errors if "error" in e.lower()]
+            if critical_errors:
+                failures.append(f"'{description}' ({path}) had console errors: {critical_errors}")
 
-        # Assert no critical console errors (warnings are okay)
-        critical_errors = [e for e in result.console_errors if "error" in e.lower()]
-        assert not critical_errors, (
-            f"Page '{description}' ({path}) had console errors: {critical_errors}"
-        )
+        assert PUBLIC_ROUTES
+        assert not failures, "\n".join(failures)
 
     @pytest.mark.public
     def test_auth_page_has_login_form(self, page: Page):
@@ -203,22 +203,17 @@ class TestUserPages:
     """Tests for pages that require regular user authentication."""
 
     @pytest.mark.auth_required
-    @pytest.mark.parametrize("path,description", USER_ROUTES)
-    def test_user_page_loads(
-        self,
-        authenticated_page: Page,
-        path: str,
-        description: str,
-    ):
-        """Test that user pages load successfully when authenticated."""
-        result = check_page_accessibility(authenticated_page, path, description)
+    def test_user_pages_load(self, authenticated_page: Page):
+        """Test that every user page loads successfully when authenticated."""
+        failures: list[str] = []
 
-        assert result.success, (
-            f"Page '{description}' ({path}) failed to load: {result.error_message}"
-        )
+        for path, description in USER_ROUTES:
+            result = check_page_accessibility(authenticated_page, path, description)
+            if not result.success:
+                failures.append(f"'{description}' ({path}) failed to load: {result.error_message}")
 
-        # Log load time for performance tracking
-        print(f"  Load time: {result.load_time_ms}ms")
+        assert USER_ROUTES
+        assert not failures, "\n".join(failures)
 
     @pytest.mark.auth_required
     def test_home_page_structure(self, authenticated_page: Page):
@@ -232,25 +227,6 @@ class TestUserPages:
 
         # Page should have a title
         assert authenticated_page.title(), "Page should have a title"
-
-    @pytest.mark.auth_required
-    def test_workspace_navigation(self, authenticated_page: Page):
-        """Test navigation through workspace pages."""
-        pages = [
-            "/workspace",
-            "/workspace/models",
-            "/workspace/prompts",
-            "/workspace/tools",
-            "/workspace/knowledge",
-        ]
-
-        for path in pages:
-            authenticated_page.goto(path)
-            wait_until_loaded(authenticated_page)
-
-            # Each page should have content
-            body = authenticated_page.locator("body")
-            expect(body, f"Page {path} body not visible").to_be_visible()
 
     @pytest.mark.auth_required
     def test_unauthenticated_redirect(self, page: Page):
@@ -271,48 +247,19 @@ class TestAdminPages:
     """Tests for pages that require admin authentication."""
 
     @pytest.mark.admin_required
-    @pytest.mark.parametrize("path,description", ADMIN_ROUTES)
-    def test_admin_page_loads(
-        self,
-        admin_page: Page,
-        path: str,
-        description: str,
-    ):
-        """Test that admin pages load successfully when authenticated as admin."""
-        result = check_page_accessibility(admin_page, path, description)
+    def test_admin_pages_load(self, admin_page: Page):
+        """Test that every admin page loads successfully when authenticated as admin."""
+        failures: list[str] = []
 
-        assert result.success, (
-            f"Admin page '{description}' ({path}) failed to load: {result.error_message}"
-        )
+        for path, description in ADMIN_ROUTES:
+            result = check_page_accessibility(admin_page, path, description)
+            if not result.success:
+                failures.append(
+                    f"Admin page '{description}' ({path}) failed to load: {result.error_message}"
+                )
 
-        print(f"  Load time: {result.load_time_ms}ms")
-
-    @pytest.mark.admin_required
-    def test_admin_dashboard_structure(self, admin_page: Page):
-        """Test that admin dashboard has expected structure."""
-        admin_page.goto("/admin")
-        wait_until_loaded(admin_page)
-
-        # Admin page should have navigation to settings
-        body = admin_page.locator("body")
-        expect(body, "Admin page body not visible").to_be_visible()
-
-    @pytest.mark.admin_required
-    def test_admin_settings_navigation(self, admin_page: Page):
-        """Test navigation through admin settings pages."""
-        settings_pages = [
-            "/admin/settings",
-            "/admin/settings/general",
-            "/admin/settings/users",
-            "/admin/settings/connections",
-        ]
-
-        for path in settings_pages:
-            admin_page.goto(path)
-            wait_until_loaded(admin_page)
-
-            body = admin_page.locator("body")
-            expect(body, f"Admin settings page {path} body not visible").to_be_visible()
+        assert ADMIN_ROUTES
+        assert not failures, "\n".join(failures)
 
     @pytest.mark.admin_required
     def test_regular_user_cannot_access_admin(
@@ -347,109 +294,3 @@ class TestAdminPages:
         expect(page).not_to_have_url(re.compile(r"/admin"))
 
         page.close()
-
-
-# ============================================================================
-# Comprehensive Page Scan
-# ============================================================================
-
-
-class TestFullPageScan:
-    """Run a comprehensive scan of all pages and generate a report."""
-
-    @pytest.mark.slow
-    def test_all_public_pages_summary(self, page: Page, config: AppConfig):
-        """Scan all public pages and generate a summary."""
-        results: list[PageAccessibilityResult] = []
-
-        for path, description in PUBLIC_ROUTES:
-            result = check_page_accessibility(page, path, description)
-            results.append(result)
-
-        # Generate summary
-        passed = sum(1 for r in results if r.success)
-        failed = len(results) - passed
-
-        print(f"\n{'=' * 60}")
-        print("PUBLIC PAGES SUMMARY")
-        print(f"{'=' * 60}")
-        print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'=' * 60}")
-
-        for result in results:
-            status = "✅" if result.success else "❌"
-            print(f"{status} {result.description} ({result.path})")
-            if not result.success:
-                print(f"   Error: {result.error_message}")
-            if result.console_errors:
-                print(f"   Console errors: {len(result.console_errors)}")
-
-        assert failed == 0, f"{failed} public pages failed accessibility check"
-
-    @pytest.mark.slow
-    @pytest.mark.auth_required
-    def test_all_user_pages_summary(
-        self,
-        authenticated_page: Page,
-        config: AppConfig,
-    ):
-        """Scan all user pages and generate a summary."""
-        results: list[PageAccessibilityResult] = []
-
-        for path, description in USER_ROUTES:
-            result = check_page_accessibility(authenticated_page, path, description)
-            results.append(result)
-
-        # Generate summary
-        passed = sum(1 for r in results if r.success)
-        failed = len(results) - passed
-
-        print(f"\n{'=' * 60}")
-        print("USER PAGES SUMMARY")
-        print(f"{'=' * 60}")
-        print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'=' * 60}")
-
-        for result in results:
-            status = "✅" if result.success else "❌"
-            print(f"{status} {result.description} ({result.path})")
-            if not result.success:
-                print(f"   Error: {result.error_message}")
-            if result.console_errors:
-                print(f"   Console errors: {len(result.console_errors)}")
-
-        assert failed == 0, f"{failed} user pages failed accessibility check"
-
-    @pytest.mark.slow
-    @pytest.mark.admin_required
-    def test_all_admin_pages_summary(
-        self,
-        admin_page: Page,
-        config: AppConfig,
-    ):
-        """Scan all admin pages and generate a summary."""
-        results: list[PageAccessibilityResult] = []
-
-        for path, description in ADMIN_ROUTES:
-            result = check_page_accessibility(admin_page, path, description)
-            results.append(result)
-
-        # Generate summary
-        passed = sum(1 for r in results if r.success)
-        failed = len(results) - passed
-
-        print(f"\n{'=' * 60}")
-        print("ADMIN PAGES SUMMARY")
-        print(f"{'=' * 60}")
-        print(f"Total: {len(results)} | Passed: {passed} | Failed: {failed}")
-        print(f"{'=' * 60}")
-
-        for result in results:
-            status = "✅" if result.success else "❌"
-            print(f"{status} {result.description} ({result.path})")
-            if not result.success:
-                print(f"   Error: {result.error_message}")
-            if result.console_errors:
-                print(f"   Console errors: {len(result.console_errors)}")
-
-        assert failed == 0, f"{failed} admin pages failed accessibility check"
