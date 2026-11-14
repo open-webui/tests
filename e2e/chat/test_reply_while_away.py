@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 import threading
+from urllib.parse import urlsplit
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -92,13 +93,14 @@ def test_a_reply_that_finished_in_another_chat_shows_on_return(page_for, make_us
 
 
 def test_a_second_tab_follows_a_streaming_reply_to_its_end(page_for, make_user, upstream):
-    page = page_for(make_user())
+    account = make_user()
+    page = page_for(account)
     # the reply pauses partway, so it cannot finish before a slow second tab has loaded
     rest_of_reply = threading.Event()
     try:
         chat_url = _start_story(page, upstream, hold=rest_of_reply, hold_after=3)
-        second_tab = page.context.new_page()
-        second_tab.goto(chat_url)
+        # opened like any page, so the cold app load does not eat the first wait
+        second_tab = page_for(account, path=urlsplit(chat_url).path)
         expect(last_reply(second_tab)).to_contain_text("part-1")
         expect(stop_button(second_tab)).to_be_visible()
     finally:
@@ -109,13 +111,14 @@ def test_a_second_tab_follows_a_streaming_reply_to_its_end(page_for, make_user, 
 
 
 def test_stop_in_a_second_tab_stops_the_reply_in_both(page_for, make_user, upstream):
-    page = page_for(make_user())
+    account = make_user()
+    page = page_for(account)
     # the reply pauses partway, so it cannot run out before a slow second tab sends Stop
     rest_of_reply = threading.Event()
     try:
         chat_url = _start_story(page, upstream, hold=rest_of_reply, hold_after=3)
-        second_tab = page.context.new_page()
-        second_tab.goto(chat_url)
+        # opened like any page, so the cold app load does not eat the first wait
+        second_tab = page_for(account, path=urlsplit(chat_url).path)
         expect(stop_button(second_tab)).to_be_visible()
 
         stop_button(second_tab).click()
