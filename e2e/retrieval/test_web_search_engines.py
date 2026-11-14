@@ -8,14 +8,16 @@ result. The model then reads the first hit with `fetch_url` and cites it: the re
 as its one source, and opening the marker shows the page's text and link. Every engine's API is
 played by `harness/search_apis.py`, the fixed public hosts through its proxy, and the hits are
 pages on the same local service, on an instance that may fetch loopback addresses. Twin of
-integration/retrieval/test_web_search_engines.py, which has the domain filter per engine.
+integration/retrieval/test_web_search_engines.py, which has the domain filter per engine and
+runs every engine; here one keyed engine (Tavily) and one keyless engine (YaCy) cover the admin
+form, the chat and the citation, since the page code is the same for every engine.
 
 Not here: DuckDuckGo, SearXNG and the external engine (modules of their own), Azure AI Search (not
 in the admin panel's engine list) and Sougou (its Tencent Cloud SDK is not among the backend's
 requirements).
 
 Discriminates: passes on dev ebc6add67; in a backend copy whose `search_web` tool hands the
-model the engine's hits without their snippets every engine case fails.
+model the engine's hits without their snippets both engine cases fail.
 """
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ pytestmark = [
 PAGE_TEXT = "The harbour ferry leaves at noon from pier two."
 PAGE = f"<html><body><h1>Ferry times</h1><p>{PAGE_TEXT}</p></body></html>"
 KEYLESS = {"yacy", "openserp"}
+SHOWN = [engine for engine in ENGINES if engine.name in {"tavily", "yacy"}]
 
 
 @pytest.fixture(scope="module")
@@ -124,7 +127,7 @@ def tool_results(searcher, question: str) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("engine", ENGINES, ids=lambda engine: engine.name)
+@pytest.mark.parametrize("engine", SHOWN, ids=lambda engine: engine.name)
 def test_the_engine_set_up_by_the_admin_answers_a_chat_search(
     engine, page_for, searcher, searcher_admin, apis
 ):
