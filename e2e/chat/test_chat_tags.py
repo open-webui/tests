@@ -110,8 +110,9 @@ def test_a_tag_the_account_already_uses_is_suggested_and_added_to_a_second_chat(
 
 def test_a_removed_tag_is_gone_from_the_chat_and_the_suggestions(page_for, two_chats):
     account, tagged_id, other_id = two_chats
-    tag = unique_tag()
+    tag, kept = unique_tag(), unique_tag()
     tag_chat(account, tagged_id, tag)
+    tag_chat(account, other_id, kept)
     page = page_for(account)
     picker = open_tags_of(page, tagged_id)
     expect(tag_entry(picker, tag)).to_have_attribute("aria-checked", "true")
@@ -123,7 +124,8 @@ def test_a_removed_tag_is_gone_from_the_chat_and_the_suggestions(page_for, two_c
 
     page.reload()
     picker = open_tags_of(page, tagged_id)
-    expect(picker.get_by_role("menuitemcheckbox")).to_have_count(0)
+    expect(tag_entry(picker, kept)).to_have_attribute("aria-checked", "false")
+    expect(tag_entry(picker, tag)).to_have_count(0)
 
     picker = open_tags_of(page, other_id)
     picker.get_by_label("Find or create a tag").fill(tag)
