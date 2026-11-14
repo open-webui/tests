@@ -6,10 +6,14 @@ control), and both that route and `/memories/path` returned every memory with it
 `meta`. The memory tools hand those replies to the model. The fix records `model['id']` and
 serializes memory rows without `meta`.
 
+The model reading a stored memory back through `list_memories` is also checked here (moved from
+the browser memories tests, whose page showed nothing more than the tool result).
+
 Twin of unit/memory/test_memory_tool_payload.py.
 
 Discriminates: passes on dev bbfa876af; reverting `e9a0164690` fails the three narrow tests (the
-stored meta holds the whole model entry and both replies carry `meta`).
+stored meta holds the whole model entry and both replies carry `meta`). The `list_memories` test
+fails in a backend copy whose tool lists nothing.
 """
 
 from __future__ import annotations
@@ -91,3 +95,19 @@ def test_a_memory_written_outside_a_chat_keeps_its_source_and_no_model(account, 
 
     assert memory["meta"]["created_by"] == (source or "tool")
     assert memory["meta"]["model"] is None
+
+
+def test_the_model_reads_a_memory_through_its_list_memories_tool(account, upstream):
+    stored = "I keep bees on the roof."
+    with account.client() as client:
+        client.post(
+            "/api/v1/memories/add", json={"content": stored, "type": "user"}
+        ).raise_for_status()
+        upstream.queue(reply.tool_call("list_memories", {}), reply.text("Your notes say bees."))
+        ask(client, "check your notes: what is on my roof?", features={"memory": True})
+
+    tool_results = [
+        entry for entry in conversation(upstream.chat_requests()[-1]) if entry["role"] == "tool"
+    ]
+    assert tool_results, "the memory tool's result never reached the model"
+    assert stored in str(tool_results[0]["content"]), "the memory tool did not return the memory"
