@@ -50,6 +50,12 @@ Discriminates: on dev 262a8c6f7 the filter and refused-replay cases of the previ
 fail (the run's summary request does not hold the turn's summary) and pass with the #34141 fix;
 its replayed case passes on both. The turn-summary test fails on dev 262a8c6f7 (the next message
 resumes from the run summary) and passes with the #34140 fix.
+
+A reply whose tool result was too big for the next model call ended on the provider's error,
+and its stored token count was the one from before that result arrived, so every later message
+was judged far under the threshold and resent the result (open-webui/open-webui#34434).
+Discriminates: on dev fcff23152 the context-limit test fails (no summary, the result resent)
+and passes with fix e1b835769.
 """
 
 from __future__ import annotations
@@ -588,3 +594,53 @@ def test_the_next_message_resumes_from_a_turn_summary_made_after_a_run_summary(
         f"rounds before the turn summary came back: {pages}"
     )
     assert unpaired(conversation(sent)) == []
+
+
+DUMP_TOOL_SOURCE = '''
+class Tools:
+    def dump_table(self, name: str) -> str:
+        """Dump a whole table."""
+        return "row " * 125_000
+'''
+
+
+def test_the_next_message_compacts_a_reply_whose_tool_result_hit_the_context_limit(
+    make_user, admin, upstream, compaction
+):
+    """open-webui/open-webui#34434: a tool result too big for the next model call ended the
+    reply with an error, and every later message resent it without compacting."""
+    compaction(threshold=COUNTED_THRESHOLD)
+    tag = uuid.uuid4().hex[:6]
+    prompt, follow_up_prompt = f"dump the orders table [{tag}]", f"just the totals then [{tag}]"
+    upstream.queue(
+        counted(
+            reply.tool_call("dump_table", {"name": "orders"}, match=answering(prompt)),
+            8_000,
+            "usage",
+        ),
+        reply.error(400, "maximum context length exceeded", match=answering(prompt)),
+        reply.text(SUMMARIES[0], match=is_summary_request),
+        reply.text("The totals are fine.", match=answering(follow_up_prompt)),
+    )
+    with python_tool(admin, DUMP_TOOL_SOURCE, name="Table dump") as tool_id:
+        with make_user().client() as client:
+            turn, failed = ask(client, prompt, tool_ids=[tool_id])
+            assert failed.get("error"), f"control: the reply did not hit the limit: {failed}"
+            usage = client.get(f"/api/v1/chats/{turn.chat_id}").json()["context_usage"]
+            ask(
+                client,
+                follow_up_prompt,
+                chat_id=turn.chat_id,
+                parent_id=turn.assistant_message_id,
+                tool_ids=[tool_id],
+            )
+
+    assert usage["tokens"] > COUNTED_THRESHOLD, (
+        f"the context gauge leaves out the tool result: {usage['tokens']} tokens"
+    )
+    assert summary_requests(upstream), "the next message was not compacted"
+    sent = last_chat_request(upstream)
+    assert "row row" not in json.dumps(sent), (
+        f"the next message resent the tool result ({len(json.dumps(sent))} chars)"
+    )
+    assert f"[CONVERSATION SUMMARY]\n{SUMMARIES[0]}" in sent["messages"][0]["content"]

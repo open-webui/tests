@@ -15,6 +15,11 @@ the summary request was capped at 1000 tokens, which a reasoning model could spe
 leave the summary empty or cut off. It passes on dev e8c0ad85e and fails on a backend copy with
 275e0f40e reverted (the request carries `max_tokens: 1000`); the task model settings test passes
 on both.
+
+The failed-reply test pins open-webui/open-webui#34434: compacting a chat whose last reply had
+failed stored the summary on that empty reply, which the next turn does not send, so the next
+turn resent the whole chat. It fails on dev fcff23152 (the next turn carries every earlier
+message and no summary) and passes with fix f1f7bec4b.
 """
 
 from __future__ import annotations
@@ -126,6 +131,30 @@ def test_the_next_turn_sends_the_summary_and_what_follows_it(make_user, upstream
     assert sent[0]["content"].startswith(SYSTEM_PROMPT)
     assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in sent[0]["content"]
     assert [message["content"] for message in sent[1:]] == ["answer 3", "question 4"]
+
+
+@pytest.mark.regression
+def test_compacting_after_a_failed_reply_shrinks_the_next_turn(make_user, upstream, compaction_on):
+    """open-webui/open-webui#34434: the summary went on the failed reply, which the next turn
+    leaves out, so the next turn resent the whole chat without it."""
+    upstream.queue(
+        reply.error(400, "maximum context length exceeded", match=reply.answering("question 3")),
+        reply.text(SUMMARY, match=is_summary_request),
+        reply.text("answer 4", match=reply.answering("question 4")),
+    )
+    with make_user().client() as client:
+        chat_id, last_id = seed_chat(client, turns(2))
+        turn, failed = ask(client, "question 3", chat_id=chat_id, parent_id=last_id)
+        assert failed.get("error"), f"control: the reply did not fail: {failed}"
+        result = compact(client, chat_id)
+        ask(client, "question 4", chat_id=chat_id, parent_id=turn.assistant_message_id)
+
+    assert result["compacted"] is True
+    sent = conversation([body for body in upstream.chat_requests() if body.get("stream")][-1])
+    assert f"[CONVERSATION SUMMARY]\n{SUMMARY}" in sent[0]["content"], (
+        f"the next turn has no summary: {sent[0]}"
+    )
+    assert [message["content"] for message in sent[1:]] == ["question 3", "question 4"]
 
 
 def test_a_second_compaction_builds_on_the_previous_summary(make_user, upstream, compaction_on):
