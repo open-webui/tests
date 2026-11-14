@@ -15,8 +15,10 @@ blank until a reload although the server saved it whole (open-webui/open-webui#3
 
 Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
 copy: the characters allowed around a delimiter cut to spaces only and display math drawn
-inline) the punctuation cases, the display test and its reload twin go red; the prices test, the
+inline) the punctuation test, the display test and its reload twin go red; the prices test, the
 broken formula test (no punctuation next to its formulas) and the copy test stay green there.
+
+The nine punctuation cases are paragraphs of one reply, so they share a page.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 """
@@ -100,28 +102,31 @@ def test_the_typeset_formulas_are_the_same_after_a_reload(chat_for, make_user, u
     expect_inline_and_display_math(last_reply(chat))
 
 
-PUNCTUATION = {
-    "brackets": "the root ($x_1$) is real",
-    "a full stop": "the root is $x_1$. Next",
-    "a comma and a colon": "roots $x_1$, $x_2$: both real",
-    "a question mark": "is it $x_1$? Yes",
-    "an exclamation mark": "it is $x_1$! Yes",
-    "guillemets": "la racine «$x_1$» est réelle",
-    "german quotes": "die Wurzel „$x_1$“ ist reell",
-    "chinese punctuation": "根是$x_1$，也是$x_2$。",
-    "a parenthesised form": "the root (\\(x_1\\)) is real",
-}
+PUNCTUATION = [
+    "the root ($x_1$) is real",
+    "the root is $x_1$. Next",
+    "roots $x_1$, $x_2$: both real",
+    "is it $x_1$? Yes",
+    "it is $x_1$! Yes",
+    "la racine «$x_1$» est réelle",
+    "die Wurzel „$x_1$“ ist reell",
+    "根是$x_1$，也是$x_2$。",
+    "the root (\\(x_1\\)) is real",
+]
 
 
-@pytest.mark.parametrize("case", PUNCTUATION)
-def test_a_formula_touching_punctuation_is_still_typeset(chat_for, make_user, upstream, case):
+def test_a_formula_touching_punctuation_is_still_typeset(chat_for, make_user, upstream):
+    """Brackets, a full stop, a comma and colon, a question and exclamation mark, guillemets,
+    german quotes, Chinese punctuation and a parenthesised form, one paragraph each."""
     chat = chat_for(make_user())
-    written = PUNCTUATION[case]
+    labelled = [f"Case {number}: {written}" for number, written in enumerate(PUNCTUATION, 1)]
 
-    box = ask(chat, upstream, written, f"punctuation case {case}")
+    box = ask(chat, upstream, "\n\n".join(labelled), "show me every punctuation case")
 
-    expected = ["x_1", "x_2"] if "x_2" in written else ["x_1"]
-    expect(typeset_sources(box)).to_have_text(expected)
+    for number, written in enumerate(PUNCTUATION, 1):
+        paragraph = box.locator("p").filter(has_text=f"Case {number}:")
+        expected = ["x_1", "x_2"] if "x_2" in written else ["x_1"]
+        expect(typeset_sources(paragraph), written).to_have_text(expected)
     shown = box.inner_text()
     assert "$" not in shown and "\\(" not in shown, f"a delimiter is left on screen: {shown!r}"
 
