@@ -3,13 +3,16 @@
 A real Open Terminal runs with a folder of the test's own in its home. In a chat with the terminal
 picked the person opens Files. Back and Forward step through the folders they visited and are
 switched off at either end; a folder in the path above the list leads there, and a folder opened
-after going back ends what Forward remembered. A folder's arrow opens it in place, with its
-entries under it and the rest of the list around them, and closes it again, as Expand and Collapse
-in the folder's More menu do; Refresh also reads the folders that are open. The Sort menu orders
-the list by name, size, date modified or date added with folders always first, a second pick of
-the same order turns it around, and the two date orders show each entry's age. A right click on
-the empty part of the list offers the folder's own actions. Show Hidden Files is still on after
-the page was loaded again.
+after going back ends what Forward remembered. A click on the empty end of that path turns it into
+a box that takes a path: Enter opens the folder typed, Escape leaves the folder as it was, `..`
+opens the folder above, and a path that climbs above the terminal's home with `..` opens the home;
+a path with no leading slash opens below the folder shown. A folder's arrow opens it in place, with
+its entries under it and the rest of the list around them, and closes it again, as Expand and
+Collapse in the folder's More menu do; Refresh also reads the folders that are open. The Sort menu
+orders the list by name, size, date modified or date added with folders always first, a second pick
+of the same order turns it around, and the two date orders show each entry's age. A right click on
+the empty part of the list offers the folder's own actions. Show Hidden Files is still on after the
+page was loaded again.
 
 The right-click menu near the lower edge of the window is a known red, see its test.
 
@@ -21,7 +24,9 @@ size order sorting by name (A) and a second pick not turning the order around (B
 test; New Folder in the right-click menu asking for a file's name (A) and its hidden files entry
 doing nothing (B) for the right click test. On A alone: the hidden files switch not read back
 when the browser opens (reload test) and an entry's menu without Open (menus test). The lower
-edge test passes on A, which also keeps the right-click menu inside the window.
+edge test passes on A, which also keeps the right-click menu inside the window. The typed path
+test fails on dev 32243bdf7 (no box to type into) and passes on branch feat/file-browser-type-path
+d2d33848c.
 """
 
 from __future__ import annotations
@@ -131,6 +136,68 @@ def test_back_and_forward_step_through_the_folders_visited(browser, quay):
     enter_empty.click()
     expect(browser.get_by_text("This folder is empty")).to_be_visible()
     expect(_forward(browser), "Forward after a new folder was opened").to_be_disabled()
+
+
+def _type_path(browser: Locator, shown: str) -> Locator:
+    """Click the empty end of the path above the list, which shows `shown` last; returns the box."""
+    trail = crumb(browser, shown).locator("xpath=..")
+    width = trail.bounding_box()["width"]
+    trail.click(position={"x": width - 2, "y": 4})
+    box = browser.get_by_role("textbox", name="Path", exact=True)
+    expect(box).to_be_focused()
+    return box
+
+
+def test_a_path_typed_into_the_path_above_the_list_opens_that_folder(browser, quay, open_terminal):
+    """Red on dev 32243bdf7: the path above the list takes no typing. Pins the feature PR that
+    lets a person type a path there, branch Classic298:feat/file-browser-type-path (d2d33848c),
+    open-webui/open-webui#TBD."""
+    enter(browser, quay.name, "nets.txt")
+
+    path = _type_path(browser, quay.name)
+    expect(path, "the box starts with the folder shown").to_have_value(f"{quay}/")
+    path.fill(str(quay / "sheds"))
+    path.press("Enter")
+    expect_listed(browser, "ledger.txt")
+    expect(crumb(browser, "sheds")).to_be_visible()
+
+    path = _type_path(browser, "sheds")
+    path.fill(str(quay))
+    path.press("Escape")
+    expect(crumb(browser, "sheds"), "Escape left the folder shown").to_be_visible()
+    expect_listed(browser, "ledger.txt")
+
+    path = _type_path(browser, "sheds")
+    path.fill("..")
+    path.press("Enter")
+    expect_listed(browser, "sheds/", "nets.txt")
+    expect(crumb(browser, ".."), "the path shows the folder `..` led to").to_have_count(0)
+
+    path = _type_path(browser, quay.name)
+    path.fill(str(quay / "nowhere"))
+    path.press("Enter")
+    expect(browser.get_by_text("Failed to load directory.", exact=False)).to_be_visible()
+
+    # the folders in the path still lead there
+    crumb(browser, quay.name).click()
+    expect_listed(browser, "sheds/", "nets.txt")
+
+    # the browser is rooted at the terminal's home, and `..` does not climb out of it
+    above = open_terminal.home.parent / f"above-{uuid.uuid4().hex[:6]}"
+    above.mkdir()
+    (above / "deeds.txt").write_text("not for the browser\n")
+    path = _type_path(browser, quay.name)
+    path.fill(f"{open_terminal.home}/../{above.name}")
+    path.press("Enter")
+    expect(row(browser, quay.name), "a path above the home opens the home").to_be_visible()
+    expect(row(browser, "deeds.txt")).to_have_count(0)
+
+    # a path with no leading slash opens below the folder shown
+    path = _type_path(browser, "Home")
+    path.fill(f"{quay.name}/sheds")
+    path.press("Enter")
+    expect_listed(browser, "ledger.txt")
+    expect(crumb(browser, quay.name), "the path shows the folder opened").to_be_visible()
 
 
 def _arrow(browser: Locator, folder: str, name: str) -> Locator:
