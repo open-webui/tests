@@ -8,19 +8,18 @@ which a `$` mention then sends to the model. An old version is deleted from its 
 picker after a confirmation, and the current version offers no delete. On the Skills page, Import
 takes a ZIP of skill folders and opens a dialog listing each skill with its file count; Import
 selected saves them with all their files. A skill that already exists is listed to be skipped, and
-choosing Replace saves the upload as a new version of it. A row's Export ZIP downloads the skill's
-folder with every file, its Export .skill downloads `<id>.skill`, which imports back from disk
-with every file, and Clone opens a new skill holding the same files.
+choosing Replace saves the upload as a new version of it. A row's Export .skill downloads
+`<id>.skill`, which imports back from disk with every file, and Clone opens a new skill in the
+editor. A row's Export ZIP and the files a clone holds are not driven here, and Export JSON is in
+test_skill_files_and_languages.py.
 
 Discriminates: passes on the dev 178de3666 build. In a frontend copy, a code editor that ignores
 the read-only flag (an old version takes typing) or a file row that starts a rename on double
 click whatever it allows turns the version picker test red; a restore that
 sends the current version in place of the picked one turns the restore test red; an import
-dialog that offers no Replace turns the replace test red; and a row's Export ZIP that downloads
-JSON turns the export ZIP test red. In a backend copy, a comparison that reports every file as
-modified turns the version picker test red, a ZIP import that keeps only SKILL.md turns the
-import test red, a clone that copies an empty SKILL.md alone turns the clone test red and an
-export that leaves out the files turns the export JSON test red. Retargeted for 37138282f and
+dialog that offers no Replace turns the replace test red. In a backend copy, a comparison that
+reports every file as modified turns the version picker test red and a ZIP import that keeps
+only SKILL.md turns the import test red. Retargeted for 37138282f and
 b130fec73, where the comparison became a panel of its own showing removed and added lines side by
 side: the version picker test passes on b130fec73. Retargeted for 24ee1cb16, where an old version is
 set as production in place of being restored as a copy: the set production test passes there and
@@ -33,7 +32,6 @@ refuses `.skill` files or whose .skill export writes only SKILL.md.
 from __future__ import annotations
 
 import io
-import json
 import re
 import uuid
 import zipfile
@@ -243,53 +241,6 @@ def test_importing_an_existing_skill_offers_skip_and_replace_saves_a_new_version
     assert len(history(owner, skill_id)) == 2
 
 
-def test_a_rows_export_zip_holds_the_skills_folder_with_every_file(page_for, owner):
-    skill_id = new_id("charts")
-    create(
-        owner,
-        {
-            "SKILL.md": skill_md(skill_id, "Plot the course."),
-            "references/symbols.md": "Rocks are crosses.\n",
-        },
-        skill_id=skill_id,
-        name=f"Charts {skill_id}",
-    )
-    page = page_for(owner)
-
-    with page.expect_download() as download:
-        _row_menu(page, f"Charts {skill_id}", "Export ZIP")
-    with zipfile.ZipFile(download.value.path()) as archive:
-        names = set(archive.namelist())
-        symbols = archive.read(f"{skill_id}/references/symbols.md")
-
-    assert names == {f"{skill_id}/SKILL.md", f"{skill_id}/references/symbols.md"}
-    assert symbols == b"Rocks are crosses.\n"
-
-
-def test_a_rows_export_json_holds_the_skill_with_its_files(page_for, owner):
-    skill_id = new_id("charts")
-    create(
-        owner,
-        {
-            "SKILL.md": skill_md(skill_id, "Plot the course."),
-            "references/symbols.md": "Rocks are crosses.\n",
-        },
-        skill_id=skill_id,
-        name=f"Charts {skill_id}",
-    )
-    page = page_for(owner)
-
-    with page.expect_download() as download:
-        _row_menu(page, f"Charts {skill_id}", "Export JSON")
-    with open(download.value.path()) as saved:
-        exported = json.load(saved)
-
-    assert exported["id"] == skill_id
-    assert {entry["path"]: entry["content"] for entry in exported["files"]}[
-        "references/symbols.md"
-    ] == ("Rocks are crosses.\n")
-
-
 def test_a_rows_export_skill_downloads_a_skill_file_that_imports_back(page_for, owner):
     skill_id = new_id("charts")
     create(
@@ -330,14 +281,11 @@ def test_a_rows_export_skill_downloads_a_skill_file_that_imports_back(page_for, 
     assert read(owner, skill_id, "references/symbols.md") == b"Rocks are crosses.\n"
 
 
-def test_clone_opens_a_new_skill_with_the_same_files(page_for, owner):
+def test_clone_opens_a_new_skill_in_the_editor(page_for, owner):
     skill_id = new_id("charts")
     create(
         owner,
-        {
-            "SKILL.md": skill_md(skill_id, "Plot the course."),
-            "references/symbols.md": "Rocks are crosses.\n",
-        },
+        {"SKILL.md": skill_md(skill_id, "Plot the course.")},
         skill_id=skill_id,
         name=f"Charts {skill_id}",
     )
@@ -346,9 +294,6 @@ def test_clone_opens_a_new_skill_with_the_same_files(page_for, owner):
     _row_menu(page, f"Charts {skill_id}", "Clone")
 
     expect(page).to_have_url(re.compile(rf"/workspace/skills/edit\?id={skill_id}-\w+$"))
-    clone_id = page.url.split("id=")[1]
-    assert set(files(owner, clone_id)) == {"SKILL.md", "references/symbols.md"}
-    assert read(owner, clone_id, "references/symbols.md") == b"Rocks are crosses.\n"
 
 
 def test_an_old_version_is_deleted_from_the_version_picker(page_for, owner):
