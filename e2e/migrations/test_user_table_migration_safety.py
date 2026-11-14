@@ -4,31 +4,28 @@ Issue #26403 (fix c416c6cad): the migration `b10670c03dd5` wrote each saved `use
 serialized a second time into its new JSON column on SQLite, so the account came back with a
 string the app cannot read. The same migration moves the old single SSO link `user.oauth_sub`
 into the `user.oauth` object, which the provider-and-sub lookup reads. The server boots on a
-database built as a 0.6.x install left it (`harness.legacy_accounts`): the account that saved
-Widescreen Mode on still sees it on in its Interface settings, and the account linked through
-`oauth_sub` signs in with "Continue with SSO" and lands in its own account.
+database built as a 0.6.x install left it (`harness.legacy_accounts`): the account linked through
+`oauth_sub` signs in with "Continue with SSO" and lands in its own account. That a saved setting
+is still on after the upgrade is pinned by the integration twin, which reads it back over HTTP.
 
 Twin of unit/migrations/test_user_table_migration_safety.py.
 Discriminates: passes on dev ef67cc3fa; with the migration's `.values({...: parsed})` back to
-`json.dumps(parsed)` in a copy of it both tests fail (neither account can sign in), and with the
-`oauth_sub` conversion dropped the SSO test fails (the sign-in page stays up).
+`json.dumps(parsed)` in a copy of it the test fails (the account cannot sign in), and with the
+`oauth_sub` conversion dropped it fails too (the sign-in page stays up).
 """
 
 from __future__ import annotations
 
-import json
 from typing import Callable, Iterator
 
-import httpx
 import pytest
 from playwright.sync_api import Page, expect
 
 from harness.instance import resolve_backend, resolve_frontend_build
-from harness.legacy_accounts import LEGACY_PASSWORD, legacy_email, legacy_id, seed_legacy_accounts
+from harness.legacy_accounts import legacy_email, legacy_id, seed_legacy_accounts
 from harness.oidc_provider import shared_provider, sso_env
 from harness.prepared_data import RunningBackend, serving
 from utils.chat_ui import chat_input
-from utils.user_menu import open_settings
 
 pytestmark = [
     pytest.mark.regression,
@@ -71,38 +68,6 @@ def new_page(browser, upgraded) -> Iterator[Callable[[], Page]]:
     yield open_page
     for context in contexts:
         context.close()
-
-
-@pytest.fixture
-def signed_in_page(new_page, upgraded) -> Callable[[str], Page]:
-    """`signed_in_page(who)` signs a legacy account in with its password and opens the app."""
-
-    def open_page(who: str) -> Page:
-        signed_in = httpx.post(
-            f"{upgraded.base_url}/api/v1/auths/signin",
-            json={"email": legacy_email(who), "password": LEGACY_PASSWORD},
-            timeout=60.0,
-        )
-        assert signed_in.status_code == 200, (
-            f"{who} cannot sign in after the upgrade: {signed_in.text}"
-        )
-        page = new_page()
-        token = json.dumps(signed_in.json()["token"])
-        page.add_init_script(f"try {{ localStorage.setItem('token', {token}); }} catch (e) {{}}")
-        page.goto("/")
-        return page
-
-    return open_page
-
-
-def test_a_setting_saved_before_the_upgrade_is_still_on(signed_in_page):
-    page = signed_in_page("alice")
-    open_settings(page)
-    page.get_by_role("tab", name="Interface").click()
-
-    switch = page.get_by_role("switch", name="Widescreen Mode")
-
-    expect(switch).to_have_attribute("aria-checked", "true", timeout=30_000)
 
 
 def test_an_old_sso_link_signs_its_owner_in_from_the_sign_in_page(new_page, upgraded, idp):
