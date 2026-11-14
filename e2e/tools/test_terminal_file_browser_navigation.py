@@ -151,7 +151,7 @@ def _type_path(browser: Locator, shown: str) -> Locator:
 def test_a_path_typed_into_the_path_above_the_list_opens_that_folder(browser, quay, open_terminal):
     """Red on dev 32243bdf7: the path above the list takes no typing. Pins the feature PR that
     lets a person type a path there, branch Classic298:feat/file-browser-type-path (d2d33848c),
-    open-webui/open-webui#TBD."""
+    open-webui/open-webui#34423."""
     enter(browser, quay.name, "nets.txt")
 
     path = _type_path(browser, quay.name)
