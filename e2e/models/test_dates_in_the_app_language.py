@@ -6,11 +6,16 @@ dates written through dayjs (the shared chat's date among them) stayed English a
 since the app handed dayjs a language code such as `de-DE` it does not know. Schedules are now
 worded through the app's translations and clock, and dayjs follows the chosen language.
 
+Since dev 9723b3a6a the automation's page is its editor and its Schedule row is the Schedule menu,
+which names only the kind, and in English whatever the language (open-webui/open-webui#34426,
+fix PR branch fix-automation-schedule-label-language). The list still words the whole schedule.
+
 The browser itself runs in English here, so only the language picked in Settings can make the
 page German.
 
 Discriminates: passes on dev 1c010b438; in a frontend build with 7d205a86d reverted all four
-fail (English schedules, "March 3, 2026 10:45 AM" on the shared chat).
+fail (English schedules, "March 3, 2026 10:45 AM" on the shared chat). The schedule cases are red
+on dev 2fdf4ce6b (the page reads "Daily") and pass on the fix branch.
 """
 
 from __future__ import annotations
@@ -24,17 +29,27 @@ from playwright.sync_api import Page, expect
 from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import automation_row
+from utils.page_tabs import page_tab
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 ENGLISH_BROWSER = {"timezone_id": "UTC", "locale": "en-US"}
 SCHEDULES = {
-    "daily": ("DTSTART:20990101T090000\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "Täglich um 9:00"),
+    "daily": (
+        "DTSTART:20990101T090000\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+        "Täglich um 9:00",
+        "Täglich",
+    ),
     "weekly": (
         "DTSTART:20990101T081500\nRRULE:FREQ=WEEKLY;BYDAY=MO,TH;BYHOUR=8;BYMINUTE=15",
         "Mo, Do um 8:15",
+        "Wöchentlich",
     ),
-    "once": ("DTSTART:20990303T104500\nRRULE:FREQ=DAILY;COUNT=1", "Einmalig · 3. März 10:45"),
+    "once": (
+        "DTSTART:20990303T104500\nRRULE:FREQ=DAILY;COUNT=1",
+        "Einmalig · 3. März 10:45",
+        "Einmalig",
+    ),
 }
 SHARED_AT = dt.datetime(2026, 3, 3, 10, 45, tzinfo=dt.timezone.utc)
 
@@ -69,7 +84,7 @@ def create_automation(owner: Actor, rrule: str) -> dict:
 
 @pytest.mark.parametrize("kind", list(SCHEDULES))
 def test_a_schedule_is_worded_in_the_chosen_language(page_for, scheduler, kind):
-    rrule, worded = SCHEDULES[kind]
+    rrule, worded, kind_name = SCHEDULES[kind]
     automation = create_automation(scheduler, rrule)
     page = in_german(page_for(scheduler, **ENGLISH_BROWSER))
 
@@ -79,8 +94,11 @@ def test_a_schedule_is_worded_in_the_chosen_language(page_for, scheduler, kind):
     expect(row).to_contain_text(f"{worded} · Neuer Chat")
 
     row.click()
-    schedule = page.get_by_role("main").get_by_text("Zeitplan", exact=True).locator("xpath=..")
-    expect(schedule).to_contain_text(worded)
+    details = page_tab(page, automation["name"])
+    expect(
+        details.get_by_text("Zeitplan", exact=True).locator("xpath=.."),
+        "the automation's page names its schedule in English (open-webui/open-webui#34426)",
+    ).to_contain_text(kind_name)
 
 
 def test_a_shared_chat_shows_its_date_in_the_chosen_language(page_for, make_user):
