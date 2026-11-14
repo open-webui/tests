@@ -770,17 +770,22 @@ def test_stage_boxes_stage_one_file_or_all_of_them(terminal_page, repository):
         "aria-checked", "true"
     )
     expect(every_file).to_have_attribute("aria-checked", "mixed")
+    # the boxes show the wanted state at once; git has it once the request is done
+    expect(every_file).to_have_attribute("aria-busy", "false")
     assert _staged(repository) == {"moon.txt"}, "Stage staged other files than the one ticked"
     expect(git.get_by_role("button", name="Commit 1 file to main")).to_be_visible()
 
     every_file.click()
     every_file = git.get_by_role("checkbox", name="Unstage all")
     expect(every_file).to_have_attribute("aria-checked", "true")
+    expect(every_file).to_have_attribute("aria-busy", "false")
     assert _staged(repository) == {"moon.txt", "tides.txt"}
     expect(git.get_by_role("button", name="Commit 2 files to main")).to_be_visible()
 
     every_file.click()
-    expect(git.get_by_role("checkbox", name="Stage all")).to_have_attribute("aria-checked", "false")
+    every_file = git.get_by_role("checkbox", name="Stage all")
+    expect(every_file).to_have_attribute("aria-checked", "false")
+    expect(every_file).to_have_attribute("aria-busy", "false")
     assert _staged(repository) == set(), "Unstage all left files staged"
 
 
