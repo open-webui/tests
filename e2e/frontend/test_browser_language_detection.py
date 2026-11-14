@@ -8,7 +8,9 @@ English and kept it on every later visit. The detector now maps a reported code 
 (`de` and `de-AT` to `de-DE`, `es-419` to `es-ES`, `fr` to `fr-FR`, `ja` to `ja-JP`); a code
 with a bundle of its own stays as it is.
 
-A signed-out browser opens the sign-in page with that language as its only preference.
+A signed-out browser opens the sign-in page with that language as its only preference. Each
+function visits its codes one after the other, each in a browser context reporting that code,
+and the failure message names the code.
 
 The same file holds the administrator's default language, open-webui/open-webui#31548, fix
 `4987711391` (PR open-webui/open-webui#31551): since 0.11.4 a new visitor got the browser's
@@ -63,36 +65,40 @@ def open_sign_in(browser: Browser, config):
         context.close()
 
 
-@pytest.mark.parametrize(
-    ("reported", "bundle"),
-    [
-        ("de", "de-DE"),
-        ("de-AT", "de-DE"),
-        ("nl", "nl-NL"),
-        ("pl", "pl-PL"),
-        ("ja", "ja-JP"),
-        ("es-419", "es-ES"),
-        ("fr", "fr-FR"),
-    ],
-)
-def test_a_reported_language_gets_its_translation(open_sign_in, reported, bundle):
-    page = open_sign_in(reported)
-
-    expect(page.get_by_role("button", name=SIGN_IN_LABEL[bundle], exact=True)).to_be_visible()
-    assert page.evaluate("localStorage.locale") == bundle, (
-        f"a browser reporting {reported!r} was not matched to the {bundle} translation"
-    )
+REPORTED_BUNDLES = [
+    ("de", "de-DE"),
+    ("de-AT", "de-DE"),
+    ("nl", "nl-NL"),
+    ("pl", "pl-PL"),
+    ("ja", "ja-JP"),
+    ("es-419", "es-ES"),
+    ("fr", "fr-FR"),
+]
 
 
-@pytest.mark.parametrize(
-    ("reported", "label"),
-    [("fr-CA", "Connexion"), ("pt-BR", "Entrar"), ("en-US", "Sign in")],
-)
-def test_a_language_with_its_own_bundle_keeps_it(open_sign_in, reported, label):
-    page = open_sign_in(reported)
+def test_a_reported_language_gets_its_translation(open_sign_in):
+    # each code needs a browser reporting it, so every one opens its own context
+    for reported, bundle in REPORTED_BUNDLES:
+        page = open_sign_in(reported)
 
-    expect(page.get_by_role("button", name=label, exact=True)).to_be_visible()
-    assert page.evaluate("localStorage.locale") == reported
+        expect(
+            page.get_by_role("button", name=SIGN_IN_LABEL[bundle], exact=True),
+            f"a browser reporting {reported!r} did not get the {bundle} translation",
+        ).to_be_visible()
+        assert page.evaluate("localStorage.locale") == bundle, (
+            f"a browser reporting {reported!r} was not matched to the {bundle} translation"
+        )
+
+
+def test_a_language_with_its_own_bundle_keeps_it(open_sign_in):
+    for reported, label in [("fr-CA", "Connexion"), ("pt-BR", "Entrar"), ("en-US", "Sign in")]:
+        page = open_sign_in(reported)
+
+        expect(
+            page.get_by_role("button", name=label, exact=True),
+            f"a browser reporting {reported!r} did not keep its own translation",
+        ).to_be_visible()
+        assert page.evaluate("localStorage.locale") == reported
 
 
 def test_a_regional_code_of_another_script_is_not_moved_to_a_sibling(open_sign_in):
