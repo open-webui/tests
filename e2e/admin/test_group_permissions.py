@@ -410,5 +410,8 @@ def test_default_models_set_in_the_editor_start_the_members_next_new_chat(
     ).to_be_visible()
     outsider_page = ready(page_for(outsider))
     expect(
+        outsider_page.get_by_role("button", name=f"Selected model: {MOCK_MODEL_ID}")
+    ).to_be_visible()
+    expect(
         outsider_page.get_by_role("button", name=f"Selected model: {model['name']}")
     ).to_have_count(0)
