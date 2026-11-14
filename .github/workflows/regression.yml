@@ -643,6 +643,7 @@ jobs:
           LC_ALL: en_US.UTF-8
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
+          OWUI_TEST_SLOW: "2"
         shell: bash
         run: pytest e2e -q --splits 36 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
 
