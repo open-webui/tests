@@ -4,7 +4,7 @@ open-webui issue #31365, fixed by PR #31366: with Settings > Interface "Paste La
 on, pasting more than 1,000 characters into the channel input or a thread reply neither landed in
 the box nor became an attachment. The paste now turns into a `Pasted_Text_<timestamp>.txt` file
 that posts with the message. A short paste stays text in the box, and with the setting off a long
-one does too.
+one does too (the closing step of the channel paste test, after a reload).
 
 The text goes through the browser clipboard and Control+V, as a person pastes it.
 
@@ -102,6 +102,16 @@ def test_a_long_paste_in_the_channel_becomes_a_file_that_posts_with_the_message(
     assert message["content"] == "the full log"
     assert attached_texts(account, channel_id) == [LONG_TEXT]
 
+    with account.client() as client:
+        client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"largeTextAsFile": False}}
+        ).raise_for_status()
+    page.reload()
+    expect(box).to_be_visible()
+    paste(page, box, LONG_TEXT)
+    expect(box).to_contain_text("line 59 of the long log")
+    expect(page.locator("#message-input-container").get_by_text("Pasted_Text_")).to_have_count(0)
+
 
 def test_a_long_paste_in_a_thread_reply_becomes_a_file(channel, make_user, page_for):
     account = member_with(make_user, largeTextAsFile=True)
@@ -126,15 +136,4 @@ def test_a_short_paste_stays_text_in_the_box(channel, make_user, page_for):
     paste(page, box, SHORT_TEXT)
 
     expect(box).to_have_text(SHORT_TEXT)
-    expect(pasted_file(page)).to_have_count(0)
-
-
-def test_with_the_setting_off_a_long_paste_stays_text_in_the_box(channel, make_user, page_for):
-    account = member_with(make_user, largeTextAsFile=False)
-    page = open_channel(page_for, account, group_channel(account))
-    box = chat_input(page)
-
-    paste(page, box, LONG_TEXT)
-
-    expect(box).to_contain_text("line 59 of the long log")
     expect(pasted_file(page)).to_have_count(0)
