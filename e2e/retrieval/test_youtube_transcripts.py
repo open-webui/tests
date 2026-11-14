@@ -12,9 +12,8 @@ certificate authority.
 Twin of integration/retrieval/test_youtube_transcripts.py.
 
 Discriminates: passes on dev ef67cc3fa; with the loader returning `[]` for a refused transcript
-(121f2404e reverted) the refusal case fails (the toast names no reason); the transcript case
-passes on both.
-"""
+(121f2404e reverted) the refusal step fails (the toast names no reason); the transcript step, a
+second chat of the same test, passes on both."""
 
 from __future__ import annotations
 
@@ -63,15 +62,15 @@ def open_chat_about(page_for, launched, video_id: str):
     return page
 
 
-def test_a_blocked_server_is_told_to_set_a_youtube_proxy(page_for, youtube_instance, fake_youtube):
+def test_a_blocked_server_is_told_to_set_a_youtube_proxy_and_a_transcript_reaches_the_model(
+    page_for, youtube_instance, fake_youtube
+):
     fake_youtube.videos["botcheck002"] = youtube.unplayable("LOGIN_REQUIRED", youtube.BOT_CHECK)
 
     page = open_chat_about(page_for, youtube_instance, "botcheck002")
 
     expect(page.get_by_text("Youtube Proxy URL")).to_be_visible(timeout=30_000)
 
-
-def test_a_transcript_reaches_the_model(page_for, youtube_instance, fake_youtube):
     fake_youtube.videos["dQw4w9WgXcR"] = youtube.with_transcript("never gonna", "give you up")
     prompt = "what does the video say?"
     youtube_instance.upstream.queue(reply.text("it sings", match=reply.answering(prompt)))
