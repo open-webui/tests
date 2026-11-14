@@ -1,12 +1,12 @@
 """The default permissions decide whether accounts can use Temporary Chat or must.
 
-Admin Panel > Users > Groups > Default permissions holds Allow Temporary Chat and, once that is
-on, Enforce Temporary Chat. With the first off an account's header has no Temporary Chat button
-and its chats are saved. With the second on the button is gone as well and every new chat is
-temporary, so nothing it sends is stored. An admin keeps the button whatever the defaults say.
-Enforce Temporary Chat switched on and then hidden by switching Allow Temporary Chat off has no
-effect on the main chat: its chats are saved (the side chat is covered for open-webui#33928 in
-test_default_chat_permissions.py).
+Admin Panel > Users > Groups > Default permissions holds Allow Temporary Chat and, once that is on,
+Enforce Temporary Chat. With the first off an account's header has no Temporary Chat button and its
+chats are saved. With the second on the button is gone as well and every new chat is temporary, so
+nothing it sends is stored. An admin keeps the button whatever the defaults say (the last step of
+the enforcing test). Enforce Temporary Chat switched on and then hidden by switching Allow Temporary
+Chat off has no effect on the main chat: its chats are saved (the side chat is covered for
+open-webui#33928 in test_default_chat_permissions.py).
 
 Discriminates: passes on dev 176d31d1d, fails with `is_saved_chat_id` treating a `temporary:` id
 as saved (an enforced temporary chat is stored). The hidden Enforce test passes on dev b6534c58f
@@ -101,7 +101,8 @@ def test_enforcing_temporary_chat_makes_every_new_chat_temporary(
     page_for, admin, make_user, upstream, preserve
 ):
     preserve("permissions")
-    save_default_permission(page_for(admin), "Enforce Temporary Chat", turn_on=True)
+    admin_page = page_for(admin)
+    save_default_permission(admin_page, "Enforce Temporary Chat", turn_on=True)
     account = make_user()
     page = page_for(account)
     upstream.queue(reply.text(ANSWER, match=reply.answering(PROMPT)))
@@ -115,15 +116,8 @@ def test_enforcing_temporary_chat_makes_every_new_chat_temporary(
     expect(page.locator('a[href^="/c/"]')).to_have_count(0)
     assert stored_chats(account) == []
 
-
-def test_an_admin_keeps_the_temporary_chat_button_when_it_is_enforced(page_for, admin, preserve):
-    preserve("permissions")
-    page = page_for(admin)
-    save_default_permission(page, "Enforce Temporary Chat", turn_on=True)
-
-    page.goto("/")
-
-    expect(toggle(page)).to_be_visible()
+    admin_page.goto("/")
+    expect(toggle(admin_page)).to_be_visible()
 
 
 @pytest.mark.chat_surfaces(SIDE_CHAT)
