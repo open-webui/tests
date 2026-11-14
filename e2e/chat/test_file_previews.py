@@ -5,9 +5,10 @@ name, its size and the text the server read out of it. Its Preview tab shows a C
 rows, each sheet of a spreadsheet on a tab of its own, a Word document as its rendered page and
 Markdown with its formatting. A PowerPoint slide draws its title where the file aligns it: left,
 right or, when the file leaves it open, centred, and a deck with sections shows each slide once. A
-PDF shows its extracted text; the Preview tab's PDF viewer says "Failed to load PDF." in the suite's
-Chromium 131 for any PDF, so it is not driven here. An attached picture opens full size from the
-sent message and downloads as the bytes that were uploaded. Switching a long document to Using
+PDF is not driven here: its Preview tab's PDF viewer says "Failed to load PDF." in the suite's
+Chromium 131 for any PDF, and the text read out of it is pinned by the integration document loader
+tests. An attached picture opens full size from the sent message and downloads as the bytes that
+were uploaded. Switching a long document to Using
 Entire Document in its dialog sends the model the whole text where focused retrieval sends a few
 pieces of it, and a file's switch shows its own mode after another attachment is removed. Since
 98f7a6146 a file under the Full Text Threshold goes whole without a switch, so those two tests set
@@ -50,7 +51,6 @@ from integration.retrieval.test_document_loaders import (
     PPTX,
     XLSX,
     docx_bytes,
-    pdf_bytes,
 )
 from utils.cached_chat import attach
 from utils.chat_surface import ChatSurface
@@ -265,18 +265,6 @@ def test_markdown_previews_with_its_formatting(chat_for, make_user):
     expect(dialog.get_by_role("heading", name="Tide table")).to_be_visible()
     expect(dialog.get_by_role("listitem")).to_have_count(2)
     expect(dialog.locator("strong").filter(has_text="Monday")).to_be_visible()
-
-
-def test_a_pdf_shows_the_text_read_out_of_it(chat_for, make_user):
-    chat = chat_for(make_user())
-
-    dialog = attach_and_open(
-        chat, "chart.pdf", pdf_bytes("Soundings near the reef"), "application/pdf"
-    )
-
-    expect(dialog.get_by_text("1 Extracted Lines")).to_be_visible()
-    expect(dialog.get_by_text("Soundings near the reef")).to_be_visible()
-    expect(dialog.get_by_role("button", name="Preview", exact=True)).to_be_visible()
 
 
 def red_buoy_png() -> bytes:
