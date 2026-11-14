@@ -1,8 +1,9 @@
-"""Journey: a person gives an automation a terminal in its Create and Edit dialog.
+"""Journey: a person gives an automation a terminal in its Create dialog and on its page.
 
 New on dev after 0.13.3 (titled `refac`, 404d27a36 to 473a0fb24). The dialog has a Terminal
 dropdown once the person has a terminal. Picking one shows a Working Directory field; both are
-saved with the automation and shown again when it is edited or cloned. Picking the picked
+saved with the automation and shown again on its page, which is its editor since dev 9723b3a6a,
+and when it is cloned. Picking the picked
 terminal again takes it off, and its working directory with it. While a terminal is picked for
 an automation that writes to a chat, the coding agents installed in that terminal join the
 dialog's models; taking the terminal off drops a picked agent again.
@@ -17,7 +18,8 @@ test red, with e2e/models/test_automation_runs.py green on it as the control. Th
 shown without a terminal fails the offers test; a clone not taking over the working directory
 fails the saved-and-shown-again test at the clone; the working directory kept when the terminal
 is taken off fails the taken-off test; the agents left out of the dialog's models fail the
-agents test.
+agents test. On dev 2fdf4ce6b, where the page replaced the Edit dialog, a frontend copy keeping the
+stored terminal when it is taken off on the page turns the taken-off test red.
 """
 
 from __future__ import annotations
@@ -39,9 +41,12 @@ from harness.terminal_server import (
 )
 from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import (
+    automation_page,
     automation_row,
     close_terminal_menu,
+    instructions,
     open_terminal_menu,
+    save_changes,
     terminal_button,
     toggle_terminal,
     wait_until_loaded,
@@ -104,13 +109,6 @@ def _open_create_dialog(page: Page) -> Locator:
     return dialog
 
 
-def _open_edit_dialog(page: Page) -> Locator:
-    page.get_by_role("button", name="Edit", exact=True).click()
-    dialog = page.get_by_role("dialog")
-    wait_until_loaded(dialog, "Save")
-    return dialog
-
-
 def _model_menu(page: Page, dialog: Locator, shown: str, search: str) -> Locator:
     """The dialog's model dropdown, opened and narrowed to `search`."""
     dialog.get_by_role("button", name=shown).first.click()
@@ -131,7 +129,7 @@ def _create(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
-    expect(page.get_by_role("main")).to_contain_text(prompt)
+    expect(instructions(page)).to_have_value(prompt)
     return page.url.rsplit("/", 1)[-1]
 
 
@@ -172,11 +170,9 @@ def test_a_terminal_and_working_directory_picked_for_an_automation_are_saved_and
         f"the automation was saved with the terminal {stored.get('terminal')}"
     )
 
-    editing = _open_edit_dialog(page)
-    expect(working_directory(open_terminal_menu(page, editing, name))).to_have_value(DIRECTORY)
-    close_terminal_menu(page, editing, name)
-    editing.get_by_role("button", name="Cancel", exact=True).click()
-    expect(editing).to_be_hidden()
+    details = automation_page(page)
+    expect(working_directory(open_terminal_menu(page, details, name))).to_have_value(DIRECTORY)
+    close_terminal_menu(page, details, name)
 
     page.goto("/automations")
     page.get_by_role("textbox", name="Search Automations").fill(title)
@@ -212,9 +208,9 @@ def test_picking_the_picked_terminal_again_takes_it_and_its_working_directory_of
     assert created.status_code == 200, created.text
     automation_id = created.json()["id"]
     page = page_for(scheduler, path=f"/automations/{automation_id}")
-    expect(page.get_by_role("main")).to_contain_text(form["data"]["prompt"])
+    expect(instructions(page)).to_have_value(form["data"]["prompt"])
 
-    editing = _open_edit_dialog(page)
+    editing = automation_page(page)
     menu = open_terminal_menu(page, editing, name)
     expect(working_directory(menu)).to_have_value(DIRECTORY)
     toggle_terminal(page, menu, name)
@@ -226,8 +222,7 @@ def test_picking_the_picked_terminal_again_takes_it_and_its_working_directory_of
     menu = open_terminal_menu(page, editing, name)
     expect(working_directory(menu)).to_have_value("")
     toggle_terminal(page, menu, name)
-    editing.get_by_role("button", name="Save", exact=True).click()
-    expect(editing).to_be_hidden()
+    save_changes(page)
 
     stored = _stored(scheduler, automation_id)
     assert stored.get("terminal") is None, (

@@ -9,11 +9,13 @@ folder's system prompt reaches the model. The calendar's Scheduled Tasks show an
 automation's coming runs, which open the automation; once paused they are gone, and a run made
 with Run now shows on today and opens its chat.
 
-Renaming an automation in its Edit dialog keeps every schedule the menu can show as it was, and
-the new name shows on its page tab, which since dev da850248d carries the automation's title.
+Renaming an automation on its page keeps every schedule the menu can show as it was, and the new
+name shows on its page tab, which since dev da850248d carries the automation's title. Since dev
+9723b3a6a the page is the automation's editor: its Schedule row is the Schedule menu, which names
+only the kind, and Save in its header replaces the Edit dialog.
 
-Since 7d205a86d the list and the page word a schedule the same way, with weekdays as the Schedule
-menu names them ("Mo, Th at 8:15 AM", "Monthly 15 at 6:00 PM").
+Since 7d205a86d the list words a schedule with weekdays as the Schedule menu names them ("Mo, Th
+at 8:15 AM", "Monthly 15 at 6:00 PM").
 
 Bugs, both red on dev ebc6add67:
 
@@ -23,12 +25,12 @@ Bugs, both red on dev ebc6add67:
   tomorrow west of it, where the run comes a day late). The browser's zone is picked from the
   clock so the two days always differ. `test_the_once_schedule_starts_on_the_browsers_own_day`,
   issue open-webui/open-webui#31999.
-* The Edit dialog reads a stored rule into the menu's fields and builds it again on Save, which
-  keeps only frequency, interval, days and time. A rule that ends, after a number of runs
-  (`COUNT` with its `DTSTART`, as an API client or the model's automation tool may save one) or
-  on a date (`UNTIL`, typed as a Custom rule), loses its end when the automation is only renamed,
-  and then runs forever. `test_renaming_an_automation_keeps_the_end_of_its_schedule`, issue
-  open-webui/open-webui#32000.
+* The Edit dialog (the page since 9723b3a6a) reads a stored rule into the menu's fields and
+  builds it again on Save, which keeps only frequency, interval, days and time. A rule that
+  ends, after a number of runs (`COUNT` with its `DTSTART`, as an API client or the model's
+  automation tool may save one) or on a date (`UNTIL`, typed as a Custom rule), loses its end
+  when the automation is only renamed, and then runs forever.
+  `test_renaming_an_automation_keeps_the_end_of_its_schedule`, issue open-webui/open-webui#32000.
 
 `test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt` and
 `test_the_calendar_shows_an_active_automations_runs_and_opens_them` are red on dev 93fc3fcb7: since
@@ -42,7 +44,9 @@ taken from the local day the Once day test turns green. In backend copies: the c
 storing each rule with a stray trailing separator turns every schedule and rename case red; the
 next run computed in UTC turns the daily next-run test red; the middleware's folder lookup
 returning no folder turns the folder test red (no prompt); the Scheduled Tasks left out of the
-calendar listing turn the calendar test red.
+calendar listing turn the calendar test red. On dev 2fdf4ce6b, where the page replaced the Edit
+dialog, a frontend copy saving the old title turns the weekly rename case red and one whose
+Active switch does not save the calendar test.
 """
 
 from __future__ import annotations
@@ -56,17 +60,25 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
-from harness.backends import wait_until
 from harness.calendar_api import set_timezone
 from harness.upstream import MOCK_MODEL_ID
-from utils.automations_page import automation_row, wait_until_loaded
+from utils.automations_page import (
+    automation_page,
+    automation_row,
+    instructions,
+    name_box,
+    property_row,
+    run_entries,
+    run_now,
+    save_changes,
+    wait_until_loaded,
+)
 from utils.chat_ui import chat_input, conversation, expect_reply
 from utils.menus import late_menu_entry
 from utils.page_tabs import page_tab
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-RUN_TIMEOUT_MS = 30_000
 ZONE = "Asia/Tokyo"
 IN_ZONE = {"timezone_id": ZONE, "locale": "en-US"}
 NEXT_YEAR = dt.date.today().year + 1
@@ -111,7 +123,7 @@ def finish(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
-    expect(page.get_by_role("main")).to_contain_text(prompt)
+    expect(instructions(page)).to_have_value(prompt)
     return page.url.rsplit("/", 1)[-1]
 
 
@@ -120,11 +132,6 @@ def stored(owner, automation_id: str) -> dict:
         found = client.get(f"/api/v1/automations/{automation_id}")
     assert found.status_code == 200, found.text
     return found.json()
-
-
-def detail(page: Page, label: str) -> Locator:
-    """The value beside `label` in the automation page's summary."""
-    return page.get_by_role("main").get_by_text(label, exact=True).locator("xpath=..")
 
 
 def set_daily(page: Page) -> None:
@@ -193,7 +200,8 @@ def test_each_schedule_kind_is_saved_as_chosen_and_described(page_for, scheduler
     automation_id = finish(page, dialog, f"Write the {kind.lower()} report.", title)
 
     assert stored(scheduler, automation_id)["data"]["rrule"] == rule
-    expect(detail(page, "Schedule")).to_contain_text(described)
+    # the page names the kind; the list words the whole schedule
+    expect(property_row(page, "Schedule")).to_contain_text(kind)
     page.goto("/automations")
     page.get_by_role("textbox", name="Search Automations").fill(title)
     row = automation_row(page, title)
@@ -212,7 +220,7 @@ def test_a_daily_run_is_due_at_the_chosen_time_in_the_browsers_zone(page_for, sc
     next_run_ns = stored(scheduler, automation_id)["next_run_at"]
     next_run = dt.datetime.fromtimestamp(next_run_ns / 1e9, ZoneInfo(ZONE))
     assert (next_run.hour, next_run.minute) == (7, 30), next_run
-    expect(detail(page, "Next run")).to_contain_text(re.compile(r"7:30\s?AM"))
+    expect(property_row(page, "Next run")).to_contain_text(re.compile(r"7:30\s?AM"))
 
 
 def zone_on_another_day() -> tuple[str, dt.date]:
@@ -238,20 +246,8 @@ def test_the_once_schedule_starts_on_the_browsers_own_day(page_for, scheduler):
 
 
 def run_now_and_open_the_chat(page: Page, owner, automation_id: str) -> None:
-    details = page.get_by_role("main")
-    details.get_by_role("button", name="Run now").click()
-    with owner.client() as client:
-
-        def has_run() -> bool:
-            runs = client.get(f"/api/v1/automations/{automation_id}/runs")
-            assert runs.status_code == 200, runs.text
-            return bool(runs.json())
-
-        assert wait_until(has_run, RUN_TIMEOUT_MS / 1000), "Run now never recorded a run"
-    # the page reads its runs once, two seconds after Run now, so a longer run shows after a reload
-    page.reload()
-    view_chat = details.get_by_role("button", name="View chat")
-    view_chat.click()
+    run_now(page, owner, automation_id)
+    run_entries(page).click()
     expect(page).to_have_url(re.compile(r"/c/[0-9a-f-]+$"))
 
 
@@ -291,7 +287,7 @@ def test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt(
     automation_id = finish(page, dialog, prompt, title)
 
     assert stored(scheduler, automation_id)["folder_id"] == folder_id
-    expect(detail(page, "Destination")).to_contain_text(f"Folder: {folder}")
+    expect(property_row(page, "Destination")).to_contain_text(folder)
     run_now_and_open_the_chat(page, scheduler, automation_id)
     expect_reply(page, "Two trawlers and a ferry.")
     chat_id = page.url.rsplit("/", 1)[-1]
@@ -344,12 +340,9 @@ def test_the_calendar_shows_an_active_automations_runs_and_opens_them(
     upcoming.first.click()
     expect(page).to_have_url(re.compile(f"/automations/{automation_id}$"))
 
-    page.get_by_role("switch", name="Active").click()
-    expect(detail(page, "Status")).to_contain_text("Paused")
-    page.get_by_role("main").get_by_role("button", name="Run now").click()
-    expect(page.get_by_role("main").get_by_role("button", name="View chat")).to_be_visible(
-        timeout=RUN_TIMEOUT_MS
-    )
+    automation_page(page).get_by_role("switch", name="Active").click()
+    expect(property_row(page, "Status")).to_contain_text("Paused")
+    run_now(page, scheduler, automation_id)
 
     page.goto("/calendar")
     expect(calendar_chips(page, title)).to_have_count(1)
@@ -373,8 +366,8 @@ ENDING = {
 }
 
 
-def rename_in_the_edit_dialog(page_for, scheduler, rule: str) -> str:
-    """Save `rule` as an automation, rename it in its Edit dialog and return the stored rule."""
+def rename_on_its_page(page_for, scheduler, rule: str) -> str:
+    """Save `rule` as an automation, rename it on its page and return the stored rule."""
     title = unique("Rota")
     with scheduler.client() as client:
         created = client.post(
@@ -388,16 +381,13 @@ def rename_in_the_edit_dialog(page_for, scheduler, rule: str) -> str:
     assert created.status_code == 200, created.text
     automation_id = created.json()["id"]
     page = page_for(scheduler, path=f"/automations/{automation_id}", **IN_ZONE)
-    expect(page.get_by_role("main")).to_contain_text("Post the rota.")
+    expect(instructions(page)).to_have_value("Post the rota.")
 
-    page.get_by_role("button", name="Edit", exact=True).click()
-    editing = page.get_by_role("dialog")
-    name = editing.get_by_role("textbox", name="Automation title")
+    name = name_box(page)
     expect(name).to_have_value(title)
-    name.fill(f"{title} renamed")
-    editing.get_by_role("button", name="Save", exact=True).click()
-    expect(editing).to_be_hidden()
     renamed = f"{title} renamed"
+    name.fill(renamed)
+    save_changes(page)
     # the page tab and the page's header both carry the new name
     expect(page_tab(page, renamed).get_by_text(renamed, exact=True)).to_be_visible()
     return stored(scheduler, automation_id)["data"]["rrule"]
@@ -406,14 +396,14 @@ def rename_in_the_edit_dialog(page_for, scheduler, rule: str) -> str:
 @pytest.mark.parametrize("label", list(KEPT_ON_RENAME))
 def test_renaming_an_automation_keeps_its_schedule(page_for, scheduler, label):
     rule = KEPT_ON_RENAME[label]
-    assert rename_in_the_edit_dialog(page_for, scheduler, rule) == rule
+    assert rename_on_its_page(page_for, scheduler, rule) == rule
 
 
 @pytest.mark.regression
 @pytest.mark.parametrize("label", list(ENDING))
 def test_renaming_an_automation_keeps_the_end_of_its_schedule(page_for, scheduler, label):
     rule = ENDING[label]
-    saved = rename_in_the_edit_dialog(page_for, scheduler, rule)
+    saved = rename_on_its_page(page_for, scheduler, rule)
     assert saved == rule, (
         f"renaming the automation rewrote its schedule {rule!r} as {saved!r}: it no longer ends "
         "(open-webui/open-webui#32000)"

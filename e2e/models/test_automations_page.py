@@ -1,8 +1,9 @@
 """Journey: a person keeps their automations on the Automations pages, and only if allowed to.
 
-The list shows each automation with its schedule and opens it. On its own page an edit to the
-title, prompt and schedule is saved and still there after a reload, the new title on its page tab
-as well (since dev da850248d the page opens as a tab named after the automation); pausing and
+The list shows each automation with its schedule and opens it. On its own page, which is its
+editor since dev 9723b3a6a, an edit to the title, prompt and schedule is saved with the header's
+Save and still there after a reload, the new title on its page tab as well (since dev da850248d
+the page opens as a tab named after the automation); pausing and
 resuming from either page sticks the same way; deleting it from the page or from the list's menu
 takes it off the list. A plain account sees no Automations entry and is refused the page until
 a group grants the automations permission, and the admin's global switch takes them away from an
@@ -13,6 +14,8 @@ Discriminates: passes on dev 176d31d1d; one frontend copy turns each test red: t
 schedule without its time, the edit dialog sending the old title, the page's switch not saving,
 both deletes not calling the server, the user menu offering Automations to everyone (the
 no-permission and admin switch tests) and the list page letting only admins in (the group test).
+Retargeted to the editor page on dev 2fdf4ce6b, where a frontend copy saving the old title turns
+the edit test red and one whose switch does not save the pausing test.
 """
 
 from __future__ import annotations
@@ -23,16 +26,20 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness.access import make_group
-from utils.automations_page import automation_row
+from utils.automations_page import (
+    automation_page,
+    automation_row,
+    instructions,
+    name_box,
+    open_automation,
+    open_page_menu_entry,
+    property_row,
+    save_changes,
+)
 from utils.page_tabs import expect_no_permission, page_tab
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
-
-
-def _open(page: Page, automation: dict) -> None:
-    page.goto(f"/automations/{automation['id']}")
-    expect(page.get_by_role("main")).to_contain_text(automation["data"]["prompt"])
 
 
 def _list_row(page: Page, name: str):
@@ -57,10 +64,10 @@ def test_an_automation_is_listed_with_its_schedule_and_opens_from_the_list(
     row.click()
 
     expect(page).to_have_url(re.compile(f"/automations/{automation['id']}$"))
-    details = page.get_by_role("main")
-    expect(details).to_contain_text(automation["data"]["prompt"])
-    expect(details).to_contain_text("Daily at 9:00 AM")
-    expect(details).to_contain_text("Active")
+    expect(instructions(page)).to_have_value(automation["data"]["prompt"])
+    expect(property_row(page, "Schedule")).to_contain_text("Daily")
+    expect(property_row(page, "Next run")).to_contain_text(re.compile(r"9:00\s?AM"))
+    expect(property_row(page, "Status")).to_contain_text("Active")
 
 
 def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
@@ -70,56 +77,49 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     new_title = f"{automation['name']} (hourly)"
     new_prompt = "List the open incidents."
     page = page_for(scheduler)
-    _open(page, automation)
+    open_automation(page, automation)
 
-    page.get_by_role("button", name="Edit", exact=True).click()
-    editing = page.get_by_role("dialog")
-    title = editing.get_by_role("textbox", name="Automation title")
-    # the dialog fills its fields once its folders and channels load
-    expect(title).to_have_value(automation["name"])
-    title.fill(new_title)
-    editing.get_by_role("textbox", name="Instructions").fill(new_prompt)
-    editing.get_by_role("button", name="Daily").first.click()
+    name_box(page).fill(new_title)
+    instructions(page).fill(new_prompt)
+    automation_page(page).get_by_role("button", name="Daily", exact=True).click()
     page.get_by_role("combobox").select_option(label="Hourly")
-    editing.get_by_role("button", name="Hourly").first.click()
-    editing.get_by_role("button", name="Save", exact=True).click()
-    expect(editing).to_be_hidden()
+    automation_page(page).get_by_role("button", name="Hourly", exact=True).click()
+    save_changes(page)
 
     page.reload()
-    details = page.get_by_role("main")
-    expect(details).to_contain_text(new_prompt)
-    expect(details).to_contain_text("Hourly")
+    expect(instructions(page)).to_have_value(new_prompt)
+    expect(name_box(page)).to_have_value(new_title)
+    expect(property_row(page, "Schedule")).to_contain_text("Hourly")
     expect(page_tab(page, new_title).get_by_text(new_title, exact=True)).to_be_visible()
-    expect(details).not_to_contain_text(automation["data"]["prompt"])
 
 
 def test_pausing_and_resuming_sticks_on_both_pages(page_for, scheduler, make_automation):
     automation = make_automation(scheduler)
     page = page_for(scheduler)
-    _open(page, automation)
+    open_automation(page, automation)
 
-    page.get_by_role("switch", name="Active").click()
-    expect(page.get_by_role("main")).to_contain_text("Paused")
+    automation_page(page).get_by_role("switch", name="Active").click()
+    expect(property_row(page, "Status")).to_contain_text("Paused")
     page.reload()
-    expect(page.get_by_role("switch", name="Paused")).not_to_be_checked()
-    expect(page.get_by_role("main")).to_contain_text("Paused")
+    expect(automation_page(page).get_by_role("switch", name="Paused")).not_to_be_checked()
+    expect(property_row(page, "Status")).to_contain_text("Paused")
 
     row = _list_row(page, automation["name"])
     expect(row.get_by_role("switch")).not_to_be_checked()
     row.get_by_role("switch").click()
     expect(row.get_by_role("switch")).to_be_checked()
 
-    _open(page, automation)
-    expect(page.get_by_role("switch", name="Active")).to_be_checked()
-    expect(page.get_by_role("main")).to_contain_text("Active")
+    open_automation(page, automation)
+    expect(automation_page(page).get_by_role("switch", name="Active")).to_be_checked()
+    expect(property_row(page, "Status")).to_contain_text("Active")
 
 
 def test_deleting_from_its_page_takes_it_off_the_list(page_for, scheduler, make_automation):
     automation = make_automation(scheduler)
     page = page_for(scheduler)
-    _open(page, automation)
+    open_automation(page, automation)
 
-    page.get_by_role("button", name="Delete", exact=True).click()
+    open_page_menu_entry(page, "Delete")
     confirm = page.get_by_role("dialog")
     expect(confirm).to_contain_text(automation["name"])
     confirm.get_by_role("button", name="Confirm").click()
