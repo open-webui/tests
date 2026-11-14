@@ -8,8 +8,11 @@ from the next account's app while an admin keeps it. With sub-agents on for the 
 dialog also holds a Sub-agents switch (#34040); saved off, a user's chats are no longer offered
 the delegation tool or the timer, while an admin's still are.
 
+The five features share one page: each test saves all five switches in one dialog and walks them
+one after the other, so a switch that does nothing shows by name in the failure.
+
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Default permissions dialog
-saves the permissions it opened with, every "withdrawn" test fails while the "offered" and admin
+saves the permissions it opened with, the "withdrawn" test fails while the "offered" and admin
 ones still pass. The Sub-agents test passes on dev 485103cde and fails in a backend copy whose tool
 gate skips the permission.
 """
@@ -22,7 +25,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.tool_calls import offered_tools
-from utils.chat_ui import chat_input
+from utils.chat_ui import chat_input, close_menu
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -47,14 +50,16 @@ def features_on(admin, preserve):
     saved.raise_for_status()
 
 
-def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
+def save_default_permissions(page: Page, switches: dict[str, bool]) -> None:
+    """Set each switch in the Default permissions dialog and save once."""
     page.goto("/admin/users/groups")
     page.get_by_role("button", name="Default permissions").click()
     dialog = page.get_by_role("dialog")
-    target = dialog.get_by_role("switch", name=switch, exact=True)
-    if (target.get_attribute("aria-checked") == "true") != turn_on:
-        target.click()
-    expect(target).to_have_attribute("aria-checked", "true" if turn_on else "false")
+    for switch, turn_on in switches.items():
+        target = dialog.get_by_role("switch", name=switch, exact=True)
+        if (target.get_attribute("aria-checked") == "true") != turn_on:
+            target.click()
+        expect(target).to_have_attribute("aria-checked", "true" if turn_on else "false")
     dialog.get_by_role("button", name="Save").click()
     expect(page.get_by_text("Default permissions updated successfully")).to_be_visible()
 
@@ -102,33 +107,38 @@ FEATURES = {
 }
 
 
-@pytest.mark.parametrize("switch", FEATURES)
-def test_the_feature_is_offered_by_default(switch, page_for, make_user, features_on):
+def expect_every_feature(page: Page, offered: bool) -> None:
+    for switch, locate in FEATURES.items():
+        feature = locate(page)
+        if offered:
+            expect(feature, f"the {switch} feature").to_be_visible()
+        else:
+            expect(feature, f"the {switch} feature").to_have_count(0)
+        close_menu(page)
+
+
+def test_every_feature_is_offered_by_default(page_for, make_user, features_on):
     page = page_for(make_user())
 
-    expect(FEATURES[switch](page)).to_be_visible()
+    expect_every_feature(page, offered=True)
 
 
-@pytest.mark.parametrize("switch", FEATURES)
-def test_the_feature_is_withdrawn_once_switched_off(
-    switch, page_for, admin, make_user, features_on
-):
-    save_default_permission(page_for(admin), switch, turn_on=False)
+def test_every_feature_is_withdrawn_once_switched_off(page_for, admin, make_user, features_on):
+    save_default_permissions(page_for(admin), dict.fromkeys(FEATURES, False))
 
     page = page_for(make_user())
 
-    expect(FEATURES[switch](page)).to_have_count(0)
+    expect_every_feature(page, offered=False)
 
 
-@pytest.mark.parametrize("switch", ["Notes", "Memories"])
-def test_an_admin_keeps_the_feature_when_it_is_switched_off(
-    switch, page_for, admin, make_user, features_on
+def test_an_admin_keeps_every_feature_when_they_are_switched_off(
+    page_for, admin, make_user, features_on
 ):
-    save_default_permission(page_for(admin), switch, turn_on=False)
+    save_default_permissions(page_for(admin), dict.fromkeys(FEATURES, False))
 
     page = page_for(make_user(role="admin"))
 
-    expect(FEATURES[switch](page)).to_be_visible()
+    expect_every_feature(page, offered=True)
 
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
@@ -147,7 +157,7 @@ def sub_agents_on(admin, preserve):
 def test_the_sub_agents_switch_saved_off_withdraws_delegation_from_a_user(
     page_for, admin, make_user, upstream, sub_agents_on
 ):
-    save_default_permission(page_for(admin), "Sub-agents", turn_on=False)
+    save_default_permissions(page_for(admin), {"Sub-agents": False})
 
     with admin.client() as client:
         stored = client.get("/api/v1/users/default/permissions").json()["features"]
