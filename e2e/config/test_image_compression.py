@@ -3,10 +3,12 @@
 Image Compression switched on in Settings > Interface, with a maximum size set in its Manage
 dialog, scales an image attached to a chat down to that size before it is sent. The admin's
 Image Compression Width and Height in Admin Settings > Documents do the same for every account.
-Without either, the model gets the image at its own size.
+Without either, the model gets the image at its own size; the person's test attaches the image
+once at that size before it switches compression on.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose chat input ignores both
-compression settings, the person's and the admin's tests fail while the plain one passes.
+compression settings, the person's and the admin's tests fail (the person's test still passes its
+first, uncompressed step).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from utils.chat_ui import chat_input, expect_reply, send
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 QUESTION = "What colour is this buoy?"
+SHRUNK_QUESTION = "How big is this buoy now?"
 
 
 def buoy_png(width: int = 96, height: int = 64) -> bytes:
@@ -33,7 +36,7 @@ def buoy_png(width: int = 96, height: int = 64) -> bytes:
     return picture.getvalue()
 
 
-def attach_and_ask(page: Page, upstream) -> tuple[int, int]:
+def attach_and_ask(page: Page, upstream, question: str = QUESTION) -> tuple[int, int]:
     """The size of the image the model was sent with the question."""
     page.goto("/")
     expect(chat_input(page)).to_be_visible()
@@ -43,10 +46,10 @@ def attach_and_ask(page: Page, upstream) -> tuple[int, int]:
     chooser.value.set_files({"name": "buoy.png", "mimeType": "image/png", "buffer": buoy_png()})
     # an attached image shows as a chip or a thumbnail, both with a remove button
     expect(page.get_by_label("Remove file").first).to_be_attached()
-    upstream.queue(reply.text("It is red.", match=reply.answering(QUESTION)))
-    send(page, QUESTION)
+    upstream.queue(reply.text("It is red.", match=reply.answering(question)))
+    send(page, question)
     expect_reply(page, "It is red.")
-    sent = next(filter(reply.answering(QUESTION), upstream.chat_requests()))
+    sent = next(filter(reply.answering(question), upstream.chat_requests()))
     [image] = [
         part["image_url"]["url"]
         for message in sent["messages"]
@@ -57,12 +60,11 @@ def attach_and_ask(page: Page, upstream) -> tuple[int, int]:
     return Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[1]))).size
 
 
-def test_an_image_reaches_the_model_at_its_own_size(page_for, make_user, upstream):
-    assert attach_and_ask(page_for(make_user()), upstream) == (96, 64)
-
-
 def test_a_persons_image_compression_shrinks_the_image_sent(page_for, make_user, upstream):
-    page = page_for(make_user(), path="/?settings=interface")
+    page = page_for(make_user())
+    assert attach_and_ask(page, upstream) == (96, 64)
+
+    page.goto("/?settings=interface")
     tab = page.locator("#tab-interface")
     with page.expect_response(lambda response: "/user/settings/update" in response.url):
         tab.get_by_role("switch", name="Image Compression", exact=True).click()
@@ -73,7 +75,7 @@ def test_a_persons_image_compression_shrinks_the_image_sent(page_for, make_user,
     with page.expect_response(lambda response: "/user/settings/update" in response.url):
         dialog.get_by_role("button", name="Save").click()
 
-    width, height = attach_and_ask(page, upstream)
+    width, height = attach_and_ask(page, upstream, SHRUNK_QUESTION)
 
     assert width <= 24 and height <= 16, (width, height)
 
