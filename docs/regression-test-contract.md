@@ -173,7 +173,7 @@ Every test in the suite meets all of these. Check each one against your test bef
 12. **It leaves nothing running.** Processes, servers and temporary files it starts are stopped and removed in a `finally` or a fixture.
 13. **It extends before it adds.** It lives in the existing test or module that already walks its path, unless none fits.
 14. **It reads plainly.** Descriptive names, flat control flow, helpers named for what they do, comments only for a non-obvious why, ruff clean.
-15. **It passes five runs in a row on a slow machine.** A new or changed browser test passes `for i in 1 2 3 4 5; do pytest <module> || break; done` with the default slow mode on. It throttles the browser's CPU fourfold, so a race a fast machine wins fails here instead of on CI. Never switch it off with `OWUI_TEST_SLOW=0` to get a test green.
+15. **It passes five runs in a row on a slow machine.** A new or changed browser test passes `for i in 1 2 3 4 5; do pytest <module> || break; done` with the default slow mode on. It throttles the browser's CPU fourfold, so a race a fast machine wins fails here instead of on CI. CI runs the browser suite at twofold (`OWUI_TEST_SLOW=2`), as its runners are slow already. A faster page meets a race too, so wait on the settled state (a control's `aria-busy` gone, the stored value read back), never on the click's first visible effect. Never switch it off with `OWUI_TEST_SLOW=0` to get a test green.
 
 ## Keeping the remaining unit tests alive
 
