@@ -4,16 +4,19 @@ A SKILL.md picked through the Skills page's Import is listed in the import dialo
 and id from its front matter; Import selected saves it with that description and the whole file
 as the instructions, which a `$` mention sends to the model. A JSON file holding several skills
 imports every one of them. A row's own Export JSON downloads that skill alone, with its
-instructions. A German name and description given in the editor's Editing language show in place
-of the default ones once the interface is German, in the list and in the `$` menu, and the
-English interface keeps the default name; the German name also finds the skill in the list's
-search. The round trip through Export JSON and Import JSON is
+instructions and its other files. A German name and description given in the editor's Editing
+language show in place of the default ones once the interface is German, in the list and in the
+`$` menu, and the English interface keeps the default name; the German name also finds the skill
+in the list's search. The round trip through Export JSON and Import JSON is
 e2e/workspace/test_workspace_import_export.py.
 
 The German-name search test pins open-webui/open-webui#32018: the Translations docs page says
 Workspace search matches the translated name as well as the original, but the skill list's search
 went to the server, which matched only the original name, description and id, so typing the name a
 German user is shown found nothing. Fixed by 1579af28a, so it passes on dev c7193760b.
+
+The row-menu Export JSON case of test_skill_history_and_import.py was merged into the export test
+here, so this is the one browser test of that menu item.
 
 Discriminates: passes on the dev ebc6add67 build apart from the search test; in a frontend copy
 that never resolves a translated name the German name test goes red. Retargeted for 9bbb95048,
@@ -35,6 +38,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from harness.skill_files import create as create_with_files
 from utils.chat_ui import chat_input
 from utils.workspace_list import item_rows
 
@@ -164,7 +168,13 @@ def test_a_json_file_of_several_skills_imports_each_of_them(page_for, keeper):
 
 def test_a_rows_own_export_downloads_that_skill_alone_with_its_instructions(page_for, keeper):
     suffix = uuid.uuid4().hex[:6]
-    exported_id = _create(keeper, f"Exported {suffix}", "Keep the log tidy.")
+    exported_id = f"skill-{suffix}"
+    create_with_files(
+        keeper,
+        {"SKILL.md": "Keep the log tidy.", "references/symbols.md": "Rocks are crosses.\n"},
+        skill_id=exported_id,
+        name=f"Exported {suffix}",
+    )
     _create(keeper, f"Neighbour {suffix}", "Stay out of it.")
     page = page_for(keeper, path="/workspace/skills")
     row = _list_rows(page, f"Exported {suffix}").filter(has_text=f"Exported {suffix}")
@@ -178,7 +188,10 @@ def test_a_rows_own_export_downloads_that_skill_alone_with_its_instructions(page
 
     assert exported["id"] == exported_id, exported
     assert exported["name"] == f"Exported {suffix}"
-    assert exported["files"] == [{"path": "SKILL.md", "content": "Keep the log tidy."}]
+    assert {entry["path"]: entry["content"] for entry in exported["files"]} == {
+        "SKILL.md": "Keep the log tidy.",
+        "references/symbols.md": "Rocks are crosses.\n",
+    }
 
 
 def _name_in_german(page: Page, skill_id: str, name: str, description: str) -> None:
