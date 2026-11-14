@@ -11,7 +11,8 @@ swallowed because the folder menus left themselves open behind the dialog (the b
 open-webui/open-webui#31486), until ef67cc3fa (open-webui/open-webui#31496) closed them first.
 
 Discriminates: passes on dev 176d31d1d and a5bc78300 and fails with da36d149b reverted (the blank
-name is saved and "Folder updated successfully" shows).
+name is saved and "Folder updated successfully" shows). The empty name and the name with
+surrounding spaces that is trimmed and kept are steps of the first rename test, after its refusal.
 """
 
 from __future__ import annotations
@@ -87,14 +88,32 @@ def sidebar(page_for, owner, folder_id) -> Locator:
     return side
 
 
-def test_renaming_a_folder_to_spaces_is_refused(sidebar, owner):
+def rename_from_the_menu(sidebar: Locator, name: str) -> None:
     folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
-    submit_folder_modal(sidebar.page, "   ")
+    submit_folder_modal(sidebar.page, name)
 
-    expect_refused(sidebar.page, owner)
+
+def reload_sidebar(sidebar: Locator) -> None:
     sidebar.page.reload()
     show_folders(sidebar)
+
+
+def test_renaming_a_folder_to_spaces_or_nothing_is_refused_and_surrounding_spaces_are_trimmed(
+    sidebar, owner
+):
+    rename_from_the_menu(sidebar, "   ")
+    expect_refused(sidebar.page, owner)
+    reload_sidebar(sidebar)
     expect(folder_row(sidebar, NAME)).to_be_visible()
+
+    rename_from_the_menu(sidebar, "")
+    expect_refused(sidebar.page, owner)
+    reload_sidebar(sidebar)
+    expect(folder_row(sidebar, NAME)).to_be_visible()
+
+    rename_from_the_menu(sidebar, "  Projects  ")
+    expect(folder_row(sidebar, "Projects")).to_be_visible()
+    assert [folder["name"] for folder in stored_folders(owner)] == ["Projects"]
 
 
 def test_renaming_a_folder_in_place_to_spaces_is_refused(sidebar, owner):
@@ -120,18 +139,3 @@ def test_renaming_on_the_folder_page_to_spaces_is_refused(page_for, owner, folde
     submit_folder_modal(page, "   ")
 
     expect_refused(page, owner)
-
-
-def test_surrounding_spaces_are_trimmed_from_a_new_name(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
-    submit_folder_modal(sidebar.page, "  Projects  ")
-
-    expect(folder_row(sidebar, "Projects")).to_be_visible()
-    assert [folder["name"] for folder in stored_folders(owner)] == ["Projects"]
-
-
-def test_an_empty_name_is_still_refused(sidebar, owner):
-    folder_menu(sidebar, NAME).get_by_role("menuitem", name="Edit").click()
-    submit_folder_modal(sidebar.page, "")
-
-    expect_refused(sidebar.page, owner)
