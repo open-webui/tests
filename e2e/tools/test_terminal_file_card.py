@@ -382,6 +382,7 @@ def test_a_file_shown_without_inline_opens_in_a_file_tab_unless_the_setting_is_i
     _set_file_display(person, "sidebar")
     page.reload()
     expect(chat_input(page)).to_be_visible()
+    expect(last_reply(page)).to_contain_text("Shown ")  # the reloaded reply has rendered
     expect(_card_name(last_reply(page), "harbour-log.txt")).to_have_count(0)
 
     beside = _show(page, upstream, LOG)
