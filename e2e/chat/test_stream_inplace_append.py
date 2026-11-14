@@ -3,10 +3,13 @@
 `ENABLE_CHAT_RESPONSE_STREAM_INPLACE_APPEND` only changes how the server appends each streamed
 piece to the text it already holds. A person sees no difference: the reply grows on screen, is
 complete when it ends and is the same after a reload. Every test below runs on an instance with
-the toggle off and on and asserts the same literal text, thinking and tool call for both. The
-paths are a slowly streamed reply with accents, emoji, CJK and a code fence split across pieces,
-deltas merged by a chunk size, reasoning deltas and `<think>` tags, a tool call whose arguments
-arrive in pieces, Stop, regenerate, continue, edit and resend, two models answering at once, a
+the toggle on, and the five that depend on how pieces are appended (merged deltas, think tags,
+a tool call in pieces, Stop, a long reply) on it off as well, asserting the same literal text,
+thinking and tool call for both. The other tests run on the toggle on only; the toggle only
+changes the append, so what a person sees there does not depend on its value. The paths are a
+slowly streamed reply with accents, emoji, CJK and a code fence split across pieces, deltas
+merged by a chunk size, reasoning deltas and `<think>` tags, a tool call whose arguments arrive
+in pieces, Stop, regenerate, continue, edit and resend, two models answering at once, a
 temporary chat and a long reply. A second page opened mid-stream, thoughts growing live, a model
 answering a channel member, a timer and a background sub-agent replying into the chat, a stream
 filter rewriting a word, a pipe yielding pieces, an Action run on the reply and merged deltas
@@ -14,7 +17,7 @@ with thoughts and a tool call are seen live and after a reload as well.
 
 The open page does not follow a fired timer or a sub-agent report on dev (the chat's stored
 current message still points at the earlier reply), so those two tests read the follow-up after
-a reload for both values.
+a reload.
 
 `test_a_background_subagent_report_and_its_follow_up_show_after_a_reload` and
 `test_a_timer_fires_and_its_whole_follow_up_shows_after_a_reload` are red on dev 62f70a844: since
@@ -36,7 +39,8 @@ split code fence (code shown without its editor) and Regenerate, Continue and Ed
 
 Discriminates: passes on dev 176d31d1d with the toggle off and on; with the in-place branch
 appending a marker before each piece every append-in-place case turns red and the append-copies
-cases stay green, and with the copying branch marked the reverse.
+cases (the five two-valued tests) stay green, and with the copying branch marked the five
+append-copies cases turn red.
 """
 
 from __future__ import annotations
@@ -84,10 +88,15 @@ SECOND_MODEL = "second-model"
 THOUGHTS = re.compile(r"^(Thinking|Thought)")
 
 
-@pytest.fixture(params=["false", "true"], ids=["append-copies", "append-in-place"])
+@pytest.fixture
 def streaming(request, instance_with):
-    """A scratch instance with the toggle off, then on; every test below runs on both."""
-    return instance_with({INPLACE_APPEND: request.param})
+    """A scratch instance with the toggle on, or the value `on_both_toggle_values` picks."""
+    return instance_with({INPLACE_APPEND: getattr(request, "param", "true")})
+
+
+on_both_toggle_values = pytest.mark.parametrize(
+    "streaming", ["false", "true"], ids=["append-copies", "append-in-place"], indirect=True
+)
 
 
 @pytest.fixture
@@ -234,6 +243,7 @@ def test_a_code_fence_split_across_pieces_renders_one_block_with_the_code(chat, 
     expect(last_reply(chat).locator(".cm-line")).to_have_text(["print('ab')", "value = [1, 2]"])
 
 
+@on_both_toggle_values
 def test_deltas_merged_by_a_chunk_size_give_the_same_reply(streaming_chat_for, account, streaming):
     choose_models(account, MOCK_MODEL_ID, stream_delta_chunk_size=3)
     pieces = [f"chunk-{index} " for index in range(12)]
@@ -270,6 +280,7 @@ def test_reasoning_deltas_fill_a_thinking_block_above_the_answer(
     expect(last_reply(chat)).to_contain_text("weighing the two options")
 
 
+@on_both_toggle_values
 def test_think_tags_split_across_pieces_fill_a_thinking_block(chat, account, streaming):
     pieces = ["<thi", "nk>weighing ", "the two ", "options</th", "ink>The answer ", "is forty-two."]
     streaming.upstream.queue(reply.text(pieces, chunk_delay=0.05, match=reply.answering("tags")))
@@ -287,6 +298,7 @@ def test_think_tags_split_across_pieces_fill_a_thinking_block(chat, account, str
     assert "<think>" not in last_reply(chat).inner_text()
 
 
+@on_both_toggle_values
 def test_tool_call_arguments_arriving_in_pieces_reach_the_tool_and_the_answer_follows(
     account, streaming_chat_for, streaming, second_provider
 ):
@@ -325,6 +337,7 @@ def test_tool_call_arguments_arriving_in_pieces_reach_the_tool_and_the_answer_fo
     expect(last_reply(chat)).to_contain_text("calculate_timestamp")
 
 
+@on_both_toggle_values
 def test_stopping_a_reply_keeps_the_text_streamed_so_far(chat, account, streaming):
     pieces = [f"part-{index} " for index in range(30)]
     streaming.upstream.queue(reply.text(pieces, chunk_delay=0.3, match=reply.answering("stop")))
@@ -433,6 +446,7 @@ def test_a_temporary_chat_reply_with_merged_deltas_streams_in_and_is_never_saved
     assert [chat for chat in listed.json() if "secretly" in chat["title"]] == []
 
 
+@on_both_toggle_values
 def test_a_long_reply_over_many_pieces_is_shown_in_full(chat, account, streaming):
     pieces = [
         f"Paragraph {index:04d}: " + "lorem ipsum dolor " * 5 + "\n\n" for index in range(400)
