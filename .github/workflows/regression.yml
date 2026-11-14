@@ -428,7 +428,7 @@ jobs:
           if-no-files-found: ignore
 
   # Each mode's shards split on its own timings in durations/. This folds the run's timings into
-  # them; the refresh-durations workflow commits the result after a green run on main.
+  # them; the refresh-durations workflow commits the result after a completed run on main.
   durations:
     needs: [integration, integration-postgres-redis, e2e]
     if: always()

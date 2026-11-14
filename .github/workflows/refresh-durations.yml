@@ -1,6 +1,7 @@
-# Commits the shard timings a green regression run of main measured, so each mode's shards stay
-# balanced as tests are added and the runners change. A run that open-webui/open-webui calls
-# belongs to that repository, so it never triggers this.
+# Commits the shard timings a completed regression run of main measured, red runs included (a failed
+# test keeps its old entry), so each mode's shards stay balanced as tests are added and the runners
+# change. A run that open-webui/open-webui calls belongs to that repository, so it never triggers
+# this.
 name: Refresh shard timings
 
 on:
@@ -19,7 +20,7 @@ concurrency:
 jobs:
   commit:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      contains(fromJSON('["success", "failure"]'), github.event.workflow_run.conclusion) &&
       github.event.workflow_run.head_branch == 'main' &&
       contains(fromJSON('["workflow_dispatch", "schedule"]'), github.event.workflow_run.event)
     runs-on: ubuntu-latest
