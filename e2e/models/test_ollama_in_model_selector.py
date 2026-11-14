@@ -2,19 +2,18 @@
 
 An admin who searches the selector for a tag Ollama does not have can download it from there: the
 selector shows the progress, the model is offered as soon as the download finishes and an error
-Ollama streams back is shown. A model in Ollama's running list (`/api/ps`) carries a green dot
-whose tooltip says when Ollama will unload it. An admin hovering it gets an Eject button: Ollama
-is asked to unload the model at once, a toast confirms it and the dot is gone once the list
-refreshes. A model that is not loaded offers no Eject, a refused unload shows Ollama's error and
-keeps the dot, and a regular user sees the dot without the button.
+Ollama streams back is shown. A model in Ollama's running list (`/api/ps`) carries a green dot whose
+tooltip says when Ollama will unload it. An admin hovering it gets an Eject button: Ollama is asked
+to unload the model at once, a toast confirms it and the dot is gone once the list refreshes. A
+model that is not loaded offers no Eject (checked after the eject, in the same test), a refused
+unload shows Ollama's error and keeps the dot, and a regular user sees the dot without the button.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, with the list not refreshed after a
-download the download test fails, with stream errors ignored the download error test fails, with
-the dot shown for every model the not-loaded test fails, with the Eject button offered to every
-role the regular-user test fails, with the list not refreshed after an unload the eject test
-fails (the dot stays) and with success announced after a refused unload the refused unload test
-fails.
-"""
+download the download test fails, with stream errors ignored the download error test fails, with the
+dot shown for every model the eject test fails at its not-loaded step, with the Eject button offered
+to every role the regular-user test fails, with the list not refreshed after an unload the eject
+test fails (the dot stays) and with success announced after a refused unload the refused unload test
+fails."""
 
 from __future__ import annotations
 
@@ -114,15 +113,10 @@ def test_a_loaded_model_shows_when_it_unloads_and_eject_frees_it(page_for, make_
     expect(eject_button(option)).to_have_count(0)
     assert running_status(option) is None
 
-
-def test_a_model_that_is_not_loaded_has_no_dot_and_no_eject(page_for, make_user, ollama):
-    page = page_for(make_user(role="admin"))
-
-    option = searched(page, IDLE_MODEL)
-    option.hover()
-
-    assert running_status(option) is None
-    expect(eject_button(option)).to_have_count(0)
+    idle = searched(page, IDLE_MODEL)
+    idle.hover()
+    assert running_status(idle) is None
+    expect(eject_button(idle)).to_have_count(0)
 
 
 def test_an_unload_ollama_refuses_shows_its_error_and_keeps_the_model_loaded(
