@@ -3,11 +3,11 @@
 On load the app asks the backend for its configuration. When that request fails it sends the user
 to `/error`, which says the backend is required. Once the backend answers again, Check Again
 reloads the app from the start and the signed-in user lands in the chat. A user who opens `/error`
-while the backend is fine is sent straight to the chat instead.
+while the backend is fine is sent straight to the chat instead (the last step of the recovery test).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, with the redirect on a failed
 configuration request removed the three tests that need the error page fail, with Check Again doing
-nothing the recovery test fails, and with the page's own redirect removed the working-backend test
+nothing the recovery test fails, and with the page's own redirect removed the recovery test
 fails.
 """
 
@@ -61,9 +61,6 @@ def test_check_again_recovers_once_the_backend_answers(authenticated_page):
     expect(page).not_to_have_url(re.compile(r"/error$"))
     expect(chat_input(page)).to_be_visible()
 
-
-def test_error_page_sends_a_user_with_a_working_backend_to_the_chat(authenticated_page):
-    page = authenticated_page
     page.goto("/error")
 
     expect(page).not_to_have_url(re.compile(r"/error$"))
