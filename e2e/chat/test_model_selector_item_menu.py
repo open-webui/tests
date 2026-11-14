@@ -179,7 +179,9 @@ def test_edit_opens_the_editor_of_a_workspace_model(chat, owner, workspace_model
     assert _stored_model(owner, workspace_model)["meta"]["description"] == NEW_DESCRIPTION
 
 
-def test_keep_in_sidebar_pins_the_model(chat, owner, provider_model):
+def test_keep_in_sidebar_pins_the_model(provider_model, chat, owner):
+    # the model exists before the page loads: since d7b3d08b4 a side chat refreshes only its own
+    # model list, and the sidebar lists pinned models from the page's
     click_menu_item(chat, provider_model, "Keep in Sidebar")
     expect(chat.page.get_by_role("menu")).to_be_hidden()
     chat.page.keyboard.press("Escape")
