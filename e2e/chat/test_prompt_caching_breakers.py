@@ -1,16 +1,18 @@
 """Journey: each breaker the Prompt Caching page names rewrites the prefix of a browser chat.
 
-The page lists what breaks the provider's cached prefix and what does not. A person drives chats
-on the page's setup in the web client and applies exactly one breaker per test: a model with File
-Context on and a text file attached, the same file switched to Using Entire Document, an
-AGENTS.md written into the Open Terminal's home between turns, a skill saved there between turns,
-a builtin tool category unticked on the model by an admin in the model editor, web search or a
-workspace tool switched on from the Integrations menu and an earlier question edited and sent
-again. The page also calls some changes harmless, and those tests stay green: a file or a whole
-knowledge base switched to Using Entire Document with File Context off, memories in the system
-context that do not change, the first file attached in a chat adding the Files tools once with
-every request after it appending again, and an AGENTS.md or a skill that was in the terminal from
-the first turn. Each control checks where the break falls.
+The page lists what breaks the provider's cached prefix and what does not. A person drives chats on
+the page's setup in the web client and applies exactly one breaker per test: a model with File
+Context on and a text file attached, the same file switched to Using Entire Document, an AGENTS.md
+written into the Open Terminal's home between turns, a skill saved there between turns, a builtin
+tool category unticked on the model by an admin in the model editor, web search or a workspace tool
+switched on from the Integrations menu and an earlier question edited and sent again. The page also
+calls some changes harmless, and those tests stay green: a file or a whole knowledge base switched
+to Using Entire Document with File Context off, memories in the system context that do not change,
+the first file attached in a chat adding the Files tools once with every request after it appending
+again, and an AGENTS.md or a skill that was in the terminal from the first turn. Each control checks
+where the break falls. The terminal controls (an AGENTS.md or a skill there from the first turn) are
+second chats of the breaker test of the same terminal file, which starts with the file already in
+place.
 
 Three breakers the page still names only append since the 0.13.1 rework, so their tests check
 that instead: Citations on with a knowledge file read by a tool (8e2ba2937 puts the citation
@@ -146,7 +148,17 @@ def terminal_chat(page_for, cached_setup, admin, make_user, preserve, open_termi
     page = page_for(person, path=f"/?models={cached_setup.id}")
     pick_terminal(page, connection["name"])
     split_screen(page)
-    return page
+    return page, connection["name"]
+
+
+def another_chat(page: Page, model_id: str, terminal: str) -> None:
+    """A new chat on the cached model with the same terminal picked."""
+    page.goto(f"/?models={model_id}")
+    expect(chat_input(page)).to_be_visible()
+    # the terminal picked for the first chat stays picked
+    expect(
+        page.get_by_role("main").get_by_role("button", name=terminal, exact=True)
+    ).to_be_visible()
 
 
 @pytest.fixture
@@ -372,24 +384,10 @@ def test_the_first_file_attached_adds_the_file_tools_once(
 # --- Open Terminal AGENTS.md and skills -----------------------------------------------------
 
 
-def test_an_agents_file_there_from_the_first_turn_only_appends(terminal_chat, agents_md, upstream):
-    page = terminal_chat
-    agents_md.write_text(AGENTS_MD)
-    ask(page, upstream, "good morning", reply.text("Morning."))
-    ask(page, upstream, "what are my instructions?", reply.text("Greet the harbour master."))
-    page.reload()
-    ask(page, upstream, "anything else?", reply.text("Nothing else."))
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
-
-    requests = chat_requests(upstream)
-    assert AGENTS_MD.strip() in str(requests[0]["messages"])
-    assert_append_only(requests)
-
-
-def test_an_agents_file_written_between_turns_rewrites_the_prefix(
-    terminal_chat, agents_md, upstream
+def test_an_agents_file_written_between_turns_rewrites_the_prefix_unlike_one_from_the_start(
+    terminal_chat, cached_setup, agents_md, upstream
 ):
-    page = terminal_chat
+    page, terminal = terminal_chat
     ask(page, upstream, "good morning", reply.text("Morning."))
     agents_md.write_text(AGENTS_MD)
     ask(page, upstream, "what are my instructions?", reply.text("Greet the harbour master."))
@@ -400,28 +398,24 @@ def test_an_agents_file_written_between_turns_rewrites_the_prefix(
     assert broken is not None, "an AGENTS.md written between turns left the prefix append-only"
     assert "messages[1] (user)" in broken, broken
 
-
-def test_a_skill_there_from_the_first_turn_only_appends(terminal_chat, skill_dir, upstream):
-    page = terminal_chat
-    save_skill(skill_dir)
+    # a second chat starts with the file already there
+    earlier = len(requests)
+    another_chat(page, cached_setup.id, terminal)
     ask(page, upstream, "good morning", reply.text("Morning."))
-    ask(
-        page,
-        upstream,
-        "when is high tide?",
-        calling("view_skill", {"id": f"terminal:{SKILL_NAME}"}),
-        reply.text("Read the high tide column."),
-    )
+    ask(page, upstream, "what are my instructions?", reply.text("Greet the harbour master."))
+    page.reload()
+    ask(page, upstream, "anything else?", reply.text("Nothing else."))
     ask(page, upstream, "thanks", reply.text("Safe travels."))
 
-    requests = chat_requests(upstream)
-    assert "view_skill" in offered_tools(requests[0])
-    assert "Read the high tide column first." in tool_results(requests[-1])
-    assert_append_only(requests)
+    second = chat_requests(upstream)[earlier:]
+    assert AGENTS_MD.strip() in str(second[0]["messages"])
+    assert_append_only(second)
 
 
-def test_a_skill_saved_between_turns_rewrites_the_prefix(terminal_chat, skill_dir, upstream):
-    page = terminal_chat
+def test_a_skill_saved_between_turns_rewrites_the_prefix_but_one_there_from_the_start_does_not(
+    terminal_chat, cached_setup, skill_dir, upstream
+):
+    page, terminal = terminal_chat
     ask(page, upstream, "good morning", reply.text("Morning."))
     save_skill(skill_dir)
     ask(page, upstream, "when is high tide?", reply.text("At noon."))
@@ -432,6 +426,24 @@ def test_a_skill_saved_between_turns_rewrites_the_prefix(terminal_chat, skill_di
     assert "view_skill" in offered_tools(requests[1])
     broken = first_break(requests)
     assert broken is not None and "in tools" in broken, broken
+
+    # a second chat starts with the skill already there
+    earlier = len(requests)
+    another_chat(page, cached_setup.id, terminal)
+    ask(page, upstream, "good morning", reply.text("Morning."))
+    ask(
+        page,
+        upstream,
+        "when is high tide?",
+        calling("view_skill", {"id": f"terminal:{SKILL_NAME}"}),
+        reply.text("Read the high tide column."),
+    )
+    ask(page, upstream, "thanks", reply.text("Safe travels."))
+
+    second = chat_requests(upstream)[earlier:]
+    assert "view_skill" in offered_tools(second[0])
+    assert "Read the high tide column first." in tool_results(second[-1])
+    assert_append_only(second)
 
 
 # --- The model's tools and the Integrations menu --------------------------------------------
