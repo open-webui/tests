@@ -30,8 +30,9 @@ address the reloads go by and what was saved.
 On dev f659c0d12, a frontend copy with 40b7b5201 (#33680) undone turns every test red that turns
 Temporary Chat on (no toggle on a new chat).
 
-The fork test and the storage test also run in a side chat, made temporary with `/temporary` as
-it has no header of its own (`utils/chat_surface.py`), in every way a side chat starts empty. The
+The fork test and the storage test run in a side chat (the storage test only there, as the first
+test is its main chat case), made temporary with `/temporary` as it has no header of its own
+(`utils/chat_surface.py`), in every way a side chat starts empty. The
 other tests pin the header's toggle and Save Chat, the address a reload goes by, folders, the
 Notes tab and new chats of the page, which a side chat does not have.
 """
@@ -271,13 +272,12 @@ def test_temporary_chat_by_default_starts_new_chats_temporary(page_for, make_use
 
 
 # only a chat without messages can turn temporary; the temporary side chat already is
-TURNED_TEMPORARY = (
-    MAIN_CHAT,
-    *(place for place in EMPTY_SIDE_CONDITIONS if place != TEMPORARY_SIDE),
-)
+SIDE_TURNED_TEMPORARY = tuple(place for place in EMPTY_SIDE_CONDITIONS if place != TEMPORARY_SIDE)
+TURNED_TEMPORARY = (MAIN_CHAT, *SIDE_TURNED_TEMPORARY)
 
 
-@pytest.mark.chat_surfaces(*TURNED_TEMPORARY)
+# the main chat does the same in the first test of this module
+@pytest.mark.chat_surfaces(*SIDE_TURNED_TEMPORARY)
 def test_a_temporary_chat_is_answered_and_never_stored(chat_for, make_user, upstream):
     account = make_user()
     chat = chat_for(account)
