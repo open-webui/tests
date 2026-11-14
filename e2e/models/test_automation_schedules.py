@@ -32,6 +32,12 @@ Bugs, both red on dev ebc6add67:
   when the automation is only renamed, and then runs forever.
   `test_renaming_an_automation_keeps_the_end_of_its_schedule`, issue open-webui/open-webui#32000.
 
+Bug, red on dev 2fdf4ce6b: the page saves a schedule rebuilt from its fields even when only the
+name changed, which drops the start date the model's automation tool writes, so a schedule meant
+to start later runs from the next day on (and an every-other-week one can move by a week).
+`test_renaming_an_automation_keeps_a_later_start`, issue open-webui/open-webui#34430, fix PR
+branch fix-automation-rename-keeps-start-date.
+
 `test_an_automation_filed_in_a_folder_runs_into_it_under_its_prompt` and
 `test_the_calendar_shows_an_active_automations_runs_and_opens_them` are red on dev 93fc3fcb7: since
 de73bb830 an automation's run, whose reply is stored before it is asked for, is refused with 409 and
@@ -360,6 +366,7 @@ KEPT_ON_RENAME = {
     "once": f"DTSTART:{NEXT_YEAR}0303T104500\nRRULE:FREQ=DAILY;COUNT=1",
     "every other day": "RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=6;BYMINUTE=0",
 }
+STARTS_LATER = f"DTSTART:{NEXT_YEAR}0601T090000\nRRULE:FREQ=DAILY"
 ENDING = {
     "after four runs": f"DTSTART:{NEXT_YEAR}0303T090000\nRRULE:FREQ=DAILY;COUNT=4",
     "on a date": f"RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL={NEXT_YEAR}0601T000000",
@@ -407,4 +414,14 @@ def test_renaming_an_automation_keeps_the_end_of_its_schedule(page_for, schedule
     assert saved == rule, (
         f"renaming the automation rewrote its schedule {rule!r} as {saved!r}: it no longer ends "
         "(open-webui/open-webui#32000)"
+    )
+
+
+@pytest.mark.regression
+def test_renaming_an_automation_keeps_a_later_start(page_for, scheduler):
+    # a start date the way the model's automation tool writes it
+    saved = rename_on_its_page(page_for, scheduler, STARTS_LATER)
+    assert saved == STARTS_LATER, (
+        f"renaming the automation rewrote its schedule {STARTS_LATER!r} as {saved!r}: it no "
+        "longer waits for its start date (open-webui/open-webui#34430)"
     )
