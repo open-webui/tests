@@ -34,7 +34,7 @@ session is still starting closes once the start ends, so the test lets the Brows
 first: where Open Terminal has Chrome, the switch to Chrome mode takes up to its 15 s startup
 limit on a slow runner. When the file browser is in a Git repository, the Git panel under the
 tabs shows a changed file's diff, stages and commits it, and the commit shows in its History and
-on the disk.
+on the disk; the undo then takes that commit back, the last step of the same test.
 
 Since c24c3d914 each changed file's stage box and Stage all are checkboxes that say whether they
 are ticked, Stage all reading mixed while only some files are staged; Discard changes also deletes
@@ -48,7 +48,7 @@ Discriminates: on dev f659c0d12, in a frontend copy whose Stage all never reads 
 test fails, one that offers Discard only for tracked files (as v0.13.0) fails the discard test,
 one whose divider ignores the keyboard fails the resize test, one whose branch pick checks
 nothing out fails the branch test and one that offers Fetch in place of Push fails the push test;
-the diff and undo tests stay green on that build as its controls.
+the diff test, with its undo step, stays green on that build as its control.
 
 Retargeted for 617618c9e: `test_the_full_width_layout_is_kept_after_a_reload` saved the removed
 full-width switch and is now the split layout test; the reorder test now counts the conversation
@@ -722,7 +722,9 @@ def _staged(folder) -> set[str]:
     return set(_git(folder, "diff", "--cached", "--name-only").split())
 
 
-def test_the_git_panel_shows_a_changed_files_diff_and_commits_it(terminal_page, repository):
+def test_the_git_panel_shows_a_changed_files_diff_commits_it_and_undoes_the_commit(
+    terminal_page, repository
+):
     page, terminal = terminal_page
     git = _open_git_panel(page, terminal, repository)
     git.get_by_role("button", name="View changes tides.txt").first.click()
@@ -744,6 +746,16 @@ def test_the_git_panel_shows_a_changed_files_diff_and_commits_it(terminal_page, 
     git.get_by_role("button", name="History").click()
     expect(git.get_by_text("Move high water to seven")).to_be_visible()
     expect(git.get_by_text("Start the tide log")).to_be_visible()
+
+    last = _git(repository, "log", "-1", "--format=%h").strip()
+    git.get_by_text("Move high water to seven").hover()
+    git.get_by_role("button", name=f"Commit actions {last}").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Undo last commit").click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
+
+    expect(git.get_by_text("Move high water to seven")).to_have_count(0)
+    assert _git(repository, "log", "-1", "--format=%s").strip() == "Start the tide log"
+    assert _staged(repository) == {"tides.txt"}, "the undone commit's change is not staged"
 
 
 def test_stage_boxes_stage_one_file_or_all_of_them(terminal_page, repository):
@@ -936,27 +948,6 @@ def test_the_list_beside_a_diff_is_resized_from_the_keyboard(terminal_page, repo
     expect(divider).to_have_attribute("aria-valuenow", "160")
     narrowest = git.get_by_role("checkbox", name="Stage all").bounding_box()["width"]
     assert narrowest < widest, f"the list stayed {widest}px wide at its narrowest setting"
-
-
-def test_undoing_the_last_commit_from_history_keeps_its_changes_staged(terminal_page, repository):
-    page, terminal = terminal_page
-    git = _open_git_panel(page, terminal, repository)
-    git.get_by_role("checkbox", name="Stage tides.txt").click()
-    git.get_by_label("Commit summary").fill("A tide too early")
-    git.get_by_role("button", name="Commit 1 file to main").click()
-    expect(git.get_by_text("No changes")).to_be_visible()
-
-    git.get_by_role("button", name="History").click()
-    expect(git.get_by_text("A tide too early")).to_be_visible()
-    last = _git(repository, "log", "-1", "--format=%h").strip()
-    git.get_by_text("A tide too early").hover()
-    git.get_by_role("button", name=f"Commit actions {last}").click()
-    page.get_by_role("menu").get_by_role("menuitem", name="Undo last commit").click()
-    page.get_by_role("dialog").get_by_role("button", name="Confirm").click()
-
-    expect(git.get_by_text("A tide too early")).to_have_count(0)
-    assert _git(repository, "log", "-1", "--format=%s").strip() == "Start the tide log"
-    assert _staged(repository) == {"tides.txt"}, "the undone commit's change is not staged"
 
 
 def _set_comments(admin, enabled: bool) -> None:
