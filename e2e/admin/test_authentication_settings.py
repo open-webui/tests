@@ -1,14 +1,14 @@
 """Journey: the admin account rules in Admin Settings > Authentication, and the auth page errors.
 
-With API Keys on, API Key Endpoint Restrictions limits what an account's key may call: the
-endpoints the admin lists answer and every other one is refused, and with the restriction off
-both answer. A Default Group chosen on the page receives each account that then signs up through
-the auth page, which shows in the group's member count and its Users list, while with None chosen
-the newcomer joins no group. On the auth page a wrong password shows the sign-in error and leaves
-the sign-in form where it is. On an instance that asks for a password confirmation, a sign-up
-whose two passwords differ says so and creates no account, while matching passwords sign in.
-With Login Form switched off, the auth page offers no email and password form and a sign-up over
-the API is refused, while signing in with a password over the API still works.
+With API Keys on, API Key Endpoint Restrictions limits what an account's key may call: the endpoints
+the admin lists answer and every other one is refused, after both answered with the restriction off
+(the first steps of the same test). A Default Group chosen on the page receives each account that
+then signs up through the auth page, which shows in the group's member count and its Users list,
+while with None chosen the newcomer joins no group. On the auth page a wrong password shows the
+sign-in error and leaves the sign-in form where it is. On an instance that asks for a password
+confirmation, a sign-up whose two passwords differ says so and creates no account, while matching
+passwords sign in. With Login Form switched off, the auth page offers no email and password form and
+a sign-up over the API is refused, while signing in with a password over the API still works.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend copy, the page saving the endpoint list as
 an empty string turns the restriction test red (the listed endpoint is refused too), the page
@@ -143,6 +143,8 @@ def test_the_endpoint_restriction_lets_the_listed_endpoint_answer_and_refuses_th
 ):
     account, key = keyed_account
     base_url = account.base_url
+    assert _status("/api/models", key, base_url) == 200
+    assert _status(REFUSED_PATH, key, base_url) == 200, "the key is refused with no restriction set"
     settings = _authentication_settings(admin_page)
     settings.get_by_role("switch", name="API Key Endpoint Restrictions").click()
     settings.get_by_placeholder("e.g.) /api/v1/messages, /api/v1/channels").fill("/api/models")
@@ -164,13 +166,6 @@ def test_the_session_of_the_same_account_still_reaches_the_refused_endpoint(
     assert _status(REFUSED_PATH, key, account.base_url) == 403
 
     assert _status(REFUSED_PATH, account.token, account.base_url) == 200
-
-
-def test_without_the_restriction_the_key_reaches_every_endpoint(keyed_account):
-    account, key = keyed_account
-
-    assert _status("/api/models", key, account.base_url) == 200
-    assert _status(REFUSED_PATH, key, account.base_url) == 200
 
 
 def test_an_account_signing_up_lands_in_the_default_group(admin_page, page, default_group):
