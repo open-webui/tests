@@ -9,27 +9,30 @@ and each shows where a person meets it:
   is there and opens the create form; switched back off, /workspace/<section> sends the user
   home with no Create button.
 - Import and Export of Models, Prompts, Tools and Skills: the section's create menu offers
-  Import JSON (Import for skills) or Export JSON, each by its own switch and none when both are
-  off.
+  Import JSON (Import for skills) and Export JSON, and none when both are off.
 - Sharing of Models, Prompts, Knowledge, Tools, Skills and Notes: the item's Access dialog offers
   Add Access; off, the item's page has no Access button, however Public Sharing is set.
 - Public Sharing of the same six: the Access dialog's visibility list offers Public next to
   Private; off, it lists Private only.
 - Allow Sharing With Users / Groups: the Add Access picker lists the users or the groups.
 
+The section, import and export and sharing tests each walk all their sections or kinds on one
+page after one save of all their switches. Import and Export are no longer tried one at a time per
+section; only the skills test keeps one alone (its plain Import entry, no Export beside it).
+
 Discriminates: passes on dev 30f3f6a8f. A frontend build that always grants (workspace pages never
 redirect, every import and export entry shown, Add Access and Public always offered, the picker
-always listing users and groups) turns red the "switched back off" and "both switched off" tests
-and the "adds only its menu entry" and "but not public" tests, and the picker removal tests; one
-that never grants (every workspace page redirects, no import or export entry, no Add Access, no
-Public, an empty picker) turns red every "switched on" test, the "offers its create button" ones
-and the default picker test. Retargeted for 9bbb95048, which renamed the skills entry to Import;
-the import and export tests pass on dev 178de3666. The Public Sharing tests were retargeted for
-784b72f19, whose access dialog picks the visibility from a menu; they pass on dev 206bf9723, and
-a build that always offers Public turns the "but not public" and "withdraws" tests red. The
-"withdraws" test was retargeted for ac12b04aa (#32979), which hides the Access button from users
-without the sharing permission; it passes on dev 72d86c6b1 and fails on ac12b04aa^ (the button
-is there and opens a dialog that can change nothing).
+always listing users and groups) turns red the "switched back off" tests, the skills import test
+and the "but not public" tests, and the picker removal tests; one that never grants (every
+workspace page redirects, no import or export entry, no Add Access, no Public, an empty picker)
+turns red every "switched on" test, the "offers its create button" test and the default picker
+test. Retargeted for 9bbb95048, which renamed the skills entry to Import; the import and export
+tests pass on dev 178de3666. The Public Sharing tests were retargeted for 784b72f19, whose access
+dialog picks the visibility from a menu; they pass on dev 206bf9723, and a build that always
+offers Public turns the "but not public" and "withdraws" tests red. The "withdraws" test was
+retargeted for ac12b04aa (#32979), which hides the Access button from users without the sharing
+permission; it passes on dev 72d86c6b1 and fails on ac12b04aa^ (the button is there and opens a
+dialog that can change nothing).
 """
 
 from __future__ import annotations
@@ -109,34 +112,36 @@ def notes_on(admin, preserve):
     saved.raise_for_status()
 
 
-@pytest.mark.parametrize("section", SECTION_ACCESS)
-def test_a_section_switched_on_offers_its_create_button(
-    section, switch_defaults, page_for, make_user
-):
-    switch_defaults({SECTION_ACCESS[section]: True})
+def test_every_section_switched_on_offers_its_create_button(switch_defaults, page_for, make_user):
+    switch_defaults({switch: True for switch in SECTION_ACCESS.values()})
     page = page_for(make_user())
 
-    open_section(page, section)
+    for section in SECTION_ACCESS:
+        open_section(page, section)
 
-    page.get_by_role("button", name="Create", exact=True).click()
-    if section in CREATE_OPENS_A_PAGE:
-        expect(page).to_have_url(re.compile(rf"/workspace/{section}/create$"))
-    else:
-        expect(page.get_by_role("dialog")).to_be_visible()
+        expect(page.get_by_role("button", name="Create", exact=True), section).to_be_visible()
+        if section in SECTION_IO:
+            # with Import and Export off the create button has no menu beside it
+            expect(page.get_by_label("Open create menu"), section).to_have_count(0)
+        page.get_by_role("button", name="Create", exact=True).click()
+        if section in CREATE_OPENS_A_PAGE:
+            expect(page).to_have_url(re.compile(rf"/workspace/{section}/create$"))
+        else:
+            expect(page.get_by_role("dialog")).to_be_visible()
 
 
-@pytest.mark.parametrize("section", SECTION_ACCESS)
-def test_a_section_switched_back_off_is_closed_and_has_no_create_button(
-    section, switch_defaults, page_for, make_user
+def test_every_section_switched_back_off_is_closed_and_has_no_create_button(
+    switch_defaults, page_for, make_user
 ):
-    switch_defaults({SECTION_ACCESS[section]: True})
-    switch_defaults({SECTION_ACCESS[section]: False})
+    switch_defaults({switch: True for switch in SECTION_ACCESS.values()})
+    switch_defaults({switch: False for switch in SECTION_ACCESS.values()})
     page = page_for(make_user())
 
-    open_section(page, section)
+    for section in SECTION_ACCESS:
+        open_section(page, section)
 
-    page.wait_for_url(lambda url: "/workspace" not in url)
-    expect(page.get_by_role("button", name="Create", exact=True)).to_have_count(0)
+        page.wait_for_url(lambda url: "/workspace" not in url)
+        expect(page.get_by_role("button", name="Create", exact=True), section).to_have_count(0)
 
 
 def create_menu_entries(page: Page, section: str) -> tuple[Locator, Locator]:
@@ -151,49 +156,45 @@ def create_menu_entries(page: Page, section: str) -> tuple[Locator, Locator]:
     )
 
 
-IO_CASES = [(section, kind) for section in SECTION_IO for kind in (0, 1)]
-IO_IDS = [f"{section}-{('import', 'export')[kind]}" for section, kind in IO_CASES]
+def all_io(turn_on: bool) -> dict[str, bool]:
+    return {name: turn_on for switches in SECTION_IO.values() for name in switches}
 
 
-@pytest.mark.parametrize(("section", "kind"), IO_CASES, ids=IO_IDS)
-def test_an_import_or_export_switched_on_adds_only_its_menu_entry(
-    section, kind, switch_defaults, page_for, make_user
+def test_every_import_and_export_switched_on_adds_its_menu_entries(
+    switch_defaults, page_for, make_user
 ):
-    switch_defaults({SECTION_ACCESS[section]: True, SECTION_IO[section][kind]: True})
+    switch_defaults({**{switch: True for switch in SECTION_ACCESS.values()}, **all_io(True)})
     page = page_for(make_user())
 
-    entries = create_menu_entries(page, section)
+    for section in SECTION_IO:
+        importing, exporting = create_menu_entries(page, section)
 
-    expect(entries[kind]).to_be_visible()
-    expect(entries[1 - kind]).to_have_count(0)
+        expect(importing, f"{section} import").to_be_visible()
+        expect(exporting, f"{section} export").to_be_visible()
 
 
-@pytest.mark.parametrize(("section", "kind"), IO_CASES, ids=IO_IDS)
-def test_an_import_or_export_switched_back_off_leaves_the_menu(
-    section, kind, switch_defaults, page_for, make_user
-):
-    both = {SECTION_ACCESS[section]: True, **{name: True for name in SECTION_IO[section]}}
-    switch_defaults(both)
-    switch_defaults({SECTION_IO[section][kind]: False})
+def test_the_skills_import_alone_adds_a_plain_import_entry(switch_defaults, page_for, make_user):
+    switch_defaults({SECTION_ACCESS["skills"]: True, SECTION_IO["skills"][0]: True})
     page = page_for(make_user())
 
-    entries = create_menu_entries(page, section)
+    importing, exporting = create_menu_entries(page, "skills")
 
-    expect(entries[1 - kind]).to_be_visible()
-    expect(entries[kind]).to_have_count(0)
+    expect(importing).to_be_visible()
+    expect(exporting).to_have_count(0)
 
 
-@pytest.mark.parametrize("section", SECTION_IO)
-def test_with_both_switched_off_the_create_menu_is_just_a_button(
-    section, switch_defaults, page_for, make_user
+def test_every_import_and_export_switched_back_off_leaves_the_menu(
+    switch_defaults, page_for, make_user
 ):
-    switch_defaults({SECTION_ACCESS[section]: True})
+    switch_defaults({**{switch: True for switch in SECTION_ACCESS.values()}, **all_io(True)})
+    switch_defaults(all_io(False))
     page = page_for(make_user())
 
-    open_section(page, section)
+    for section in SECTION_IO:
+        open_section(page, section)
 
-    expect(page.get_by_role("button", name="Create", exact=True)).to_be_visible()
-    expect(page.get_by_label("Open create menu")).to_have_count(0)
+        expect(page.get_by_role("button", name="Create", exact=True), section).to_be_visible()
+        expect(page.get_by_label("Open create menu"), section).to_have_count(0)
 
 
 def _create(account: Actor, path: str, form: dict) -> dict:
@@ -285,50 +286,58 @@ def owner_after(switch_defaults, make_user, notes_on):
     return make
 
 
-@pytest.mark.parametrize("kind", SHARED_KINDS)
-def test_sharing_switched_on_offers_add_access_but_not_public(kind, owner_after, page_for):
-    owner = owner_after(sharing_switches(kind, 0))
-
-    dialog = open_access_dialog(page_for(owner), owner, kind)
-
-    expect(dialog.get_by_role("button", name="Add Access")).to_be_visible()
-    expect(visibility_choices(dialog)).to_have_text(["Private"])
+def every_kind(*names: int) -> dict[str, bool]:
+    """The Workspace Access and Sharing switches of every kind, all on."""
+    return {name: True for kind in SHARED_KINDS for name in sharing_switches(kind, *names)}
 
 
-@pytest.mark.parametrize("kind", SHARED_KINDS)
-def test_public_sharing_switched_on_offers_public(kind, owner_after, page_for):
-    owner = owner_after(sharing_switches(kind, 0, 1))
-
-    dialog = open_access_dialog(page_for(owner), owner, kind)
-
-    expect(dialog.get_by_role("button", name="Add Access")).to_be_visible()
-    expect(visibility_choices(dialog)).to_have_text(["Private", "Public"])
-
-
-@pytest.mark.parametrize("kind", SHARED_KINDS)
-def test_public_sharing_switched_back_off_withdraws_public_only(
-    kind, owner_after, switch_defaults, page_for
-):
-    owner = owner_after(sharing_switches(kind, 0, 1))
-    switch_defaults({SHARED_KINDS[kind][3]: False})
-
-    dialog = open_access_dialog(page_for(owner), owner, kind)
-
-    expect(dialog.get_by_role("button", name="Add Access")).to_be_visible()
-    expect(visibility_choices(dialog)).to_have_text(["Private"])
-
-
-@pytest.mark.parametrize("kind", SHARED_KINDS)
-def test_sharing_switched_back_off_withdraws_the_access_button(
-    kind, owner_after, switch_defaults, page_for
-):
-    owner = owner_after(sharing_switches(kind, 0, 1))
-    switch_defaults({SHARED_KINDS[kind][2]: False})
+def test_sharing_switched_on_offers_add_access_but_not_public(owner_after, page_for):
+    owner = owner_after(every_kind(0))
     page = page_for(owner)
 
-    open_item_page(page, owner, kind)
+    for kind in SHARED_KINDS:
+        dialog = open_access_dialog(page, owner, kind)
 
-    expect(page.get_by_role("button", name="Access", exact=True)).to_have_count(0)
+        expect(dialog.get_by_role("button", name="Add Access"), kind).to_be_visible()
+        expect(visibility_choices(dialog), kind).to_have_text(["Private"])
+
+
+def test_public_sharing_switched_on_offers_public(owner_after, page_for):
+    owner = owner_after(every_kind(0, 1))
+    page = page_for(owner)
+
+    for kind in SHARED_KINDS:
+        dialog = open_access_dialog(page, owner, kind)
+
+        expect(dialog.get_by_role("button", name="Add Access"), kind).to_be_visible()
+        expect(visibility_choices(dialog), kind).to_have_text(["Private", "Public"])
+
+
+def test_public_sharing_switched_back_off_withdraws_public_only(
+    owner_after, switch_defaults, page_for
+):
+    owner = owner_after(every_kind(0, 1))
+    switch_defaults({SHARED_KINDS[kind][3]: False for kind in SHARED_KINDS})
+    page = page_for(owner)
+
+    for kind in SHARED_KINDS:
+        dialog = open_access_dialog(page, owner, kind)
+
+        expect(dialog.get_by_role("button", name="Add Access"), kind).to_be_visible()
+        expect(visibility_choices(dialog), kind).to_have_text(["Private"])
+
+
+def test_sharing_switched_back_off_withdraws_the_access_button(
+    owner_after, switch_defaults, page_for
+):
+    owner = owner_after(every_kind(0, 1))
+    switch_defaults({SHARED_KINDS[kind][2]: False for kind in SHARED_KINDS})
+    page = page_for(owner)
+
+    for kind in SHARED_KINDS:
+        open_item_page(page, owner, kind)
+
+        expect(page.get_by_role("button", name="Access", exact=True), kind).to_have_count(0)
 
 
 GRANT_SWITCHES = {"users": "Allow Sharing With Users", "groups": "Allow Sharing With Groups"}
