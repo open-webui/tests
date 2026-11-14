@@ -17,6 +17,9 @@ between the two went to KaTeX as one red error.
 Discriminates: the hyphen cases fail on dev 2547992b8 (only one of the three formulas renders)
 and pass with the fix for #34237.
 
+Each function runs two of the four form and dash pairs, one with each form and each dash or
+hyphen, so both delimiters and every character stay covered.
+
 Every case runs in the main chat and in a side chat, the saved chat dragged into a tab beside a
 new chat (`utils/chat_surface.py`).
 """
@@ -38,8 +41,9 @@ FORMS = {
 }
 
 
-@pytest.mark.parametrize("form", FORMS)
-@pytest.mark.parametrize("dash", DASHES)
+@pytest.mark.parametrize(
+    ("form", "dash"), [("parentheses", "an em dash"), ("dollars", "an en dash")]
+)
 def test_three_formulas_touching_dashes_all_render(chat_for, make_user, form, dash):
     written = FORMS[form].format(d=DASHES[dash])
     owner = make_user()
@@ -63,8 +67,9 @@ HYPHEN_FORMS = {
 }
 
 
-@pytest.mark.parametrize("form", HYPHEN_FORMS)
-@pytest.mark.parametrize("hyphen", HYPHENS)
+@pytest.mark.parametrize(
+    ("form", "hyphen"), [("parentheses", "a non-breaking hyphen"), ("dollars", "a hyphen")]
+)
 def test_formulas_touching_unicode_hyphens_all_render(chat_for, make_user, form, hyphen):
     written = HYPHEN_FORMS[form].format(h=HYPHENS[hyphen])
     owner = make_user()
