@@ -12,7 +12,8 @@ picked as Default terminal there stays picked after a reload, and a new model in
 with it and keeps it when saved; with no default terminal a new model starts with none.
 
 Discriminates: passes on dev 30f3f6a8f; in a frontend build whose Model Defaults save sends the
-stored defaults back in place of the edited ones, every test but the untouched attach fails.
+stored defaults back in place of the edited ones, every test fails (the capability test passes its
+first step, an image attaching under the untouched defaults, and fails at the refusal).
 The prompt suggestion and capability tests were retargeted for 8d0ff76f2, whose defaults use
 the model editor's prompt rows and Capabilities switches: they pass on dev 76ad6f97c (3 of 3)
 and fail in a build of it whose save drops the edited capabilities and prompt suggestions.
@@ -135,6 +136,20 @@ def test_a_default_parameter_reaches_the_provider(
 def test_a_default_capability_switched_off_refuses_an_image(
     page_for, admin, make_user, defaults_restored
 ):
+    allowed = page_for(make_user())
+    expect(chat_input(allowed)).to_be_visible()
+    allowed.get_by_role("main").get_by_label("More").click()
+    with allowed.expect_file_chooser() as chooser:
+        allowed.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
+    with allowed.expect_response(is_file_upload) as uploaded:
+        chooser.value.set_files({"name": "pier.png", "mimeType": "image/png", "buffer": PIXEL_PNG})
+    file_id = uploaded.value.json()["id"]
+    # the name shows only while it uploads, then the stored image shows as its thumbnail
+    thumbnail = allowed.get_by_role("button", name="Show image preview").locator(
+        f"img[src*='{file_id}']"
+    )
+    expect(thumbnail).to_be_visible()
+
     admin_page = page_for(admin)
     settings = open_model_defaults(admin_page)
     open_section(settings, "Model Capabilities")
@@ -153,23 +168,6 @@ def test_a_default_capability_switched_off_refuses_an_image(
 
     expect(page.get_by_text("Selected model(s) do not support image inputs")).to_be_visible()
     expect(page.get_by_role("button", name="pier.png")).to_have_count(0)
-
-
-def test_an_image_attaches_while_the_default_capabilities_allow_it(page_for, make_user):
-    page = page_for(make_user())
-    expect(chat_input(page)).to_be_visible()
-    page.get_by_role("main").get_by_label("More").click()
-    with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("menuitem", name="Upload Files").click()
-    with page.expect_response(is_file_upload) as uploaded:
-        chooser.value.set_files({"name": "pier.png", "mimeType": "image/png", "buffer": PIXEL_PNG})
-    file_id = uploaded.value.json()["id"]
-
-    # the name shows only while it uploads, then the stored image shows as its thumbnail
-    thumbnail = page.get_by_role("button", name="Show image preview").locator(
-        f"img[src*='{file_id}']"
-    )
-    expect(thumbnail).to_be_visible()
 
 
 # --------------------------------------------------------------------------- default tools
