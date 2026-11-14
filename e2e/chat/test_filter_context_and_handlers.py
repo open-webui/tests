@@ -1,22 +1,19 @@
-"""Filters as the chat page shows their work: one switched off mid-reply, and an outlet edit.
+"""Filters as the chat page shows their work: an outlet edit.
 
-1. Fix commit `7d694570a` in `utils/filter.py`: the active filters are read once per request and
-   kept on it, where every filter stage of a chat turn used to read them from the database
-   again. So a filter an admin switches off mid-reply still runs its `stream` stage to the end
-   of that reply. Here a second filter's inlet switches it off, which makes the moment exact.
-2. Unpinned, no issue filed: an `outlet` filter that edits the reply edits both its `content`
-   and the text of its `output` message items, since the chat page renders a reply from its
-   `output`. The edit shows live, is stored and still shows after a reload.
+Unpinned, no issue filed: an `outlet` filter that edits the reply edits both its `content` and
+the text of its `output` message items, since the chat page renders a reply from its `output`.
+The edit shows live, is stored and still shows after a reload.
 
-Twin of integration/chat/test_filter_context_and_handlers.py (its mid-request cases).
+Twin of integration/chat/test_filter_context_and_handlers.py (its mid-request cases). The
+mid-request case of fix `7d694570a` (a filter switched off mid-reply still runs its stream stage)
+was dropped here: the integration twin pins it and the page adds nothing to it.
 
-Discriminates: both pass on dev ef67cc3fa. The first fails with 7d694570a reverted in a backend
-copy (the reply arrives without the stream mark); the second fails in a backend copy that drops
-the outlet's `output` edit (the page shows the unedited reply).
+Discriminates: passes on dev ef67cc3fa and fails in a backend copy that drops the outlet's
+`output` edit (the page shows the unedited reply).
 
-Both tests run in the main chat and in a side chat. In a side chat the outlet test is red on dev
-c15f28649 and green on the side chat rework build (fix PR open-webui/open-webui#34064), with no
-issue filed: the side chat keeps showing the unedited reply until a reload.
+The test runs in the main chat and in a side chat. In a side chat it is red on dev c15f28649 and
+green on the side chat rework build (fix PR open-webui/open-webui#34064), with no issue filed: the
+side chat keeps showing the unedited reply until a reload.
 """
 
 from __future__ import annotations
@@ -33,30 +30,6 @@ from utils.chat_ui import expect_reply, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-SWITCHING_FILTER = """
-import httpx
-
-
-class Filter:
-    async def inlet(self, body):
-        async with httpx.AsyncClient(base_url={base_url!r}) as client:
-            response = await client.post(
-                "/api/v1/functions/id/{target}/toggle",
-                headers={{"Authorization": "Bearer {token}"}},
-            )
-            response.raise_for_status()
-        return body
-"""
-
-LATE_STREAM_FILTER = """
-class Filter:
-    def stream(self, event):
-        for choice in event.get("choices", []):
-            if choice.get("delta", {}).get("content"):
-                choice["delta"]["content"] += " [late stream]"
-        return event
-"""
-
 HIGHLIGHTING_OUTLET = """
 class Filter:
     async def outlet(self, body):
@@ -71,21 +44,6 @@ class Filter:
                             part["text"] += " [highlighted]"
         return body
 """
-
-
-def test_the_reply_keeps_the_filter_switched_off_during_it(
-    chat_for, instance, admin, make_user, upstream
-):
-    prompt = "tell me about filters"
-    upstream.queue(reply.text("filtered reply", match=reply.answering(prompt)))
-    chat = chat_for(make_user())
-    with installed_function(admin, LATE_STREAM_FILTER, is_global=True) as late_filter:
-        switching = SWITCHING_FILTER.format(
-            base_url=instance.base_url, target=late_filter, token=admin.token
-        )
-        with installed_function(admin, switching, is_global=True):
-            send(chat, prompt)
-            expect_reply(chat, "filtered reply [late stream]")
 
 
 def stored_reply(person, chat_id: str, expected: str) -> dict:
