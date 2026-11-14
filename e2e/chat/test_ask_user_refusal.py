@@ -1,9 +1,9 @@
 """A refused `ask_user` call left the user with a dead chat and no reply.
 
-Fix commit `be958d7b0` (PR #29252, issue #29077). When the model asked two `ask_user`
-questions in one turn, Open WebUI refused them but stopped the turn there: the model was never
-told and the page showed no answer. The refusal now goes back to the model, whose next reply
-reaches the page. A single well-formed question still opens the question card.
+Fix commit `be958d7b0` (PR #29252, issue #29077). When the model asked two `ask_user` questions in
+one turn, Open WebUI refused them but stopped the turn there: the model was never told and the page
+showed no answer. The refusal now goes back to the model, whose next reply reaches the page. A
+single well-formed question still opens the question card (the English step of the direction test).
 
 The card follows the Chat Direction setting (open-webui/open-webui#32784, fix aee4cbf46): with the
 default Auto a question in Hebrew reads right to left and an English one left to right, and the
@@ -13,11 +13,10 @@ Twin of unit/chat/test_ask_user_refusal.py, next to integration/chat/test_ask_us
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`).
 
-Discriminates: with be958d7b0 reverted the refused turn never shows a reply; the question card
-shows on both. On the 0.12.4 pre-fix build (aee4cbf46 reverted among other fixes) the Hebrew
-card test goes red (its question reads left to right); the English card stays left to right on
-both.
-"""
+Discriminates: with be958d7b0 reverted the refused turn never shows a reply; the question card shows
+on both (the English step of the direction test). On the 0.12.4 pre-fix build (aee4cbf46 reverted
+among other fixes) the Hebrew card test goes red (its question reads left to right); the English
+step of that test, the card left to right, passes on both."""
 
 from __future__ import annotations
 
@@ -79,19 +78,21 @@ def test_a_refused_double_question_still_gets_a_reply(chat_page, upstream):
     expect_reply(chat_page, "Let me ask one question at a time.")
 
 
-def test_a_single_question_opens_the_question_card(chat_page, upstream):
+def test_a_question_card_opens_left_to_right_in_english_and_right_to_left_in_hebrew(
+    chat_for, make_user, upstream
+):
+    english = chat_for(make_user())
     upstream.queue(Reply(tool_calls=[ask_user_call("call_plan")]))
 
-    send(chat_page, "help me choose a plan")
+    send(english, "help me choose a plan")
 
-    question = chat_page.panel.get_by_text("Which plan fits you best?")
-    expect(question).to_be_visible(timeout=30_000)
-    expect(chat_page.panel.get_by_text("The cheapest one")).to_be_visible()
-    expect(chat_page.panel.get_by_text("The fastest one")).to_be_visible()
-    expect(question).to_have_css("direction", "ltr")
+    plan = english.panel.get_by_text("Which plan fits you best?")
+    expect(plan).to_be_visible(timeout=30_000)
+    expect(english.panel.get_by_text("The cheapest one")).to_be_visible()
+    expect(english.panel.get_by_text("The fastest one")).to_be_visible()
+    expect(plan).to_have_css("direction", "ltr")
 
-
-def test_a_hebrew_question_card_reads_right_to_left(chat_page, upstream):
+    chat_page = chat_for(make_user())
     upstream.queue(Reply(tool_calls=[ask_user_call("call_plan", HEBREW_QUESTION)]))
 
     send(chat_page, "help me choose a plan in hebrew")
