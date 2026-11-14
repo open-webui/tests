@@ -30,14 +30,19 @@ def scheduler(make_user):
 
 @pytest.fixture
 def make_automation() -> Callable[..., dict]:
-    def create(owner: Actor, model_id: str = MOCK_MODEL_ID, is_active: bool = True) -> dict:
+    def create(
+        owner: Actor,
+        model_id: str = MOCK_MODEL_ID,
+        is_active: bool = True,
+        rrule: str = FUTURE_DAILY,
+    ) -> dict:
         form = {
             "name": f"Weekly report {uuid.uuid4().hex[:6]}",
             "is_active": is_active,
             "data": {
                 "prompt": f"Write the weekly report, batch {uuid.uuid4().hex[:6]}.",
                 "model_id": model_id,
-                "rrule": FUTURE_DAILY,
+                "rrule": rrule,
                 "target": {"type": "chat"},
             },
         }

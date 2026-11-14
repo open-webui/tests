@@ -10,12 +10,18 @@ a group grants the automations permission, and the admin's global switch takes t
 admin too. Since dev da850248d a refused page keeps its address and shows a permission message in
 place of the list; it sent the account home before.
 
+Bug, open-webui/open-webui#34427: the page rebuilds a stored schedule in its own form and compared
+that with the stored text, so an automation the model's tool saved with a start date opened with
+Save already showing. `test_an_automation_made_in_a_chat_opens_without_unsaved_changes` pins it
+(fix PR branch fix-automation-page-save-on-open).
+
 Discriminates: passes on dev 176d31d1d; one frontend copy turns each test red: the list's daily
 schedule without its time, the edit dialog sending the old title, the page's switch not saving,
 both deletes not calling the server, the user menu offering Automations to everyone (the
 no-permission and admin switch tests) and the list page letting only admins in (the group test).
 Retargeted to the editor page on dev 2fdf4ce6b, where a frontend copy saving the old title turns
-the edit test red and one whose switch does not save the pausing test.
+the edit test red and one whose switch does not save the pausing test. The unsaved changes test
+is red on dev 2fdf4ce6b and passes on the fix branch.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from harness.access import make_group
 from utils.automations_page import (
     automation_page,
     automation_row,
+    expect_no_runs,
     instructions,
     name_box,
     open_automation,
@@ -91,6 +98,24 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     expect(name_box(page)).to_have_value(new_title)
     expect(property_row(page, "Schedule")).to_contain_text("Hourly")
     expect(page_tab(page, new_title).get_by_text(new_title, exact=True)).to_be_visible()
+
+
+@pytest.mark.regression
+def test_an_automation_made_in_a_chat_opens_without_unsaved_changes(
+    page_for, scheduler, make_automation
+):
+    # the schedule as the model's automation tool writes it, after the tool's own example
+    automation = make_automation(scheduler, rrule="DTSTART:20990101T090000\nRRULE:FREQ=DAILY")
+    page = page_for(scheduler)
+    open_automation(page, automation)
+    expect_no_runs(page)
+
+    save = automation_page(page).get_by_role("button", name="Save", exact=True)
+    expect(
+        save, "the page offers Save before anything was changed (open-webui/open-webui#34427)"
+    ).to_have_count(0)
+    name_box(page).fill(f"{automation['name']} renamed")
+    expect(save).to_be_visible()
 
 
 def test_pausing_and_resuming_sticks_on_both_pages(page_for, scheduler, make_automation):
