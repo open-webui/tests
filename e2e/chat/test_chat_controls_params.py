@@ -8,8 +8,9 @@ typed), the reasoning effort and the logit bias (`token:bias` pairs sent as a ma
 parameter an admin adds there is sent under its name, its value read as JSON when it is JSON and
 kept as text when it is not. The chat's own system prompt is sent in place of none, again after a
 reload. A new chat starts from the defaults again, and going back and forth between two chats in the
-sidebar keeps each chat's values to itself. Two tabs open on one chat that each change a different
-setting keep both, and the chat opened again shows and sends both (#32755, b4a58be19).
+sidebar keeps each chat's values to itself (one test walks both). Two tabs open on one chat that
+each change a different setting keep both, and the chat opened again shows and sends both
+(#32755, b4a58be19).
 
 The parameters an account saves under Settings > General > Advanced Parameters are sent with
 every chat that sets none of its own; a value set in the chat's Controls wins over them, and a
@@ -37,7 +38,7 @@ a fractional one (Temperature) keeps its decimals. Red on dev 32243bdf7, which s
 
 The tests of one chat's values and of the account's parameters run in the main chat and in a side
 chat (`utils/chat_surface.py`); the account's parameters are saved in a page of their own first.
-The new chat, sidebar and system prompt tests go to another chat through the sidebar and the two
+The sidebar and system prompt tests go to another chat through the sidebar and the two
 tabs test opens the chat in two browser tabs, so they stay in the main chat. On dev c15f28649 a
 side chat sent its own parameters only in part and the account's over them (no filed issue; the
 system prompt part is open-webui/open-webui#34027); every variant passes on dev e791cbdde.
@@ -196,19 +197,6 @@ def test_custom_parameters_are_sent_as_json_or_as_text(chat_for, make_user, upst
 
     assert request.get("chat_template_kwargs") == {"enable_thinking": False, "levels": [1, 2]}
     assert request.get("verbosity") == "low and slow"
-
-
-def test_a_new_chat_starts_from_the_defaults(page_for, make_user, upstream):
-    page = page_for(make_user())
-    panel = _advanced_params(page)
-    _set(panel, "Temperature", "0.3")
-    close_menu(page)
-    assert _ask(page, upstream).get("temperature") == 0.3
-
-    page.get_by_role("link", name="New Chat").first.click()
-    expect(page).not_to_have_url(re.compile(r"/c/"))
-    fresh = _ask(page, upstream)
-    assert "temperature" not in fresh
 
 
 def test_each_chat_keeps_its_own_values_when_switching_in_the_sidebar(
