@@ -281,9 +281,10 @@ def arena_model(admin, preserve) -> Iterator[str]:
         client.post("/api/v1/models/model/delete", json={"id": arena["id"]})
 
 
-def _offered_in_selector(page: Page, name: str) -> Locator:
-    page.goto("/")
-    page.get_by_role("button", name=re.compile("^Selected model")).click()
+def _offered_in_selector(page: Page, name: str, reopen: bool = True) -> Locator:
+    if reopen:
+        page.goto("/")
+        page.get_by_role("button", name=re.compile("^Selected model")).click()
     model_search(page).fill(name)
     available = page.get_by_role("listbox", name="Available models")
     return available.get_by_role("option", name=f"Select {name} model")
@@ -302,7 +303,9 @@ def test_switching_arena_models_off_hides_them_in_the_settings_and_the_selector(
     settings.get_by_role("button", name="Save", exact=True).click()
     expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
-    expect(_offered_in_selector(page_for(make_user()), arena_model)).to_have_count(0)
+    user_page = page_for(make_user())
+    expect(_offered_in_selector(user_page, reply.MOCK_MODEL_ID)).to_have_count(1)  # list loaded
+    expect(_offered_in_selector(user_page, arena_model, reopen=False)).to_have_count(0)
 
 
 def test_cloning_an_arena_model_adds_a_second_one_filled_in_from_it(
