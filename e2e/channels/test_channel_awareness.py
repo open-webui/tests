@@ -1,11 +1,11 @@
 """Journey: a model in a chat looks up what was said in the person's channels.
 
 A member asks in an ordinary chat; the model searches the channel messages and the chat shows that
-it did, and the search finds a thread reply in a channel the member belongs to. Someone who is not
-in the channel asks the same and the search finds nothing.
+it did, and the search finds a thread reply in a channel the member belongs to. That someone
+outside the channel finds nothing is pinned by integration/tools/test_builtin_channel_tools.py.
 
 Discriminates: passes on dev ebc6add67; in a backend copy, a message search that leaves out thread
-replies turns the member test red and one that ignores membership turns the outsider test red.
+replies turns the member test red.
 """
 
 from __future__ import annotations
@@ -26,16 +26,16 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 @pytest.fixture
 def herons(admin, preserve, make_user):
-    """A group channel with a thread about herons, its member and an outsider; and a unique tag."""
+    """A group channel with a thread about herons, its member and a unique tag."""
     preserve("admin_config")
     with admin.client() as client:
         enable_channels(client)
-    member, other_member, outsider = make_user(), make_user(), make_user()
+    member, other_member = make_user(), make_user()
     tag = uuid.uuid4().hex[:8]
     channel_id = group_channel(member, other_member)
     parent_id = post_message(member, channel_id, f"birds at the jetty {tag}")
     post_message(other_member, channel_id, f"two grey herons {tag}", parent_id=parent_id)
-    return member, outsider, tag
+    return member, tag
 
 
 def _ask_about(page_for, account, upstream, tag: str) -> list:
@@ -64,16 +64,8 @@ def _ask_about(page_for, account, upstream, tag: str) -> list:
 
 
 def test_the_model_finds_a_thread_reply_in_the_members_channel(herons, page_for, upstream):
-    member, _, tag = herons
+    member, tag = herons
 
     found = _ask_about(page_for, member, upstream, tag)
 
     assert f"two grey herons {tag}" in json.dumps(found)
-
-
-def test_the_model_finds_nothing_for_someone_outside_the_channel(herons, page_for, upstream):
-    _, outsider, tag = herons
-
-    found = _ask_about(page_for, outsider, upstream, tag)
-
-    assert found == []
