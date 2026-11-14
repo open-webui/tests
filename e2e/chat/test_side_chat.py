@@ -23,13 +23,13 @@ tab is one of the chat's saved tabs and is back after a reload, and opening it f
 carries on from the chat so far and its own exchange without touching the chat it came from.
 Deleting it from the sidebar takes it off the list and leaves that chat as it was. Any saved chat
 dragged from the sidebar onto the right side of the open chat shows "Open in side panel" and
-opens in a tab beside it, without copying it; without the Side Chat permission it does not.
+opens in a tab beside it, without copying it; since d7b3d08b4 that needs no Side Chat permission,
+as the tab copies nothing from the chat it opens beside.
 
 Discriminates (the saved side chat tests): pass on the dev f659c0d12 build. On that build patched
 to save a side chat as "New Chat" every test that asks aside fails, as neither a tab nor a row
 carries the question; with saved side chat tabs left out of the saved view, the first test and the
-drop test fail after the reload; with the Side Chat check dropped from the drop target, the test
-without the permission fails as the drop hint shows.
+drop test fail after the reload.
 
 A side chat stays temporary, answered but kept out of the chat list, when the account turns on
 Temporary Chat in it with `/temporary` before its first message, or when the admin enforces
@@ -467,7 +467,7 @@ def test_a_deleted_side_chat_is_gone_and_the_chat_it_came_from_stays(
 
 
 def test_a_chat_dropped_from_the_sidebar_opens_beside_the_chat(
-    page_for, make_user, upstream, side_chat_allowed
+    page_for, make_user, upstream, side_chat_denied
 ):
     account = make_user()
     other_id = seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
@@ -494,25 +494,6 @@ def test_a_chat_dropped_from_the_sidebar_opens_beside_the_chat(
     expect(page.get_by_role("tabpanel", name=OTHER_TITLE, exact=True)).to_contain_text(
         OTHER_CHAT[1]["content"]
     )
-
-
-def test_without_side_chat_a_chat_dropped_from_the_sidebar_opens_nothing(
-    page_for, make_user, upstream, side_chat_denied
-):
-    account = make_user()
-    seed_titled_chat(account, OTHER_CHAT, OTHER_TITLE)
-    page, chat_id = open_answered_chat(page_for, account, upstream)
-    row = chat_row(open_sidebar(page), OTHER_TITLE)
-    expect(row).to_be_visible()
-
-    hint = drag_onto_the_chat(page, row)
-    # the same drag shows the hint for an account with Side Chat on
-    expect(hint).to_have_count(0)
-    page.mouse.up()
-
-    expect(page.get_by_role("tab", name=OTHER_TITLE, exact=True)).to_have_count(0)
-    expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
-    expect_reply(page, ANSWER)
 
 
 def enforce_temporary_chats(admin) -> None:

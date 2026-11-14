@@ -5,11 +5,12 @@ with its own message box, saved under its question. A person expects the everyda
 work there as in the chat: picking another model, attaching a file, an image or a knowledge base
 (and seeing its source), a tool and its result, web search, Stop, Copy, code blocks and reasoning.
 The saved side chat shares and exports with its exchange from its sidebar menu, and without the
-Side Chat permission neither `/side` nor the shortcut opens one. The basic side chat flows
+Side Chat permission `/side` is refused. The basic side chat flows
 (context, closing, reopening, deleting, dropping a chat beside another) are in test_side_chat.py.
 A question the model asks with Ask User shows in the side chat, and answering it finishes the
-reply. Since 3b1a95383 the shortcut opens a side chat on an empty new chat too; with no chat so
-far the model gets only the side question.
+reply. Since d7b3d08b4 the New Chat tab the shortcut opens is a new chat of its own, beside a
+saved chat as on an empty one: the model gets only its question, and it opens without the Side
+Chat permission too, as only `/side` hands over the chat so far.
 
 What a side chat does not offer yet on dev c15f28649 is pinned as plain tests, red until it
 lands: Regenerate, Edit, Continue Response and rating under its messages
@@ -42,8 +43,9 @@ A question still waiting in a side chat shows again after a reload and can be di
 the reply then carries on (5cbd9bc5c, PR open-webui/open-webui#33901). Passes on dev e8c0ad85e
 and fails on that build with 5cbd9bc5c reverted (the question never shows).
 
-A command the model runs from a side chat runs on the terminal picked for the chat, and with the
-terminal taken off the side chat's model gets no terminal tools. Fails on a copy of the dev
+A command the model runs from a side chat runs on the terminal picked for the chat. Since
+d7b3d08b4 the side chat keeps a terminal pick of its own, and with the terminal taken off there
+its model gets no terminal tools while the chat keeps its terminal. Fails on a copy of the dev
 c15f28649 build whose side chat leaves the picked terminal out of its request.
 """
 
@@ -785,24 +787,32 @@ def test_a_side_chat_exported_from_the_sidebar_holds_its_exchange(
     )
 
 
-def test_the_new_chat_tab_shortcut_opens_a_side_chat_that_answers(
-    page_for, make_user, upstream, side_chat_allowed
-):
-    page = open_chat(page_for, make_user())
+def ask_in_a_new_chat_tab(page: Page, upstream, question: str) -> list:
+    """Open a New Chat tab with the shortcut, ask `question` there and wait for the answer;
+    returns the user and assistant messages the model got for it."""
     expect(chat_input(page)).to_be_visible()
-
     page.keyboard.press("Control+Alt+O")
-
     panel = page.get_by_role("tabpanel", name="New Chat 1", exact=True)
     expect(side_input(panel)).to_be_visible()
-    question = tagged("By the way, how long is that tunnel?")
     upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
     side_send(panel, question)
     expect(side_reply(side_chat_panel(page, question))).to_contain_text(
         SIDE_ANSWER, timeout=REPLY_TIMEOUT_MS
     )
-    sent = [entry["content"] for entry in reply.conversation(sent_for(upstream, question))]
-    assert PARENT_CHAT[1]["content"] in sent, f"the side chat lacked the chat so far: {sent}"
+    sent = reply.conversation(sent_for(upstream, question))
+    return [entry["content"] for entry in sent if entry["role"] in ("user", "assistant")]
+
+
+def test_the_new_chat_tab_shortcut_beside_a_chat_opens_a_new_chat_that_answers_alone(
+    page_for, make_user, upstream, side_chat_allowed
+):
+    page = open_chat(page_for, make_user())
+    question = tagged("By the way, how long is that tunnel?")
+
+    exchanged = ask_in_a_new_chat_tab(page, upstream, question)
+
+    # only /side carries the chat so far (d7b3d08b4)
+    assert exchanged == [question], f"the new chat tab was sent {exchanged}"
 
 
 def test_a_side_chat_opens_from_an_empty_new_chat_and_answers_alone(
@@ -845,7 +855,7 @@ def side_chat_denied(admin, preserve) -> None:
     assert saved.status_code == 200, saved.text
 
 
-def test_without_side_chat_neither_the_command_nor_the_shortcut_opens_one(
+def test_without_side_chat_the_command_is_refused_and_the_shortcut_opens_a_chat_without_context(
     page_for, make_user, upstream, side_chat_denied
 ):
     page = open_chat(page_for, make_user())
@@ -856,13 +866,16 @@ def test_without_side_chat_neither_the_command_nor_the_shortcut_opens_one(
 
     expect(page.get_by_text("You do not have permission to use side chat.")).to_be_visible()
     expect(page.get_by_role("tab", name=question)).to_have_count(0)
-    page.keyboard.press("Control+Alt+O")
-    # the shortcut opens a "New Chat 1" tab when allowed (see the shortcut test above)
-    expect(page.get_by_role("tab", name=re.compile("^New Chat"))).to_have_count(0)
-    expect(page.get_by_role("tab", name=question)).to_have_count(0)
     later = upstream.chat_requests()[asked_before:]
     assert not any(reply.answering(question)(body) for body in later), (
         "the refused side question was still sent to the model"
+    )
+
+    # a New Chat tab is a chat of its own and needs no Side Chat (d7b3d08b4)
+    again = tagged("How long is the Felbertauern tunnel?")
+    exchanged = ask_in_a_new_chat_tab(page, upstream, again)
+    assert exchanged == [again], (
+        f"the new chat tab of an account without Side Chat was sent {exchanged}"
     )
 
 
@@ -895,12 +908,14 @@ def test_a_command_the_model_runs_from_a_side_chat_runs_on_the_terminal_picked_f
         f"the side chat's command did not run on the picked terminal: {marker} is missing there"
     )
 
-    # with the terminal taken off the chat, the side chat's model has no terminal either
-    composer = page.get_by_role("main")
-    composer.get_by_role("button", name=connection["name"], exact=True).click()
+    # a side chat keeps its own terminal pick (d7b3d08b4); taken off there, its model has none
+    panel.get_by_role("button", name=connection["name"], exact=True).click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=connection["name"]).click()
-    expect(composer.get_by_role("button", name=connection["name"], exact=True)).to_have_count(0)
+    expect(panel.get_by_role("button", name=connection["name"], exact=True)).to_have_count(0)
     close_menu(page)
+    expect(
+        main_chat(page).panel.get_by_role("button", name=connection["name"], exact=True)
+    ).to_be_visible()
     again = tagged("And which berth was it?")
     side_ask(panel, upstream, again, reply.text("I cannot look without a terminal."))
     assert "run_command" not in offered_tools(sent_for(upstream, again)), (

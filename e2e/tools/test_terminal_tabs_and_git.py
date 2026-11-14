@@ -27,12 +27,14 @@ The workspace shortcuts (80ddf8e3b) open Files (Ctrl+Shift+E), a shell (Ctrl+`),
 (Ctrl+Alt+N) and a browser (Ctrl+Shift+B), step through a pane's tabs (Ctrl+Shift+] and [) and
 close the active one (Ctrl+W, never the conversation). They do nothing while a menu or a dialog
 is open or with Keyboard Shortcuts switched off; Desktop (Ctrl+Alt+D) does nothing on a terminal
-without a desktop, New Chat Tab (Ctrl+Alt+O) needs the side chat permission and Comments
-(Ctrl+Shift+Y) needs comments switched on. A tab closed while its session is still starting
-closes once the start ends, so the test lets the Browser tab start first: where Open Terminal has
-Chrome, the switch to Chrome mode takes up to its 15 s startup limit on a slow runner. When the
-file browser is in a Git repository, the Git panel under the tabs shows a changed file's diff,
-stages and commits it, and the commit shows in its History and on the disk.
+without a desktop and Comments (Ctrl+Shift+Y) needs comments switched on. New Chat Tab
+(Ctrl+Alt+O) opens a new chat beside the conversation, since d7b3d08b4 also without the side
+chat permission, as only `/side` hands that chat the conversation so far. A tab closed while its
+session is still starting closes once the start ends, so the test lets the Browser tab start
+first: where Open Terminal has Chrome, the switch to Chrome mode takes up to its 15 s startup
+limit on a slow runner. When the file browser is in a Git repository, the Git panel under the
+tabs shows a changed file's diff, stages and commits it, and the commit shows in its History and
+on the disk.
 
 Since c24c3d914 each changed file's stage box and Stage all are checkboxes that say whether they
 are ticked, Stage all reading mixed while only some files are staged; Discard changes also deletes
@@ -63,12 +65,13 @@ divider drag outpaces the saves.
 Discriminates for the workspace tests, in frontend builds of f659c0d12: with the layout never
 sent to the server the reload, first message and reconnect tests fail; with the menu and dialog
 guard gone the menu test fails, with the Keyboard Shortcuts switch ignored the switched off test
-fails, with side chats open to everyone the side chat test fails and with edge drops never
-splitting the drag test fails (the reorder, split, divider and shortcut tests pass there). With
-the divider unclamped the divider test fails, with Ctrl+Backslash unbound the split test fails
-and with Ctrl+W unbound the shortcut test fails; with the wedge fixed (no save started when
-nothing is pending) the reconnect test passes. The reorder test fails on v0.13.0 builds whose
-dropped tab keeps its old place.
+fails and with edge drops never splitting the drag test fails (the reorder, split, divider and
+shortcut tests pass there). With the divider unclamped the divider test fails, with
+Ctrl+Backslash unbound the split test fails and with Ctrl+W unbound the shortcut test fails;
+with the wedge fixed (no save started when nothing is pending) the reconnect test passes. The
+reorder test fails on v0.13.0 builds whose dropped tab keeps its old place. The New Chat Tab and
+Comments shortcut test passes on dev 2fdf4ce6b and fails on dev c0bd0cb34, where the shortcut
+opens nothing without the side chat permission.
 The activity test passes on dev e8c0ad85e and fails on a copy of the dev e8c0ad85e build that labels
 staging and pushing otherwise.
 The reorder test also checks that no full-width or side tabs switch is offered; in an e8c0ad85e
@@ -141,7 +144,6 @@ from playwright.sync_api import Locator, Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from harness import upstream as reply
-from harness.access import make_group
 from harness.actors import Actor
 from harness.listener import json_answer
 from harness.open_terminal import HOME_TAB, SHELL_TAB, serving_open_terminal
@@ -976,7 +978,7 @@ def _answered(page: Page, upstream) -> str:
     return _tab_strip(page).get_by_role("tab").first.inner_text().strip()
 
 
-def test_side_chat_and_comments_shortcuts_answer_only_where_allowed(
+def test_the_new_chat_tab_shortcut_answers_everyone_and_comments_only_where_on(
     page_for, make_user, admin, preserve, upstream
 ):
     preserve("admin_config")
@@ -990,21 +992,18 @@ def test_side_chat_and_comments_shortcuts_answer_only_where_allowed(
     page = page_for(make_user())
     title = _answered(page, upstream)
     page.keyboard.press("Control+Alt+O")
-    page.keyboard.press("Control+Shift+Y")
-    # the search opens after both chords were handled
-    page.keyboard.press("Control+K")
-    expect(page.get_by_role("dialog").get_by_placeholder("Search")).to_be_visible()
-    _expect_panes(page, [[title]])
-
-    _set_comments(admin, True)
-    allowed = make_user()
-    make_group(admin, [allowed], {"chat": {"side_chat": True}})
-    page = page_for(allowed)
-    title = _answered(page, upstream)
-    page.keyboard.press("Control+Alt+O")
     _expect_panes(page, [[title, "New Chat 1"]])
     page.keyboard.press("Control+Shift+Y")
-    _expect_panes(page, [[title, "New Chat 1", "Comments"]])
+    # the search opens after the comments chord was handled
+    page.keyboard.press("Control+K")
+    expect(page.get_by_role("dialog").get_by_placeholder("Search")).to_be_visible()
+    _expect_panes(page, [[title, "New Chat 1"]])
+
+    _set_comments(admin, True)
+    page = page_for(make_user())
+    title = _answered(page, upstream)
+    page.keyboard.press("Control+Shift+Y")
+    _expect_panes(page, [[title, "Comments"]])
     _selected(page, "Comments")
 
 
@@ -1508,14 +1507,15 @@ def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_d
     page.keyboard.press("Control+Backslash")
     expect(chat_input(page)).to_be_visible()
     expect(files.get_by_text("plain-notes.md", exact=True)).to_be_visible()
-    _expect_new_tab_entries(page, ["Files", "New File", "New Terminal", "Voice Note"])
+    _expect_new_tab_entries(page, ["Files", "New File", "New Terminal", "Voice Note", "New Chat"])
     # a terminal that does not say it has Git is never asked about a repository
     assert not plain.requests_to("/git/status"), "a terminal without Git was asked for its status"
 
     _pick_another_terminal(page, "Plain", "Workstation")
     expect(files.get_by_text("workstation-notes.md", exact=True)).to_be_visible()
     _expect_new_tab_entries(
-        page, ["Files", "New File", "New Terminal", "Voice Note", "Browser", "Desktop"]
+        page,
+        ["Files", "New File", "New Terminal", "Voice Note", "Browser", "Desktop", "New Chat"],
     )
     expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
     _wait_until(lambda: _watched(workstation))
@@ -1523,7 +1523,7 @@ def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_d
 
     _pick_another_terminal(page, "Workstation", "Locked")
     expect(files.get_by_text("locked-notes.md", exact=True)).to_be_visible()
-    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note"])
+    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note", "New Chat"])
     expect(git).to_have_count(0)
     assert not locked.requests_to("/git/status"), "a terminal with Git off was asked for its status"
     assert not _watched(locked), "a terminal with live updates off was asked for them"
@@ -1531,7 +1531,7 @@ def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_d
     # a terminal whose configuration cannot be read still shows its files
     _pick_another_terminal(page, "Locked", "Silent")
     expect(files.get_by_text("silent-notes.md", exact=True)).to_be_visible()
-    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note"])
+    _expect_new_tab_entries(page, ["Files", "New File", "Voice Note", "New Chat"])
     expect(git).to_have_count(0)
 
 
