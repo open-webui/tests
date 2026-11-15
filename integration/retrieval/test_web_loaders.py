@@ -23,6 +23,11 @@
   request. Tavily's API base URL is environment-only, so the instance boots pointed at a local
   stand-in. The external loader and an unknown engine are read the same way.
 
+- Internal certificate authority (issue #34479): with Verify SSL Certificate on, the certificate
+  check the Tavily, Playwright and Web IQ loaders run before reading a page trusted only the
+  public authorities, so a page signed by the CA named in `AIOHTTP_CLIENT_SSL_CERT_FILE` was
+  refused. The page's port is honoured since #34476, which this test needs to reach it.
+
 - urllib3-future socket options (PR #26796, commit 7ef0530b2, issue #26791): the connect-time
   SSRF guard passed every socket option straight to `setsockopt()`, which takes three arguments.
   urllib3-future, which shadows urllib3 once a tool or function installs it, declares its
@@ -39,19 +44,23 @@ one `try` for fetch and save fails the unreadable link, a Web IQ constructor wit
 `api_base_url` fails the Web IQ page, substring sniffing fails every Office type and passing the
 exception as the detail fails the failed search. On dev ef67cc3fa, a required `api_base_url`
 on the Tavily loader fails the Tavily page, and passing every socket option to `setsockopt` whole
-fails the document link under urllib3-future's defaults.
+fails the document link under urllib3-future's defaults. The internal CA case fails on dev
+8b11a2018 and on #34476 alone (the page is refused), and passes with the #34479 fix on top.
 """
 
 from __future__ import annotations
 
 import io
+import tempfile
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from harness.actors import admin_of, create_user
 from harness.instance import free_port
 from harness.listener import json_answer, listening, text_answer
+from harness.object_storage import self_signed_certificate
 from harness.plugins import installed_function
 from harness.web_retrieval import LOCAL_WEB_FETCH, save_web_settings, web_settings_restored
 
@@ -213,6 +222,56 @@ def test_a_page_is_read_through_tavily(web_admin, tavily_api, page):
     extract = tavily_api.requests_to("/extract")[-1]
     assert (extract.json()["urls"], extract.json()["extract_depth"]) == (page, "advanced")
     assert extract.headers["Authorization"] == "Bearer tvly-key"
+
+
+@pytest.fixture(scope="module")
+def internal_ca():
+    """(certificate, key) of an authority of its own, which signs the pages it serves."""
+    with tempfile.TemporaryDirectory(prefix="owui-internal-ca-") as directory:
+        yield self_signed_certificate(Path(directory))
+
+
+@pytest.mark.slow
+def test_tavily_reads_a_page_signed_by_the_configured_internal_ca(
+    instance_with, tavily_api, internal_ca
+):
+    trusting = instance_with(
+        {
+            **LOCAL_WEB_FETCH,
+            "TAVILY_API_BASE_URL": tavily_api.base_url,
+            "AIOHTTP_CLIENT_SSL_CERT_FILE": str(internal_ca[0]),
+        }
+    )
+    with (
+        trusting.client() as client,
+        web_settings_restored(client),
+        listening(certificate=internal_ca) as internal,
+        listening(tls=True) as untrusted,
+    ):
+        internal_page, untrusted_page = (
+            f"{internal.base_url}/herons",
+            f"{untrusted.base_url}/herons",
+        )
+        extracted = {"results": [{"url": internal_page, "raw_content": "read by tavily"}]}
+        tavily_api.route("POST", "/extract", json_answer(extracted))
+        save_web_settings(
+            client,
+            WEB_LOADER_ENGINE="tavily",
+            TAVILY_API_KEY="tvly-key",
+            ENABLE_WEB_LOADER_SSL_VERIFICATION=True,
+        )
+
+        asked_before = len(tavily_api.requests_to("/extract"))
+        previewed = attach(client, internal_page, preview=True)
+        refused = attach(client, untrusted_page, preview=True)
+
+    assert previewed.status_code == 200, (
+        f"the internal CA was not trusted (#34479): {previewed.text}"
+    )
+    assert previewed.json()["content"] == "read by tavily"
+    assert refused.status_code == 400, "a page signed by an unknown authority was read"
+    asked = tavily_api.requests_to("/extract")[asked_before:]
+    assert [request.json()["urls"] for request in asked] == [internal_page]
 
 
 def test_a_page_is_read_through_the_external_loader(web_admin, listener, page):

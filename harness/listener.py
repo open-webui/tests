@@ -101,7 +101,14 @@ class IPv6HTTPServer(ThreadingHTTPServer):
 
 
 @contextmanager
-def listening(host: str = "127.0.0.1", tls: bool = False, port: int = 0) -> Iterator[Listener]:
+def listening(
+    host: str = "127.0.0.1",
+    tls: bool = False,
+    port: int = 0,
+    certificate: tuple[Path, Path] | None = None,
+) -> Iterator[Listener]:
+    """A local HTTP service; `certificate` (certificate, key) serves it over TLS with that pair."""
+
     class RequestHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -150,11 +157,12 @@ def listening(host: str = "127.0.0.1", tls: bool = False, port: int = 0) -> Iter
     server = server_class((host, port), RequestHandler)
     port = server.server_port
     url_host = f"[{host}]" if ":" in host else host
+    tls = tls or certificate is not None
     scheme = "https" if tls else "http"
     listener = Listener(base_url=f"{scheme}://{url_host}:{port}", port=port)
     with tempfile.TemporaryDirectory(prefix="owui-listener-") as certificates:
         if tls:
-            certificate, key = self_signed_certificate(Path(certificates))
+            certificate, key = certificate or self_signed_certificate(Path(certificates))
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.load_cert_chain(certificate, key)
             server.socket = context.wrap_socket(server.socket, server_side=True)
