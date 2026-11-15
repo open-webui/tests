@@ -25,6 +25,12 @@ viewer skipped (3D model); relative pictures not resolved against the terminal a
 not opened (note); the binary placeholder dropped (unreadable file); Copy copying nothing and
 the size left out (toolbar); the hover card's limits removed and its scripts allowed (hover);
 PDF annotations not read as comments (comment).
+
+A long note whose code blocks name no language opens in its editor about as fast as in the
+read-only view (#34486, fix on branch fix-large-markdown-file-freeze): the editor guessed the
+language of every such block against all its grammars, which froze the page for seconds. It
+fails on dev 8b11a2018 (the editor froze the page for 12.8 s, the read-only view for 0.8 s) and
+passes with the fix (0.6 s and 0.7 s).
 """
 
 from __future__ import annotations
@@ -331,6 +337,70 @@ def test_a_read_only_note_shows_its_picture_and_its_link_opens_the_linked_file(f
 
     expect(tab(page, "yield.tsv")).to_have_attribute("aria-selected", "true")
     expect(file_browser(page).get_by_role("row", name=re.compile(r"apple\s*40"))).to_be_visible()
+
+
+LONG_NOTE_END = "The press log ends here."
+# only stretches over 50 ms are long tasks, so the timer answers for a load with none
+LONGEST_FREEZE_SINCE = """since => new Promise(resolve => {
+    setTimeout(() => resolve(0), 1000);
+    new PerformanceObserver((list, observer) => {
+        observer.disconnect();
+        const tasks = list.getEntries().filter(task => task.startTime >= since);
+        resolve(Math.max(0, ...tasks.map(task => task.duration)));
+    }).observe({ type: 'longtask', buffered: true });
+})"""
+
+
+def _long_note(entries: int) -> str:
+    """A note of `entries` reports, each with a code block that names no language."""
+    entry = (
+        "[#{n} Press report](https://example.com/reports/{n})\n\n"
+        + "The press runs slower when the apples come in cold. " * 6
+        + "\n\n```\n"
+        + "the cellar log shows the same pressing day twice " * 5
+        + "\n```\n\n"
+    )
+    labelled = '```python\ndef press(apples):\n    return "juice"\n```\n\n'
+    reports = "".join(entry.format(n=n) for n in range(entries))
+    return f"# Press log\n\n{labelled}{reports}{LONG_NOTE_END}\n"
+
+
+def _longest_freeze_opening(browser: Locator, name: str) -> float:
+    """Milliseconds of the longest stretch the page stopped responding while the file opened."""
+    page = browser.page
+    since = page.evaluate("performance.now()")
+    open_file(browser, name)
+    expect(
+        browser.get_by_text(LONG_NOTE_END), f"{name} never showed its last line"
+    ).to_be_attached()
+    return page.evaluate(LONGEST_FREEZE_SINCE, since)
+
+
+@pytest.mark.regression
+def test_a_long_note_opens_in_its_editor_without_freezing_the_page(folder, browse):
+    """#34486: the editor guessed the language of every code block, freezing the page."""
+    note = _long_note(entries=150)
+    (folder / "log.md").write_text(note)
+    (folder / "log-read-only.md").write_text(note)
+    (folder / "log-read-only.md").chmod(0o444)
+    browser = browse()
+
+    read_only = _longest_freeze_opening(browser, "log-read-only.md")
+    expect(browser.get_by_role("button", name="Save", exact=True)).to_be_disabled()
+    back_to(browser, folder.name)
+    editor = _longest_freeze_opening(browser, "log.md")
+
+    # a block that names its language is still highlighted
+    labelled = browser.get_by_role("textbox").get_by_text("def press(apples):")
+    colours = labelled.evaluate(
+        "block => new Set([...block.querySelectorAll('*')]"
+        ".map(part => getComputedStyle(part).color)).size"
+    )
+    assert colours > 1, "the Python block in the editor shows in a single colour"
+    assert read_only > 0, "opening the read-only note showed no long task to compare with"
+    assert editor < 3 * read_only, (
+        f"the editor froze the page for {editor:.0f} ms, the read-only view for {read_only:.0f} ms"
+    )
 
 
 def test_a_file_that_is_no_text_says_so_and_an_unknown_picture_is_named_as_binary(folder, browse):
