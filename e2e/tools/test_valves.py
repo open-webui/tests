@@ -10,7 +10,10 @@ or the Valves section of the chat controls; the tool sees each user's own value,
 default until a user saves one. A list user valve in the chat controls is saved the way the
 valves dialog saves it (open-webui/open-webui#31300, issue #31299): left unset it keeps its
 default when another valve is saved, a typed list loses its empty entries and later edits
-still save.
+still save. A nullable valve switched to Custom in the chat controls and emptied again saves
+without an error (issue #34475): the panel used to send the empty box, which the server refuses.
+That test fails on dev 8b11a2018 at its first check and passes on the fix 0d58d4236; the optional
+text and Valves dialog steps after it check that the fix leaves those as they were.
 
 `test_pipe_valves_saved_from_the_function_list_shape_its_next_reply` is red now and then on dev
 896056690: since de73bb830 the reply in a new chat sometimes stays blank until a reload although the
@@ -43,7 +46,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.plugins import installed_function
 from utils.chat_controls import open_chat_controls, open_section
-from utils.chat_surface import ChatSurface
+from utils.chat_surface import MAIN_CHAT, ChatSurface
 from utils.chat_ui import (
     Chat,
     chat_input,
@@ -116,6 +119,7 @@ NAMING_TOOL = source(
 BOOKING_TOOL = source(
     """
     import json
+    from typing import Optional
 
     from pydantic import BaseModel, Field
 
@@ -123,6 +127,8 @@ BOOKING_TOOL = source(
         class UserValves(BaseModel):
             nickname: str = Field("guest", description="What the tool calls you")
             rooms: list[str] = Field(["lobby"], description="Rooms you may book")
+            reminders: Optional[bool] = Field(None, description="Remind you before a booking")
+            desk_note: Optional[str] = Field("ring twice", description="A note for the desk")
 
         def booking(self, __user__: dict) -> str:
             \"\"\"Say what the user may book.\"\"\"
@@ -411,7 +417,8 @@ def test_user_valves_set_in_the_chat_controls_replace_the_default(chat_for, nami
 
 @pytest.fixture
 def booking_tool(admin, make_user):
-    """A tool with a text and a list user valve, shared for reading with a fresh user."""
+    """A tool with a text, a list, a nullable on/off and a nullable text user valve, shared for
+    reading with a fresh user."""
     booker = make_user()
     name = f"Booking {uuid.uuid4().hex[:6]}"
     tool_id = _create_tool(admin, name, BOOKING_TOOL, [grant("user", booker.id, "read")])
@@ -492,3 +499,56 @@ def test_a_list_valve_set_in_the_chat_controls_drops_empty_entries_and_keeps_sav
     assert saved == expected, f"the list or a later edit was saved wrongly (#31300): {saved}"
     ask_tool(chat, upstream, name, "booking", "which rooms are mine now?")
     assert booking_result(upstream, "which rooms are mine now?") == expected
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT)
+def test_a_nullable_valve_switched_to_custom_and_emptied_again_saves_without_an_error(
+    chat_for, booking_tool
+):
+    name, tool_id, booker = booking_tool
+    chat = chat_for(booker)
+    page = chat.page
+    refused = page.get_by_text("Error updating tool user valves")
+
+    panel = open_chat_controls_valves(chat, name)
+    reminders_valve = valve(panel, "Reminders", "Remind you before a booking")
+    customise(reminders_valve)
+    expect(reminders_valve.get_by_role("textbox")).to_have_value("")
+    # the panel saves half a second after a change; give a save of the blank time to fail
+    page.wait_for_timeout(2000)
+    assert refused.count() == 0, "switching to Custom sent a blank the server refused (#34475)"
+    type_into(reminders_valve, "true")
+    expect(page.get_by_text("Valves updated", exact=True)).to_be_visible()
+    saved = saved_user_valves(booker, tool_id, {"reminders": True})
+    assert saved == {"reminders": True}, f"the typed value was saved wrongly (#34475): {saved}"
+
+    type_into(reminders_valve, "")
+    expect(late_menu_entry(reminders_valve, "Default")).to_be_visible()
+    assert refused.count() == 0, "emptying the box sent a blank the server refused (#34475)"
+    saved = saved_user_valves(booker, tool_id, {})
+    assert saved == {}, f"the emptied valve did not go back to its default (#34475): {saved}"
+
+    # an optional text keeps an emptied box as an empty text
+    note_valve = valve(panel, "Desk Note", "A note for the desk")
+    customise(note_valve)
+    expect(note_valve.get_by_role("textbox")).to_have_value("ring twice")
+    type_into(note_valve, "")
+    saved = saved_user_valves(booker, tool_id, {"desk_note": ""})
+    assert saved == {"desk_note": ""}, f"the emptied optional text was not kept: {saved}"
+
+    # the Valves dialog asks for a value before it saves a blank one
+    start_fresh(chat)
+    open_integrations_menu(chat)
+    page.get_by_role("menuitem", name=re.compile(r"^Tools")).click()
+    tool_row = integration_row(page.get_by_role("menu"), name)
+    tool_row.hover()
+    late_menu_entry(tool_row, "Valves").click()
+    dialog = page.get_by_role("dialog").filter(has_text="Valves")
+    dialog_reminders = valve(dialog, "Reminders", "Remind you before a booking")
+    customise(dialog_reminders)
+    dialog.get_by_role("button", name="Save").click()
+    # a save of the blank would answer within this time
+    page.wait_for_timeout(1000)
+    assert refused.count() == 0, "the Valves dialog sent a blank the server refused"
+    saved = saved_user_valves(booker, tool_id, {"desk_note": ""})
+    assert saved == {"desk_note": ""}, f"the Valves dialog changed the saved valves: {saved}"
