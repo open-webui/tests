@@ -39,9 +39,10 @@ picture is not taken as an image. The second pasted picture test passes on dev c
 fails on a build of it where an upload from the editor keeps the name it was given.
 
 A note's Outline button in the preview toolbar lists its headings, and picking one with the
-mouse or the keyboard scrolls the note to it; a note without headings and the Source view show no
-such button (bfaa4b0d2, branch feat/preview-outline of Classic298/open-webui, PR pending). The
-outline test fails on dev 8b11a2018, which has no Outline button, and passes on a bfaa4b0d2 build.
+mouse or the keyboard scrolls the note to it; a note without headings says so in the list, and
+the Source view shows no such button (branch feat/preview-outline of Classic298/open-webui, PR
+pending). The outline test fails on dev 8b11a2018, which has no Outline button, and passes on a
+build of that branch.
 
 Resetting the zoom from below 10% returns the image to 100% and centres it again (e48c15d87, PR
 open-webui/open-webui#34080, issue #34079). The reset test passes on the dev 485103cde build and
@@ -627,7 +628,10 @@ def test_the_outline_lists_a_notes_headings_and_jumps_to_one(browser, open_termi
     open_file(browser, folder.name)
     open_file(browser, "plain.md")
     expect(browser.get_by_text("Only a line, no headings.")).to_be_visible()
-    expect(browser.get_by_role("button", name="Outline")).to_have_count(0)
+    browser.get_by_role("button", name="Outline").click()
+    expect(browser.page.get_by_role("menu").get_by_text("No results")).to_be_visible()
+    browser.page.keyboard.press("Escape")
+    expect(browser.page.get_by_role("menu")).to_have_count(0)
     browser.get_by_role("button", name=folder.name, exact=True).click()
 
     open_file(browser, "audit.md")
