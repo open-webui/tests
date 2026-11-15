@@ -38,6 +38,11 @@ is refused as too long, the arrow keys move no column edge, sheet protection is 
 picture is not taken as an image. The second pasted picture test passes on dev c15f28649 and
 fails on a build of it where an upload from the editor keeps the name it was given.
 
+A note's Outline button in the preview toolbar lists its headings, and picking one with the
+mouse or the keyboard scrolls the note to it; a note without headings and the Source view show no
+such button (bfaa4b0d2, branch feat/preview-outline of Classic298/open-webui, PR pending). The
+outline test fails on dev 8b11a2018, which has no Outline button, and passes on a bfaa4b0d2 build.
+
 Resetting the zoom from below 10% returns the image to 100% and centres it again (e48c15d87, PR
 open-webui/open-webui#34080, issue #34079). The reset test passes on the dev 485103cde build and
 fails on a build of it with e48c15d87 reverted.
@@ -600,6 +605,51 @@ def test_the_source_view_edits_and_saves_the_raw_markdown(browser, open_terminal
     )
     browser.get_by_role("button", name="Editor").click()
     expect(browser.get_by_role("heading", name="Plan B")).to_be_visible()
+
+
+def audit_report() -> str:
+    """A long note: two chapters of thirty findings, each finding under a level four heading."""
+    filler = "Checked the orchard rows, the cider press and the cellar door. " * 12
+    chapters = [
+        f"## Chapter {chapter}\n\n"
+        + "".join(f"#### Finding {chapter}.{number}\n\n{filler}\n\n" for number in range(1, 31))
+        for chapter in (1, 2)
+    ]
+    return "# Orchard audit\n\n" + "".join(chapters)
+
+
+def test_the_outline_lists_a_notes_headings_and_jumps_to_one(browser, open_terminal):
+    folder = open_terminal.home / unique("audit.dir")
+    folder.mkdir()
+    (folder / "plain.md").write_text("Only a line, no headings.\n")
+    (folder / "audit.md").write_text(audit_report())
+    browser.get_by_label("Refresh", exact=True).first.click()
+    open_file(browser, folder.name)
+    open_file(browser, "plain.md")
+    expect(browser.get_by_text("Only a line, no headings.")).to_be_visible()
+    expect(browser.get_by_role("button", name="Outline")).to_have_count(0)
+    browser.get_by_role("button", name=folder.name, exact=True).click()
+
+    open_file(browser, "audit.md")
+    last = browser.get_by_role("heading", name="Finding 2.30")
+    expect(last).not_to_be_in_viewport()
+    browser.get_by_role("button", name="Outline").click()
+    outline = browser.page.get_by_role("menu")
+    expect(outline.get_by_role("menuitem")).to_have_count(63)
+    outline.get_by_role("menuitem", name="Finding 2.30", exact=True).click()
+
+    expect(last).to_be_in_viewport()
+    expect(outline).to_have_count(0)
+    browser.get_by_role("button", name="Outline").focus()
+    browser.page.keyboard.press("Enter")
+    expect(outline.get_by_role("menuitem").first).to_be_focused()
+    browser.page.keyboard.press("Enter")
+    expect(browser.get_by_role("heading", name="Orchard audit")).to_be_in_viewport()
+    expect(last).not_to_be_in_viewport()
+
+    browser.get_by_role("button", name="Source").click()
+    expect(browser.get_by_text("#### Finding 1.1", exact=True)).to_be_visible()
+    expect(browser.get_by_role("button", name="Outline")).to_have_count(0)
 
 
 def test_an_edit_undone_in_the_sheet_is_not_saved(browser, open_terminal):
