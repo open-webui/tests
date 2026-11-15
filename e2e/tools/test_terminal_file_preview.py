@@ -40,8 +40,7 @@ fails on a build of it where an upload from the editor keeps the name it was giv
 
 A note's Outline button in the preview toolbar lists its headings, and picking one with the
 mouse or the keyboard scrolls the note to it; a note without headings says so in the list, and
-the Source view shows no such button (branch feat/preview-outline of Classic298/open-webui, PR
-pending). The outline test fails on dev 8b11a2018, which has no Outline button, and passes on a
+the Source view shows no such button (open-webui/open-webui#34494). The outline test fails on dev 8b11a2018, which has no Outline button, and passes on a
 build of that branch.
 
 Resetting the zoom from below 10% returns the image to 100% and centres it again (e48c15d87, PR
