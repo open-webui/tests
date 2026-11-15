@@ -15,6 +15,11 @@ next message started a new branch there. A save now keeps the newest turn of tha
 Discriminates: the out-of-date window test fails on upstream dev `eecba38c5` (a page opened before
 its live connection is up shows only the first turn) and passes with the fix 967471e29 on branch
 fix/stale-save-reopens-older-turn; the second open window test passes on both.
+
+#34477: a chat whose stored turns point back at a later turn as their parent never opened, the
+page walked the loop forever until the browser tab ran out of memory. Discriminates: the loop test
+fails on upstream dev `8b11a2018` (the page never shows the turns) and passes with the fix
+`e2a213709` on branch fix/cyclic-history-chat-hang.
 """
 
 from __future__ import annotations
@@ -162,3 +167,23 @@ def test_an_edit_saved_from_a_second_open_window_keeps_the_newest_turn(
     reopened = page_for(owner, path=f"/c/{chat_id}")
     expect(conversation(reopened).get_by_text("First question, typo fixed")).to_be_visible()
     expect_reply(reopened, "The second answer")
+
+
+def test_a_chat_whose_turns_loop_back_still_opens(page_for, make_user):
+    owner = make_user()
+    question = {**_message("question", "late", ["answer"], "First question"), "role": "user"}
+    answer = _message("answer", "question", ["follow-up"], "The first answer")
+    follow_up = {**_message("follow-up", "answer", ["late"], "Second question"), "role": "user"}
+    late_answer = _message("late", "follow-up", ["question"], "The second answer")
+    chat = {
+        "title": "Looping turns",
+        "models": [MOCK_MODEL_ID],
+        "history": _history("late", question, answer, follow_up, late_answer),
+    }
+    with owner.client() as client:
+        created = client.post("/api/v1/chats/new", json={"chat": chat})
+    assert created.status_code == 200, created.text
+
+    page = page_for(owner, path=f"/c/{created.json()['id']}")
+    for text in ("First question", "The first answer", "Second question", "The second answer"):
+        expect(conversation(page).get_by_text(text, exact=True)).to_be_visible()
