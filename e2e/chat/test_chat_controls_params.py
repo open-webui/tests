@@ -32,9 +32,10 @@ account setting fails the three account tests. On dev 948432b43, a backend copy 
 replaces the chat's stored settings with the sent one fails the two tabs test (the system prompt
 is gone).
 
-A decimal typed into a whole-number parameter there (num_ctx 32.767, Seed) is sent rounded, while
-a fractional one (Temperature) keeps its decimals. Red on dev 32243bdf7, which saved and sent
-32.767 as is (open-webui/open-webui#34416).
+A decimal typed into a whole-number parameter there (num_ctx 32.767, max_tokens, Seed) is refused:
+the field goes back to its whole value, which is what is sent, while a fractional one (Temperature)
+keeps its decimals. Red on dev 32243bdf7 and c82ceaf1f, which saved and sent 32.767 as is
+(open-webui/open-webui#34416); passes since dev a38905a9d.
 
 The tests of one chat's values and of the account's parameters run in the main chat and in a side
 chat (`utils/chat_surface.py`); the account's parameters are saved in a page of their own first.
@@ -327,28 +328,37 @@ def test_the_accounts_saved_parameters_reach_a_new_chat(
     assert (request.get("temperature"), request.get("max_tokens")) == (0.6, 200)
 
 
-def test_a_decimal_typed_into_a_whole_number_parameter_is_sent_as_a_whole_number(
+def test_a_decimal_typed_into_a_whole_number_parameter_is_refused(
     page_for, chat_for, tuned_account, upstream
 ):
     """#34416: num_ctx typed as 32.767 was saved and sent to the model as is."""
     page = page_for(tuned_account)
-    _save_account_parameters(
-        page,
-        {
-            "num_ctx (Ollama)": "32.767",
-            "max_tokens": "200.4",
-            "Seed": "41.6",
-            "Temperature": "0.65",
-        },
-    )
+    page.goto("/?settings=general")
+    settings = page.get_by_role("dialog")
+    setting_button(settings, "Model parameters").click()
+    decimals = {"num_ctx (Ollama)": "32.767", "max_tokens": "200.4", "Seed": "41.6"}
+    kept = {}
+    for label, decimal in decimals.items():
+        control_button(settings, label).click()
+        field = settings.get_by_role("spinbutton", name=label)
+        expect(field).to_have_value(re.compile(r"^\d+$"))
+        kept[label] = field.input_value()
+        field.fill(decimal)
+        field.blur()
+        expect(field, f"{label} kept the decimal {decimal} (#34416)").to_have_value(kept[label])
+    _set(settings, "Temperature", "0.65")
+    with page.expect_response(lambda response: "/user/settings/update" in response.url):
+        settings.get_by_role("button", name="Save", exact=True).click()
+    page.goto("/")
     chat = chat_for(tuned_account)
 
     request = _ask(chat, upstream)
 
     sent = tuple(request.get(key) for key in ("num_ctx", "max_tokens", "seed", "temperature"))
-    assert sent == (33, 200, 42, 0.65), (
-        f"num_ctx 32.767, max_tokens 200.4, Seed 41.6 and Temperature 0.65 were sent as {sent} "
-        "(open-webui/open-webui#34416)"
+    expected = (*(int(value) for value in kept.values()), 0.65)
+    assert sent == expected, (
+        f"num_ctx 32.767, max_tokens 200.4, Seed 41.6 and Temperature 0.65 were sent as {sent}, "
+        f"not as {expected} (open-webui/open-webui#34416)"
     )
 
 
