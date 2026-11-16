@@ -261,7 +261,7 @@ def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
     start_from_link(chat, f"/?models={cached_setup.id}")
 
     attach_from_menu(chat, "Attach Knowledge", "Harbour handbook")
-    use_entire_document(chat, "Harbour handbook collection")
+    use_entire_document(chat, "Harbour handbook Knowledge")
     ask(chat, upstream, "when does the ferry leave?", reply.text("At 06:40."))
     ask(chat, upstream, "and from which pier?", reply.text("Pier 7."))
 
