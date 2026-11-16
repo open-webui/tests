@@ -7,20 +7,22 @@ the page switches to a board with a column per status, kept after a reload, and 
 another column takes that column's status. A tag typed into a chat's tag control is stored on the
 chat, and the Filter menu's Tags entry then narrows the list to the chats carrying it; the folder
 search narrows the list to chats whose title or messages match. A member who may only read the
-shared folder sees the owner's chats with neither a status menu nor a tag control. Since 121bc0ec5
-a folder that never set up statuses offers five ready-made ones (Backlog, To do, In progress,
-Waiting, Done) in the status menu. Since 6378f94a6 the page's section switch shows the folder's
-automations: a member who may write pauses one with its Active switch, which a reading member
-finds disabled, and a chat an automation made carries the "Made by an automation" mark.
+shared folder sees the owner's chats with neither a status menu nor a tag control. Since 6a0223a88
+a new folder has no statuses, and its Statuses dialog suggests five ready-made ones (Backlog, To
+do, In progress, Waiting, Done); a picked one is saved as the folder's own. Since 6378f94a6 the
+page's section switch shows the folder's automations: a member who may write pauses one with its
+Active switch, which a reading member finds disabled, and a chat an automation made carries the
+"Made by an automation" mark.
 
 Discriminates: journey, no fix. All pass on the dev 941bf3674 build. With the dev build on a
 backend copy of it whose status route stores nothing the status pick and board drag tests go red,
 whose tag filter is ignored the tag test goes red, whose folder search matches nothing the search
 test goes red and whose chats all read as editable the reading member test goes red. The tests
-added for 121bc0ec5 and 6378f94a6 pass on the dev 485103cde build; with that build on backend
-copies of it, a folder without statuses offering none turns the ready-made test red, the manage
-check falling back to the creator alone the pause test (the toggle answers 404), and the chat
-meta no longer carrying the automation the mark test.
+added for 6378f94a6 pass on the dev 485103cde build; with that build on backend copies of it, the
+manage check falling back to the creator alone turns the pause test red (the toggle answers 404),
+and the chat meta no longer carrying the automation the mark test. The suggestions test passes on
+the dev c82ceaf1f build (5 of 5) and fails on the dev c82884453 build from before 6a0223a88 (the
+status menu still offers the ready-made statuses).
 """
 
 from __future__ import annotations
@@ -106,7 +108,6 @@ def _status_saved(page: Page):
 
 def test_a_status_added_in_the_dialog_is_picked_for_a_chat_and_kept(page_for, make_user):
     owner = make_user()
-    # an empty list opts out of the ready-made statuses a new folder starts with (121bc0ec5)
     folder_id = _folder(owner, [])
     chat_id = _chat(owner, folder_id, "Hull survey")
     page = page_for(owner, path=f"/folders/{folder_id}")
@@ -239,20 +240,34 @@ def test_a_reading_member_gets_no_status_menu_or_tag_control_on_the_owners_chat(
     expect(members_page.get_by_role("button", name="Edit tags for Harbour dues")).to_have_count(0)
 
 
-def test_a_new_folders_status_menu_offers_the_ready_made_statuses(page_for, make_user):
+def test_a_new_folders_statuses_dialog_suggests_the_ready_made_statuses(page_for, make_user):
     owner = make_user()
     folder_id = _folder(owner)
     chat_id = _chat(owner, folder_id, "Net mending")
     page = page_for(owner, path=f"/folders/{folder_id}")
 
     _status_button(page, "Net mending").click()
+    expect(page.get_by_role("menuitemradio", name="No status")).to_be_visible()
     for name in READY_MADE:
-        expect(page.get_by_role("menuitemradio", name=name, exact=True)).to_be_visible()
+        expect(page.get_by_role("menuitemradio", name=name, exact=True)).to_have_count(0)
+    late_menu_entry(page, "Edit statuses…").click()
+    dialog = page.get_by_role("dialog")
+    for name in READY_MADE:
+        expect(dialog.get_by_role("button", name=name, exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="In progress", exact=True).click()
+    expect(dialog.get_by_role("button", name="In progress", exact=True)).to_have_count(0)
+    dialog.get_by_role("button", name="Save").click()
+    expect(dialog).to_be_hidden()
+
+    _status_button(page, "Net mending").click()
     with _status_saved(page) as saved:
         page.get_by_role("menuitemradio", name="In progress", exact=True).click()
 
     assert saved.value.status == 200, saved.value.text()
-    assert _stored_status(owner, folder_id, chat_id) == "in_progress"
+    with owner.client() as client:
+        statuses = client.get(f"/api/v1/folders/{folder_id}").json()["meta"]["statuses"]
+    assert [status["name"] for status in statuses] == ["In progress"], statuses
+    assert _stored_status(owner, folder_id, chat_id) == statuses[0]["id"]
     expect(_status_button(page, "Net mending")).to_have_attribute(
         "aria-label", re.compile(r": In progress")
     )

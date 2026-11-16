@@ -13,7 +13,11 @@ either direction, and each chat says whether the caller may change its status an
 caller first. A member of a shared folder files their own chat there; who may reach which route
 is pinned by integration/security/test_folder_access_matrix.py. Since 31ef2064d a member who
 can edit the folder also tags any chat in it, and the tag lands in the chat owner's tags. A tag
-gets a colour with `PATCH /api/v1/chats/{id}/tags`, only through a chat that carries it.
+gets a colour with `PATCH /api/v1/chats/{id}/tags`, only through a chat that carries it. Since
+6a0223a88 a new folder has no statuses (the ready-made ones are only suggested when adding some),
+so it refuses every status until it saves its own. Discriminates: the new folder test passes on
+dev c82ceaf1f and fails in a backend copy of it that gives a folder without statuses the five
+ready-made ones again (each is taken with 200).
 
 Discriminates: journey, no fix. All pass on dev 06491f013 on SQLite and on PostgreSQL with Redis.
 In one backend copy of it holding these eight edits, each turns its test red and the other four
@@ -41,6 +45,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 TODO = {"id": "s_todo", "name": "To do", "glyph": "todo", "color": "gray"}
 DOING = {"id": "s_doing", "name": "Doing", "glyph": "in_progress", "color": "amber"}
 DONE = {"id": "s_done", "name": "Done", "glyph": "done", "color": "green"}
+# the ready-made ids every new folder took until 6a0223a88
 READY_MADE = ("backlog", "todo", "in_progress", "waiting", "done")
 WORKSPACE_PAGE = 50
 OWNERS = "Owner's"
@@ -294,28 +299,25 @@ def test_the_activity_filter_separates_unread_from_read_chats(make_user):
     assert _titles(idle) == ["Seen"], idle
 
 
-def test_a_new_folder_offers_the_ready_made_statuses_and_an_empty_list_offers_none(make_user):
+def test_a_new_folder_offers_no_statuses_until_it_saves_some(make_user):
     with make_user().client() as client:
-        ready_made = _folder(client)
-        opted_out = _folder(client, [])
-        chats = {
-            folder_id: _chat(client, folder_id, "Intake") for folder_id in (ready_made, opted_out)
-        }
+        folder_id = _folder(client)
+        chat_id = _chat(client, folder_id, "Intake")
 
-        filed = {
-            status: _file(client, ready_made, chats[ready_made], status).status_code
-            for status in READY_MADE
+        refused = {
+            status: _file(client, folder_id, chat_id, status).status_code for status in READY_MADE
         }
-        done = _listed(client, ready_made, status="done")
-        refused = _file(client, opted_out, chats[opted_out], "todo")
+        _set_statuses(client, folder_id, [TODO])
+        filed = _file(client, folder_id, chat_id, TODO["id"])
+        listed = _listed(client, folder_id, status=TODO["id"])
 
-    assert filed == dict.fromkeys(READY_MADE, 200), (
-        f"a folder without statuses of its own refused a ready-made one: {filed}"
+    assert refused == dict.fromkeys(READY_MADE, 422), (
+        f"a folder that saved no statuses took a ready-made one: {refused}"
     )
-    assert [(chat["title"], chat["status"]) for chat in done["chats"]] == [("Intake", "done")], done
-    assert refused.status_code == 422, (
-        f"a folder that set no statuses took a ready-made one: {refused.text}"
-    )
+    assert filed.status_code == 200, f"the folder refused a status it saved: {filed.text}"
+    assert [(chat["title"], chat["status"]) for chat in listed["chats"]] == [
+        ("Intake", TODO["id"])
+    ], listed
 
 
 def _shared_folder(owner: Actor, member: Actor, *permissions: str) -> str:
