@@ -175,7 +175,8 @@ def test_closing_a_thread_gives_the_focus_back_to_the_button_that_opened_it(peop
     opener = message_action(_in_channel(page, parent_id), "Reply in Thread")
     opener.focus()
     page.keyboard.press("Enter")
-    expect(_thread_input(page)).to_be_visible()
+    # the thread moves the focus into its input once that is up, which could take it off Close
+    expect(_thread_input(page)).to_be_focused()
 
     close = page.get_by_role("button", name="Close", exact=True)
     close.focus()
