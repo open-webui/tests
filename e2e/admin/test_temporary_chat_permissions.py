@@ -10,7 +10,9 @@ open-webui#33928 in test_default_chat_permissions.py).
 
 Discriminates: passes on dev 176d31d1d, fails with `is_saved_chat_id` treating a `temporary:` id
 as saved (an enforced temporary chat is stored). The hidden Enforce test passes on dev b6534c58f
-and fails in a build of it whose new chat applies Enforce without Allow Temporary Chat.
+and fails in a build of it whose new chat applies Enforce without Allow Temporary Chat. Dev
+c82884453 regressed that again (open-webui#34536): its new chat and its access refresh apply
+Enforce on its own, so the test fails there and passes with the fix.
 
 A side chat is a new chat as well, so under Enforce Temporary Chat nothing it sends may be stored
 either; that test opens it beside the new chat (`utils/chat_surface.py`). A side chat has no
