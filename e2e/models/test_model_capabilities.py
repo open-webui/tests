@@ -139,14 +139,16 @@ def test_unticking_vision_refuses_a_picture_attached_in_the_chat(page_for, build
 
     switch_capability(page, preset, "Vision", False)
 
-    open_chat_on(page, preset)
-    attach(page, "harbour.png", PICTURE, "image/png")
-    expect(page.get_by_text("Selected model(s) do not support image inputs")).to_be_visible()
-    expect(image_preview(page)).to_have_count(0)
+    # a page of its own: a new chat in this tab brings back the first picture as an unsent draft
+    fresh = page_for(builder)
+    open_chat_on(fresh, preset)
+    attach(fresh, "harbour.png", PICTURE, "image/png")
+    expect(fresh.get_by_text("Selected model(s) do not support image inputs")).to_be_visible()
+    expect(image_preview(fresh)).to_have_count(0)
 
     # an SVG is read as a document, so it still goes up as a file
-    attach(page, "chart.svg", HARBOUR_CHART, "image/svg+xml")
-    expect(page.locator("form").get_by_text("chart.svg")).to_be_visible()
+    attach(fresh, "chart.svg", HARBOUR_CHART, "image/svg+xml")
+    expect(fresh.locator("form").get_by_text("chart.svg")).to_be_visible()
 
 
 def ask_about_attached_notes(page: Page, upstream, question: str) -> dict:

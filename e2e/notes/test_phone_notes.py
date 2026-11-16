@@ -15,9 +15,11 @@ The Download choices test is red on dev ebc6add67: on a screen this narrow the c
 the menu, past the left edge of the screen, with their names cut off
 (open-webui/open-webui#32015, fixed by f7727e24b).
 
-The writing test is red on dev 2547992b8: the sidebar button inside the note's page tab opens the
-sidebar behind the Tabs drawer, so a phone user cannot get back to Notes from an open note
-(open-webui/open-webui#34243, fix branch fix/phone-sidebar-behind-tabs).
+The writing test was red on dev 2547992b8: the sidebar button inside the note's page tab opened the
+sidebar behind the Tabs drawer, so a phone user could not get back to Notes from an open note
+(open-webui/open-webui#34243). Upstream closed it by dropping that button: the note's page tab now
+has none, and a person shuts the drawer with Hide tabs and opens the sidebar from the chat. The
+test goes that way; it passes on the dev c82ceaf1f build.
 """
 
 from __future__ import annotations
@@ -116,6 +118,9 @@ def test_a_note_written_on_a_phone_is_stored_and_listed(phone, author):
     note = wait_until_stored(author, note_id, "Rain jacket and a torch")
     assert note["title"] == title, note["title"]
 
+    # the note fills the Tabs drawer, which is shut to reach the sidebar again
+    tap_on_screen(phone.get_by_role("dialog", name="Tabs").get_by_role("button", name="Hide tabs"))
+    expect(phone.get_by_role("dialog", name="Tabs")).to_be_hidden()
     open_notes(phone)
     listed = drawer_page(phone).get_by_text(title).first
     expect_reachable(listed)
