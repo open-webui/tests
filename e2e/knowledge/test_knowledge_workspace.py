@@ -304,7 +304,7 @@ def test_searching_the_base_lists_only_matching_files(page_for, curator):
     base = _open_base(page, knowledge_id)
     _expect_listed(base, "tides.txt", "moorings.txt", "fuel.txt")
 
-    base.get_by_role("textbox", name="Search Collection").fill("moor")
+    base.get_by_role("textbox", name="Search Files").fill("moor")
 
     expect(_file_row(base, "tides.txt")).to_have_count(0)
     expect(_file_row(base, "fuel.txt")).to_have_count(0)

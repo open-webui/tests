@@ -1,6 +1,6 @@
 """The Attach Webpage modal in the composer: links go in, pages come out as attachments.
 
-The plus menu offers Attach Webpage under Add Context (since dev 834c47ee0); the modal takes one
+The plus menu offers Attach Webpage under Attachments (since dev 834c47ee0); the modal takes one
 link per line, refuses text that is not an http(s) link, and the page behind each link is fetched
 by the server and shown in the composer as an attachment named by its link. The text of the page
 reaches the model with the next message, and a page the server cannot read is refused with a toast

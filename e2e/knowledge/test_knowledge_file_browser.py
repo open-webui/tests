@@ -99,7 +99,7 @@ def add_upload(owner: Actor, knowledge_id: str, name: str, mime: str, data: byte
 
 def open_base(page: Page, knowledge_id: str) -> Page:
     page.goto(f"/workspace/knowledge/{knowledge_id}")
-    expect(page.get_by_role("textbox", name="Search Collection")).to_be_visible()
+    expect(page.get_by_role("textbox", name="Search Files")).to_be_visible()
     return page
 
 
@@ -120,7 +120,7 @@ def sort_menu(page: Page) -> Locator:
 
 
 def search(page: Page, text: str) -> None:
-    page.get_by_role("textbox", name="Search Collection").fill(text)
+    page.get_by_role("textbox", name="Search Files").fill(text)
 
 
 def open_file(page: Page, name: str) -> None:

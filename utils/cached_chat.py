@@ -49,7 +49,7 @@ def attach(chat: Chat, name: str, content: str | bytes, mime_type: str = "text/p
 
 
 def attach_from_menu(chat: Chat, submenu: str, name: str) -> None:
-    """Attach a knowledge base, note or chat through the chat input's More menu, Add Context."""
+    """Attach a knowledge base, note or chat through the chat input's More menu, Attachments."""
     menu = open_add_context(chat)
     menu.get_by_role("menuitem", name=submenu).click()
     late_menu_entry(menu, name).first.click()

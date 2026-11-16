@@ -456,7 +456,7 @@ def test_a_knowledge_base_attached_in_a_side_chat_is_searched_and_cited(
         panel = open_side_chat(page, upstream, question, reply.text(SIDE_ANSWER))
 
         menu = side_composer_menu(panel, "More")
-        menu.get_by_role("menuitem", name="Add Context").click()
+        menu.get_by_role("menuitem", name="Attachments").click()
         menu.get_by_role("menuitem", name="Attach Knowledge").click()
         late_menu_entry(menu, name).first.click()
         expect(panel.locator("form").get_by_text(name).first).to_be_visible()
