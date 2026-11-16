@@ -9,13 +9,20 @@
   the same moment, so the rest of the queue went out too and two replies streamed into the
   chat at once.
 
+Since dev f14dca0ee a message sent to a saved chat of one's own while its answer is being written
+waits on the server, and the waiting messages are answered together, as one question, once that
+answer ends; Send now on one of them stops the answer, so the whole queue is answered at once. The
+page still holds the queue of a temporary chat, where Send now sends only the chosen message.
+
 `test_send_now_sends_only_the_chosen_message` is red on dev 62f70a844: Send now stops the running
 reply first, and since de73bb830 a stopped reply never ends on the page, so the chosen message is
 not sent (open-webui/open-webui#32081, fixed by d12bf062b).
 
 Discriminates: passes on the efe63bd34 build; with `5f8d8f0c5` reverted the delete and edit
 tests fail (the message behind the failed one is never sent), and with `aea7d34f4` reverted the
-Send now test fails (the rest of the queue is sent while the chosen message is answered).
+Send now test fails (the rest of the queue is sent while the chosen message is answered). The
+saved chat Send now test is red on the dev 6a67b5b01 build (the queue is sent one message at a
+time) and passes on the dev de68d0ce4 build.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), and the Send now
 test in every way a side chat starts and every state it can be in. A side chat had no send queue:
@@ -32,13 +39,15 @@ import pytest
 from playwright.sync_api import Locator, Route, expect
 
 from harness import upstream as reply
-from utils.chat_surface import EVERYWHERE, ChatSurface
+from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send, stop_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 OPENING = "hello"
 FIRST, SECOND, THIRD = "queued alpha", "queued bravo", "queued charlie"
+# the server answers the messages that waited under one answer as one question
+SECOND_AND_THIRD = f"{SECOND}\n\n{THIRD}"
 QUEUE_SEND_BUTTON = re.compile("^(Send now|Waiting for upload|Upload failed)$")
 
 
@@ -55,7 +64,9 @@ def last_user_messages(upstream) -> list[str]:
         for body in upstream.chat_requests()
     ]
     # a side chat can be opened with a question of its own, which is none of the queue's
-    return [text for text in last_of_each if text in (OPENING, FIRST, SECOND, THIRD)]
+    return [
+        text for text in last_of_each if text in (OPENING, FIRST, SECOND, THIRD, SECOND_AND_THIRD)
+    ]
 
 
 @pytest.fixture
@@ -136,9 +147,9 @@ def test_a_failed_attachment_still_holds_the_queue_until_it_is_dealt_with(
 
 
 # one model only: the queue holds messages per chat, however many models answer each of them
-@pytest.mark.chat_surfaces(*EVERYWHERE)
+@pytest.mark.chat_surfaces(TEMPORARY_SIDE)
 def test_send_now_sends_only_the_chosen_message(chat, upstream):
-    """In a side chat: open-webui/open-webui#34022."""
+    """In a temporary chat, whose queue the page holds; open-webui/open-webui#34022."""
     slow = [f"alpha-{index} " for index in range(40)]
     bravo = [f"bravo-{index} " for index in range(8)]
     upstream.queue(
@@ -166,3 +177,28 @@ def test_send_now_sends_only_the_chosen_message(chat, upstream):
     # a side chat can hold the question it was opened with
     user_messages = conversation(chat).locator(".chat-user").filter(has_text="queued ")
     expect(user_messages).to_contain_text([FIRST, SECOND, THIRD])
+
+
+@pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
+def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(chat, upstream):
+    """Since dev f14dca0ee; in a side chat: open-webui/open-webui#34022."""
+    slow = [f"alpha-{index} " for index in range(40)]
+    upstream.queue(
+        reply.text(slow, chunk_delay=0.3, match=reply.answering(FIRST)),
+        reply.text("bravo and charlie answered", match=reply.answering(SECOND_AND_THIRD)),
+    )
+    send(chat, FIRST)
+    expect(last_reply(chat)).to_contain_text("alpha-1")
+    send(chat, SECOND)
+    send(chat, THIRD)
+    expect(queued_item(chat, THIRD)).to_be_visible()
+
+    queued_item(chat, SECOND).get_by_role("button", name="Send now").click()
+
+    expect_reply(chat, "bravo and charlie answered")
+    assert last_user_messages(upstream) == [FIRST, SECOND_AND_THIRD], (
+        "the queue was not answered as one question once Send now stopped the answer"
+    )
+    expect(conversation(chat)).not_to_contain_text("alpha-39")
+    expect(queued_item(chat, SECOND)).to_have_count(0)
+    expect(queued_item(chat, THIRD)).to_have_count(0)
