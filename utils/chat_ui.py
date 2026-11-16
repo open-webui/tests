@@ -231,10 +231,11 @@ def turn_on_integration(chat: Chat, name: str) -> None:
 
 
 def open_add_context(chat: Chat) -> Locator:
-    """The More menu's Add Context list (webpages, files, knowledge, notes, chats), once it shows:
-    since dev 834c47ee0 they sit there, a level down from the menu's first page."""
+    """The More menu's Attachments list (webpages, files, knowledge, notes, chats), once it shows:
+    since dev 834c47ee0 they sit there, a level down from the menu's first page (named Add Context
+    before dev 244145d9a)."""
     menu = open_input_menu(chat)
-    menu.get_by_role("menuitem", name="Add Context").click()
+    menu.get_by_role("menuitem", name="Attachments").click()
     expect(menu.get_by_role("menuitem", name="Upload Files")).to_have_count(0)
     return menu
 

@@ -14,10 +14,10 @@ switch) while the header archive journey on the same build stays green.
 
 Every control in the list shows its name, the six Selected switches included (PR
 open-webui/open-webui#33734, fix 032042055, showed their translation keys). A group whose every
-control is hidden is left out as well (PR #33867, fix ab416b0e3): with every Add Context entry
-hidden a user's + menu has no Add Context, and with every artifact setting hidden their
-Interface settings have no Artifacts heading. These pass on dev e8c0ad85e and fail in a frontend
-copy with 032042055 and ab416b0e3 reverted.
+control is hidden is left out as well (PR #33867, fix ab416b0e3): with every attachment entry
+hidden a user's + menu has no Attachments entry (Add Context before dev 244145d9a), and with
+every artifact setting hidden their Interface settings have no Artifacts heading. These pass on
+dev e8c0ad85e and fail in a frontend copy with 032042055 and ab416b0e3 reverted.
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def test_hiding_every_add_context_entry_takes_the_entry_from_users(
 
     user_menu = open_input_menu(page_for(make_user()))
     expect(user_menu.get_by_role("menuitem", name="Upload Files")).to_be_visible()
-    expect(user_menu.get_by_role("menuitem", name="Add Context")).to_have_count(0)
+    expect(user_menu.get_by_role("menuitem", name="Attachments")).to_have_count(0)
 
     admin_menu = open_add_context(page_for(admin))
     expect(admin_menu.get_by_role("menuitem", name="Attach Webpage")).to_be_visible()
