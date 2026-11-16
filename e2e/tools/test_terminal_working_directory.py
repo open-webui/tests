@@ -28,7 +28,9 @@ f659c0d12 whose working directory menu leaves the chat's folder unset when one i
 folder dialog saves no working directory and whose model editor does not take a default terminal,
 the picked-folder, recent-folder, folder dialog and model tests fail. The missing directory test
 passes on the dev a072aaf31 build and fails on a build of it that sends the message although the
-terminal refused the directory.
+terminal refused the directory. Since open-webui/open-webui#34367 it also checks that the folder
+page stays open and no chat is left in the folder: red on the dev de68d0ce4 build (an empty chat is
+made and opened, the message box comes up empty), green with the fix.
 On a copy of the dev e8c0ad85e build: recent folders kept for all people alike, a clone run with a
 bad option and the clone error replaced by a fixed text turn the per-person, clone and both clone
 error tests red; on a second copy, the menu search matching every folder and file:// addresses let
@@ -589,7 +591,8 @@ def test_a_folders_missing_directory_refuses_the_first_message(
 ):
     """Refused message kept in the chat and the box emptied: open-webui/open-webui#34367.
 
-    Fix branch Classic298:fix/refused-first-message-stays-in-chat.
+    After 03d8d3e35 the message was no longer sent, but an empty New Chat was still made in the
+    folder and opened in place of the folder page, which dropped the typed message.
     """
     person = make_user()
     folder_id, _ = create_folder(
@@ -606,7 +609,11 @@ def test_a_folders_missing_directory_refuses_the_first_message(
 
     expect(notifications(page).get_by_text(UNAVAILABLE)).to_be_visible()
     expect(chat_input(page)).to_contain_text("anything there?")
+    expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
     assert len(upstream.chat_requests()) == before, "the model was asked anyway"
+    with person.client() as client:
+        chats = client.get(f"/api/v1/chats/folder/{folder_id}").json()
+    assert chats == [], f"the refused message left chats in the folder: {chats}"
 
 
 def test_the_folder_dialog_saves_a_default_terminal_and_directory(
