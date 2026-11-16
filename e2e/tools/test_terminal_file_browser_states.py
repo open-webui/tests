@@ -1,16 +1,17 @@
 """Journey: what the file browser shows while a terminal is slow, refuses or is taken away.
 
-A fake terminal answers what the file browser asks, and the test decides how. A folder the
-terminal refuses to list (401, 403 or 500, each seen by the page as that status) shows "Failed to
-load directory" with the hint to check the connection, and lists again on Refresh once the
-terminal answers. A folder whose arrow cannot open it says "Failed to load folder" and stays
-closed. While a listing is on its way the browser claims nothing about the folder, neither
-entries nor "This folder is empty", and an answer that arrives after the person went elsewhere is
-dropped. A search shows "No matches", "Failed to search files" when the terminal refuses it,
-loads further results as the end of the list comes into view and offers Retry when that fails.
-New Folder, New File, Upload, Delete and Download each say that they failed when the terminal
-refuses them, and a selection the terminal deletes only in part says how many of it went. The
-folder is read again when the browser tab is shown again. A person whose access to the terminal
+A fake terminal answers what the file browser asks, and the test decides how. A folder the terminal
+refuses to list (401, 403 or 500, each seen by the page as that status) shows "Failed to load
+directory" with the hint to check the connection, also when Refresh finds it refused
+(open-webui/open-webui#34550: Refresh kept the old list and said nothing), and lists again on
+Refresh once the terminal answers. A folder whose arrow cannot open it says "Failed to load folder"
+and stays closed. While a listing is on its way the browser claims nothing about the folder,
+neither entries nor "This folder is empty", and an answer that arrives after the person went
+elsewhere is dropped. A search shows "No matches", "Failed to search files" when the terminal
+refuses it, loads further results as the end of the list comes into view and offers Retry when that
+fails. New Folder, New File, Upload, Delete and Download each say that they failed when the
+terminal refuses them, and a selection the terminal deletes only in part says how many of it went.
+The folder is read again when the browser tab is shown again. A person whose access to the terminal
 is taken away while Files is open sees "Terminal connection unavailable" in its place.
 
 Discriminates: passes on the dev c15f28649 build, three runs. Each test fails on a frontend build
@@ -22,7 +23,8 @@ not made reported as made (refused action test), every entry of a selection coun
 tab whose terminal is gone drawn as before (lost access test). On B: the old rows staying while
 a folder loads (slow test), further results that fail offering no Retry (search test) and a
 failed download saying nothing (refused action test). The messages of a refused New File, Upload
-and Delete have no mutation of their own.
+and Delete have no mutation of their own. The refused listing test also fails after a 401 on the
+dev c82ceaf1f build, where Refresh kept the old list (open-webui/open-webui#34550).
 """
 
 from __future__ import annotations
