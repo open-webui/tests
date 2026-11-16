@@ -25,6 +25,7 @@ a folder loads (slow test), further results that fail offering no Retry (search 
 failed download saying nothing (refused action test). The messages of a refused New File, Upload
 and Delete have no mutation of their own. The refused listing test also fails after a 401 on the
 dev c82ceaf1f build, where Refresh kept the old list (open-webui/open-webui#34550).
+The slow test reads the home crumb as "Home", the label dev 9a379eaa7 gave it.
 """
 
 from __future__ import annotations
@@ -248,7 +249,7 @@ def test_a_slow_listing_claims_nothing_until_it_arrives_and_a_late_answer_is_dro
         expect(browser.get_by_text(LOAD_FAILED), "while the list loads").to_have_count(0)
 
         # the person does not wait and goes back to the folder above
-        crumb(browser, "user").click()
+        crumb(browser, "Home").click()
         expect_listed(browser, "logs/", "nets.txt", "oars.txt")
         arrives.set()
     late.value.finished()
