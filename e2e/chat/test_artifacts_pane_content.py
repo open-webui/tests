@@ -150,7 +150,7 @@ def test_preview_moves_the_pane_to_that_blocks_version(chat_for, make_user, upst
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
     expect(artifact_page(page).locator("h1")).to_have_text("second draft")
-    expect_split_screen(page)
+    expect_split_screen(chat)
     box.get_by_role("button", name="Preview", exact=True).first.click()
     expect(pane).to_contain_text("Version 1 of 2")
     expect(artifact_page(page).locator("h1")).to_have_text("first draft")
@@ -169,7 +169,8 @@ def test_preview_on_an_earlier_block_reopens_the_closed_pane_on_that_blocks_vers
     pane = artifacts_pane(page)
     expect(pane).to_contain_text("Version 2 of 2")
 
-    page.get_by_role("button", name="Close Artifacts", exact=True).click()
+    # a side chat's tab is "Artifacts · <its title>" since a14385816
+    page.get_by_role("button", name=re.compile(r"^Close Artifacts( · .+)?$")).click()
     expect(pane).to_have_count(0)
     box.get_by_role("button", name="Preview", exact=True).first.click()
 

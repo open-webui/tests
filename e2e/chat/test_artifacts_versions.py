@@ -46,7 +46,7 @@ def two_artifacts(chat_for, make_user, upstream):
     )
     send(chat, "make me the first page")
     expect_reply(chat, "Done with first card.")
-    expect_split_screen(chat.page)
+    expect_split_screen(chat)
     send(chat, "make me the second page")
     expect_reply(chat, "Done with second card.")
     return chat.page
