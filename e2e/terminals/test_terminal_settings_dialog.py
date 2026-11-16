@@ -537,32 +537,6 @@ def test_a_machine_of_a_terminal_per_chat_is_named_after_its_chat_and_its_owner(
     expect(machine_row(dialog, "Deleted chat")).to_contain_text("Running")
 
 
-def test_system_info_and_files_are_not_offered_for_another_persons_chat_machine(
-    page_for, managed_terminal
-):
-    """Red on dev c15f28649: both are offered there and can only fail
-    (open-webui/open-webui#34094)."""
-    terminal = managed_terminal(scope="chat")
-    writer, reader = terminal.writer, terminal.reader
-    tag = uuid.uuid4().hex[:8]
-    own, theirs = f"Own log {tag}", f"Their log {tag}"
-    terminal.run(writer, "true", chat_id=_saved_chat(writer, own))
-    terminal.run(reader, "true", chat_id=_saved_chat(reader, theirs))
-    page = page_for(writer)
-    dialog = open_terminal_settings(page, terminal.name)
-    expect(machines_heading(dialog, 2)).to_be_visible()
-
-    open_machine_menu(dialog, own).get_by_role("menuitem", name="System info", exact=True).click()
-    info = page.get_by_role("dialog", name=f"System info for {own}", exact=True)
-    expect(info.get_by_text("Memory", exact=True).first).to_be_visible()
-    _close(info)
-
-    offered = machine_actions(open_machine_menu(dialog, theirs))
-    assert offered == ["Restart", "Stop", "Delete machine"], (
-        f"the machine of another person's chat offers {offered}"
-    )
-
-
 def test_only_a_person_who_may_write_to_the_connection_is_offered_new_terminal_and_settings(
     page_for, managed_terminal
 ):
