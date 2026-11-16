@@ -8,6 +8,10 @@
   running reply and sent that message, but the stopped reply's completion resumed the queue at
   the same moment, so the rest of the queue went out too and two replies streamed into the
   chat at once.
+* open-webui/open-webui#34553: in a side chat the Stop button stayed after Send now until the page
+  was reloaded, now and then. The queued answer starts while the page reloads the chat, and when
+  it ended while the page was still asking which replies run, the page took the late answer for a
+  running reply. The test holds that question until the answer has ended.
 
 Since dev f14dca0ee a message sent to a saved chat of one's own while its answer is being written
 waits on the server, and the waiting messages are answered together, as one question, once that
@@ -22,7 +26,8 @@ Discriminates: passes on the efe63bd34 build; with `5f8d8f0c5` reverted the dele
 tests fail (the message behind the failed one is never sent), and with `aea7d34f4` reverted the
 Send now test fails (the rest of the queue is sent while the chosen message is answered). The
 saved chat Send now test is red on the dev 6a67b5b01 build (the queue is sent one message at a
-time) and passes on the dev de68d0ce4 build.
+time). It is red on the dev de68d0ce4 build in every place (the Stop button stays) and passes on
+the build of the fix for open-webui/open-webui#34553.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), and the Send now
 test in every way a side chat starts and every state it can be in. A side chat had no send queue:
@@ -34,6 +39,7 @@ every test is red in every side chat and passes on the PR's build.
 from __future__ import annotations
 
 import re
+import threading
 
 import pytest
 from playwright.sync_api import Locator, Route, expect
@@ -49,6 +55,20 @@ FIRST, SECOND, THIRD = "queued alpha", "queued bravo", "queued charlie"
 # the server answers the messages that waited under one answer as one question
 SECOND_AND_THIRD = f"{SECOND}\n\n{THIRD}"
 QUEUE_SEND_BUTTON = re.compile("^(Send now|Waiting for upload|Upload failed)$")
+TASK_LOOKUPS = "**/api/tasks/chat/**"
+# counts the replies the socket says have ended, before the chat page handles the message
+COUNT_REPLY_ENDS = r"""
+window.replyEnds = 0;
+window.WebSocket = new Proxy(window.WebSocket, {
+    construct(target, args) {
+        const socket = Reflect.construct(target, args);
+        socket.addEventListener('message', (event) => {
+            if (/"chat:active".*"active":\s*false/.test(String(event.data))) window.replyEnds += 1;
+        });
+        return socket;
+    }
+});
+"""
 
 
 def queued_item(chat: ChatSurface, text: str) -> Locator:
@@ -179,26 +199,73 @@ def test_send_now_sends_only_the_chosen_message(chat, upstream):
     expect(user_messages).to_contain_text([FIRST, SECOND, THIRD])
 
 
+def wait_on_page(chat: ChatSurface, check, failure: str) -> None:
+    """Wait up to 15 s for `check()` while the page keeps running its routes and socket frames."""
+    for _ in range(150):
+        if check():
+            return
+        chat.page.wait_for_timeout(100)
+    raise AssertionError(failure)
+
+
 @pytest.mark.chat_surfaces(*(place for place in EVERYWHERE if place != TEMPORARY_SIDE))
-def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(chat, upstream):
-    """Since dev f14dca0ee; in a side chat: open-webui/open-webui#34022."""
+def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(
+    chat_for, make_user, upstream
+):
+    """Since dev f14dca0ee; in a side chat: open-webui/open-webui#34022 and #34553."""
+    chat = chat_for(make_user(), init_script=COUNT_REPLY_ENDS)
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
     slow = [f"alpha-{index} " for index in range(40)]
+    queue_answered = threading.Event()
     upstream.queue(
         reply.text(slow, chunk_delay=0.3, match=reply.answering(FIRST)),
-        reply.text("bravo and charlie answered", match=reply.answering(SECOND_AND_THIRD)),
+        reply.text(
+            "bravo and charlie answered",
+            hold=queue_answered,
+            match=reply.answering(SECOND_AND_THIRD),
+        ),
     )
     send(chat, FIRST)
     expect(last_reply(chat)).to_contain_text("alpha-1")
     send(chat, SECOND)
     send(chat, THIRD)
     expect(queued_item(chat, THIRD)).to_be_visible()
+    held_lookups: list[Route] = []
 
-    queued_item(chat, SECOND).get_by_role("button", name="Send now").click()
+    def hold_lookups(route: Route) -> None:
+        if route.request.method == "GET":
+            held_lookups.append(route)
+        else:
+            route.continue_()
 
+    page.route(TASK_LOOKUPS, hold_lookups)
+
+    try:
+        queued_item(chat, SECOND).get_by_role("button", name="Send now").click()
+
+        wait_on_page(
+            chat,
+            lambda: held_lookups and SECOND_AND_THIRD in last_user_messages(upstream),
+            "the page never asked which replies run once the queue was sent",
+        )
+        late_answer = held_lookups[0].fetch()
+        assert late_answer.json()["task_ids"], "the queue's answer was not running yet"
+        ended_before = page.evaluate("window.replyEnds")
+    finally:
+        queue_answered.set()
     expect_reply(chat, "bravo and charlie answered")
+    page.wait_for_function(f"window.replyEnds > {ended_before}")
+    held_lookups[0].fulfill(response=late_answer)
+    for lookup in held_lookups[1:]:
+        lookup.continue_()
+    page.unroute(TASK_LOOKUPS)
+    page.wait_for_timeout(1_000)  # bounded: the late answer must not bring the Stop button back
+
     assert last_user_messages(upstream) == [FIRST, SECOND_AND_THIRD], (
         "the queue was not answered as one question once Send now stopped the answer"
     )
     expect(conversation(chat)).not_to_contain_text("alpha-39")
     expect(queued_item(chat, SECOND)).to_have_count(0)
     expect(queued_item(chat, THIRD)).to_have_count(0)
+    expect(stop_button(chat)).to_be_hidden()
