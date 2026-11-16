@@ -143,8 +143,8 @@ def test_a_connection_saved_untouched_stores_the_defaults(page_for, admin_accoun
 def test_a_terminal_without_authentication_is_saved_without_a_key(
     page_for, admin_account, terminal
 ):
-    """Red on dev c15f28649, where the API Key field must be filled in whatever Auth is set to
-    (open-webui/open-webui#34086)."""
+    """Red on dev c15f28649 to c82ceaf1f, where the API Key field must be filled in whatever Auth
+    is set to (open-webui/open-webui#34086, fixed by 14618e355)."""
     page = page_for(admin_account, path=ADMIN_INTEGRATIONS)
     name = f"Open box {secrets.token_hex(3)}"
     dialog = add_terminal(shown_admin_terminal_section(page))

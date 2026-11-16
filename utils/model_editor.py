@@ -4,6 +4,9 @@
 the editor's collapsible parts (Capabilities, Default Features, Builtin Tools, Prompts, Voice),
 `set_checkbox` turns a switch in one of them on or off, `pick` ticks or unticks an entry in the
 search list of Tools, Skills, Filters or Actions and `save` saves and waits for the models list.
+`model_default_terminal` is the Default terminal row of the editor or of Model Defaults,
+`expect_model_default_terminal` waits until it shows a terminal and
+`choose_model_default_terminal` picks one in its list.
 `open_chat_on` starts a new chat on the model, `open_menu` opens one of the chat input's menus and
 `sent_request` sends a question and returns the request the scripted provider got for it.
 """
@@ -29,6 +32,23 @@ def open_editor(page: Page, model: dict) -> Locator:
 def save(editor: Locator) -> None:
     editor.get_by_role("button", name="Save & Update").click()
     expect(editor.page).to_have_url(re.compile(r"/workspace/models/?$"))
+
+
+def model_default_terminal(editor: Locator) -> Locator:
+    """The Default terminal row, a button named by its label and the terminal it shows."""
+    return editor.get_by_role("button", name=re.compile(r"^Default terminal"))
+
+
+def expect_model_default_terminal(editor: Locator, name: str) -> None:
+    expect(model_default_terminal(editor)).to_have_accessible_name(
+        re.compile(rf"^Default terminal\W*{re.escape(name)}$")
+    )
+
+
+def choose_model_default_terminal(editor: Locator, name: str) -> None:
+    model_default_terminal(editor).click()
+    editor.page.get_by_role("menuitem", name=name, exact=True).click()
+    expect_model_default_terminal(editor, name)
 
 
 def section(editor: Locator, title: str) -> Locator:

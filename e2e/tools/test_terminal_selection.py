@@ -79,7 +79,11 @@ from utils.chat_ui import (
     skill_group_of,
     split_screen,
 )
-from utils.model_editor import section
+from utils.model_editor import (
+    expect_model_default_terminal,
+    model_default_terminal,
+    section,
+)
 from utils.user_terminals import listed_terminal, open_terminal_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -459,10 +463,6 @@ def test_a_models_default_terminal_is_picked_only_for_a_person_who_may_use_it(
     expect(listed_terminal(page, QUAY)).to_have_count(0)
 
 
-def default_terminal(editor: Locator) -> Locator:
-    return editor.get_by_role("button", name=re.compile(r"^Default terminal: "))
-
-
 def open_model_editor(person, page_for, model: dict) -> Locator:
     page = page_for(person, path=f"/workspace/models/edit?id={model['id']}")
     editor = page.get_by_role("main")
@@ -487,13 +487,13 @@ def test_a_default_terminal_that_is_gone_reads_unavailable_and_none_takes_it_off
     model = make_model(gone)
     editor = open_model_editor(admin, page_for, model)
     page = editor.page
-    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: Unavailable")
+    expect_model_default_terminal(editor, "Unavailable")
 
-    default_terminal(editor).click()
+    model_default_terminal(editor).click()
     for offered in ("None", "Unavailable", QUAY, SLIP):
-        expect(page.get_by_role("button", name=offered, exact=True)).to_be_visible()
-    page.get_by_role("button", name="None", exact=True).click()
-    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
+        expect(page.get_by_role("menuitem", name=offered, exact=True)).to_be_visible()
+    page.get_by_role("menuitem", name="None", exact=True).click()
+    expect_model_default_terminal(editor, "None")
 
     def updates_the_model(response) -> bool:
         return response.request.method == "POST" and "/api/v1/models/model/update" in response.url
@@ -521,7 +521,7 @@ def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
     editor = open_model_editor(make_user(role="admin"), page_for, make_model())
     expect(terminal_capability(editor)).to_be_checked()
     expect(editor.get_by_text("No terminal servers available")).to_be_visible()
-    expect(default_terminal(editor)).to_have_count(0)
+    expect(model_default_terminal(editor)).to_have_count(0)
 
     # without WebSocket support there is no Tether, so only a connection brings one
     socketless = instance_with({"ENABLE_WEBSOCKET_SUPPORT": "false"})
@@ -538,12 +538,12 @@ def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
     expect(capabilities.get_by_role("switch", name="Vision", exact=True)).to_be_visible()
     expect(terminal_capability(editor)).to_have_count(0)
     expect(editor.get_by_text("No terminal servers available")).to_have_count(0)
-    expect(default_terminal(editor)).to_have_count(0)
+    expect(model_default_terminal(editor)).to_have_count(0)
 
     connect(owner, servers, quay=[EVERYONE_READS])
     editor = open_model_editor(builder, page_for, model)
     expect(terminal_capability(editor)).to_be_checked()
-    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
+    expect_model_default_terminal(editor, "None")
 
 
 def save_layout(person, chat_id: str, terminal_id: str) -> None:

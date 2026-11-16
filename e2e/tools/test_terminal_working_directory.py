@@ -44,9 +44,9 @@ Since 91f16464b the folder dialog's Default terminal is the chat input's Termina
 terminal is picked from its list, and picking the checked one again leaves the folder without
 one (the list had a None entry before).
 
-`test_a_models_default_terminal_is_picked_for_its_new_chats` is red on dev c15f28649: the model is
-saved, then the editor asks "Discard unsaved changes?" and stays open (finding "issue: [dev]
-Saving a model asks "Discard unsaved changes?" right after the save", from da850248d). With the
+`test_a_models_default_terminal_is_picked_for_its_new_chats` was red on dev c15f28649: the model
+was saved, then the editor asked "Discard unsaved changes?" and stayed open
+(open-webui/open-webui#34087, from da850248d, fixed by 6a67b5b01). With the
 default terminal set over the API, a new chat on the model also started without it on dev
 8588bd2a7 (the new chat screen lost the chat's terminal); e791cbdde fixed that before it was filed.
 
@@ -109,7 +109,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, send
-from utils.model_editor import save
+from utils.model_editor import choose_model_default_terminal, save
 from utils.model_selector import SELECTOR_BUTTON, select_model
 from utils.sidebar_folders import (
     click_folder_menu_button,
@@ -677,7 +677,7 @@ def workbench_model(admin):
 def test_a_models_default_terminal_is_picked_for_its_new_chats(
     page_for, admin, terminal, workbench_model
 ):
-    """Red on dev c15f28649 (open-webui/open-webui#34087)."""
+    """Was red on dev c15f28649 (open-webui/open-webui#34087, fixed by 6a67b5b01)."""
     page = page_for(admin, path=f"/workspace/models/edit?id={workbench_model['id']}")
     editor = page.get_by_role("main")
     # the editor fills in after the app loads the model list, part of the same cold load
@@ -685,7 +685,7 @@ def test_a_models_default_terminal_is_picked_for_its_new_chats(
         workbench_model["name"], timeout=REPLY_TIMEOUT_MS
     )
 
-    choose_default_terminal(page, editor, TERMINAL)
+    choose_model_default_terminal(editor, TERMINAL)
     save(editor)
 
     with admin.client() as client:

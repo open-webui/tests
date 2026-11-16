@@ -21,15 +21,14 @@ The default tool tests pass on dev f659c0d12; in a build of it whose Model Defau
 leaves out the tools the picked tool test fails, and in one whose new model form starts with no
 tools the new model test fails. In a build whose rows show no picked count and whose new chat
 picks every default tool, the test of the default tool the user may not use fails on the count.
-The default terminal tests pass on a build of the branch adding the Default terminal to Model
-Defaults and fail on dev 782f4b705, whose Model Defaults has no Default terminal and whose new
-model starts with none; the test with no default terminal passes on both.
+The default terminal tests pass on the dev de68d0ce4 build, which added the Default terminal to
+Model Defaults, and fail on the dev c82ceaf1f build, whose Model Defaults has no Default terminal
+and whose new model starts with none; the test with no default terminal passes on both.
 """
 
 from __future__ import annotations
 
 import contextlib
-import re
 import uuid
 from typing import Iterator
 
@@ -41,7 +40,13 @@ from harness.python_tools import EVERYONE_READS
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID
 from utils.chat_ui import chat_input, expect_picked, expect_reply, send
-from utils.model_editor import pick, section, selector_row
+from utils.model_editor import (
+    choose_model_default_terminal,
+    expect_model_default_terminal,
+    pick,
+    section,
+    selector_row,
+)
 from utils.model_selector import model_search
 from utils.setting_rows import setting_button
 
@@ -341,10 +346,6 @@ def builder(make_user):
                 client.post("/api/v1/models/model/delete", json={"id": model["id"]})
 
 
-def default_terminal(scope: Locator) -> Locator:
-    return scope.get_by_role("button", name=re.compile(r"^Default terminal: "))
-
-
 def is_model_create(response) -> bool:
     return response.request.method == "POST" and "/api/v1/models/create" in response.url
 
@@ -365,14 +366,12 @@ def test_a_default_terminal_picked_in_model_defaults_stays_picked_after_a_reload
 ):
     page = page_for(admin)
     settings = open_model_defaults(page)
-    default_terminal(settings).click()
-    page.get_by_role("button", name=TERMINAL_NAME, exact=True).click()
-    expect(default_terminal(settings)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+    choose_model_default_terminal(settings, TERMINAL_NAME)
     save(page, settings)
 
     page.reload()
     settings = open_model_defaults(page)
-    expect(default_terminal(settings)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+    expect_model_default_terminal(settings, TERMINAL_NAME)
     with admin.client() as client:
         stored = client.get(MODELS_CONFIG[0]).json().get("DEFAULT_MODEL_METADATA") or {}
     assert stored.get("terminalId") == terminal["id"], f"stored defaults: {stored}"
@@ -385,7 +384,7 @@ def test_a_new_model_starts_with_the_default_terminal_and_keeps_it_when_saved(
     model_id = f"shell-{uuid.uuid4().hex[:8]}"
     page = page_for(builder, path="/workspace/models/create")
     editor = page.get_by_role("main")
-    expect(default_terminal(editor)).to_have_accessible_name(f"Default terminal: {TERMINAL_NAME}")
+    expect_model_default_terminal(editor, TERMINAL_NAME)
 
     editor.get_by_placeholder("Model Name").fill(model_id)
     editor.get_by_placeholder("Model ID").fill(model_id)
@@ -412,4 +411,4 @@ def test_a_new_model_starts_with_no_terminal_while_model_defaults_has_none(
     set_default_terminal(admin, None)
     page = page_for(builder, path="/workspace/models/create")
     editor = page.get_by_role("main")
-    expect(default_terminal(editor)).to_have_accessible_name("Default terminal: None")
+    expect_model_default_terminal(editor, "None")
