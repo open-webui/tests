@@ -551,6 +551,8 @@ def test_a_shell_the_terminal_does_not_move_holds_the_first_message_back_and_say
     _wait_until(lambda: _said(session, "chat"))
     assert _said(session, "chat"), f"sending the first message told the shell {session.messages}"
     chat_id = _said(session, "chat")[0]["chat_id"]
+    # refuse once the page is on the chat: a refusal that comes before it gets the move asked again
+    expect(page).to_have_url(re.compile(rf"/c/{chat_id}$"))
     session.send(json.dumps({"type": "chat", "error": "The shell is busy elsewhere"}))
     # the reason shows with or without "Could not attach sessions to this chat.", by timing
     alert = page.get_by_role("alert").filter(has_text="The shell is busy elsewhere")
