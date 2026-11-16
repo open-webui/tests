@@ -11,8 +11,9 @@ for no status), by person and by activity (unread or read), sorted by title or b
 either direction, and each chat says whether the caller may change its status and tags.
 `GET /{id}/tags` counts the tags in use and `GET /{id}/users` counts each person's chats, the
 caller first. A member of a shared folder files their own chat there; who may reach which route
-is pinned by integration/security/test_folder_access_matrix.py. The owner of a tag gives it a
-colour with `PATCH /api/v1/chats/{id}/tags`, only through their own chat that carries it.
+is pinned by integration/security/test_folder_access_matrix.py. Since 31ef2064d a member who
+can edit the folder also tags any chat in it, and the tag lands in the chat owner's tags. A tag
+gets a colour with `PATCH /api/v1/chats/{id}/tags`, only through a chat that carries it.
 
 Discriminates: journey, no fix. All pass on dev 06491f013 on SQLite and on PostgreSQL with Redis.
 In one backend copy of it holding these eight edits, each turns its test red and the other four
@@ -21,7 +22,7 @@ keeping a deleted status on the chat (the deleted status test), dropping a statu
 when a chat comes back to it (the earlier time test), ignoring the tag filter (the tag test), the
 person filter (the people test), matching titles only in the folder search (the search test), a
 page of ten in the workspace list (the paging test) and answering every chat as editable (the
-member test, the owner's chat reads editable).
+reading member test, the owner's chat reads editable).
 """
 
 from __future__ import annotations
@@ -333,7 +334,8 @@ def _shared_folder(owner: Actor, member: Actor, *permissions: str) -> str:
     return folder_id
 
 
-def test_a_writing_member_files_any_chat_but_tags_only_their_own(make_user):
+def test_a_writing_member_files_and_tags_any_chat(make_user):
+    name = f"gamma{uuid.uuid4().hex[:6]}"
     owner, member = make_user(), make_user()
     folder_id = _shared_folder(owner, member)
     with owner.client() as client:
@@ -342,20 +344,25 @@ def test_a_writing_member_files_any_chat_but_tags_only_their_own(make_user):
         own = _chat(client, folder_id, "Member's")
         filed = _file(client, folder_id, own, DONE["id"])
         filed_owners = _file(client, folder_id, owners, TODO["id"])
+        tagged_owners = client.post(f"/api/v1/chats/{owners}/tags", json={"name": name})
         listing = _by_title(_listed(client, folder_id))
+    with owner.client() as client:
+        owners_tags = client.get(f"/api/v1/chats/{owners}/tags")
 
     assert (filed.status_code, filed_owners.status_code) == (200, 200), (
         f"a writing member could not file a chat: {filed.text} / {filed_owners.text}"
     )
+    assert tagged_owners.status_code == 200, f"a writing member could not tag: {tagged_owners.text}"
     assert (listing["Member's"]["status"], listing[OWNERS]["status"]) == (DONE["id"], TODO["id"])
-    assert (listing["Member's"]["can_edit_status"], listing["Member's"]["can_edit_tags"]) == (
-        True,
-        True,
+    assert [tag["id"] for tag in listing[OWNERS]["tags"]] == [name], listing[OWNERS]
+    assert [tag["id"] for tag in owners_tags.json()] == [name], (
+        f"the member's tag did not land in the owner's tags: {owners_tags.text}"
     )
-    assert (listing[OWNERS]["can_edit_status"], listing[OWNERS]["can_edit_tags"]) == (
-        True,
-        False,
-    ), f"a writing member was offered the wrong controls on the owner's chat: {listing[OWNERS]}"
+    for title in ("Member's", OWNERS):
+        assert (listing[title]["can_edit_status"], listing[title]["can_edit_tags"]) == (
+            True,
+            True,
+        ), f"a writing member was offered the wrong controls on {title} chat: {listing[title]}"
 
 
 def test_a_reading_member_files_no_chat_and_reads_the_owners_as_fixed(make_user):
