@@ -230,6 +230,8 @@ def test_saving_over_an_existing_file_asks_before_replacing_it(chat, folder):
 
 
 def test_closing_a_typed_new_file_asks_first_and_a_reload_never_brings_it_back(chat, folder):
+    """Regression (open-webui#34538): after closing the Untitled tab left the saved tabs unchanged,
+    0e59b66af saved no later tab change, so the file tab opened next was gone after the reload."""
     panel = _untitled(chat)
     _type_into(panel, "Draft that is never saved.")
 
