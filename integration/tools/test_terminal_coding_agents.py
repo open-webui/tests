@@ -27,15 +27,15 @@ title test passes with the fix for #33970 on dev 553b18a34 and fails on dev 553b
 keeps "New Chat": the agent run skips the post-reply title task).
 
 The rules around a turn: a model id that names no agent model is refused ("Invalid agent model");
-an agent does not run in a temporary chat or for a regenerated reply; a picture sent to an agent
+an agent does not run in a temporary chat; a picture sent to an agent
 that takes none ends the reply with the reason; a request of the agent takes one answer, of its own
 kind. The agent's session belongs to the reply it was stored on: a message sent from an earlier
 reply resumes that reply's session, and a cloned chat starts a session of its own that is given the
 conversation so far. Opening an agent chat whose stored chat names no model, terminal or folder
 fills them in from the session.
 Discriminates (these tests): pass on dev c15f28649; each fails alone under its mutation in a
-backend copy: the id shape check dropped; the saved-chat check dropped; the regeneration check
-dropped; the ACP image check dropped; the kind check and the pending check of an agent request
+backend copy: the id shape check dropped; the saved-chat check dropped; the ACP image check
+dropped; the kind check and the pending check of an agent request
 dropped (the once-and-in-kind test, the kind check also the question card test); the chat's most
 recent session resumed wherever the message is sent from (the earlier-reply test); a session token
 of another chat accepted (the clone test); the selections not filled on open (the opening test).
@@ -52,6 +52,13 @@ set as the session's `thought_level` option, one the model does not offer ending
 the prompt (121bc0ec5). Discriminates: pass on dev 485103cde; in a backend copy the continue test
 fails with the model added to the keys a resumed session must match, the effort test with the
 effort never read from the parameters.
+
+Since c82ceaf1f a reply of an agent can be regenerated. An agent that cannot copy part of its
+conversation (OpenCode, as here) is then asked in a new session given the conversation up to that
+reply, since its old session already holds the reply being replaced. Discriminates: passes on dev
+c82ceaf1f; in a backend copy of it that keeps resuming the old session on a regeneration the
+regeneration test goes red. Open WebUI tells such a branch apart by whole-second timestamps, so
+the continue test sends its second message only after the second the first reply was stored in.
 """
 
 from __future__ import annotations
@@ -141,6 +148,13 @@ def resolve(client: httpx.Client, turn: ChatTurn, call_id: str, **answer) -> htt
         f"/api/v1/chats/{turn.chat_id}/messages/{turn.assistant_message_id}/resolve",
         json={"call_id": call_id, **answer},
     )
+
+
+def after_the_second_of(message: dict) -> None:
+    """Waits out the second a reply was stored in, as a person's next message always does."""
+    # Open WebUI tells a reply that resumed a session from an older one by whole-second timestamps
+    while time.time() < message["timestamp"] + 1:
+        time.sleep(0.05)
 
 
 def output_text(message: dict, kind: str) -> str:
@@ -273,6 +287,7 @@ def test_the_next_message_continues_the_agents_own_session(make_user, connect, a
         first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
         session = agent_terminal.received("session/new")[-1]
         started = agent_terminal.received("session/prompt")[-1]["sessionId"]
+        after_the_second_of(first_reply)
         second = ask_agent(
             client,
             terminal["id"],
@@ -692,30 +707,48 @@ def test_an_agent_does_not_run_in_a_temporary_chat(make_user, connect, agent_ter
     assert saved["content"].startswith(f"Agent heard: {prompt} ["), saved
 
 
-def test_regenerating_an_agent_reply_over_the_api_is_refused(make_user, connect, agent_terminal):
+def test_regenerating_an_agent_reply_asks_again_in_a_session_without_that_reply(
+    make_user, connect, agent_terminal
+):
     person = make_user()
     terminal = connect(person)
-    prompt = f"write the changelog {uuid.uuid4().hex[:6]}"
+    tag = uuid.uuid4().hex[:6]
+    question, follow_up = f"plan the release {tag}", f"write the changelog {tag}"
 
     with person.client() as client:
-        first = ask_agent(client, terminal["id"], prompt)
+        first = ask_agent(client, terminal["id"], question)
         wait_for_reply(client, first, REPLY_TIMEOUT)
+        started = agent_terminal.received("session/prompt")[-1]["sessionId"]
+        second = ask_agent(
+            client,
+            terminal["id"],
+            follow_up,
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+        )
+        wait_for_reply(client, second, REPLY_TIMEOUT)
+        loads = len(agent_terminal.received("session/load"))
         again = ask_agent(
             client,
             terminal["id"],
-            prompt,
+            follow_up,
             chat_id=first.chat_id,
-            regeneration_message_id=first.assistant_message_id,
+            parent_id=first.assistant_message_id,
+            regeneration_message_id=second.assistant_message_id,
         )
-        refused = wait_for_reply(client, again, REPLY_TIMEOUT)
+        regenerated = wait_for_reply(client, again, REPLY_TIMEOUT)
 
-    assert (refused.get("error") or {}).get("content") == (
-        "Continue an agent conversation with a new message"
-    ), f"regenerating an agent reply was not refused: {refused}"
-    heard = [
-        params for params in agent_terminal.received("session/prompt") if prompt in str(params)
-    ]
-    assert len(heard) == 1, f"the agent was asked again for the regenerated reply: {heard}"
+    assert "error" not in regenerated, f"regenerating an agent reply failed: {regenerated}"
+    resumed = agent_terminal.received("session/load")[loads:]
+    assert resumed == [], (
+        f"the regenerated reply went on in the session {started} that already holds the reply "
+        f"it replaces: {resumed}"
+    )
+    asked = agent_terminal.received("session/prompt")[-1]
+    assert asked["sessionId"] != started, asked
+    assert question in str(asked["prompt"]) and follow_up in str(asked["prompt"]), (
+        f"the new session was not given the conversation up to the regenerated reply: {asked}"
+    )
 
 
 def test_a_message_sent_from_an_earlier_reply_resumes_that_replys_agent_session(

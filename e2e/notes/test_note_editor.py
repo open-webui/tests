@@ -1,8 +1,9 @@
 """Journey: a note is formatted, titled and measured in its editor.
 
 A fresh account opens a new note and types into it. Selecting text raises a toolbar over it:
-its bold, italic, underline and strikethrough buttons mark the selection, and its heading,
-bullet, ordered, task and code block buttons turn the line into that block; each shows in the
+its bold, italic, underline and strikethrough buttons mark the selection, and the headings of its
+Heading menu (since c82ceaf1f) and its bullet, ordered, task and code block buttons turn the line
+into that block; each shows in the
 editor at once, is stored with the note and is still there after a reload. Every mark takes its
 own line of one note, and every block its own line of another. The Formatting switch in the
 note's menu decides whether typed Markdown such as "## Heading" or "**bold**" becomes
@@ -98,9 +99,9 @@ MARKS = [
 ]
 MARKS_MD = "**bold words**\n_italic words_\n<u>underline words</u>\n~~strikethrough words~~"
 BLOCKS = [
-    ("H1", "h1"),
-    ("H2", "h2"),
-    ("H3", "h3"),
+    ("Heading 1", "h1"),
+    ("Heading 2", "h2"),
+    ("Heading 3", "h3"),
     ("Bullet List", "ul:not([data-type]) li p"),
     ("Ordered List", "ol li p"),
     ("Task List", "ul[data-type=taskList] li p"),
@@ -119,6 +120,15 @@ BLOCK_LINES = [
     "task item",
     "code line",
 ]
+
+
+def _turn_into(page: Page, block: str) -> None:
+    """Picks a block from the toolbar; the headings sit in its Heading menu since c82ceaf1f."""
+    if not block.startswith("Heading "):
+        _toolbar_button(page, block).click()
+        return
+    _toolbar_button(page, "Heading").click()
+    page.locator("#bubble-menu").get_by_role("menuitemradio", name=block, exact=True).click()
 
 
 def _type_lines(page: Page, lines: list[str]) -> None:
@@ -161,10 +171,10 @@ def test_the_toolbar_turns_a_line_into_a_block(page_for, make_user):
     note_id = _new_note(page)
     _type_lines(page, BLOCK_LINES)
 
-    for (tooltip, block), line in zip(BLOCKS, BLOCK_LINES):
+    for (name, block), line in zip(BLOCKS, BLOCK_LINES):
         _select_line(page, line)
-        _toolbar_button(page, tooltip).click()
-        expect(_editor(page).locator(block), f"{tooltip} did not turn the line").to_have_text(line)
+        _turn_into(page, name)
+        expect(_editor(page).locator(block), f"{name} did not turn the line").to_have_text(line)
 
     _wait_until_stored(author, note_id, "md", BLOCKS_MD)
     page.reload()

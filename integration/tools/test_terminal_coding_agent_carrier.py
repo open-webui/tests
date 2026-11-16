@@ -302,7 +302,9 @@ def test_a_session_the_terminal_refuses_to_start_ends_the_reply_with_its_reason(
         )
 
     assert _error(refused) == busy, f"the terminal's reason did not reach the reply: {refused}"
-    assert after.get("content") == "Scripted agent heard: start again", (
+    # since c82ceaf1f a new session is given the conversation so far, the refused turn included
+    heard = after.get("content", "")
+    assert heard.startswith("Scripted agent heard: ") and heard.endswith("start again"), (
         f"the chat did not go on once the terminal started a session: {after}"
     )
 
