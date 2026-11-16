@@ -73,7 +73,7 @@ from harness.upstream import MOCK_MODEL_ID
 from utils.automations_page import (
     automation_page,
     automation_row,
-    instructions,
+    expect_instructions,
     name_box,
     property_row,
     run_entries,
@@ -131,7 +131,7 @@ def finish(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
-    expect(instructions(page)).to_have_value(prompt)
+    expect_instructions(page, prompt)
     return page.url.rsplit("/", 1)[-1]
 
 
@@ -390,7 +390,7 @@ def rename_on_its_page(page: Page, scheduler, rule: str) -> str:
     assert created.status_code == 200, created.text
     automation_id = created.json()["id"]
     page.goto(f"/automations/{automation_id}")
-    expect(instructions(page)).to_have_value("Post the rota.")
+    expect_instructions(page, "Post the rota.")
 
     name = name_box(page)
     expect(name).to_have_value(title)

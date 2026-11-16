@@ -8,6 +8,8 @@ An automation's page is its editor since dev 9723b3a6a: the Name and Instruction
 Properties whose values (Schedule, Model, Destination, Terminal) are the dropdowns of the Create
 dialog shown as plain values, then the Activity list of its runs. A Save button shows in the
 page's header while a field differs from the saved automation; Delete moved into its More menu.
+Since dev 86aac87f8 a saved prompt opens collapsed, as a button reading it under the name
+Instructions; clicking it opens the Instructions box.
 
 The Create dialog's and the page's Terminal dropdown: `terminal_button`, `open_terminal_menu`,
 `toggle_terminal`, `close_terminal_menu` and `working_directory`.
@@ -36,14 +38,26 @@ def wait_until_loaded(dialog: Locator, save: str = "Create") -> None:
 
 
 def automation_page(page: Page) -> Locator:
-    """The open automation's page: the page tab panel holding its Instructions box."""
-    return page.get_by_role("tabpanel").filter(
-        has=page.get_by_role("textbox", name="Instructions", exact=True)
-    )
+    """The open automation's page: the page tab panel holding its Name box."""
+    return page.get_by_role("tabpanel").filter(has=page.get_by_placeholder("Automation name"))
 
 
 def instructions(page: Page) -> Locator:
+    """The open Instructions box."""
     return automation_page(page).get_by_role("textbox", name="Instructions", exact=True)
+
+
+def expect_instructions(page: Page, prompt: str) -> None:
+    """The page has loaded the saved prompt, shown collapsed."""
+    expect(
+        automation_page(page).get_by_role("button", name="Instructions", exact=True)
+    ).to_have_text(prompt)
+
+
+def edit_instructions(page: Page) -> Locator:
+    """Open the collapsed prompt and return the Instructions box."""
+    automation_page(page).get_by_role("button", name="Instructions", exact=True).click()
+    return instructions(page)
 
 
 def name_box(page: Page) -> Locator:
@@ -52,7 +66,7 @@ def name_box(page: Page) -> Locator:
 
 def open_automation(page: Page, automation: dict) -> None:
     page.goto(f"/automations/{automation['id']}")
-    expect(instructions(page)).to_have_value(automation["data"]["prompt"])
+    expect_instructions(page, automation["data"]["prompt"])
 
 
 def property_row(page: Page, label: str) -> Locator:

@@ -36,8 +36,8 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from utils.automations_page import (
     automation_row,
+    expect_instructions,
     expect_no_runs,
-    instructions,
     name_box,
     run_entries,
     run_now,
@@ -70,7 +70,7 @@ def test_run_now_lists_a_run_whose_chat_holds_the_answer(page_for, scheduler, up
 
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
     expect(name_box(page)).to_have_value(title)
-    expect(instructions(page)).to_have_value(prompt)
+    expect_instructions(page, prompt)
     expect_no_runs(page)
 
     upstream.queue(reply.text("Three tickets came in overnight.", match=reply.answering(prompt)))

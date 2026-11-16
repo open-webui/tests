@@ -35,8 +35,9 @@ from harness.access import make_group
 from utils.automations_page import (
     automation_page,
     automation_row,
+    edit_instructions,
+    expect_instructions,
     expect_no_runs,
-    instructions,
     name_box,
     open_automation,
     open_page_menu_entry,
@@ -71,7 +72,7 @@ def test_an_automation_is_listed_with_its_schedule_and_opens_from_the_list(
     row.click()
 
     expect(page).to_have_url(re.compile(f"/automations/{automation['id']}$"))
-    expect(instructions(page)).to_have_value(automation["data"]["prompt"])
+    expect_instructions(page, automation["data"]["prompt"])
     expect(property_row(page, "Schedule")).to_contain_text("Daily")
     expect(property_row(page, "Next run")).to_contain_text(re.compile(r"9:00\s?AM"))
     expect(property_row(page, "Status")).to_contain_text("Active")
@@ -87,14 +88,14 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     open_automation(page, automation)
 
     name_box(page).fill(new_title)
-    instructions(page).fill(new_prompt)
+    edit_instructions(page).fill(new_prompt)
     automation_page(page).get_by_role("button", name="Daily", exact=True).click()
     page.get_by_role("combobox").select_option(label="Hourly")
     automation_page(page).get_by_role("button", name="Hourly", exact=True).click()
     save_changes(page)
 
     page.reload()
-    expect(instructions(page)).to_have_value(new_prompt)
+    expect_instructions(page, new_prompt)
     expect(name_box(page)).to_have_value(new_title)
     expect(property_row(page, "Schedule")).to_contain_text("Hourly")
     expect(page_tab(page, new_title).get_by_text(new_title, exact=True)).to_be_visible()

@@ -44,7 +44,7 @@ from utils.automations_page import (
     automation_page,
     automation_row,
     close_terminal_menu,
-    instructions,
+    expect_instructions,
     open_terminal_menu,
     save_changes,
     terminal_button,
@@ -129,7 +129,7 @@ def _create(page: Page, dialog: Locator, prompt: str, title: str) -> str:
     dialog.get_by_role("textbox", name="Automation title").fill(title)
     dialog.get_by_role("button", name="Create", exact=True).click()
     expect(page).to_have_url(re.compile(r"/automations/[0-9a-f-]+$"))
-    expect(instructions(page)).to_have_value(prompt)
+    expect_instructions(page, prompt)
     return page.url.rsplit("/", 1)[-1]
 
 
@@ -208,7 +208,7 @@ def test_picking_the_picked_terminal_again_takes_it_and_its_working_directory_of
     assert created.status_code == 200, created.text
     automation_id = created.json()["id"]
     page = page_for(scheduler, path=f"/automations/{automation_id}")
-    expect(instructions(page)).to_have_value(form["data"]["prompt"])
+    expect_instructions(page, form["data"]["prompt"])
 
     editing = automation_page(page)
     menu = open_terminal_menu(page, editing, name)
