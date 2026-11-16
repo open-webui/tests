@@ -38,9 +38,10 @@ c15f28649 and, after the side chat swap of open-webui/open-webui#34064, on dev e
 (open-webui/open-webui#34031); all pass on the fix branch fix/side-tab-title-and-menu.
 
 Since dev 24b8bb0e6 Overview, Artifacts and Comments are no longer in the chat's menu and open from
-the tab bar's New tab menu: Overview its dialog, Artifacts the chat's artifact and Comments the
-comments tab. Passes on dev 485103cde; with Overview taken out of the New tab menu in a frontend
-build it fails.
+the tab bar's New tab menu: Overview the chat's message tree, Artifacts the chat's artifact and
+Comments the comments tab. Since dev aa394849d Overview opens in a tab of its own instead of a
+dialog. Passes on dev 485103cde (dialog) and c82884453 (tab); with Overview taken out of the New
+tab menu in a frontend build it fails.
 """
 
 from __future__ import annotations
@@ -517,9 +518,11 @@ def test_overview_artifacts_and_comments_open_from_the_new_tab_menu_not_the_chat
     expect(menu).to_have_count(0)
 
     _new_tab_entry(page, "Overview").click()
-    expect(page.get_by_role("dialog", name="Overview")).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(page.get_by_role("dialog", name="Overview")).to_have_count(0)
+    expect(page.get_by_role("tab", name="Overview", exact=True)).to_have_attribute(
+        "aria-selected", "true"
+    )
+    overview = page.get_by_role("tabpanel", name="Overview", exact=True)
+    expect(overview.get_by_text("draw me the tide board")).to_be_visible()
 
     _new_tab_entry(page, "Artifacts").click()
     expect(artifacts_pane(page).frame_locator("iframe").locator("h1")).to_have_text("Tide board")
