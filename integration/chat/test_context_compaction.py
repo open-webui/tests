@@ -708,7 +708,7 @@ def test_a_temporary_chat_compacts_and_hands_the_summary_to_the_page(
             session_id=socket.sid,
             history=[system, *history],
         )
-        compacted = socket.wait_for(chat_id, "context_compaction", done=True)
+        compacted = socket.wait_for(chat_id, "context_compaction", context_summary=SUMMARY)
         wait_for_replies(socket, chat_id, 1)
         sent = main_call(upstream)
 
