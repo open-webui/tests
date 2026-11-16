@@ -7,6 +7,7 @@ for a page that is set up in between). A clicked file opens in a tab of its own,
 its tab, `back_to` returns to the folder's list, `tab` is a tab of the workspace by its name.
 The list's rows and menus are `utils/file_browser.py`'s.
 `comment_shown_by` rests on a comment marker of a document and returns the comment that opens.
+`file_text` is the opened file's text, apart from the path above it, which is a text field too.
 """
 
 from __future__ import annotations
@@ -70,6 +71,11 @@ def back_to(browser: Locator, folder: str) -> None:
     browser.get_by_role("button", name=folder, exact=True).click()
     expect(browser.get_by_role("list")).to_be_visible()
     rest_elsewhere(browser.page)
+
+
+def file_text(browser: Locator) -> Locator:
+    """The opened file's text, the one text field of many lines; the path above it has one."""
+    return browser.get_by_role("textbox").and_(browser.locator("[aria-multiline=true]"))
 
 
 def comment_shown_by(page: Page, marker: Locator) -> Locator:

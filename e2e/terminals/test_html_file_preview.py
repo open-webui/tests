@@ -36,7 +36,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import choose_terminal, open_files_tab
 from utils.chat_ui import expect_reply, send, split_screen
 from utils.file_browser import file_browser
-from utils.file_views import connect_for, files_in, files_of, open_file
+from utils.file_views import connect_for, file_text, files_in, files_of, open_file
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -208,7 +208,7 @@ def test_the_source_of_an_html_page_is_edited_saved_and_then_shown(
     expect(browser.get_by_role("button", name="Save", exact=True)).to_have_count(0)
 
     browser.get_by_role("button", name="Source", exact=True).click()
-    editor = browser.get_by_role("textbox")
+    editor = file_text(browser)
     expect(editor).to_contain_text("<h1>Cider report</h1>")
     editor.click()
     page.keyboard.press("Control+a")

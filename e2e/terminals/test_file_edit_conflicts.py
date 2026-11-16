@@ -48,7 +48,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from utils.cached_chat import calling
 from utils.chat_ui import expect_reply, send, split_screen
 from utils.file_browser import file_browser
-from utils.file_views import files_of, open_file, tab
+from utils.file_views import file_text, files_of, open_file, tab
 from utils.sidebar_chats import chat_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -98,7 +98,7 @@ def _say(page: Page, upstream, answer: str) -> str:
 
 
 def _editor(page: Page) -> Locator:
-    return file_browser(page).get_by_role("textbox")
+    return file_text(file_browser(page))
 
 
 def _type_at_the_end(page: Page, text: str = TYPED) -> None:

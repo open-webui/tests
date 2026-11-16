@@ -54,7 +54,15 @@ from utils.cached_chat import ask, calling
 from utils.chat_ui import split_screen
 from utils.clipboard import copied, loopback_clipboard
 from utils.file_browser import file_browser, row
-from utils.file_views import back_to, comment_shown_by, files_of, open_file, rest_elsewhere, tab
+from utils.file_views import (
+    back_to,
+    comment_shown_by,
+    file_text,
+    files_of,
+    open_file,
+    rest_elsewhere,
+    tab,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -180,13 +188,13 @@ def test_a_tab_separated_file_shows_as_a_table_and_an_empty_sheet_as_its_source(
     expect(table.get_by_role("row", name=re.compile(r"apple\s*40"))).to_be_visible()
     expect(table.get_by_role("row", name=re.compile(r"pear\s*25"))).to_be_visible()
     browser.get_by_role("button", name="Source", exact=True).click()
-    expect(browser.get_by_role("textbox")).to_contain_text("apple\t40")
+    expect(file_text(browser)).to_contain_text("apple\t40")
 
     back_to(browser, folder.name)
     open_file(browser, "empty.csv")
     # nothing to show as a table, so the file opens where a first row can be typed
     expect(browser.get_by_role("button", name="Preview", exact=True)).to_be_visible()
-    editor = browser.get_by_role("textbox")
+    editor = file_text(browser)
     expect(editor).to_be_visible()
     expect(browser.get_by_role("table")).to_have_count(0)
     editor.click()
@@ -273,7 +281,7 @@ def test_an_svg_picture_shows_without_the_script_inside_it(folder, browse):
     expect(level).not_to_have_text("100%")
 
     browser.get_by_role("button", name="Source", exact=True).click()
-    expect(browser.get_by_role("textbox")).to_contain_text("the picture ran a script")
+    expect(file_text(browser)).to_contain_text("the picture ran a script")
     assert page.title() == title, f"the picture's script ran in the page: {page.title()!r}"
 
 
@@ -391,7 +399,7 @@ def test_a_long_note_opens_in_its_editor_without_freezing_the_page(folder, brows
     editor = _longest_freeze_opening(browser, "log.md")
 
     # a block that names its language is still highlighted
-    labelled = browser.get_by_role("textbox").get_by_text("def press(apples):")
+    labelled = file_text(browser).get_by_text("def press(apples):")
     colours = labelled.evaluate(
         "block => new Set([...block.querySelectorAll('*')]"
         ".map(part => getComputedStyle(part).color)).size"
@@ -410,16 +418,16 @@ def test_a_file_that_is_no_text_says_so_and_an_unknown_picture_is_named_as_binar
     browser = browse()
 
     open_file(browser, "plain.txt")
-    expect(browser.get_by_role("textbox")).to_have_text("a readable line")
+    expect(file_text(browser)).to_have_text("a readable line")
 
     back_to(browser, folder.name)
     open_file(browser, "dump.bin")
     expect(browser.get_by_text("Could not read file.", exact=True)).to_be_visible()
-    expect(browser.get_by_role("textbox")).to_have_count(0)
+    expect(file_text(browser)).to_have_count(0)
 
     back_to(browser, folder.name)
     open_file(browser, "scan.tiff")
-    expect(browser.get_by_role("textbox")).to_have_text("[Binary file: image/tiff]")
+    expect(file_text(browser)).to_have_text("[Binary file: image/tiff]")
 
 
 def test_the_toolbar_shows_a_files_size_copies_its_text_and_downloads_it(folder, browse, person):

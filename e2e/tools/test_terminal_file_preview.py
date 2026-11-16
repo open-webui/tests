@@ -68,6 +68,7 @@ from harness import slow_machine
 from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
+from utils.file_views import file_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -361,7 +362,7 @@ def test_an_invalid_json_file_opens_as_its_source(browser):
     open_file(browser, "broken.json")
 
     expect(browser.get_by_text('{"farm":')).to_be_visible()
-    expect(browser.get_by_role("textbox")).to_be_editable()
+    expect(file_text(browser)).to_be_editable()
 
 
 def test_an_image_zooms_in_out_and_back(browser):
