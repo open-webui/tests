@@ -14,10 +14,12 @@ Discriminates: fails on the dev ca8f451cc build (the message and its reply vanis
 stays on the new chat), passes with the fix d1511abce and on dev 2b1fb53f4; on 2b1fb53f4 with both
 the held-back input and the fix's reset guard removed it fails the same way.
 
-Since 0.13.4 the first message of a new chat shows at once while the chat is still being
-created. A side chat creates its chat when its first message is sent, so the second test holds
-that creation and expects the message on screen meanwhile. It passes on dev 485103cde and fails
-in a frontend copy of it that creates the chat before showing the message.
+A side chat creates its chat when its first message is sent. From dev c0b90785e its first message
+showed while that chat was still being created; since dev 03d8d3e35 the message stays in the box
+until the chat exists, so a chat that cannot be created leaves the message there to send again.
+The second test holds the creation, then refuses it. It passes on the dev de68d0ce4 build and
+fails on the dev 6a67b5b01 build, which took the message out of the box before the creation
+answered.
 """
 
 from __future__ import annotations
@@ -87,25 +89,31 @@ def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, ma
     expect(conversation(page).get_by_text(question)).to_have_count(0)
 
 
-def test_the_first_message_of_a_side_chat_shows_while_its_chat_is_still_being_created(
+def test_the_first_message_of_a_side_chat_stays_in_the_box_until_its_chat_is_created(
     page_for, make_user, upstream
 ):
     # an admin may open side chats whatever the default permissions say
     page = page_for(make_user(role="admin"))
     side = open_new_chat_tab(page)
-    question = f"instant question {uuid.uuid4().hex[:6]}"
-    upstream.queue(reply.text("instant answer", match=reply.answering(question)))
+    question = f"early question {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("early answer", match=reply.answering(question)))
 
     creations = hold(page, "**/api/v1/chats/new")
     try:
         side.send(question)
         wait_until_held(page, creations, "the side chat to be created")
-        expect(
-            side.conversation.get_by_text(question),
-            "the first message waited for its chat to be created",
-        ).to_be_visible()
+        expect(side.input).to_contain_text(question)
+        expect(side.conversation.get_by_text(question)).to_have_count(0)
     finally:
-        for route in creations:
-            route.continue_()
+        with page.expect_response("**/api/v1/chats/new"):
+            for route in creations:
+                route.fulfill(status=500, json={"detail": "the database is busy"})
+    page.unroute("**/api/v1/chats/new")
 
-    side.expect_reply("instant answer")
+    expect(side.input, "a refused chat creation lost the message").to_contain_text(question)
+    expect(side.conversation.get_by_text(question)).to_have_count(0)
+
+    side.input.click()
+    page.keyboard.press("Enter")
+    side.expect_reply("early answer")
+    expect(side.conversation.get_by_text(question)).to_be_visible()
