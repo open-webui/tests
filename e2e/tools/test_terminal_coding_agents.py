@@ -4,17 +4,19 @@ New on dev for 0.13.1 (6ef26be29 and follow-ups, 1ef75436f, 72d52d2cd, titled `r
 a terminal in the chat's Terminal menu adds that terminal's installed agents to the model
 selector; the agent's answer shows in the chat and stays after a reload, and the reopened chat
 continues with the same agent. A permission request shows Allow and Deny, a question shows the
-question card, and an agent's error shows on the reply. Agent replies offer no Regenerate, no
-Save As Copy and no Send on an edited message, since an agent conversation cannot branch. A reply
+question card, and an agent's error shows on the reply. An agent reply is tried again on a fork of
+the agent's conversation, so Regenerate warns that file changes are not undone and an edited
+question offers Send (c82ceaf1f); Continue Response and Save As Copy stay off. A reply
 should keep the agent's name once its terminal is gone; on dev it shows the raw `agent:` id after
 a reload, as the stored reply never carries the name (open-webui/open-webui#33879), so that
 test stays red until its fix (branch fix/agent-reply-keeps-name) merges. The agent is
 `harness/fake_acp_agent.py`, run by a real Open Terminal.
 
 Discriminates: the other tests pass on dev f659c0d12. In a backend copy whose agent discovery
-returns no models every test fails at the model selector. The no-branching test fails on a build
-with 1ef75436f's branch guards undone (Regenerate shows). The name test fails on dev 1fc5b8f6d
-and passes on fix/agent-reply-keeps-name (the reloaded reply shows the raw id without the fix).
+returns no models every test fails at the model selector. The try-again test passes on the dev
+c82ceaf1f build and fails on the c82884453 build, whose agent replies offer no Regenerate. The
+name test fails on dev 1fc5b8f6d and passes on fix/agent-reply-keeps-name (the reloaded reply
+shows the raw id without the fix).
 
 Once the agent's terminal is gone, its chat and a new chat take the default model, also when the
 person had the agent as their default model, and the next message goes to it (#33843, #33860).
@@ -69,11 +71,11 @@ from utils.chat_ui import (
     conversation,
     expect_reply,
     last_reply,
-    regenerate_buttons,
     send,
     set_tool_approval_mode,
 )
 from utils.model_selector import model_options, model_search, select_model
+from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -135,7 +137,7 @@ def test_the_picked_terminals_agent_answers_and_the_reopened_chat_continues_with
     expect_reply(page, "Agent heard: and once more [model")
 
 
-def test_an_agent_reply_offers_no_way_to_branch_the_conversation(agent_chat):
+def test_an_agent_reply_is_tried_again_with_a_warning_but_never_continued_or_copied(agent_chat):
     page = agent_chat()
 
     send(page, "branch me")
@@ -144,7 +146,16 @@ def test_an_agent_reply_offers_no_way_to_branch_the_conversation(agent_chat):
 
     answer = _whole_message(page, page.locator(".chat-assistant"))
     expect(answer.get_by_label("Edit", exact=True)).to_have_count(1)
-    expect(regenerate_buttons(page)).to_have_count(0)
+    expect(answer.get_by_label("Continue Response", exact=True)).to_have_count(0)
+    answer.hover()
+    # a new try forks the agent's own conversation; what it changed on disk stays changed
+    tooltip_button(answer, "Regenerate (file changes are not undone)").click()
+    page.get_by_role("menu").get_by_role("menuitem", name="Try Again").click()
+    expect(conversation(page).get_by_text("2/2")).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    expect(last_reply(page)).to_contain_text("Agent heard:", timeout=REPLY_TIMEOUT_MS)
+    expect(page.get_by_role("button", name="Stop")).to_have_count(0, timeout=REPLY_TIMEOUT_MS)
+
+    answer = _whole_message(page, page.locator(".chat-assistant"))
     answer.hover()
     answer.get_by_label("Edit", exact=True).click()
     expect(answer.get_by_role("button", name="Save", exact=True)).to_be_visible()
@@ -156,7 +167,7 @@ def test_an_agent_reply_offers_no_way_to_branch_the_conversation(agent_chat):
     question.hover()
     question.get_by_label("Edit", exact=True).click()
     expect(question.get_by_role("button", name="Save", exact=True)).to_be_visible()
-    expect(question.get_by_role("button", name="Send", exact=True)).to_have_count(0)
+    expect(question.get_by_role("button", name="Send", exact=True)).to_be_visible()
 
 
 def test_an_agent_reply_keeps_the_agents_name_once_its_terminal_is_gone(agent_chat, admin):
