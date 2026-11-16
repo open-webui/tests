@@ -3,12 +3,13 @@
 Issue open-webui/open-webui#34059. Opening a chat from the sidebar drawer or by its link, and
 switching to another chat, focused the message box. A focused text field is what raises a phone's
 on-screen keyboard, which then covered the conversation the person came to read. On a phone-sized
-screen an opened chat now leaves the message box alone until it is tapped. A new chat still starts
-with the cursor in the message box, and it stays there after a message is sent, also in a new chat
-started with the top bar's New Chat button inside an opened chat.
+screen an opened chat now leaves the message box alone until it is tapped. Since dev 1588ce1bf a
+new chat on a phone does too, also one started from the sidebar or with the top bar's New Chat
+button inside an opened chat; until then it put the cursor in the box.
 
 Discriminates: the opening test is red on the dev c15f28649 build (the message box holds the focus
-after the chat opens) and passes on the build of the fix; the new chat tests pass on both.
+after the chat opens) and passes on the build of the fix. The new chat checks are red on the dev
+6a67b5b01 build (a new chat focuses the message box) and pass on the dev de68d0ce4 build.
 """
 
 from __future__ import annotations
@@ -79,8 +80,8 @@ def test_opening_a_chat_on_a_phone_leaves_the_message_box_unfocused(page_for, ma
     first_id, first_title = saved_chat(account, upstream, "They hover in the wind.")
     second_id, second_title = saved_chat(account, upstream, "They dive from a perch.")
     page = on_a_phone(page_for, account)
-    # the new chat page focuses the message box once after load; let that land first
-    expect(chat_input(page)).to_be_focused()
+    focused = focused_text_field_once_settled(page)
+    assert focused is None, f"a new chat, focus on {focused}: {KEYBOARD_UP}"
 
     open_from_the_drawer(page, first_title)
     expect(page).to_have_url(re.compile(first_id))
@@ -103,24 +104,27 @@ def test_opening_a_chat_on_a_phone_leaves_the_message_box_unfocused(page_for, ma
     expect(chat_input(by_link)).to_be_focused()
 
 
-def test_a_new_chat_on_a_phone_keeps_the_cursor_in_the_message_box(page_for, make_user, upstream):
+def test_a_new_chat_on_a_phone_leaves_the_message_box_unfocused(page_for, make_user, upstream):
     page = on_a_phone(page_for, make_user())
-    expect(chat_input(page)).to_be_focused()
+
+    focused = focused_text_field_once_settled(page)
+    assert focused is None, f"a new chat, focus on {focused}: {KEYBOARD_UP}"
 
     ask_by_tapping(page, upstream, f"first {uuid.uuid4().hex[:6]}", "The first answer.")
-    expect(chat_input(page)).to_be_focused()
     ask_by_tapping(page, upstream, f"second {uuid.uuid4().hex[:6]}", "The second answer.")
-    expect(chat_input(page)).to_be_focused()
+    # the person puts the keyboard away before starting the next chat
+    page.evaluate("() => document.activeElement?.blur()")
 
     tap_on_screen(page.get_by_role("button", name="Open Sidebar").last)
     chats = page.get_by_role("navigation", name="Chat history")
     # the logo link is named New Chat too; this is the labelled entry under it
     tap_on_screen(chats.get_by_role("link", name="New Chat").filter(has_text="New Chat"))
     expect(page.get_by_text("The second answer.")).to_have_count(0)
-    expect(chat_input(page)).to_be_focused()
+    focused = focused_text_field_once_settled(page)
+    assert focused is None, f"a new chat from the sidebar, focus on {focused}: {KEYBOARD_UP}"
 
 
-def test_a_new_chat_from_the_top_bar_keeps_the_cursor_after_its_first_message(
+def test_a_new_chat_from_the_top_bar_leaves_the_message_box_unfocused(
     page_for, make_user, upstream
 ):
     account = make_user()
@@ -130,9 +134,5 @@ def test_a_new_chat_from_the_top_bar_keeps_the_cursor_after_its_first_message(
 
     tap_on_screen(page.get_by_role("button", name="New Chat", exact=True))
     expect(page.get_by_text("They hover in the wind.")).to_have_count(0)
-    expect(chat_input(page)).to_be_focused()
-
-    ask_by_tapping(page, upstream, f"first {uuid.uuid4().hex[:6]}", "The first answer.")
-    expect(chat_input(page)).to_be_focused()
-    ask_by_tapping(page, upstream, f"second {uuid.uuid4().hex[:6]}", "The second answer.")
-    expect(chat_input(page)).to_be_focused()
+    focused = focused_text_field_once_settled(page)
+    assert focused is None, f"a new chat from the top bar, focus on {focused}: {KEYBOARD_UP}"
