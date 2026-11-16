@@ -6,9 +6,13 @@ line numbers, and the part of a paired removed and added line that changed is em
 swaps the drawn diff for the editable source and Done swaps it back. Any other fence is not drawn
 as a diff.
 
+Since dev f085657a9 the rows carry no class naming their kind, so a row is found by its text and
+its kind read from what a person sees: its +/- sign, its background and the bold changed part.
+
 Discriminates: passes on the 176d31d1d build; with removed lines no longer classified, the new-line
 numbering, the changed-part emphasis or the Edit toggle removed, the matching test goes red, and
-with every tagged fence drawn as a diff the other-language test does.
+with every tagged fence drawn as a diff the other-language test does. The row reading passes on dev
+c82884453.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649 a
 side chat showed code without its editor (open-webui/open-webui#34014, fix PR
@@ -50,8 +54,33 @@ def ask_for(chat: ChatSurface, upstream, answer: str, prompt: str = "show me the
     return last_reply(chat)
 
 
-def line(box: Locator, kind: str) -> Locator:
-    return box.locator(f".diff-line.{kind}")
+def rows(box: Locator) -> Locator:
+    # one span per diff line, with no role or label of its own
+    return box.locator("pre > code > span")
+
+
+def row(box: Locator, text: str) -> Locator:
+    return rows(box).filter(has_text=text)
+
+
+def sign(line: Locator) -> Locator:
+    return line.locator(":scope > span:not([data-line-number])").first
+
+
+def background(line: Locator) -> str:
+    return line.evaluate("element => getComputedStyle(element).backgroundColor")
+
+
+def emphasised(line: Locator) -> list[str]:
+    """The parts of the line's text drawn in bold."""
+    return (
+        line.locator(":scope > span")
+        .last.locator("span")
+        .evaluate_all(
+            "parts => parts.filter(part => Number(getComputedStyle(part).fontWeight) >= 600)"
+            ".map(part => part.textContent)"
+        )
+    )
 
 
 @pytest.mark.parametrize("lang", ["diff", "patch"])
@@ -60,15 +89,22 @@ def test_added_and_removed_lines_are_marked_apart_from_context(chat_for, make_us
 
     box = ask_for(chat, upstream, fenced(lang, PATCH))
 
-    expect(line(box, "addition")).to_have_count(1)
-    expect(line(box, "deletion")).to_have_count(1)
-    expect(line(box, "addition")).to_contain_text("ferries leave at ten")
-    expect(line(box, "deletion")).to_contain_text("ferries leave at nine")
-    expect(line(box, "context")).to_have_count(2)
-    expect(line(box, "hunk")).to_have_text("@@ -1,3 +1,3 @@")
-    expect(line(box, "file")).to_have_count(2)
-    expect(line(box, "addition").locator(".line-prefix")).to_have_text("+")
-    expect(line(box, "deletion").locator(".line-prefix")).to_have_text("-")
+    expect(rows(box)).to_have_count(7)
+    added, removed = row(box, "ferries leave at ten"), row(box, "ferries leave at nine")
+    expect(sign(added)).to_have_text("+")
+    expect(sign(removed)).to_have_text("-")
+    expect(sign(row(box, "first line"))).to_have_text(" ")
+    expect(row(box, "@@")).to_have_text("@@ -1,3 +1,3 @@")
+    context = background(row(box, "first line"))
+    assert background(row(box, "last line")) == context
+    files = {background(line) for line in row(box, "harbour.txt").all()}
+    looks = {
+        "added": background(added),
+        "removed": background(removed),
+        "hunk": background(row(box, "@@")),
+        "file": files.pop() if len(files) == 1 else f"two looks {files}",
+    }
+    assert context not in looks.values(), f"a line looks like context ({context}): {looks}"
 
 
 def test_added_and_removed_lines_are_drawn_in_different_colours(chat_for, make_user, upstream):
@@ -77,8 +113,12 @@ def test_added_and_removed_lines_are_drawn_in_different_colours(chat_for, make_u
     box = ask_for(chat, upstream, fenced("diff", PATCH))
 
     backgrounds = {
-        kind: line(box, kind).first.evaluate("element => getComputedStyle(element).backgroundColor")
-        for kind in ("addition", "deletion", "context")
+        name: background(row(box, text))
+        for name, text in (
+            ("addition", "ferries leave at ten"),
+            ("deletion", "ferries leave at nine"),
+            ("context", "first line"),
+        )
     }
     assert len(set(backgrounds.values())) == 3, f"kinds share a background: {backgrounds}"
 
@@ -89,17 +129,18 @@ def test_the_lines_of_a_hunk_carry_old_and_new_numbers(chat_for, make_user, upst
 
     box = ask_for(chat, upstream, fenced("diff", patch))
 
-    def numbers(kind: str) -> tuple[str | None, str | None]:
-        row = line(box, kind)
+    def numbers(text: str) -> tuple[str | None, str | None]:
+        gutter = row(box, text).locator("[data-line-number]")
+        expect(gutter).to_have_count(2)
         return (
-            row.locator(".old-number").get_attribute("data-line-number"),
-            row.locator(".new-number").get_attribute("data-line-number"),
+            gutter.nth(0).get_attribute("data-line-number"),
+            gutter.nth(1).get_attribute("data-line-number"),
         )
 
-    expect(line(box, "context")).to_have_count(1)
-    assert numbers("context") == ("10", "20")
-    assert numbers("deletion") == ("11", "")
-    assert numbers("addition") == ("", "21")
+    expect(rows(box)).to_have_count(4)
+    assert numbers("kept") == ("10", "20")
+    assert numbers("old text") == ("11", "")
+    assert numbers("new text") == ("", "21")
 
 
 def test_only_the_changed_part_of_a_replaced_line_is_emphasised(chat_for, make_user, upstream):
@@ -107,21 +148,23 @@ def test_only_the_changed_part_of_a_replaced_line_is_emphasised(chat_for, make_u
 
     box = ask_for(chat, upstream, fenced("diff", "-ferries leave at nine\n+ferries leave at ten"))
 
-    expect(line(box, "deletion").locator(".changed")).to_have_text("nine")
-    expect(line(box, "addition").locator(".changed")).to_have_text("ten")
+    expect(rows(box)).to_have_count(2)
+    assert emphasised(row(box, "ferries leave at nine")) == ["nine"]
+    assert emphasised(row(box, "ferries leave at ten")) == ["ten"]
 
 
 def test_edit_shows_the_source_and_done_draws_the_diff_again(chat_for, make_user, upstream):
     chat = chat_for(make_user())
     box = ask_for(chat, upstream, fenced("diff", "-old text\n+new text"))
-    expect(line(box, "addition")).to_have_count(1)
+    expect(rows(box)).to_have_count(2)
 
     box.get_by_role("button", name="Edit", exact=True).click()
 
     expect(box.locator(".cm-line").first).to_have_text("-old text")
-    expect(line(box, "addition")).to_have_count(0)
+    expect(rows(box)).to_have_count(0)
     box.get_by_role("button", name="Done", exact=True).click()
-    expect(line(box, "addition")).to_have_count(1)
+    expect(rows(box)).to_have_count(2)
+    expect(sign(row(box, "new text"))).to_have_text("+")
 
 
 def test_a_fence_in_another_language_is_not_drawn_as_a_diff(chat_for, make_user, upstream):
@@ -130,5 +173,5 @@ def test_a_fence_in_another_language_is_not_drawn_as_a_diff(chat_for, make_user,
     box = ask_for(chat, upstream, fenced("python", "-old text\n+new text"))
 
     expect(box.locator(".cm-line").first).to_have_text("-old text")
-    expect(box.locator(".diff-line")).to_have_count(0)
+    expect(rows(box)).to_have_count(0)
     expect(box.get_by_role("button", name="Edit", exact=True)).to_have_count(0)
