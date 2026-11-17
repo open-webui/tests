@@ -1,8 +1,9 @@
 """Journey: an admin connects a Qdrant or Milvus collection in Integrations and a chat uses it.
 
 The admin adds a knowledge connection in Admin Settings > Integrations, which can only be saved
-after its test query returned points, reloads to see it listed, edits it without retyping the
-API key and switches it off. A chat that attaches the resulting knowledge base with `#` is sent
+after its test query returned points (Qdrant is picked, as a new form starts on OpenAI-compatible
+since 587aba038), reloads to see it listed, edits it without retyping the API key and switches it
+off. A chat that attaches the resulting knowledge base with `#` is sent
 the points Qdrant found; once the connection is switched off the chat is sent none. A local
 service plays Qdrant, so the tests read the query it got and the context the model was sent.
 The reply lists a point whose source is a web address by its title, and its title and Content
@@ -117,6 +118,7 @@ def _source_form(page: Page, title: str) -> Locator:
 
 
 def _fill_new_source(form: Locator, name: str, endpoint: str, collection: str, query: str) -> None:
+    form.get_by_label("Provider").select_option("qdrant")
     form.get_by_label("Name", exact=True).fill(name)
     form.get_by_label("Endpoint").fill(endpoint)
     form.get_by_label("API Key / Token").fill(QDRANT_API_KEY)

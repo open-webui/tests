@@ -105,6 +105,8 @@ def sort_by(browser: Locator, order: str) -> None:
 
 
 def row_menu(browser: Locator, name: str) -> Locator:
+    # a menu just used stays in the page while it fades out, beside the one opened next
+    expect(browser.page.get_by_role("menu")).to_have_count(0)
     entry = row(browser, name)
     entry.hover()
     entry.get_by_label("More", exact=True).click()
