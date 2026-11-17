@@ -696,7 +696,8 @@ def test_a_denied_dispatch_is_asked_again_on_regenerate_and_continue_runs_nothin
 ):
     """In a side chat: red on dev, open-webui/open-webui#34014.
 
-    Fix PR open-webui/open-webui#34064.
+    Fix PR open-webui/open-webui#34064. Red again in a side chat on dev c68b8a632
+    (open-webui/open-webui#34572): Regenerate shows while the approval is still open.
     """
     chat = chat_for(make_user())
     select_model(chat, shouter)

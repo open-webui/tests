@@ -13,6 +13,9 @@ asks the provider to speak the approval status.
 
 Red on dev c4c10aa25 (open-webui/open-webui#33557): a call started in a new chat loses its Voice tab
 and End call button when the first message saves the chat, and a standard call's reply stays blank.
+
+Red on dev c68b8a632 (open-webui/open-webui#34572): the chat marks the reply finished while it waits
+for the approval, so the answer after the approval is never spoken.
 """
 
 from __future__ import annotations
