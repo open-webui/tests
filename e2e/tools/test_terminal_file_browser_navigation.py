@@ -332,9 +332,11 @@ def test_a_right_click_on_the_empty_part_of_the_list_offers_the_folders_actions(
     expect(row(browser, "nets.txt")).to_be_visible()
     expect(row(browser, ".tide-table")).to_have_count(0)
 
-    # with the page's live updates the new file would show by itself in time; Refresh is at once
+    # with the page's live updates the new file would show by itself in time; Refresh is at once.
+    # The menu opens first: a live update landing while it is aimed moves the rows under the click
+    menu = folder_menu(browser)
     (quay / "lamp.txt").write_text("oil\n")
-    folder_menu(browser).get_by_role("button", name="Refresh", exact=True).click()
+    menu.get_by_role("button", name="Refresh", exact=True).click()
     expect(row(browser, "lamp.txt")).to_be_visible()
 
 
