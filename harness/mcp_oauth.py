@@ -19,10 +19,11 @@ answers Open WebUI's own server-side requests the way Cloudflare's bot protectio
 with `cf-mitigated: challenge` and an HTML page that repeats the requested URL, while a browser
 passes as before. With `refresh_outage` set to a status (503, 429) every refresh grant answers
 it without spending the refresh token, as a provider does during an outage or under a rate
-limit. With `large_headers` every answer carries an 11 KB `Content-Security-Policy` header,
-as monday.com's does. `revoke_refresh_tokens()` withdraws the live refresh tokens,
-`forget_clients()` drops every registered client so the authorize answers `invalid_client`, and
-`ProtectedMcp.presented` lists every bearer token the MCP server was shown.
+limit. `refresh_delay` holds each refresh answer back that many seconds after the token was
+spent, so concurrent refreshes overlap. With `large_headers` every answer carries an 11 KB
+`Content-Security-Policy` header, as monday.com's does. `revoke_refresh_tokens()` withdraws the
+live refresh tokens, `forget_clients()` drops every registered client so the authorize answers
+`invalid_client`, and `ProtectedMcp.presented` lists every bearer token the MCP server was shown.
 `register_oauth_mcp()` registers the server as the admin panel does and saves the connection (after
 `preserve(TOOL_SERVERS)`). `scopes` is what the MCP server's protected-resource metadata asks for
 and its tools require (`mcp:tools` by default; `GOOGLE_WORKSPACE_SCOPES` is a list as long as
@@ -129,6 +130,7 @@ class McpAuthorizationServer:
     offline_access_only: bool = False
     bot_challenge: bool = False
     refresh_outage: int | None = None  # the status every refresh grant answers while set
+    refresh_delay: float = 0.0  # seconds a refresh answer waits after spending the token
     large_headers: bool = False
 
     @property
@@ -255,6 +257,7 @@ class McpAuthorizationServer:
                 del self.refresh_tokens[form["refresh_token"]]
             else:
                 holder = None
+        time.sleep(self.refresh_delay)
         if holder is None:
             return 400, {"error": "invalid_grant"}
         return 200, self._issue_tokens(client_id, holder["scope"], holder["resource"])

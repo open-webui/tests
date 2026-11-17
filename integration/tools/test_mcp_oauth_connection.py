@@ -52,12 +52,20 @@ the refresh the same way. Red on dev c15f28649 until the fix (fix branch
 fix/mcp-oauth-large-headers) merges: there the connection check answers 400. Passes on the fix
 branch, and fails on a backend copy of it with only the refresh left at the default limit (the
 tool is gone after the failed refresh).
+
+The concurrent refresh test pins issue open-webui/open-webui#34582: two requests that found the
+token due for a refresh at the same moment (two tabs loading the tools) both spent the same
+refresh token. A provider that rotates refresh tokens refused the second with `invalid_grant`,
+and Open WebUI deleted the user's MCP sign-in, so they had to connect again. Red on dev e1d272252
+until the fix (fix branch fix/mcp-token-refresh-lock) merges: there two refreshes are sent, one
+listing shows the server as not connected and the session is gone. Passes on the fix branch.
 """
 
 from __future__ import annotations
 
 import secrets
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -73,6 +81,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 TOOL_SERVERS = ("/api/v1/configs/tool_servers", "/api/v1/configs/tool_servers")
 PHRASE = "herons wait in the shallows"
 EXPIRING_SOON = 60  # inside the five minutes before expiry in which Open WebUI refreshes
+REFRESH_DELAY = 1.0
 
 
 @pytest.fixture
@@ -284,6 +293,35 @@ def test_listing_a_server_the_user_has_not_connected_logs_no_warning(
     )
     connect(instance, person, server_id)
     assert listed_server(person, server_id)["authenticated"] is True
+
+
+@pytest.mark.regression
+def test_two_requests_due_for_a_refresh_at_once_refresh_once_and_keep_the_connection(
+    instance, admin, upstream, mcp, person, server_id
+):
+    auth_server = mcp.auth_server
+    auth_server.access_token_lifetime = EXPIRING_SOON
+    connect(instance, person, server_id)
+    auth_server.access_token_lifetime = 3600
+    auth_server.refresh_delay = REFRESH_DELAY
+
+    with ThreadPoolExecutor(2) as pool:
+        listings = list(pool.map(lambda _: listed_server(person, server_id), range(2)))
+    auth_server.refresh_delay = 0.0
+
+    refreshes = auth_server.token_grants("refresh_token")
+    assert len(refreshes) == 1, (
+        f"two requests refreshed the same token {len(refreshes)} times; a provider that rotates "
+        "refresh tokens refuses the second (#34582)"
+    )
+    assert [listing["authenticated"] for listing in listings] == [True, True], (
+        f"a request that raced the refresh found the server not connected: {listings} (#34582)"
+    )
+    assert f"mcp:{server_id}" in stored_sessions(admin, person), (
+        "the raced refresh deleted the user's MCP sign-in, so they have to connect again (#34582)"
+    )
+    assert echo_through_chat(person, upstream, server_id) == PHRASE
+    assert mcp.presented[-1] == auth_server.issued[-1]["access_token"]
 
 
 @pytest.mark.regression
