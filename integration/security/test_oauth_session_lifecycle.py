@@ -20,6 +20,10 @@
   neither `expires_in` nor a refresh token got a fabricated one-hour lifetime, after which the
   stored SSO session was dead with no way to renew it. Such a token is now kept as non-expiring;
   with a refresh token the hour still applies.
+- Deleted sessions in the log (#34580): pruning old sessions at `OAUTH_MAX_SESSIONS_PER_USER`,
+  a back-channel logout and an MCP reconnect deleted stored sessions with nothing at warning
+  level, so a person losing their provider token left no trace. Each now logs a warning naming
+  the account and the session.
 
 Twin of unit/security/test_oauth_session_lifecycle.py (and of the client-callback test in
 unit/security/test_oauth_identity.py). The profile picture fetch is in
@@ -30,7 +34,8 @@ Discriminates: passes on dev 93fc3fcb7; in a copy with the matching fix reverted
 callback redirect to the provider while OAuth is off, the sign-in after a key rotation keeps
 failing, the callback files the connection under the account that returned to it and the token
 without an expiry is stored as expiring in an hour. The MCP authorize answers 400 on dev
-de73bb830^, before a0e606bfa.
+de73bb830^, before a0e606bfa. The deletion warnings are missing on dev e1d272252, before the
+fix for #34580.
 """
 
 from __future__ import annotations
@@ -70,6 +75,12 @@ def idp():
 @pytest.fixture
 def sso(instance_with, idp):
     return instance_with(sso_env(idp))
+
+
+@pytest.fixture
+def capped_sso(instance_with, idp):
+    """An SSO instance that keeps at most two sessions per person."""
+    return instance_with({**sso_env(idp), "OAUTH_MAX_SESSIONS_PER_USER": "2"})
 
 
 def error_of(response: httpx.Response) -> str | None:
@@ -302,3 +313,93 @@ def test_an_mcp_callback_returned_by_another_account_stores_nothing(
     assert error_of(replayed), "the refused state stayed replayable"
     assert not has_connection(other, client_key), "the connection was filed under the returner"
     assert not has_connection(initiator, client_key)
+
+
+# ── deleted sessions are logged (#34580) ─────────────────────────────────
+
+
+def session_ids(instance, account_id: str) -> set[str]:
+    """The ids of the OAuth sessions the admin sees stored for an account."""
+    with instance.client() as admin:
+        sessions = admin.get(f"/api/v1/users/{account_id}/oauth/sessions")
+    if sessions.status_code == 400:  # the endpoint's answer for an account without any
+        return set()
+    assert sessions.status_code == 200, sessions.text
+    return {session["id"] for session in sessions.json()}
+
+
+def warned_about(server_log: str, session_id: str) -> bool:
+    return any("WARNING" in line and session_id in line for line in server_log.splitlines())
+
+
+def test_a_session_pruned_at_the_limit_is_logged_as_a_warning(capped_sso, idp):
+    """Narrow: the sign-in over the limit names the session it deletes in a warning."""
+    idp.sign_in_as()
+    first = sign_in(capped_sso)
+    assert first.token, f"the sign-in failed: {first.error}"
+    account_id = session_user(capped_sso, first.token)["id"]
+    assert sign_in(capped_sso).token
+    before = session_ids(capped_sso, account_id)
+    assert len(before) == 2
+    log_offset = capped_sso.log_size()
+
+    assert sign_in(capped_sso).token
+
+    pruned = before - session_ids(capped_sso, account_id)
+    assert len(pruned) == 1, f"the sign-in over the limit pruned {pruned}"
+    server_log = capped_sso.log_since(log_offset)
+    assert warned_about(server_log, pruned.pop()), (
+        f"a session pruned at the limit left no warning in the log: {server_log[-2000:]}"
+    )
+
+
+def test_a_session_ended_by_a_back_channel_logout_is_logged_as_a_warning(sso, idp):
+    """Narrow: a provider logout names every session it deletes in a warning."""
+    person = idp.sign_in_as()
+    signed_in = sign_in(sso)
+    assert signed_in.token, f"the sign-in failed: {signed_in.error}"
+    account_id = session_user(sso, signed_in.token)["id"]
+    (session_id,) = session_ids(sso, account_id)
+    log_offset = sso.log_size()
+
+    answer = httpx.post(
+        f"{sso.base_url}/oauth/backchannel-logout",
+        data={"logout_token": idp.logout_token(person["sub"])},
+        timeout=60.0,
+    )
+
+    assert answer.status_code == 200, answer.text
+    assert session_ids(sso, account_id) == set(), "the logout left the session"
+    server_log = sso.log_since(log_offset)
+    assert warned_about(server_log, session_id), (
+        f"a session ended by the provider's logout left no warning in the log: {server_log[-2000:]}"
+    )
+
+
+def test_an_mcp_session_replaced_on_reconnect_is_logged_as_a_warning(
+    instance, admin, preserve, make_user, idp
+):
+    """Narrow: connecting an MCP server again names the replaced session in a warning."""
+    preserve(TOOL_SERVERS)
+    with admin.client() as client:
+        client_key = connect_mcp_server(client, f"{idp.base_url}/mcp")
+    person = make_user()
+    with browser_for(instance) as browser:
+        callback = browser.get(
+            mcp_callback_url(browser, client_key, person), headers=bearer(person)
+        )
+    assert error_of(callback) is None
+    (replaced_id,) = session_ids(instance, person.id)
+    log_offset = instance.log_size()
+
+    with browser_for(instance) as browser:
+        callback = browser.get(
+            mcp_callback_url(browser, client_key, person), headers=bearer(person)
+        )
+
+    assert error_of(callback) is None
+    assert replaced_id not in session_ids(instance, person.id), "the reconnect kept the old session"
+    server_log = instance.log_since(log_offset)
+    assert warned_about(server_log, replaced_id), (
+        f"an MCP session replaced on reconnect left no warning in the log: {server_log[-2000:]}"
+    )
