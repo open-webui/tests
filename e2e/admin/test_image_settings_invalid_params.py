@@ -10,14 +10,16 @@ every change with "OpenAI API Key is required." even with image generation off. 
 now asked for only while its feature is on: the OpenAI generation key only while Image Generation
 is on, the Gemini edit key only while Image Edit is on.
 
-Since 1d6d80558 (#32985) the image engine settings and the whole image edit section show only while
-Image Generation is on, so saving while it is off asks for no key, and these two tests turn it on to
-reach the engine and edit controls before exercising the per-feature key requirement.
+Since e1d272252 the engine settings are image connections, each set up in a dialog of its own that
+saves it right away, with the parameters under Advanced; a connection takes no key at all when its
+auth is None, so the tab no longer asks for one. The #32835 tests keep the part that still applies:
+with the feature off, a keyless connection does not stop the tab or the connection from saving.
 
 Discriminates: passes on the dev 0d651a816 build; with the check for the two parameter fields
 missing from the save handler the message never shows and Save stays disabled. The #32835 checks
 pass with the fix and fail on dev 63eed95c8 (the generation key error shows while generation is off;
-the empty Gemini edit key blocks the save and the new base URL is not stored).
+the empty Gemini edit key blocks the save and the new base URL is not stored). On the dev
+00bd84944 build they pass against the connection dialog.
 """
 
 from __future__ import annotations
@@ -29,29 +31,30 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.image_engines import (
     IMAGES_CONFIG,
+    image_connection,
+    image_settings,
     save_image_settings,
     serve_automatic1111,
+)
+from utils.image_settings import (
+    PARAMS_PLACEHOLDER,
+    configure_connection,
+    open_image_settings,
+    save_connection,
+    save_tab,
+    show_advanced,
 )
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-PARAMS_PLACEHOLDER = "Enter additional parameters in JSON format"
 OPENAI_PARAMS = {"quality": "hd"}
 AUTOMATIC1111_PARAMS = {"cfg_scale": 7}
 
 
-def open_images_tab(page: Page) -> Locator:
-    page.goto("/admin/settings/images")
-    settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("switch", name="Image Generation")).to_be_visible(timeout=20_000)
-    return settings
-
-
-def save_refused_then_fixed(page: Page, settings: Locator, fixed: dict) -> None:
-    params = settings.get_by_placeholder(PARAMS_PLACEHOLDER)
-    save = settings.get_by_role("button", name="Save", exact=True)
-    # the tab rewrites the field once its settings load, so fill only after that
-    expect(params).to_have_value("{}")
+def save_refused_then_fixed(page: Page, dialog: Locator, fixed: dict) -> None:
+    show_advanced(dialog)
+    params = dialog.get_by_placeholder(PARAMS_PLACEHOLDER)
+    save = dialog.get_by_role("button", name="Save", exact=True)
     params.fill("{quality: hd")
     save.click()
     expect(
@@ -60,34 +63,32 @@ def save_refused_then_fixed(page: Page, settings: Locator, fixed: dict) -> None:
     ).to_be_visible()
     expect(save, "#31381: Save stayed disabled after the error").to_be_enabled()
     params.fill(json.dumps(fixed))
-    save.click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save_connection(page, dialog)
 
 
-def saved_settings(admin) -> dict:
+def saved_connection(admin, connection_id: str) -> dict:
     with admin.client() as client:
-        return client.get(IMAGES_CONFIG[0]).json()
+        connections = client.get(IMAGES_CONFIG[0]).json()["IMAGE_CONNECTIONS"]
+    [connection] = [entry for entry in connections if entry["id"] == connection_id]
+    return connection
 
 
 def test_invalid_openai_parameters_are_reported_and_save_works_once_fixed(
     page_for, make_user, admin, preserve
 ):
     preserve(IMAGES_CONFIG)
+    openai = image_connection(
+        "openai", "openai", "http://127.0.0.1:9/v1", "sk-image-test", models=("gpt-image-1",)
+    )
     with admin.client() as client:
-        save_image_settings(
-            client,
-            ENABLE_IMAGE_GENERATION=True,
-            IMAGE_GENERATION_ENGINE="openai",
-            IMAGE_GENERATION_MODEL="gpt-image-1",
-            IMAGES_OPENAI_API_KEY="sk-image-test",
-            IMAGES_OPENAI_API_BASE_URL="http://127.0.0.1:9/v1",
-        )
+        save_image_settings(client, **image_settings(openai))
     page = page_for(make_user(role="admin"))
-    settings = open_images_tab(page)
+    settings = open_image_settings(page)
+    dialog = configure_connection(page, settings, "openai")
 
-    save_refused_then_fixed(page, settings, OPENAI_PARAMS)
+    save_refused_then_fixed(page, dialog, OPENAI_PARAMS)
 
-    assert saved_settings(admin)["IMAGES_OPENAI_API_PARAMS"] == OPENAI_PARAMS
+    assert saved_connection(admin, "openai")["config"]["params"] == OPENAI_PARAMS
 
 
 def test_invalid_automatic1111_parameters_are_reported_and_save_works_once_fixed(
@@ -97,31 +98,30 @@ def test_invalid_automatic1111_parameters_are_reported_and_save_works_once_fixed
     with admin.client() as client:
         save_image_settings(client, **serve_automatic1111(listener))
     page = page_for(make_user(role="admin"))
-    settings = open_images_tab(page)
+    settings = open_image_settings(page)
+    dialog = configure_connection(page, settings, "automatic1111")
 
-    save_refused_then_fixed(page, settings, AUTOMATIC1111_PARAMS)
+    save_refused_then_fixed(page, dialog, AUTOMATIC1111_PARAMS)
 
-    assert saved_settings(admin)["AUTOMATIC1111_PARAMS"] == AUTOMATIC1111_PARAMS
+    assert saved_connection(admin, "automatic1111")["config"]["params"] == AUTOMATIC1111_PARAMS
 
 
 def test_saving_with_image_generation_off_asks_for_no_key(page_for, make_user, admin, preserve):
     preserve(IMAGES_CONFIG)
+    keyless = image_connection("openai", "openai", "http://127.0.0.1:9/v1", models=("gpt-image-1",))
     with admin.client() as client:
-        save_image_settings(
-            client,
-            ENABLE_IMAGE_GENERATION=False,
-            IMAGE_GENERATION_ENGINE="openai",
-            IMAGE_GENERATION_MODEL="gpt-image-1",
-            IMAGES_OPENAI_API_KEY="",
-        )
+        save_image_settings(client, **image_settings(keyless, generation=False, edit=False))
     page = page_for(make_user(role="admin"))
-    settings = open_images_tab(page)
-    save = settings.get_by_role("button", name="Save", exact=True)
+    settings = open_image_settings(page)
 
-    # the engine settings only show while image generation is on (#32985)
-    params = settings.get_by_placeholder(PARAMS_PLACEHOLDER)
-    expect(params).to_have_count(0)
-    save.click()
+    # the connections only show while image generation or editing is on
+    add = settings.get_by_role("button", name="Add Connection")
+    expect(add).to_have_count(0)
+    with page.expect_response(lambda response: "/images/config/update" in response.url) as saved:
+        settings.get_by_role("button", name="Save", exact=True).click()
+    assert saved.value.ok, (
+        f"#32835: saving with image generation off was refused: {saved.value.text()}"
+    )
     expect(
         page.get_by_text("Settings saved successfully!").first,
         "#32835: saving with image generation off still asked for its API key",
@@ -130,55 +130,29 @@ def test_saving_with_image_generation_off_asks_for_no_key(page_for, make_user, a
     image_generation = settings.get_by_role("switch", name="Image Generation")
     image_generation.click()
     expect(image_generation).to_be_checked()
-    # turning it on reveals the engine settings, and now the missing key is required
-    expect(params).to_be_visible()
-    save.click()
-    expect(page.get_by_text("OpenAI API Key is required.")).to_be_visible()
-    stored = saved_settings(admin)
-    assert stored["ENABLE_IMAGE_GENERATION"] is False, (
-        "image generation was saved on without an API key"
-    )
+    # turning it on reveals the connections
+    expect(add).to_be_visible()
+    expect(settings.get_by_role("button", name="Configure")).to_have_count(1)
 
 
 def test_saving_with_image_edit_off_asks_for_no_edit_key(page_for, make_user, admin, preserve):
     preserve(IMAGES_CONFIG)
+    generator = image_connection(
+        "openai", "openai", "http://127.0.0.1:9/v1", "sk-image-test", models=("gpt-image-1",)
+    )
+    editor = image_connection(
+        "gemini", "gemini", "http://127.0.0.1:9/v1beta", models=("gemini-2.5-flash-image",)
+    )
     with admin.client() as client:
-        save_image_settings(
-            client,
-            ENABLE_IMAGE_GENERATION=True,
-            IMAGE_GENERATION_ENGINE="openai",
-            IMAGE_GENERATION_MODEL="gpt-image-1",
-            IMAGES_OPENAI_API_KEY="sk-image-test",
-            IMAGES_OPENAI_API_BASE_URL="http://127.0.0.1:9/v1",
-            ENABLE_IMAGE_EDIT=False,
-            IMAGE_EDIT_ENGINE="gemini",
-            IMAGES_EDIT_GEMINI_API_KEY="",
-            IMAGES_EDIT_GEMINI_API_BASE_URL="http://127.0.0.1:9/v1beta",
-        )
+        save_image_settings(client, **image_settings(generator, editor, edit=False))
     page = page_for(make_user(role="admin"))
-    settings = open_images_tab(page)
-    save = settings.get_by_role("button", name="Save", exact=True)
+    settings = open_image_settings(page)
+    dialog = configure_connection(page, settings, "gemini")
 
-    # image generation is on, so the engine and Gemini edit fields show; the edit ones come last
-    edit_base_url = settings.get_by_placeholder("API Base URL").last
-    edit_base_url.fill("http://127.0.0.1:9/v1beta/edited")
-    save.click()
-    expect(
-        page.get_by_text("Settings saved successfully!").first,
-        "#32835: saving with Image Edit off still asked for the Gemini edit key",
-    ).to_be_visible()
-    stored = saved_settings(admin)
-    assert stored["IMAGES_EDIT_GEMINI_API_BASE_URL"] == "http://127.0.0.1:9/v1beta/edited", (
-        f"the edit base URL was not saved: {stored['IMAGES_EDIT_GEMINI_API_BASE_URL']}"
+    dialog.get_by_label("URL", exact=True).fill("http://127.0.0.1:9/v1beta/edited")
+    save_connection(page, dialog)
+    stored = saved_connection(admin, "gemini")
+    assert stored["url"] == "http://127.0.0.1:9/v1beta/edited", (
+        f"#32835: the keyless Gemini edit connection was not saved: {stored}"
     )
-
-    image_edit = settings.get_by_role("switch", name="Image Edit")
-    image_edit.click()
-    expect(image_edit).to_be_checked()
-    save.click()
-    edit_key = settings.get_by_placeholder("API Key").last
-    assert edit_key.evaluate("field => field.validity.valueMissing"), (
-        "Image Edit on with Gemini and no key was not refused"
-    )
-    stored = saved_settings(admin)
-    assert stored["ENABLE_IMAGE_EDIT"] is False, "image editing was saved on without a Gemini key"
+    save_tab(page, settings)

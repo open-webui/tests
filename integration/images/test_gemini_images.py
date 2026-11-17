@@ -22,6 +22,7 @@ from harness.image_engines import (
     IMAGEN_MODEL,
     IMAGES_CONFIG,
     PNG_BASE64,
+    changed_connection,
     gemini_calls,
     save_image_settings,
     serve_gemini,
@@ -38,13 +39,14 @@ SOURCE_PNG_BASE64 = (
 
 @pytest.fixture
 def gemini(admin, preserve, listener):
-    """`gemini(**overrides)` points the admin's image settings at the stand-in."""
+    """`gemini(**imagen)` points the admin's image settings at the stand-in, with `imagen`
+    changes to the connection that generates."""
     preserve(IMAGES_CONFIG)
     settings = serve_gemini(listener)
 
-    def configure(**overrides):
+    def configure(**imagen):
         with admin.client() as client:
-            save_image_settings(client, **{**settings, **overrides})
+            save_image_settings(client, **changed_connection(settings, "imagen", **imagen))
 
     return configure
 
@@ -75,9 +77,7 @@ def test_imagen_predict_generates_a_stored_picture(gemini, listener, make_user):
 
 
 def test_generate_content_generates_a_stored_picture(gemini, listener, make_user):
-    gemini(
-        IMAGE_GENERATION_MODEL=GEMINI_IMAGE_MODEL, IMAGES_GEMINI_ENDPOINT_METHOD="generateContent"
-    )
+    gemini(models=(GEMINI_IMAGE_MODEL,), endpoint_method="generateContent")
     painter = make_user()
 
     with painter.client() as client:
@@ -116,7 +116,7 @@ def test_an_edit_sends_the_picture_and_stores_the_result(gemini, listener, make_
 
 
 def test_a_key_gemini_refuses_is_a_failed_generation(gemini, listener, make_user):
-    gemini(IMAGES_GEMINI_API_KEY="revoked-key")
+    gemini(key="revoked-key")
 
     with make_user().client() as client:
         generated = client.post("/api/v1/images/generations", json={"prompt": "a lighthouse"})

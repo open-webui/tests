@@ -1,17 +1,18 @@
 """Journey: each image engine an admin can pick in Admin Settings > Images, set up there and used.
 
-The admin sets an engine up in the Images tab against a local stand-in, then a user turns on
-Image in the chat and the model calls `generate_image` or `edit_image`. Automatic1111: the
-checkpoint picked from the engine's own list is switched to on save, and the size, steps, auth
-string and extra parameters reach `txt2img`. ComfyUI: an uploaded workflow and its node mapping
-put the prompt, checkpoint, size, steps and a seed into the queued graph, and the picture is
-still in the chat after a reload. Gemini: the generateContent method picked in the tab is the
-endpoint called. OpenAI: the size, API version and extra parameters reach the request. Editing:
-a picture the user attaches is what the edit engine receives (OpenAI set up in the tab's Edit
-Image section with its own model and size, Gemini and ComfyUI with its image node), and the
-edited picture shows in the reply, also after a reload. The Image switch, its permission and the
-OpenAI engine's own setup are in e2e/chat/test_image_generation.py; Image Prompt Generation only
-runs with legacy function calling and is left out.
+The admin adds an image connection for an engine in the Images tab against a local stand-in and
+makes it public (a new connection is the admins' alone), then a user turns on Image in the chat and
+the model calls `generate_image` or `edit_image`. Automatic1111: the checkpoint added as the
+connection's model is switched to for the drawing, and the size, steps, auth string and extra
+parameters reach `txt2img`. ComfyUI: an uploaded workflow and its node mapping put the prompt,
+checkpoint, size, steps and a seed into the queued graph, and the picture is still in the chat after
+a reload. Gemini: the generateContent method picked in the tab is the endpoint called. OpenAI: the
+size, API version and extra parameters reach the request. Editing: a picture the user attaches is
+what the edit engine receives (an OpenAI connection added in the tab for editing only, with its own
+model and edit size, Gemini and ComfyUI with its image node), and the edited picture shows in the
+reply, also after a reload. The Image switch, its permission and the OpenAI engine's own setup are
+in e2e/chat/test_image_generation.py; Image Prompt Generation only runs with legacy function calling
+and is left out.
 
 Discriminates: passes on the dev ebc6add67 build. In a backend copy whose `_apply_workflow_nodes`
 skips the width and height nodes the ComfyUI test fails, whose Automatic1111 branch drops
@@ -19,7 +20,8 @@ skips the width and height nodes the ComfyUI test fails, whose Automatic1111 bra
 test fails, whose `load_url_image` hands the engines the file id in place of the picture the
 three edit tests fail, and whose OpenAI generation leaves out `IMAGES_OPENAI_API_PARAMS` the
 OpenAI test fails. In a frontend build whose Images tab saves no node ids for the width node the
-ComfyUI test fails too.
+ComfyUI test fails too. Moved to the connection dialog of e1d272252, passes on the dev 00bd84944
+build.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ from harness.image_engines import (
     PNG_BASE64,
     checkpoint_switches,
     gemini_calls,
+    image_settings,
     save_image_settings,
     serve_automatic1111,
     serve_gemini,
@@ -65,6 +68,18 @@ from utils.chat_ui import (
     send,
     turn_on_integration,
 )
+from utils.image_settings import (
+    PARAMS_PLACEHOLDER,
+    add_connection,
+    add_model_id,
+    configure_connection,
+    open_image_settings,
+    save_connection,
+    save_tab,
+    show_advanced,
+    verify_connection,
+)
+from utils.tool_servers import make_public
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -88,8 +103,11 @@ TEXT_TO_IMAGE = {
 
 
 @pytest.fixture
-def images_restored(preserve) -> None:
+def images_restored(preserve, admin) -> None:
+    """Image settings restored afterwards, starting with no connection and both features off."""
     preserve(IMAGES_CONFIG)
+    with admin.client() as client:
+        save_image_settings(client, **image_settings(generation=False, edit=False))
 
 
 @pytest.fixture
@@ -99,30 +117,11 @@ def comfyui() -> FakeComfyUI:
         yield fake
 
 
-def image_settings(page: Page) -> Locator:
-    """Admin Settings > Images, freshly loaded from the server."""
-    page.goto("/admin/settings/images")
-    settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("switch", name="Image Generation")).to_be_visible()
-    return settings
-
-
 def switch_on(settings: Locator, name: str) -> None:
     switch = settings.get_by_role("switch", name=name, exact=True)
     if switch.get_attribute("aria-checked") != "true":
         switch.click()
     expect(switch).to_be_checked()
-
-
-def save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
-def pick_engine(settings: Locator, engine: str, editing: bool = False) -> None:
-    """Pick `engine` in Create Image's engine select, or in Edit Image's."""
-    name = "Image Edit Engine" if editing else "Image Generation Engine"
-    settings.get_by_role("combobox", name=name).select_option(label=engine)
 
 
 def open_image_chat(page: Page) -> None:
@@ -221,30 +220,29 @@ def test_automatic1111_set_up_in_the_tab_draws_on_its_checkpoint_size_and_steps(
         json_answer([{"title": name, "model_name": name} for name in ("sketch", CHECKPOINT)]),
     )
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     switch_on(settings, "Image Generation")
-    pick_engine(settings, "Automatic1111")
-    settings.get_by_placeholder("Enter URL (e.g. http://127.0.0.1:7860/)").fill(listener.base_url)
-    settings.get_by_role("button", name="verify connection").click()
-    expect(admin_page.get_by_text("Server connection verified")).to_be_visible()
-    settings.get_by_placeholder("Enter api auth string (e.g. username:password)").fill(
+    dialog = add_connection(admin_page, settings, "AUTOMATIC1111")
+    dialog.get_by_label("URL", exact=True).fill(listener.base_url)
+    verify_connection(admin_page, dialog)
+    dialog.get_by_placeholder("Enter api auth string (e.g. username:password)").fill(
         "painter:easel"
     )
-    settings.get_by_placeholder("Enter additional parameters in JSON format").fill(
-        '{"cfg_scale": 5}'
-    )
-    model_box = settings.get_by_role("combobox", name="Model", exact=True).first
-    model_box.fill("sketch")
-    settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("640x384")
-    settings.get_by_placeholder("Enter Number of Steps (e.g. 50)").fill("12")
-    save(admin_page, settings)
+    add_model_id(dialog, "sketch")
+    show_advanced(dialog)
+    dialog.get_by_placeholder(PARAMS_PLACEHOLDER).fill('{"cfg_scale": 5}')
+    dialog.get_by_label("Image Size", exact=True).fill("640x384")
+    dialog.get_by_label("Steps", exact=True).fill("12")
+    make_public(admin_page, dialog)
+    save_connection(admin_page, dialog)
+    save_tab(admin_page, settings)
 
-    assert {"sd_model_checkpoint": "sketch"} in checkpoint_switches(listener)
     page = page_for(make_user())
     open_image_chat(page)
     draw(page, upstream, "a lighthouse at dusk")
 
     expect_stored_picture(page)
+    assert {"sd_model_checkpoint": "sketch"} in checkpoint_switches(listener)
     [generation] = listener.requests_to("/sdapi/v1/txt2img")
     sent = generation.json()
     assert sent["prompt"] == "a lighthouse at dusk", sent
@@ -258,16 +256,14 @@ def test_a_comfyui_workflow_and_its_node_mapping_from_the_tab_shape_the_queued_g
     page_for, make_user, images_restored, comfyui, upstream
 ):
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     switch_on(settings, "Image Generation")
-    pick_engine(settings, "ComfyUI")
-    settings.get_by_placeholder("Enter URL (e.g. http://127.0.0.1:7860/)").first.fill(
-        comfyui.base_url
-    )
-    settings.get_by_role("button", name="verify connection").first.click()
-    expect(admin_page.get_by_text("Server connection verified")).to_be_visible()
+    dialog = add_connection(admin_page, settings, "ComfyUI")
+    dialog.get_by_label("URL", exact=True).fill(comfyui.base_url)
+    verify_connection(admin_page, dialog)
     with admin_page.expect_file_chooser() as chooser:
-        settings.get_by_role("button", name="Click here to upload a workflow.json file.").click()
+        upload = dialog.get_by_role("button", name="Click here to upload a workflow.json file.")
+        upload.first.click()
     chooser.value.set_files(
         {
             "name": "workflow.json",
@@ -277,11 +273,14 @@ def test_a_comfyui_workflow_and_its_node_mapping_from_the_tab_shape_the_queued_g
     )
     mapping = {"prompt*": "6", "model": "4", "width": "5", "height": "5", "steps": "3", "seed": "3"}
     for node_type, node_ids in mapping.items():
-        node_ids_box(settings, node_type).fill(node_ids)
-    settings.get_by_role("combobox", name="Model", exact=True).first.fill(CHECKPOINTS[1])
-    settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("768x320")
-    settings.get_by_placeholder("Enter Number of Steps (e.g. 50)").fill("9")
-    save(admin_page, settings)
+        node_ids_box(dialog, node_type).fill(node_ids)
+    add_model_id(dialog, CHECKPOINTS[1])
+    show_advanced(dialog)
+    dialog.get_by_label("Image Size", exact=True).fill("768x320")
+    dialog.get_by_label("Steps", exact=True).fill("9")
+    make_public(admin_page, dialog)
+    save_connection(admin_page, dialog)
+    save_tab(admin_page, settings)
 
     person = make_user()
     page = page_for(person)
@@ -304,10 +303,12 @@ def test_a_comfyui_workflow_and_its_node_mapping_from_the_tab_shape_the_queued_g
     expect(reply_image(page)).to_have_attribute("src", source)
 
 
-def node_ids_box(settings: Locator, node_type: str) -> Locator:
+def node_ids_box(dialog: Locator, node_type: str) -> Locator:
     """The Node Ids box in the workflow node mapping row labelled `node_type`."""
-    label = settings.get_by_text(node_type, exact=True).first
-    return label.locator("xpath=../..").get_by_placeholder("Node Ids")
+    label = dialog.get_by_text(node_type, exact=True).first
+    return label.locator(
+        "xpath=ancestor::div[.//input[@placeholder='Node Ids']][1]"
+    ).get_by_placeholder("Node Ids")
 
 
 def test_the_gemini_endpoint_method_picked_in_the_tab_is_the_one_called(
@@ -315,14 +316,17 @@ def test_the_gemini_endpoint_method_picked_in_the_tab_is_the_one_called(
 ):
     serve_gemini(listener)
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     switch_on(settings, "Image Generation")
-    pick_engine(settings, "Gemini")
-    settings.get_by_role("combobox", name="Model", exact=True).first.fill(GEMINI_IMAGE_MODEL)
-    settings.get_by_role("textbox", name="Base URL", exact=True).first.fill(listener.base_url)
-    settings.get_by_role("textbox", name="API Key").first.fill(GEMINI_API_KEY)
-    settings.get_by_role("combobox", name="Gemini Endpoint Method").select_option("generateContent")
-    save(admin_page, settings)
+    dialog = add_connection(admin_page, settings, "Gemini")
+    dialog.get_by_label("URL", exact=True).fill(listener.base_url)
+    dialog.get_by_placeholder("API Key").fill(GEMINI_API_KEY)
+    add_model_id(dialog, GEMINI_IMAGE_MODEL)
+    show_advanced(dialog)
+    dialog.get_by_label("Endpoint Method").select_option("generateContent")
+    make_public(admin_page, dialog)
+    save_connection(admin_page, dialog)
+    save_tab(admin_page, settings)
 
     page = page_for(make_user())
     open_image_chat(page)
@@ -340,14 +344,15 @@ def test_the_openai_size_version_and_extra_parameters_reach_the_engine(
     with admin.client() as client:
         save_image_settings(client, **serve_openai_images(listener))
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
-    settings.get_by_role("combobox", name="Model", exact=True).first.fill("gpt-image-1")
-    settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").first.fill("1024x1536")
-    settings.get_by_role("textbox", name="API Version").first.fill("2025-04-01")
-    settings.get_by_placeholder("Enter additional parameters in JSON format").fill(
-        '{"quality": "high"}'
-    )
-    save(admin_page, settings)
+    settings = open_image_settings(admin_page)
+    dialog = configure_connection(admin_page, settings, "openai")
+    dialog.get_by_role("button", name="Remove dall-e-2 from list.").click()
+    add_model_id(dialog, "gpt-image-1")
+    show_advanced(dialog)
+    dialog.get_by_label("Image Size", exact=True).fill("1024x1536")
+    dialog.get_by_label("API Version").fill("2025-04-01")
+    dialog.get_by_placeholder(PARAMS_PLACEHOLDER).fill('{"quality": "high"}')
+    save_connection(admin_page, dialog)
 
     page = page_for(make_user())
     open_image_chat(page)
@@ -371,16 +376,22 @@ def test_an_attached_picture_is_edited_by_the_openai_edit_engine_set_up_in_the_t
         "POST", "/images/edits", json_answer({"data": [{"b64_json": EDITED_PNG_BASE64}]})
     )
     with admin.client() as client:
-        save_image_settings(client, **serve_automatic1111(listener), ENABLE_IMAGE_EDIT=False)
+        save_image_settings(client, **serve_automatic1111(listener))
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     switch_on(settings, "Image Edit")
-    pick_engine(settings, "Default (Open AI)", editing=True)
-    settings.get_by_role("combobox", name="Model", exact=True).last.fill("gpt-image-1")
-    settings.get_by_placeholder("Enter Image Size (e.g. 512x512)").last.fill("256x256")
-    settings.get_by_role("textbox", name="API Base URL").last.fill(listener.base_url)
-    settings.get_by_role("textbox", name="API Key").last.fill("sk-edits")
-    save(admin_page, settings)
+    dialog = add_connection(admin_page, settings, "OpenAI compatible")
+    generate = dialog.get_by_role("button", name="Generate", exact=True)
+    generate.click()
+    expect(generate).to_have_attribute("aria-pressed", "false")
+    dialog.get_by_label("URL", exact=True).fill(listener.base_url)
+    dialog.get_by_placeholder("API Key").fill("sk-edits")
+    add_model_id(dialog, "gpt-image-1")
+    show_advanced(dialog)
+    dialog.get_by_label("Edit Image Size").fill("256x256")
+    make_public(admin_page, dialog)
+    save_connection(admin_page, dialog)
+    save_tab(admin_page, settings)
 
     person = make_user()
     page = page_for(person)

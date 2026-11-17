@@ -25,7 +25,7 @@ import pytest
 
 from harness.actors import admin_of, create_user
 from harness.comfyui import PNG, FakeComfyUI, comfyui_settings, serving, workflow
-from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
+from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, openai_settings, save_image_settings
 from harness.listener import json_answer, listening
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -51,23 +51,6 @@ def fetching(instance_with):
     return instance_with(LOCAL_FETCH_BLOCKING_ONE_ADDRESS)
 
 
-def _engine_settings(engine_url: str) -> dict:
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "ENABLE_IMAGE_PROMPT_GENERATION": False,
-        "IMAGE_GENERATION_ENGINE": "openai",
-        "IMAGE_GENERATION_MODEL": "dall-e-2",
-        "IMAGE_SIZE": "512x512",
-        "IMAGES_OPENAI_API_BASE_URL": engine_url,
-        "IMAGES_OPENAI_API_KEY": ENGINE_KEY,
-        "ENABLE_IMAGE_EDIT": True,
-        "IMAGE_EDIT_ENGINE": "openai",
-        "IMAGE_EDIT_MODEL": "dall-e-2",
-        "IMAGES_EDIT_OPENAI_API_BASE_URL": engine_url,
-        "IMAGES_EDIT_OPENAI_API_KEY": ENGINE_KEY,
-    }
-
-
 def _engine_answering_with_link(instance, preserve, listener, link: str):
     """Point the instance's image engine at `listener`, which answers every request with `link`."""
     preserve(IMAGES_CONFIG, on=instance)
@@ -75,7 +58,7 @@ def _engine_answering_with_link(instance, preserve, listener, link: str):
     listener.route("POST", "/images/generations", answer)
     listener.route("POST", "/images/edits", answer)
     with admin_of(instance).client() as client:
-        save_image_settings(client, **_engine_settings(listener.base_url))
+        save_image_settings(client, **openai_settings(listener.base_url, ENGINE_KEY))
 
 
 def _request_image(actor, action: str):

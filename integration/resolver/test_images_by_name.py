@@ -1,15 +1,15 @@
 """Journey: image engines reached by host name, with the threaded and the c-ares resolver.
 
-`AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER` decides which resolver the shared aiohttp pool and the
-SSRF-safe connector use, and every call to an image engine an admin can point at a local service
-goes through one of them. Each test drives one engine by a host name (`localhost`, a hosts-file
-name for `::1` alone and a hosts-file name for another local address; ComfyUI answers on
-`localhost` only, where the fake binds one address) and expects the same outcome under both
-resolvers: Automatic1111's checkpoint switch, model list, connection check and generation, OpenAI's
-generation (a picture sent inline and one fetched from a link on the engine) and edit, Gemini's two
-generation methods and edit, ComfyUI's connection check, model list, generation and edit, and an
-edit of a picture given by link. An engine whose name does not resolve fails each of those calls
-with the same status and message, the resolver's own wording aside.
+`AIOHTTP_CLIENT_ASYNC_DNS_RESOLVER` decides which resolver the shared aiohttp pool and the SSRF-safe
+connector use, and every call to an image engine an admin can point at a local service goes through
+one of them. Each test drives one engine by a host name (`localhost`, a hosts-file name for `::1`
+alone and a hosts-file name for another local address; ComfyUI answers on `localhost` only, where
+the fake binds one address) and expects the same outcome under both resolvers: Automatic1111's
+checkpoint switch, connection check (which lists its models) and generation, OpenAI's generation (a
+picture sent inline and one fetched from a link on the engine) and edit, Gemini's two generation
+methods and edit, ComfyUI's connection check, generation and edit, and an edit of a picture given by
+link. An engine whose name does not resolve fails each of those calls with the same status and
+message, the resolver's own wording aside.
 
 Discriminates: on dev 176d31d1d, a backend copy whose `env.py` installs a resolver that fails every
 lookup when the flag is on turns every c-ares run of a by-name test red and leaves every threaded
@@ -26,6 +26,7 @@ import base64
 
 import pytest
 
+from harness import image_engines
 from harness.actors import admin_of
 from harness.comfyui import CHECKPOINTS, PNG, FakeComfyUI, comfyui_settings, serving, workflow
 from harness.host_names import (
@@ -39,13 +40,15 @@ from harness.host_names import (
 )
 from harness.image_engines import (
     CHECKPOINT,
-    GEMINI_API_KEY,
     GEMINI_IMAGE_MODEL,
     IMAGEN_MODEL,
     IMAGES_CONFIG,
     PNG_BASE64,
+    changed_connection,
     checkpoint_switches,
     gemini_calls,
+    gemini_settings,
+    image_connection,
     save_image_settings,
     serve_automatic1111,
     serve_gemini,
@@ -60,15 +63,10 @@ SOURCE_DATA_URL = f"data:image/png;base64,{PNG_BASE64}"
 OTHER_CHECKPOINT = "switched.safetensors"
 UNRESOLVABLE_URL = f"http://{UNRESOLVABLE}:8000"
 NO_DETAIL = "Something went wrong :/"
-INVALID_URL = "The URL you provided is invalid. Please double-check and try again."
+VERIFY_FAILURE = "[ERROR: Failed to connect to the image generation engine]"
 ENGINES = ["automatic1111", "openai", "gemini", "comfyui"]
 # what the admin reads when the engine's name does not resolve, the same under both resolvers
-GENERATION_FAILURES = {
-    "automatic1111": "[ERROR: Failed to connect to the image generation engine]",
-    "openai": NO_DETAIL,
-    "gemini": NO_DETAIL,
-    "comfyui": NO_DETAIL,
-}
+GENERATION_FAILURES = {engine: NO_DETAIL for engine in ENGINES}
 
 
 @pytest.fixture
@@ -95,46 +93,24 @@ def image_settings(fetching_instance, fetching_admin, preserve):
 
 
 def _automatic1111_settings(base_url: str) -> dict:
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "IMAGE_GENERATION_ENGINE": "automatic1111",
-        "AUTOMATIC1111_BASE_URL": base_url,
-        "IMAGE_GENERATION_MODEL": CHECKPOINT,
-        "IMAGE_SIZE": "512x512",
-        "IMAGE_STEPS": 20,
-    }
+    """Automatic1111 offering its loaded checkpoint and one more to switch to."""
+    settings = image_engines.automatic1111_settings(base_url)
+    return changed_connection(settings, "automatic1111", models=(CHECKPOINT, OTHER_CHECKPOINT))
 
 
 def _openai_settings(base_url: str) -> dict:
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "IMAGE_GENERATION_ENGINE": "openai",
-        "IMAGES_OPENAI_API_BASE_URL": base_url,
-        "IMAGES_OPENAI_API_KEY": "sk-images",
-        "IMAGE_GENERATION_MODEL": "dall-e-2",
-        "IMAGE_SIZE": "512x512",
-        "ENABLE_IMAGE_EDIT": True,
-        "IMAGE_EDIT_ENGINE": "openai",
-        "IMAGE_EDIT_MODEL": "gpt-image-1",
-        "IMAGES_EDIT_OPENAI_API_BASE_URL": base_url,
-        "IMAGES_EDIT_OPENAI_API_KEY": "sk-images",
-    }
+    generator = image_connection(
+        "openai", "openai", base_url, "sk-images", models=("dall-e-2",), edits=False, size="512x512"
+    )
+    editor = image_connection(
+        "openai-edit", "openai", base_url, "sk-images", models=("gpt-image-1",), generates=False
+    )
+    return image_engines.image_settings(generator, editor)
 
 
-def _gemini_settings(base_url: str) -> dict:
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "IMAGE_GENERATION_ENGINE": "gemini",
-        "IMAGE_GENERATION_MODEL": IMAGEN_MODEL,
-        "IMAGES_GEMINI_API_BASE_URL": base_url,
-        "IMAGES_GEMINI_API_KEY": GEMINI_API_KEY,
-        "IMAGES_GEMINI_ENDPOINT_METHOD": "predict",
-        "ENABLE_IMAGE_EDIT": True,
-        "IMAGE_EDIT_ENGINE": "gemini",
-        "IMAGE_EDIT_MODEL": GEMINI_IMAGE_MODEL,
-        "IMAGES_EDIT_GEMINI_API_BASE_URL": base_url,
-        "IMAGES_EDIT_GEMINI_API_KEY": GEMINI_API_KEY,
-    }
+def _verify(client, engine: str, url: str):
+    """The admin's connection check, which also lists the engine's models."""
+    return client.post("/api/v1/images/connections/verify", json={"type": engine, "url": url})
 
 
 def _serve_openai(listener) -> dict:
@@ -168,11 +144,7 @@ def test_automatic1111_answers_every_call_by_name(
             json_answer([{"title": CHECKPOINT, "model_name": "configured"}]),
         )
         image_settings(**_automatic1111_settings(listener.base_url))
-        verified = client.post(
-            "/api/v1/images/verify",
-            json={"engine": "automatic1111", "url": listener.base_url, "key": ""},
-        )
-        models = client.get("/api/v1/images/models")
+        verified = _verify(client, "automatic1111", listener.base_url)
         generated = client.post(
             "/api/v1/images/generations", json={"prompt": "a lighthouse", "model": OTHER_CHECKPOINT}
         )
@@ -180,8 +152,7 @@ def test_automatic1111_answers_every_call_by_name(
         stored = _stored(client, images[0]) if generated.status_code == 200 else None
 
     assert verified.status_code == 200, verified.text
-    assert models.status_code == 200, models.text
-    assert models.json() == [{"id": CHECKPOINT, "name": "configured"}]
+    assert verified.json() == [{"id": CHECKPOINT, "name": "configured"}]
     assert generated.status_code == 200, generated.text
     assert stored == GENERATED_PNG
     assert [switch["sd_model_checkpoint"] for switch in checkpoint_switches(listener)] == [
@@ -211,13 +182,11 @@ def test_openai_generates_and_edits_by_name(resolver, name_form, image_settings,
 @pytest.mark.parametrize("name_form", name_forms())
 def test_gemini_generates_and_edits_by_name(resolver, name_form, image_settings, fetching_admin):
     with serving_by_name(name_form) as listener, fetching_admin.client() as client:
-        serve_gemini(listener)
-        image_settings(**_gemini_settings(listener.base_url))
+        settings = serve_gemini(listener)
+        image_settings(**settings)
         predicted = client.post("/api/v1/images/generations", json={"prompt": "a lighthouse"})
-        image_settings(
-            IMAGE_GENERATION_MODEL=GEMINI_IMAGE_MODEL,
-            IMAGES_GEMINI_ENDPOINT_METHOD="generateContent",
-        )
+        generate_content = {"models": (GEMINI_IMAGE_MODEL,), "endpoint_method": "generateContent"}
+        image_settings(**changed_connection(settings, "imagen", **generate_content))
         generated = client.post("/api/v1/images/generations", json={"prompt": "a red kite"})
         edited = client.post(
             "/api/v1/images/edit", json={"image": SOURCE_DATA_URL, "prompt": "make it blue"}
@@ -237,10 +206,7 @@ def test_comfyui_answers_every_call_by_name(resolver, image_settings, fetching_a
     with serving(fake) as base_url, fetching_admin.client() as client:
         named = by_name(base_url, "localhost")
         image_settings(**comfyui_settings(named, workflow()))
-        verified = client.post(
-            "/api/v1/images/verify", json={"engine": "comfyui", "url": named, "key": ""}
-        )
-        models = client.get("/api/v1/images/models")
+        verified = _verify(client, "comfyui", named)
         generated = client.post("/api/v1/images/generations", json={"prompt": "a lighthouse"})
         edited = client.post(
             "/api/v1/images/edit", json={"image": SOURCE_DATA_URL, "prompt": "add fog"}
@@ -248,8 +214,7 @@ def test_comfyui_answers_every_call_by_name(resolver, image_settings, fetching_a
         pictures = [_stored(client, image) for image in [*generated.json(), *edited.json()]]
 
     assert verified.status_code == 200, verified.text
-    assert models.status_code == 200, models.text
-    assert [model["id"] for model in models.json()] == CHECKPOINTS
+    assert [model["id"] for model in verified.json()] == CHECKPOINTS
     assert generated.status_code == 200, generated.text
     assert edited.status_code == 200, edited.text
     assert pictures == [PNG, PNG]
@@ -261,9 +226,9 @@ def test_a_picture_given_by_link_is_fetched_and_edited_by_name(
     resolver, name_form, image_settings, fetching_admin
 ):
     with serving_by_name(name_form) as listener, fetching_admin.client() as client:
-        serve_gemini(listener)
+        settings = serve_gemini(listener)
         listener.route("GET", "/source.png", (200, {"Content-Type": "image/png"}, GENERATED_PNG))
-        image_settings(**_gemini_settings(listener.base_url))
+        image_settings(**settings)
         edited = client.post(
             "/api/v1/images/edit",
             json={"image": f"{listener.base_url}/source.png", "prompt": "make it blue"},
@@ -281,7 +246,7 @@ def _unresolvable_engine(engine: str) -> dict:
     build = {
         "automatic1111": _automatic1111_settings,
         "openai": _openai_settings,
-        "gemini": _gemini_settings,
+        "gemini": gemini_settings,
     }[engine]
     return build(UNRESOLVABLE_URL)
 
@@ -322,30 +287,19 @@ def test_an_unresolvable_engine_fails_an_edit_the_same_way(
 
 @pytest.mark.usefixtures("refuses_unknown_names")
 @pytest.mark.parametrize("engine", ["automatic1111", "comfyui"])
-def test_an_unresolvable_engine_fails_verification_and_listing_the_same_way(
-    resolver, engine, image_settings, fetching_admin
-):
-    settings = _unresolvable_engine(engine)
+def test_an_unresolvable_engine_fails_verification_the_same_way(resolver, engine, fetching_admin):
     with fetching_admin.client() as client:
-        image_settings(**settings)
-        verified, verify_seconds = timed(
-            client.post,
-            "/api/v1/images/verify",
-            json={"engine": engine, "url": UNRESOLVABLE_URL, "key": ""},
-        )
-        models, model_seconds = timed(client.get, "/api/v1/images/models")
+        verified, seconds = timed(_verify, client, engine, UNRESOLVABLE_URL)
 
     assert verified.status_code == 400, verified.text
-    assert verified.json()["detail"] == INVALID_URL
-    assert models.status_code == 400, models.text
-    assert models.json()["detail"] == "[ERROR: Failed to retrieve image generation models]"
-    assert max(verify_seconds, model_seconds) < FAILS_WITHIN, "the lookup failed slowly"
+    assert verified.json()["detail"] == VERIFY_FAILURE
+    assert seconds < FAILS_WITHIN, f"the lookup failed only after {seconds:.1f}s"
 
 
 @pytest.mark.usefixtures("refuses_unknown_names")
 def test_an_unresolvable_link_fails_an_edit_the_same_way(resolver, image_settings, fetching_admin):
     with fetching_admin.client() as client:
-        image_settings(**_gemini_settings(UNRESOLVABLE_URL))
+        image_settings(**gemini_settings(UNRESOLVABLE_URL))
         edited, seconds = timed(
             client.post,
             "/api/v1/images/edit",

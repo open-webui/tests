@@ -224,7 +224,9 @@ def set_tool_approval_mode(chat: Chat, mode: str) -> None:
 
 def turn_on_integration(chat: Chat, name: str) -> None:
     """Switch `name` on for the next message from the chat's Integrations menu."""
-    switch = open_integrations_menu(chat).get_by_role("menuitemcheckbox", name=name, exact=True)
+    # with several image models the Image entry also names the picked one ("Image Default")
+    entry_name = re.compile(rf"^{re.escape(name)}(\s|$)")
+    switch = open_integrations_menu(chat).get_by_role("menuitemcheckbox", name=entry_name)
     switch.click()
     expect(switch).to_have_attribute("aria-checked", "true")
     close_menu(chat)

@@ -16,7 +16,7 @@ from typing import Iterator
 
 import httpx
 
-from harness.image_engines import PNG_BASE64
+from harness.image_engines import PNG_BASE64, openai_settings
 from harness.listener import Listener, json_answer
 from harness.upstream import MOCK_MODEL_ID
 
@@ -79,21 +79,7 @@ def serve_openai_images(listener: Listener) -> dict:
     drawn = json_answer({"data": [{"b64_json": PNG_BASE64}]})
     listener.route("POST", "/images/generations", drawn)
     listener.route("POST", "/images/edits", drawn)
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "ENABLE_IMAGE_PROMPT_GENERATION": False,
-        "IMAGE_GENERATION_ENGINE": "openai",
-        "IMAGE_GENERATION_MODEL": "dall-e-2",
-        "IMAGE_SIZE": "512x512",
-        "IMAGE_STEPS": 0,
-        "IMAGES_OPENAI_API_BASE_URL": listener.base_url,
-        "IMAGES_OPENAI_API_KEY": "sk-images",
-        "ENABLE_IMAGE_EDIT": True,
-        "IMAGE_EDIT_ENGINE": "openai",
-        "IMAGE_EDIT_MODEL": "dall-e-2",
-        "IMAGES_EDIT_OPENAI_API_BASE_URL": listener.base_url,
-        "IMAGES_EDIT_OPENAI_API_KEY": "sk-images",
-    }
+    return openai_settings(listener.base_url)
 
 
 @contextmanager

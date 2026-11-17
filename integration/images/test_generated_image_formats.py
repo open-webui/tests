@@ -18,10 +18,13 @@ import io
 
 import pytest
 
+from harness import image_engines
 from harness.image_engines import (
     GEMINI_IMAGE_MODEL,
+    IMAGEN_MODEL,
     IMAGES_CONFIG,
     PNG_BASE64,
+    image_connection,
     save_image_settings,
     serve_automatic1111,
     serve_gemini,
@@ -63,14 +66,10 @@ def automatic1111_answering(listener, encoded: str) -> dict:
 
 def openai_answering(listener, encoded: str) -> dict:
     listener.route("POST", "/images/generations", json_answer({"data": [{"b64_json": encoded}]}))
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "IMAGE_GENERATION_ENGINE": "openai",
-        "IMAGES_OPENAI_API_BASE_URL": listener.base_url,
-        "IMAGES_OPENAI_API_KEY": "sk-images",
-        "IMAGE_GENERATION_MODEL": "dall-e-2",
-        "IMAGE_SIZE": "512x512",
-    }
+    openai = image_connection(
+        "openai", "openai", listener.base_url, "sk-images", models=("dall-e-2",), size="512x512"
+    )
+    return image_engines.image_settings(openai, edit=False)
 
 
 def gemini_predict_answering(listener, encoded: str) -> dict:
@@ -78,7 +77,7 @@ def gemini_predict_answering(listener, encoded: str) -> dict:
     prediction = {"bytesBase64Encoded": encoded, "mimeType": "image/png"}
     listener.route(
         "POST",
-        f"/models/{settings['IMAGE_GENERATION_MODEL']}:predict",
+        f"/models/{IMAGEN_MODEL}:predict",
         json_answer({"predictions": [prediction]}),
     )
     return settings

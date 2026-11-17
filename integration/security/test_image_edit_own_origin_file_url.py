@@ -23,7 +23,13 @@ import base64
 
 import pytest
 
-from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
+from harness.image_engines import (
+    IMAGES_CONFIG,
+    PNG_BASE64,
+    image_connection,
+    image_settings,
+    save_image_settings,
+)
 from harness.listener import json_answer, text_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -41,14 +47,15 @@ def edit_service(admin, preserve, listener):
     edited = {"data": [{"b64_json": base64.b64encode(INLINE_PNG).decode()}]}
     listener.route("POST", "/images/edits", json_answer(edited))
     with admin.client() as client:
-        save_image_settings(
-            client,
-            ENABLE_IMAGE_EDIT=True,
-            IMAGE_EDIT_ENGINE="openai",
-            IMAGE_EDIT_MODEL="gpt-image-1",
-            IMAGES_EDIT_OPENAI_API_BASE_URL=listener.base_url,
-            IMAGES_EDIT_OPENAI_API_KEY="edit-key",
+        editor = image_connection(
+            "editor",
+            "openai",
+            listener.base_url,
+            "edit-key",
+            models=("gpt-image-1",),
+            generates=False,
         )
+        save_image_settings(client, **image_settings(editor))
     return listener
 
 

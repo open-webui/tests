@@ -1,10 +1,10 @@
 """Journey: the Documents, Web Search, Audio and Images tabs of the admin settings take effect.
 
 Each test changes a setting the way an admin does, saves it, reloads the tab to see it stuck and
-then uses it from a chat. Documents: a custom RAG template wraps the text of a file uploaded to
-the chat. Web Search: an external engine on a local stand-in answers the model's search. Audio:
-an OpenAI-compatible speech engine on a local stand-in reads a reply aloud. Images: the Gemini
-engine on a local stand-in draws the picture the model asks for. Every test works as a fresh
+then uses it from a chat. Documents: a custom RAG template wraps the text of a file uploaded to the
+chat. Web Search: an external engine on a local stand-in answers the model's search. Audio: an
+OpenAI-compatible speech engine on a local stand-in reads a reply aloud. Images: a Gemini image
+connection on a local stand-in draws the picture the model asks for. Every test works as a fresh
 admin and puts the settings back afterwards.
 
 `test_a_saved_image_engine_draws_the_models_picture` is red now and then on dev 896056690: since
@@ -16,7 +16,8 @@ ignoring `RAG_TEMPLATE` the documents test fails (the template never sticks), wi
 `WEB_SEARCH_ENGINE` the web search test fails (the engine is unset after the reload), with
 `/api/v1/audio/config/update` dropping the TTS voice the audio test fails (the voice is back to
 `alloy`), and with `/api/v1/images/config/update` dropping the Gemini API key the images test
-fails (the engine refuses the request and no image shows).
+fails (the engine refuses the request and no image shows). The images test moved to the image
+connection dialog of e1d272252 and passes on the dev 00bd84944 build.
 """
 
 from __future__ import annotations
@@ -36,7 +37,14 @@ from harness.audio_engine import (
     VOICE,
     serve_audio_engine,
 )
-from harness.image_engines import GEMINI_API_KEY, IMAGEN_MODEL, IMAGES_CONFIG, serve_gemini
+from harness.image_engines import (
+    GEMINI_API_KEY,
+    IMAGEN_MODEL,
+    IMAGES_CONFIG,
+    image_settings,
+    save_image_settings,
+    serve_gemini,
+)
 from harness.listener import json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import (
@@ -47,6 +55,7 @@ from utils.chat_ui import (
     send,
     turn_on_integration,
 )
+from utils.image_settings import add_connection, add_model_id, configure_connection, save_connection
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -211,21 +220,27 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
     assert request["input"] in spoken
 
 
-def test_a_saved_image_engine_draws_the_models_picture(admin_page, preserve, listener, upstream):
+def test_a_saved_image_engine_draws_the_models_picture(
+    admin_page, admin, preserve, listener, upstream
+):
     preserve(IMAGES_CONFIG)
+    with admin.client() as client:
+        save_image_settings(client, **image_settings(generation=False, edit=False))
     serve_gemini(listener)
     settings = _open_tab(admin_page, "images")
     settings.get_by_role("switch", name="Image Generation").click()
-    settings.get_by_role("combobox", name="Image Generation Engine").select_option(label="Gemini")
-    # the first of each is image generation's, the second image editing's
-    settings.get_by_role("combobox", name="Model", exact=True).first.fill(IMAGEN_MODEL)
-    settings.get_by_role("textbox", name="Base URL", exact=True).first.fill(listener.base_url)
-    settings.get_by_role("textbox", name="API Key").first.fill(GEMINI_API_KEY)
+    dialog = add_connection(admin_page, settings, "Gemini")
+    dialog.get_by_label("URL", exact=True).fill(listener.base_url)
+    dialog.get_by_placeholder("API Key").fill(GEMINI_API_KEY)
+    add_model_id(dialog, IMAGEN_MODEL)
+    save_connection(admin_page, dialog)
     _save(admin_page, settings)
 
     settings = _open_tab(admin_page, "images")
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()
-    expect(settings.get_by_role("combobox", name="Image Generation Engine")).to_have_value("gemini")
+    dialog = configure_connection(admin_page, settings, "Gemini")
+    expect(dialog.get_by_label("Connection Type")).to_have_value("gemini")
+    expect(dialog.get_by_placeholder("API Key")).to_have_value(GEMINI_API_KEY)
 
     question = "draw a red square"
     upstream.queue(

@@ -28,31 +28,41 @@ from __future__ import annotations
 
 import pytest
 
-from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
+from harness.image_engines import (
+    IMAGES_CONFIG,
+    PNG_BASE64,
+    image_connection,
+    image_settings,
+    save_image_settings,
+)
 from harness.listener import json_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 DEFAULT_MODEL = "gpt-image-2"
+# OpenAI's model list labels no image models, so a connection with no model IDs offers the default
+PLAIN_MODEL_LIST = {"object": "list", "data": [{"id": "gpt-4o", "object": "model"}]}
 
 
 @pytest.fixture
 def openai_images(admin, preserve, listener):
     """`openai_images(model)` points the admin's image settings at a stand-in OpenAI."""
     preserve(IMAGES_CONFIG)
+    listener.route("GET", "/models", json_answer(PLAIN_MODEL_LIST))
     listener.route("POST", "/images/generations", json_answer({"data": [{"b64_json": PNG_BASE64}]}))
 
     def configure(model: str) -> None:
+        openai = image_connection(
+            "openai",
+            "openai",
+            listener.base_url,
+            "sk-images",
+            models=(model,) if model else (),
+            edits=False,
+            size="1024x1024",
+        )
         with admin.client() as client:
-            save_image_settings(
-                client,
-                ENABLE_IMAGE_GENERATION=True,
-                IMAGE_GENERATION_ENGINE="openai",
-                IMAGES_OPENAI_API_BASE_URL=listener.base_url,
-                IMAGES_OPENAI_API_KEY="sk-images",
-                IMAGE_GENERATION_MODEL=model,
-                IMAGE_SIZE="1024x1024",
-            )
+            save_image_settings(client, **image_settings(openai, edit=False))
 
     return configure
 
@@ -85,9 +95,9 @@ def test_the_openai_model_list_offers_no_shut_down_model(openai_images, make_use
         listed = client.get("/api/v1/images/models")
 
     assert listed.status_code == 200, listed.text
-    offered = [model["id"] for model in listed.json()]
-    assert DEFAULT_MODEL in offered, offered
-    assert not [model for model in offered if model.startswith("dall-e")], (
+    assert listed.json(), "with no model set the OpenAI connection offers no image model at all"
+    offered = [model[field] for model in listed.json() for field in ("id", "name", "model")]
+    assert not [model for model in offered if "dall-e" in model], (
         f"the model list still offers DALL·E models OpenAI no longer serves: {offered}"
     )
 
@@ -119,20 +129,21 @@ def test_the_default_request_matches_the_default_model_chosen_by_name(
 
 @pytest.fixture
 def openai_edits(admin, preserve, listener):
-    """`openai_edits(model)` points the admin's image edit settings at a stand-in OpenAI."""
+    """`openai_edits(saved, requested)` points the admin's image editing at a stand-in OpenAI."""
     preserve(IMAGES_CONFIG)
     listener.route("POST", "/images/edits", json_answer({"data": [{"b64_json": PNG_BASE64}]}))
 
-    def configure(model: str) -> None:
+    def configure(saved: str, requested: str) -> None:
+        """`saved` is the admin's default edit model, `requested` one more the connection offers."""
+        models = tuple(model for model in (saved, requested) if model)
+        editor = image_connection(
+            "openai", "openai", listener.base_url, "sk-edits", models=models, generates=False
+        )
+        settings = image_settings(editor, generation=False)
+        if saved:
+            settings["IMAGE_EDIT_DEFAULT_MODEL"] = f"openai:{saved}"
         with admin.client() as client:
-            save_image_settings(
-                client,
-                ENABLE_IMAGE_EDIT=True,
-                IMAGE_EDIT_ENGINE="openai",
-                IMAGE_EDIT_MODEL=model,
-                IMAGES_EDIT_OPENAI_API_BASE_URL=listener.base_url,
-                IMAGES_EDIT_OPENAI_API_KEY="sk-edits",
-            )
+            save_image_settings(client, **settings)
 
     return configure
 
@@ -156,7 +167,7 @@ def edit_sent(actor, listener, prompt: str, model: str) -> bytes:
 def test_an_edit_asks_for_base64_only_from_the_model_it_sends(
     openai_edits, listener, make_user, saved, requested, asks_for_base64
 ):
-    openai_edits(saved)
+    openai_edits(saved, requested)
 
     sent = edit_sent(make_user(), listener, f"paint it red for {requested}", requested)
 

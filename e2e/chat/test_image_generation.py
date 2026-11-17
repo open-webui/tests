@@ -1,13 +1,13 @@
 """Journey: image generation in the chat, from the admin's engine settings to the stored picture.
 
-The admin picks the OpenAI engine in Admin Settings > Images and points it at a local stand-in
-for OpenAI's image endpoints (`harness.channel_chat.serve_openai_images`). A user then turns on
-Image under Integrations, the model calls `generate_image` (native tool calling, the default)
-and the picture shows in the reply and is still there after a reload. Asked for a change, the
-model calls `edit_image` on the picture it drew. The Image switch is offered only while the
-admin has image generation on and the user holds the image generation permission, a model with
-image generation on by default starts with the chip lit, and an engine that fails leaves no
-picture and shows its error in the tool result.
+The admin adds an OpenAI compatible image connection in Admin Settings > Images and points it at a
+local stand-in for OpenAI's image endpoints (`harness.channel_chat.serve_openai_images`). A user
+then turns on Image under Integrations, the model calls `generate_image` (native tool calling, the
+default) and the picture shows in the reply and is still there after a reload. Asked for a change,
+the model calls `edit_image` on the picture it drew. The Image switch is offered only while the
+admin has image generation on and the user holds the image generation permission, a model with image
+generation on by default starts with the chip lit, and an engine that fails leaves no picture and
+shows its error in the tool result.
 
 `test_a_model_with_image_generation_by_default_starts_with_the_chip_on` is red now and then on dev
 7b7dba6ee: since de73bb830 a live update to the reply can write back an older copy of it, so the
@@ -16,16 +16,16 @@ picture drops out of the reply, or the reply stays blank, until a reload
 22102e4a2 lost the reply and its picture in 5 of 5 runs and a build without the per-update copy in
 none.
 
-The Image chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so
-the tests that look for it turn it on for their account.
-Discriminates: passes on dev 176d31d1d with its built frontend. In a backend copy, with
-`/api/v1/images/config/update` ignoring `IMAGES_OPENAI_API_KEY` the settings test fails (the key
-is empty after the reload), with `generate_image` not storing its files on the chat message the
-reload test fails (the picture is gone after the reload), with `edit_image` left out of the
-builtin tools the edit test fails (no edited picture) and with `generate_image` answering an
-empty success on errors the failing engine test fails. In a frontend build, with the composer
-ignoring the admin switch and the user permission the two toggle tests fail, and with the model's
-default features ignored the default feature test fails (no Image chip).
+The Image chip shows only with Show Input Selections on (off by default since dev 834c47ee0), so the
+tests that look for it turn it on for their account. Discriminates: passes on dev 176d31d1d with its
+built frontend, and with the connection dialog of e1d272252 on the dev 00bd84944 build. In a backend
+copy, with `/api/v1/images/config/update` dropping the connection's key the settings test fails (the
+key is empty after the reload), with `generate_image` not storing its files on the chat message the
+reload test fails (the picture is gone after the reload), with `edit_image` left out of the builtin
+tools the edit test fails (no edited picture) and with `generate_image` answering an empty success
+on errors the failing engine test fails. In a frontend build, with the composer ignoring the admin
+switch and the user permission the two toggle tests fail, and with the model's default features
+ignored the default feature test fails (no Image chip).
 
 Every test but the admin's engine setup runs in the main chat and in a side chat (that one is about
 Admin Settings > Images and stays on a page of its own); the side variants are green on dev
@@ -39,11 +39,11 @@ import json
 import re
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.channel_chat import drawing_model, serve_openai_images
-from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
+from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, image_settings, save_image_settings
 from harness.listener import json_answer
 from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
@@ -59,6 +59,14 @@ from utils.chat_ui import (
     show_input_selections,
     start_from_link,
     turn_on_integration,
+)
+from utils.image_settings import (
+    add_connection,
+    add_model_id,
+    configure_connection,
+    open_image_settings,
+    save_connection,
+    save_tab,
 )
 from utils.tooltips import tooltip_button
 
@@ -94,14 +102,6 @@ def denied_image_generation(admin, preserve):
         permissions["features"]["image_generation"] = False
         saved = client.post("/api/v1/users/default/permissions", json=permissions)
     saved.raise_for_status()
-
-
-def image_settings(page: Page) -> Locator:
-    """Admin Settings > Images, freshly loaded from the server."""
-    page.goto("/admin/settings/images")
-    settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("tab", selected=True)).to_be_visible()
-    return settings
 
 
 def open_chat(chat: Chat) -> Chat:
@@ -152,30 +152,30 @@ def draw(chat: Chat, upstream, prompt: str, answer: str) -> None:
 
 
 def test_an_admin_sets_up_the_openai_engine_and_it_draws(
-    page_for, make_user, preserve, listener, upstream
+    page_for, make_user, admin, preserve, listener, upstream
 ):
     preserve(IMAGES_CONFIG)
+    with admin.client() as client:
+        save_image_settings(client, **image_settings(generation=False, edit=False))
     serve_openai_images(listener)
     admin_page = page_for(make_user(role="admin"))
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     settings.get_by_role("switch", name="Image Generation").click()
-    settings.get_by_role("combobox", name="Image Generation Engine").select_option(
-        label="Default (Open AI)"
-    )
-    # the first of each is image generation's, the second image editing's
-    settings.get_by_role("combobox", name="Model", exact=True).first.fill("dall-e-2")
-    settings.get_by_role("textbox", name="API Base URL").first.fill(listener.base_url)
-    settings.get_by_role("textbox", name="API Key").first.fill("sk-drawn")
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    dialog = add_connection(admin_page, settings, "OpenAI compatible")
+    dialog.get_by_label("Name", exact=True).fill("Stand-in OpenAI")
+    dialog.get_by_label("URL", exact=True).fill(listener.base_url)
+    dialog.get_by_placeholder("API Key").fill("sk-drawn")
+    add_model_id(dialog, "dall-e-2")
+    save_connection(admin_page, dialog)
+    save_tab(admin_page, settings)
 
-    settings = image_settings(admin_page)
+    settings = open_image_settings(admin_page)
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()
-    expect(settings.get_by_role("combobox", name="Image Generation Engine")).to_have_value("openai")
-    expect(settings.get_by_role("textbox", name="API Base URL").first).to_have_value(
-        listener.base_url
-    )
-    expect(settings.get_by_role("textbox", name="API Key").first).to_have_value("sk-drawn")
+    dialog = configure_connection(admin_page, settings, "Stand-in OpenAI")
+    expect(dialog.get_by_label("Connection Type")).to_have_value("openai")
+    expect(dialog.get_by_label("URL", exact=True)).to_have_value(listener.base_url)
+    expect(dialog.get_by_placeholder("API Key")).to_have_value("sk-drawn")
+    expect(dialog.get_by_role("button", name="Remove dall-e-2 from list.")).to_be_visible()
 
     admin_page.goto("/")
     turn_on_image(open_chat(admin_page))

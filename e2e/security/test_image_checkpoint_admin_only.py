@@ -37,8 +37,9 @@ def test_a_generated_image_shows_in_the_reply(
     page_for, make_user, admin, preserve, listener, upstream
 ):
     preserve(IMAGES_CONFIG)
+    settings = serve_automatic1111(listener)
     with admin.client() as client:
-        save_image_settings(client, **serve_automatic1111(listener))
+        save_image_settings(client, **settings)
     upstream.queue(
         reply.tool_call("generate_image", {"prompt": "a red square"}),
         reply.text("Here is your red square."),
@@ -55,4 +56,5 @@ def test_a_generated_image_shows_in_the_reply(
     assert listener.requests_to("/sdapi/v1/txt2img"), "the image never reached Automatic1111"
     assert checkpoint_switches(listener) == []
     with admin.client() as client:
-        assert client.get(IMAGES_CONFIG[0]).json()["IMAGE_GENERATION_MODEL"] == CHECKPOINT
+        saved = client.get(IMAGES_CONFIG[0]).json()["IMAGE_CONNECTIONS"]
+    assert [connection["config"]["model_ids"] for connection in saved] == [[CHECKPOINT]]

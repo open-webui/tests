@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from harness.chat import ask
+from harness.image_engines import image_connection, image_settings
 from harness.listener import json_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -64,13 +65,10 @@ def services(admin, listener, preserve):
         )
         client.post(RETRIEVAL_CONFIG[1], json={"web": web}).raise_for_status()
         images = client.get(IMAGES_CONFIG[0]).json()
-        images.update(
-            ENABLE_IMAGE_GENERATION=True,
-            ENABLE_IMAGE_PROMPT_GENERATION=False,
-            IMAGE_GENERATION_ENGINE="openai",
-            IMAGES_OPENAI_API_BASE_URL=listener.base_url,
-            IMAGES_OPENAI_API_KEY="sk-images",
+        openai = image_connection(
+            "openai", "openai", listener.base_url, "sk-images", models=("gpt-image-1",)
         )
+        images.update(**image_settings(openai), ENABLE_IMAGE_PROMPT_GENERATION=False)
         client.post(IMAGES_CONFIG[1], json=images).raise_for_status()
     _allow_features(admin, False)
     return listener

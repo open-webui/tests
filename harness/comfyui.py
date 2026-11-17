@@ -19,6 +19,7 @@ from typing import Iterator
 
 from aiohttp import web
 
+from harness.image_engines import image_connection, image_settings
 from harness.instance import free_port
 
 PROMPT_ID = "prompt-1"
@@ -114,15 +115,13 @@ def serving(fake: FakeComfyUI) -> Iterator[str]:
 
 def comfyui_settings(base_url: str, graph: dict) -> dict:
     """Image settings that generate and edit through ComfyUI at `base_url` running `graph`."""
-    return {
-        "ENABLE_IMAGE_GENERATION": True,
-        "IMAGE_GENERATION_ENGINE": "comfyui",
-        "COMFYUI_BASE_URL": base_url,
-        "COMFYUI_WORKFLOW": json.dumps(graph),
-        "COMFYUI_WORKFLOW_NODES": [PROMPT_NODE],
-        "ENABLE_IMAGE_EDIT": True,
-        "IMAGE_EDIT_ENGINE": "comfyui",
-        "IMAGES_EDIT_COMFYUI_BASE_URL": base_url,
-        "IMAGES_EDIT_COMFYUI_WORKFLOW": json.dumps(graph),
-        "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES": [PROMPT_NODE, IMAGE_NODE],
-    }
+    comfyui = image_connection(
+        "comfyui",
+        "comfyui",
+        base_url,
+        workflow=json.dumps(graph),
+        nodes=[PROMPT_NODE],
+        edit_workflow=json.dumps(graph),
+        edit_nodes=[PROMPT_NODE, IMAGE_NODE],
+    )
+    return image_settings(comfyui)
