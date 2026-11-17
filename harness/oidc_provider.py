@@ -12,7 +12,10 @@ and is spent (rotation), a spent, revoked or unknown one answers `invalid_grant`
 `id_token_lifetime` gives the ID token of the next sign-in a lifetime of its own, `sends_expiry`
 and `sends_refresh_token` leave either out of the answers, `revoke_refresh_tokens()` withdraws
 every refresh token issued so far and `refresh_delay` holds each refresh answer back that many
-seconds after the token was spent, so concurrent refreshes overlap. While `authorize_gate` is an
+seconds after the token was spent, so concurrent refreshes overlap. With `refresh_outage` set to
+a status (503, 429) every refresh grant answers it without spending the refresh token, as a
+provider does during an outage or under a rate limit, and `discovery_outage` does the same for
+the discovery document. While `authorize_gate` is an
 unset event, the authorize endpoint answers only once it is set, as a provider showing its own
 sign-in page does. `jwks_refused_agent` makes
 the key endpoint answer 403 to a client whose User-Agent starts with it, the way a provider's
@@ -100,6 +103,8 @@ class OidcProvider:
     token_lifetime: int = 3600  # seconds, for access tokens and ID tokens issued from now on
     id_token_lifetime: int | None = None  # seconds, for ID tokens only when set
     refresh_delay: float = 0.0  # seconds a refresh answer waits after spending the token
+    refresh_outage: int | None = None  # the status every refresh grant answers while set
+    discovery_outage: int | None = None  # the status the discovery document answers while set
     sends_expiry: bool = True  # whether token answers carry `expires_in`
     sends_refresh_token: bool = True
     jwks_refused_agent: str | None = None  # a User-Agent prefix the key endpoint answers 403
@@ -123,6 +128,8 @@ class OidcProvider:
             self.token_lifetime = 3600
             self.id_token_lifetime = None
             self.refresh_delay = 0.0
+            self.refresh_outage = None
+            self.discovery_outage = None
             self.sends_expiry = True
             self.sends_refresh_token = True
             self.jwks_refused_agent = None
@@ -288,6 +295,8 @@ class OidcProvider:
     def _refresh(self, form: dict[str, str]) -> tuple[int, dict]:
         if form.get("client_id") != self.client_id:
             return 401, {"error": "invalid_client"}
+        if self.refresh_outage:
+            return self.refresh_outage, {"error": "temporarily_unavailable"}
         with self.lock:
             holder = self.refresh_tokens.pop(form.get("refresh_token", ""), None)
         time.sleep(self.refresh_delay)
@@ -371,7 +380,9 @@ def serve(addresses: Sequence[str] = ()) -> tuple[OidcProvider, Callable[[], Non
 
         def do_GET(self) -> None:
             entry = self._record()
-            if entry.path == "/.well-known/openid-configuration":
+            if entry.path == "/.well-known/openid-configuration" and provider.discovery_outage:
+                self._send(provider.discovery_outage, {"error": "temporarily_unavailable"})
+            elif entry.path == "/.well-known/openid-configuration":
                 self._send(200, provider.discovery())
             elif entry.path == "/jwks" and provider.refuses_key_fetch(
                 entry.headers.get("User-Agent", "")

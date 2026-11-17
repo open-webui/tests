@@ -10,9 +10,17 @@ Regression #32820: a model connection set to `system_oauth` got no token when th
 called the API with a bearer token and no browser cookie, while tool servers fall back to the
 user's latest stored session.
 
+Regression #34578: a refresh the provider answered with a 5xx or a 429, at the token endpoint or
+for its discovery document, deleted the SSO session, so every tool using the user's provider
+token got none until they signed in again. Such an answer now keeps the session and the next call
+refreshes with the same refresh token, while a refused refresh still drops it.
+
 Discriminates: in a backend copy, returning the stored token without checking its expiry in the
 SSO `get_oauth_token` fails the refresh and the refused-refresh tests (no refresh is tried). The
 API-call test passes with the #32820 fix and fails on dev ca8f451cc (no Authorization header).
+The outage test (all three cases) is red on dev e1d272252 until the fix (branch
+fix/sso-refresh-keeps-session-on-transient-error) merges: there nothing is forwarded once the
+provider is back, as the session is gone. It passes on the fix branch.
 """
 
 from __future__ import annotations
@@ -75,7 +83,7 @@ def forwarded_token(browser, tool_server) -> str | None:
             "config": {},
         },
     )
-    [fetch] = tool_server.requests_to("/openapi.json")
+    fetch = tool_server.requests_to("/openapi.json")[-1]
     authorization = fetch.headers.get("Authorization")
     return authorization.removeprefix("Bearer ") if authorization else None
 
@@ -118,6 +126,33 @@ def test_a_refused_refresh_forwards_nothing_and_drops_the_session(sso, idp, tool
     assert refresh_grants(idp), "the refresh was never tried"
     assert forwarded is None, "a token the provider would not refresh was forwarded"
     assert disconnected.status_code == 404, "the refused refresh left the SSO session behind"
+
+
+@pytest.mark.regression
+@pytest.mark.parametrize(
+    ("outage", "status"),
+    [("refresh_outage", 503), ("refresh_outage", 429), ("discovery_outage", 503)],
+    ids=["outage", "rate-limited", "discovery-outage"],
+)
+def test_a_provider_outage_during_the_refresh_keeps_the_session(
+    sso, idp, tool_server, outage, status
+):
+    idp.token_lifetime = EXPIRING_SOON
+    browser = sign_in_as_admin(sso, idp)
+    signed_in = idp.issued[-1]
+    setattr(idp, outage, status)
+
+    during_outage = forwarded_token(browser, tool_server)
+    setattr(idp, outage, None)
+    after_outage = forwarded_token(browser, tool_server)
+
+    assert refresh_grants(idp), "the refresh was never tried"
+    assert during_outage is None, "a token was forwarded while the provider could not refresh it"
+    assert after_outage == idp.issued[-1]["access_token"], (
+        f"a {status} from the provider during the refresh deleted the user's SSO session, so "
+        "nothing was forwarded once the provider was back (#34578)"
+    )
+    assert refresh_grants(idp)[-1]["refresh_token"] == signed_in["refresh_token"]
 
 
 @pytest.mark.regression
