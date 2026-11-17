@@ -15,6 +15,14 @@ text also sends it as structured data, and the model gets the text twice, the se
 Discriminates: passes on dev efe63bd34, fails with f7ce4024d reverted (the sign-in asks for no
 scope). Undoing only the recovery fails the recovered-connection test; undoing only the kept
 registration scope leaves both green, as the recovery on save then fills it in.
+
+The ID token test pins issue open-webui/open-webui#34504: a server whose protected-resource
+metadata asks for `openid` gets an ID token back with the access token, and Readwise signs it
+HS256 with the client secret, as OIDC allows a confidential client. Open WebUI checked it against
+the provider's published keys only, failed with "Algorithm 'HS256' requires 'oct' key" and threw
+the good access token away. An MCP sign-in only uses the access token. Red on dev f91f3af21 until
+the fix (fix branch fix/mcp-oauth-hs256-id-token) merges: there the HS256 case lands on that error
+and stores no session. The RS256 case passes on both.
 """
 
 from __future__ import annotations
@@ -97,7 +105,10 @@ def connect(instance, actor, server_id: str) -> dict[str, str]:
         assert authorize.status_code == 302, authorize.text
         approved = browser.get(authorize.headers["location"])
         assert approved.status_code == 302, f"the authorization server refused: {approved.text}"
-        browser.get(approved.headers["location"], headers=bearer)
+        landed = browser.get(approved.headers["location"], headers=bearer)
+    landing = urllib.parse.urlsplit(landed.headers.get("location", ""))
+    error = dict(urllib.parse.parse_qsl(landing.query)).get("error")
+    assert error is None, f"the sign-in failed: {error}"
     location = urllib.parse.urlsplit(authorize.headers["location"])
     return dict(urllib.parse.parse_qsl(location.query))
 
@@ -147,3 +158,18 @@ def test_a_registration_answer_naming_the_scope_is_unchanged(
     assert registration.json()["scope"] == SCOPE
     assert connect(instance, person, server_id).get("scope") == SCOPE
     assert echo(person, upstream, server_id) == PHRASE
+
+
+@pytest.mark.parametrize("signature", ["client-secret", "provider"])
+def test_a_server_asking_for_openid_signs_in_however_it_signs_the_id_token(
+    instance, admin, preserve, upstream, person, signature
+):
+    with serving_protected_mcp(scopes=["openid", SCOPE]) as mcp:
+        mcp.auth_server.id_token_signature = signature
+        server_id = register(admin, preserve, mcp, person)
+
+        asked = connect(instance, person, server_id)
+
+        assert "openid" in asked.get("scope", "").split(), asked
+        assert "id_token" in mcp.auth_server.issued[-1], "the server sent no ID token"
+        assert echo(person, upstream, server_id) == PHRASE

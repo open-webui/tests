@@ -20,10 +20,13 @@ with `cf-mitigated: challenge` and an HTML page that repeats the requested URL, 
 passes as before. With `refresh_outage` set to a status (503, 429) every refresh grant answers
 it without spending the refresh token, as a provider does during an outage or under a rate
 limit. `refresh_delay` holds each refresh answer back that many seconds after the token was
-spent, so concurrent refreshes overlap. With `large_headers` every answer carries an 11 KB
-`Content-Security-Policy` header, as monday.com's does. `revoke_refresh_tokens()` withdraws the
-live refresh tokens, `forget_clients()` drops every registered client so the authorize answers
-`invalid_client`, and `ProtectedMcp.presented` lists every bearer token the MCP server was shown.
+spent, so concurrent refreshes overlap. `id_token_signature` adds an ID token to a code grant
+that asked for `openid`, signed with the server's published RSA key (`provider`) or, HS256, with
+the client secret (`client-secret`), as Readwise's does. With `large_headers` every answer
+carries an 11 KB `Content-Security-Policy` header, as monday.com's does.
+`revoke_refresh_tokens()` withdraws the live refresh tokens, `forget_clients()` drops every
+registered client so the authorize answers `invalid_client`, and `ProtectedMcp.presented` lists
+every bearer token the MCP server was shown.
 `register_oauth_mcp()` registers the server as the admin panel does and saves the connection (after
 `preserve(TOOL_SERVERS)`). `scopes` is what the MCP server's protected-resource metadata asks for
 and its tools require (`mcp:tools` by default; `GOOGLE_WORKSPACE_SCOPES` is a list as long as
@@ -46,6 +49,9 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterator
 
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.algorithms import RSAAlgorithm
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.transport_security import TransportSecuritySettings
@@ -132,6 +138,10 @@ class McpAuthorizationServer:
     refresh_outage: int | None = None  # the status every refresh grant answers while set
     refresh_delay: float = 0.0  # seconds a refresh answer waits after spending the token
     large_headers: bool = False
+    id_token_signature: str | None = None  # `provider` or `client-secret`; None issues no ID token
+    key: rsa.RSAPrivateKey = field(
+        default_factory=lambda: rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    )
 
     @property
     def issuer(self) -> str:
@@ -148,7 +158,15 @@ class McpAuthorizationServer:
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
             "code_challenge_methods_supported": ["S256"],
+            "jwks_uri": f"{self.base_url}/jwks",
+            "id_token_signing_alg_values_supported": [
+                "HS256" if self.id_token_signature == "client-secret" else "RS256"
+            ],
         }
+
+    def jwks(self) -> dict:
+        public = RSAAlgorithm.to_jwk(self.key.public_key(), as_dict=True)
+        return {"keys": [{**public, "kid": "signing-key", "use": "sig", "alg": "RS256"}]}
 
     def reached(self, url: str) -> str:
         """A URL on the metadata's authorize endpoint, as a browser would have reached it here."""
@@ -217,6 +235,7 @@ class McpAuthorizationServer:
                 "scope": query.get("scope", ""),
                 "resource": query.get("resource"),
                 "offline": query.get("access_type") == "offline",
+                "nonce": query.get("nonce"),
             }
         answer = {"code": code, **({"state": query["state"]} if "state" in query else {})}
         return 302, {}, f"{query['redirect_uri']}?{urllib.parse.urlencode(answer)}"
@@ -246,9 +265,29 @@ class McpAuthorizationServer:
         if _s256(form.get("code_verifier", "")) != grant["code_challenge"]:
             return 400, {"error": "invalid_grant", "error_description": "PKCE verification failed"}
         with_refresh_token = grant["offline"] or not self.offline_access_only
-        return 200, self._issue_tokens(
+        answer = self._issue_tokens(
             client_id, grant["scope"], grant["resource"], with_refresh_token
         )
+        if self.id_token_signature and "openid" in grant["scope"].split():
+            answer["id_token"] = self._id_token(client_id, grant["nonce"])
+        return 200, answer
+
+    def _id_token(self, client_id: str, nonce: str | None) -> str:
+        now = int(time.time())
+        payload = {
+            "iss": self.issuer,
+            "sub": "mcp-user",
+            "aud": client_id,
+            "iat": now,
+            "exp": now + 3600,
+        }
+        if nonce:
+            payload["nonce"] = nonce
+        if self.id_token_signature == "client-secret":
+            with self.lock:
+                secret = self.clients[client_id]["client_secret"]
+            return jwt.encode(payload, secret, algorithm="HS256")
+        return jwt.encode(payload, self.key, algorithm="RS256", headers={"kid": "signing-key"})
 
     def _refresh(self, client_id: str, form: dict[str, str]) -> tuple[int, dict]:
         with self.lock:
@@ -340,6 +379,8 @@ def serve_authorization_server(
             from_server = "aiohttp" in entry.headers.get("User-Agent", "")
             if entry.path == "/.well-known/oauth-authorization-server":
                 self._send(200, server.metadata())
+            elif entry.path == "/jwks":
+                self._send(200, server.jwks())
             elif entry.path == "/authorize" and server.bot_challenge and from_server:
                 self._send_challenge()
             elif entry.path == "/authorize":
