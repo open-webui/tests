@@ -21,9 +21,16 @@ signed in early and still in use lost its session to signed-out ones. Signing ou
 browser's session when the person keeps another one for the provider (a person's only session
 stays for automations and API keys), and the cap drops the sessions refreshed least recently.
 
+Regression open-webui/open-webui#34579: once the SSO session behind a browser's sign-in was gone,
+a `system_oauth` tool server was still listed as usable, so the person was never asked to sign
+in again and every call to it went out without a token. The tool list now marks such a server
+`authenticated: false` with `auth_type: system_oauth`, which the chat turns into a sign-in prompt.
+
 Discriminates: in a backend copy, returning the stored token without checking its expiry in the
 SSO `get_oauth_token` fails the refresh and the refused-refresh tests (no refresh is tried). The
 API-call test passes with the #32820 fix and fails on dev ca8f451cc (no Authorization header).
+The #34579 test fails on dev e1d272252 (the server is listed without the flag) and, in a
+backend copy with the flag left off MCP servers, on the MCP server.
 The outage test (all three cases) is red on dev e1d272252 until the fix (branch
 fix/sso-refresh-keeps-session-on-transient-error) merges: there nothing is forwarded once the
 provider is back, as the session is gone. It passes on the fix branch.
@@ -50,6 +57,7 @@ from harness.second_provider import OPENAI_CONFIG, attach
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source, pytest.mark.slow]
 
+TOOL_SERVERS_CONFIG = ("/api/v1/configs/tool_servers", "/api/v1/configs/tool_servers")
 EXPIRING_SOON = 60  # inside the five minutes before expiry in which Open WebUI refreshes
 TOOL_SPEC = {"openapi": "3.0.0", "info": {"title": "SSO tools", "version": "1"}, "paths": {}}
 SSO_MODEL = "sso-protected-model"
@@ -292,3 +300,58 @@ def test_signing_out_keeps_a_persons_only_session(sso, idp):
 
     assert signed_out.status_code == 200, signed_out.text
     assert stored_session_ids(sso, account_id) == {only_id}, "the only session was dropped"
+
+
+SSO_TOOL_SERVER_IDS = ["server:sso-tools", "server:mcp:sso-mcp"]
+
+
+def listed_tool_servers(client) -> list[dict]:
+    """The OpenAPI and the MCP `system_oauth` server, as the tool list shows them."""
+    listed = client.get("/api/v1/tools/")
+    assert listed.status_code == 200, f"listing tools failed: {listed.text}"
+    servers = {tool["id"]: tool for tool in listed.json() if tool["id"] in SSO_TOOL_SERVER_IDS}
+    assert sorted(servers) == sorted(SSO_TOOL_SERVER_IDS), f"servers missing: {sorted(servers)}"
+    return list(servers.values())
+
+
+@pytest.mark.regression
+def test_a_system_oauth_tool_server_asks_for_a_new_sign_in_once_the_session_is_gone(
+    sso, idp, tool_server, preserve
+):
+    preserve(TOOL_SERVERS_CONFIG, on=sso)
+    browser = sign_in_as_admin(sso, idp)
+    shared = {"auth_type": "system_oauth", "key": "", "config": {"enable": True}}
+    connections = [
+        {
+            **shared,
+            "url": tool_server.base_url,
+            "path": "openapi.json",
+            "type": "openapi",
+            "info": {"id": "sso-tools", "name": "SSO tools"},
+        },
+        {
+            **shared,
+            "url": f"{tool_server.base_url}/mcp",
+            "path": "",
+            "type": "mcp",
+            "info": {"id": "sso-mcp", "name": "SSO MCP"},
+        },
+    ]
+    saved = browser.post(TOOL_SERVERS_CONFIG[1], json={"TOOL_SERVER_CONNECTIONS": connections})
+    assert saved.status_code == 200, f"saving the tool servers failed: {saved.text}"
+
+    for server in listed_tool_servers(browser):
+        assert "authenticated" not in server, f"a live session was flagged: {server}"
+
+    disconnected = browser.delete("/api/v1/auths/oauth/sessions/oidc")
+    assert disconnected.status_code == 200, f"removing the SSO session failed: {disconnected.text}"
+    for server in listed_tool_servers(browser):
+        assert server.get("authenticated") is False, (
+            f"the tool server stays usable after its SSO session is gone: {server}"
+        )
+        assert server.get("auth_type") == "system_oauth", server
+
+    # an API call carries no SSO sign-in to renew, so it is not asked to sign in again
+    with sso.client(token=browser.cookies.get("token")) as api:
+        for server in listed_tool_servers(api):
+            assert "authenticated" not in server, f"an API caller was flagged: {server}"
