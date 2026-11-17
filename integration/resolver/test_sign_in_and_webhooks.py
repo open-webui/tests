@@ -10,10 +10,12 @@ discovery document names and forwarded, a token exchange asks the provider's int
 which client the token was minted for, and signing out finds the end-session endpoint. A user's
 notification target, the admin's event webhook and a finished chat's `always` target are each
 delivered to a service named by host. A picture, refresh endpoint or webhook whose name does not
-resolve fails the same way under both: the default avatar, no forwarded token and a dropped
-session, and a refused test button, with the account still created. Where the fetch guard is on
-(the default) a webhook naming a local service or an unresolvable host is refused at once,
-identically under both.
+resolve fails the same way under both: the default avatar, no forwarded token and a refused
+test button, with the account still created. Since ab73749ca (#34585) a refresh endpoint that does
+not resolve counts as a provider outage: the session is kept, and once the name resolves again the
+next call refreshes and forwards a token. That test passes on dev b6e71d4d7 and fails on
+ab73749ca~1 (the session is gone). Where the fetch guard is on (the default) a webhook naming a
+local service or an unresolvable host is refused at once, identically under both.
 
 The requests, httpx and authlib calls are not affected by the flag: the code and token exchange
 of the sign-in itself, its userinfo and key fetches (authlib over httpx), the channels' incoming
@@ -155,7 +157,7 @@ def _forwarded_token(browser, tool_server) -> str | None:
             "config": {},
         },
     )
-    [fetch] = tool_server.requests_to("/openapi.json")
+    fetch = tool_server.requests_to("/openapi.json")[-1]
     authorization = fetch.headers.get("Authorization")
     return authorization.removeprefix("Bearer ") if authorization else None
 
@@ -217,21 +219,26 @@ def test_an_expiring_token_is_refreshed_at_an_endpoint_named_by_host(
 
 
 @pytest.mark.usefixtures("refuses_unknown_names")
-def test_a_refresh_endpoint_that_does_not_resolve_forwards_nothing_and_drops_the_session(
+def test_a_refresh_endpoint_that_does_not_resolve_forwards_nothing_and_keeps_the_session(
     resolver, sso, idp, tool_server
 ):
     idp.token_lifetime = EXPIRING_SOON
     browser = _sign_in_as_admin(sso, idp)
+    signed_in = idp.issued[-1]
     idp.endpoint_bases["token_endpoint"] = _named_base(idp, UNRESOLVABLE)
     try:
         forwarded, seconds = timed(_forwarded_token, browser, tool_server)
     finally:
         del idp.endpoint_bases["token_endpoint"]
-    disconnected = browser.delete("/api/v1/auths/oauth/sessions/oidc")
+    after_it_resolves = _forwarded_token(browser, tool_server)
 
     assert forwarded is None, "a token that could not be refreshed was forwarded"
-    assert disconnected.status_code == 404, "the failed refresh left the SSO session behind"
     assert seconds < FAILS_WITHIN, f"the refresh took {seconds:.1f}s to fail"
+    assert after_it_resolves == idp.issued[-1]["access_token"], (
+        "the failed refresh dropped the SSO session, so nothing was forwarded once the token "
+        "endpoint resolved again"
+    )
+    assert _refresh_grants(idp)[-1].form["refresh_token"] == signed_in["refresh_token"]
 
 
 # --- the token exchange and sign-out ------------------------------------------------------------
