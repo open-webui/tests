@@ -14,11 +14,11 @@ saves the permissions it opened with, every test but the admin one fails.
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Page, expect
 
 from harness.image_engines import IMAGES_CONFIG, save_image_settings, serve_gemini
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
-from utils.chat_ui import open_integrations_menu
+from utils.chat_ui import integration_switch
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -69,10 +69,6 @@ def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:
     expect(page.get_by_text("Default permissions updated successfully")).to_be_visible()
 
 
-def menu_entry(page: Page, entry: str) -> Locator:
-    return open_integrations_menu(page).get_by_role("menuitemcheckbox", name=entry, exact=True)
-
-
 @pytest.mark.parametrize("entry", TABS)
 def test_a_switched_on_feature_is_offered_in_the_integrations_menu(
     entry, page_for, admin, make_user, engines
@@ -81,7 +77,7 @@ def test_a_switched_on_feature_is_offered_in_the_integrations_menu(
 
     page = page_for(make_user())
 
-    expect(menu_entry(page, entry)).to_be_visible()
+    expect(integration_switch(page, entry)).to_be_visible()
 
 
 @pytest.mark.parametrize("entry", TABS)
@@ -93,7 +89,7 @@ def test_a_switched_off_feature_leaves_the_integrations_menu(
 
     page = page_for(make_user())
 
-    expect(menu_entry(page, entry)).to_have_count(0)
+    expect(integration_switch(page, entry)).to_have_count(0)
 
 
 @pytest.mark.parametrize("entry", TABS)
@@ -105,7 +101,7 @@ def test_the_default_permission_withdraws_the_feature_from_users(
 
     page = page_for(make_user())
 
-    expect(menu_entry(page, entry)).to_have_count(0)
+    expect(integration_switch(page, entry)).to_have_count(0)
 
 
 def test_an_admin_keeps_web_search_without_the_default_permission(
@@ -116,4 +112,4 @@ def test_an_admin_keeps_web_search_without_the_default_permission(
 
     page = page_for(make_user(role="admin"))
 
-    expect(menu_entry(page, "Web Search")).to_be_visible()
+    expect(integration_switch(page, "Web Search")).to_be_visible()

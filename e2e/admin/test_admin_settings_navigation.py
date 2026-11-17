@@ -3,11 +3,11 @@
 An admin opens Settings from the chat and finds, in the tab list named Admin, the admin tabs in five
 named groups, in this order:
 System (General, Authentication, Interface), AI (Connections, Models, Sub-agents), Tools
-(Integrations, Documents, Audio, Images, Web Search, Code Execution, Pipelines), Quality
-(Analytics, Evaluations, in that order since dev 4a145af22) and Data (Database). A person without
-the admin role gets no Admin tab list and none of its tabs. Since dev 7ed2cb56a
-(open-webui/open-webui#33064) the personal and the admin tabs sit in two tab lists, Personal and
-Admin.
+(Integrations, Documents, Audio, Images, Videos since dev c201472cf, Web Search, Code Execution,
+Pipelines), Quality (Analytics, Evaluations, in that order since dev 4a145af22) and Data
+(Database). A person without the admin role gets no Admin tab list and none of its tabs. Since dev
+7ed2cb56a (open-webui/open-webui#33064) the personal and the admin tabs sit in two tab lists,
+Personal and Admin.
 
 Discriminates: in a frontend build with the group map back to the earlier grouping (Interface,
 Audio and Images under an Experience heading, Integrations and Documents among the system tabs),
@@ -38,6 +38,7 @@ ADMIN_NAVIGATION = [
     "Documents",
     "Audio",
     "Images",
+    "Videos",
     "Web Search",
     "Code Execution",
     "Pipelines",
