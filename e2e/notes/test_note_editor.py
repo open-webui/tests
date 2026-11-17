@@ -43,6 +43,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from utils.note_chat import note_chat_input
 from utils.note_menu import open_note_menu
 from utils.tooltips import tooltip_button
 
@@ -309,6 +310,8 @@ def test_closing_the_note_chat_gives_the_focus_back_to_its_button(page_for, make
     page.keyboard.press("Enter")
     panel_close = page.get_by_role("button", name="Close", exact=True)
     expect(panel_close).to_be_visible()
+    # the note chat focuses its message box once its chat has loaded
+    expect(note_chat_input(page)).to_be_focused()
 
     panel_close.focus()
     page.keyboard.press("Enter")
