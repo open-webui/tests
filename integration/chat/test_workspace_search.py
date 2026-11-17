@@ -27,18 +27,18 @@ e8c0ad85e and fails on a backend copy with 07029af63 reverted (the chat is not f
 
 #34162: since 07029af63 (v0.13.1) the search reads those rows, and a chat started, imported or
 continued with a null byte in a message kept it in the message's row. PostgreSQL cannot read
-JSON holding one, so one such row made the search and the chat list search answer 500. Messages
-are now cleaned when they are saved, and migration 5d2b7e9c4a10 removes the null bytes already
-stored in message rows, chat records and shared copies on PostgreSQL, leaving a message that
-quotes the six characters of the escape alone. The cleanup tests store such data on an instance
-of their own, run the migration again by hand and then use every reader: the search, the chat
-list search, the inbox and a message update. The chat list search also stops hiding chats
-that quote the escape's text or carry "x00" in their title, which a 2025 workaround for the
-same bug filtered out on PostgreSQL. Discriminates: on dev 782f4b705 the three save tests
-fail on both databases (the row keeps the byte), the quoting and "x00" tests fail on PostgreSQL
-and the cleanup tests fail (no such migration); with a cleanup that does nothing
-the cleanup tests fail with 500s, and with one that drops the quoted escape's text as well the
-migration breaks the JSON and fails. All pass with the fix, f3d995ff4.
+JSON holding one, so one such row made the search and the chat list search answer 500. Since
+10be890bc every JSON value is cleaned when it is saved, and the first search on PostgreSQL that
+meets a null byte stored earlier removes them from every JSON column once and answers, leaving a
+message that quotes the six characters of the escape alone. The cleanup tests store such data in
+message rows, chat records and shared copies on an instance of their own, search once as a person
+would after the upgrade and then use every reader: the search, the chat list search, the inbox
+and a message update. The chat list search should also stop hiding chats that quote the escape's
+text or carry "x00" in their title, which a 2025 workaround for the same bug filtered out on
+PostgreSQL. Discriminates: all pass on PostgreSQL on dev 10be890bc except the quoting and "x00"
+tests, which stay red there as the workaround is still in place. On dev b6e71d4d7 the three save
+tests fail (the row keeps the byte); on a backend copy of 10be890bc without the cleanup on search
+the four cleanup tests fail (the search, the chat list search and a message update answer 500).
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ import json
 import uuid
 from dataclasses import dataclass
 
+import httpx
 import pytest
 
 from harness import upstream as reply
@@ -55,9 +56,9 @@ from harness.actors import Actor, admin_of, create_user
 from harness.backends import on_postgres, read_rows, write_rows
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask
-from harness.prepared_data import manual_alembic
 from harness.workspace_search import (
     PAGE_SIZE,
+    SEARCH_PATH,
     conversation,
     create_folder,
     create_note,
@@ -447,7 +448,6 @@ def test_a_null_byte_in_a_message_is_dropped_and_the_chat_is_still_found(
     assert _chat_list_search(account, word) == [chat_id]
 
 
-NULL_BYTE_MIGRATION = "5d2b7e9c4a10"
 NULL_BYTE_ENV = {"REGRESSION_THROWAWAY_INSTANCE": "null-byte-cleanup"}
 
 
@@ -458,6 +458,7 @@ class Cleaned:
     word: str
     chats: dict[str, str]
     share_id: str
+    first_search: httpx.Response
 
 
 def _store_json(instance, table: str, column: str, key: str, value, key_value: str) -> None:
@@ -480,8 +481,8 @@ def _share(client, chat_id: str, reader: Actor, share_mode: str | None) -> str:
 
 
 @pytest.fixture(scope="module")
-def cleaned(instance_with, tmp_path_factory) -> Cleaned:
-    """Chats an earlier version stored with null bytes on PostgreSQL, after the cleanup ran."""
+def cleaned(instance_with) -> Cleaned:
+    """Chats an earlier version stored with null bytes on PostgreSQL, after the first search."""
     instance = instance_with(NULL_BYTE_ENV)
     if not on_postgres(instance):
         pytest.skip("only PostgreSQL fails to read a stored null byte")
@@ -516,11 +517,10 @@ def cleaned(instance_with, tmp_path_factory) -> Cleaned:
         snapshot = {"title": name, "share_mode": share_mode, "history": conversation(stored, "hi")}
         _store_json(instance, "shared_chat", "chat", "chat_id", snapshot, chats[name])
 
-    data_dir = tmp_path_factory.mktemp("null-byte-cleanup")
-    for arguments in (("downgrade", f"{NULL_BYTE_MIGRATION}-1"), ("upgrade", "head")):
-        finished = manual_alembic(data_dir, *arguments, database_url=instance.database_url)
-        assert finished.returncode == 0, f"alembic {' '.join(arguments)}: {finished.stderr[-3000:]}"
-    return Cleaned(instance, account, word, chats, share_id)
+    # The first search after the upgrade meets the stored bytes and cleans them up once.
+    with account.client() as client:
+        first_search = client.get(SEARCH_PATH, params={"q": word})
+    return Cleaned(instance, account, word, chats, share_id, first_search)
 
 
 def _stored_text(instance, statement: str, key: str) -> str:
@@ -549,11 +549,15 @@ def test_the_cleanup_removes_only_the_null_bytes(cleaned):
 
 
 @pytest.mark.regression
-def test_after_the_cleanup_the_search_dialog_finds_every_chat(cleaned):
+def test_the_first_search_after_the_upgrade_answers_and_finds_every_chat(cleaned):
     chats = cleaned.chats
     expected = {f"chat:{chats[name]}" for name in ("row", "record", "quoted", "replies")}
+    expected |= {f"shared:{cleaned.share_id}"}
+    first = cleaned.first_search
 
-    assert found(cleaned.account, cleaned.word) == expected | {f"shared:{cleaned.share_id}"}
+    assert first.status_code == 200, f"the first search after the upgrade failed: {first.text}"
+    assert {entry["id"] for entry in first.json()["items"]} == expected
+    assert found(cleaned.account, cleaned.word) == expected
 
 
 @pytest.mark.regression
