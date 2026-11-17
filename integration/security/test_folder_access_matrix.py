@@ -18,7 +18,8 @@ shared folder. The rename takes a title alone, trimmed, and refuses a blank one 
 anything more (history, other chat fields, variables, a folder) with 401. The move stays inside
 the shared folder's tree: a private folder above it, any other folder of the owner's or the
 member's, and no folder at all are refused. Other members, a stranger and the admin get neither,
-and the owner's move leaves the member's chat as read or unread as it was, and pinned.
+and the owner's move leaves the member's chat as read or unread as it was, and pinned. Since
+0181885a2 the member's own move leaves it unread as well.
 
 The pin test is red on dev 948432b43: the owner's move unpins the member's chat
 (open-webui/open-webui#33341, fix PR #33342 open).
@@ -467,9 +468,9 @@ def test_a_move_by_the_owner_leaves_the_members_chat_unread(harbour):
     assert moved.status_code == OK, moved.text
     after = _members_view(harbour)
     assert after["last_read_at"] == 0, f"the owner's move marked it read at {after['last_read_at']}"
-    # the member's own move does mark it read
     assert _move(member, chat_id, harbour["shared"]).status_code == OK
-    assert _members_view(harbour)["last_read_at"] > 0
+    after_own_move = _members_view(harbour)["last_read_at"]
+    assert after_own_move == 0, f"the member's own move marked it read at {after_own_move}"
 
 
 def _members_pin(harbour: dict) -> bool:
