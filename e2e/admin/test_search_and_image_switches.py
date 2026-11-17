@@ -18,6 +18,7 @@ from playwright.sync_api import Page, expect
 
 from harness.image_engines import IMAGES_CONFIG, save_image_settings, serve_gemini
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.admin_settings import save
 from utils.chat_ui import integration_switch
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -53,8 +54,7 @@ def save_tab_switch(page: Page, entry: str, turn_on: bool) -> None:
     expect(switch).to_have_attribute("aria-checked", "false" if turn_on else "true")
     switch.click()
     expect(switch).to_have_attribute("aria-checked", "true" if turn_on else "false")
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save(settings)
 
 
 def save_default_permission(page: Page, switch: str, turn_on: bool) -> None:

@@ -18,6 +18,8 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
+from utils.admin_settings import submit
+
 pytestmark = [pytest.mark.requires_browser, pytest.mark.requires_source]
 
 ADMIN_CONFIG = "/api/v1/auths/admin/config"
@@ -36,12 +38,12 @@ def test_saving_and_removing_an_override_relabels_the_open_page(page_for, make_u
     page.get_by_role("button", name="Add translation").click()
     page.get_by_role("textbox", name="Key").fill(ORIGINAL)
     page.get_by_role("textbox", name="Value").fill(OVERRIDE)
-    page.get_by_role("button", name="Save").click()
+    submit(page.get_by_role("dialog"))
     expect(sidebar_entry(page, OVERRIDE)).to_be_visible()
     expect(sidebar_entry(page, ORIGINAL)).to_have_count(0)
 
     page.get_by_role("button", name="Delete").click()
-    page.get_by_role("button", name="Save").click()
+    submit(page.get_by_role("dialog"))
     expect(sidebar_entry(page, ORIGINAL)).to_be_visible()
     expect(sidebar_entry(page, OVERRIDE)).to_have_count(0)
 
@@ -75,7 +77,7 @@ def test_deleting_one_languages_translation_keeps_the_others(admin, page_for, ma
     with page.expect_response(
         lambda response: response.request.method == "POST" and ADMIN_CONFIG in response.url
     ):
-        page.get_by_role("button", name="Save").click()
+        submit(page.get_by_role("dialog"))
 
     with admin.client() as client:
         saved = client.get(ADMIN_CONFIG).json()["I18N"]

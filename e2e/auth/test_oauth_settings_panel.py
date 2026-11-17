@@ -26,6 +26,7 @@ from e2e.conftest import _close_context, _new_context
 from harness.actors import admin_of
 from harness.oidc_provider import OAUTH_CONFIG_PATH, session_user, shared_provider, sso_env
 from harness.plain_http import serve_at_lan_host
+from utils.admin_settings import save
 from utils.chat_ui import chat_input
 
 pytestmark = [
@@ -90,11 +91,6 @@ def set_switch(panel: Locator, name: str) -> None:
     expect(switch).to_be_checked()
 
 
-def save(page: Page) -> None:
-    page.get_by_role("dialog").get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def continue_with(page: Page, provider: str = "SSO") -> None:
     page.get_by_role("button", name=f"Continue with {provider}").click()
 
@@ -107,7 +103,7 @@ def expect_signed_in(page: Page, config: AppConfig) -> None:
 def test_allowed_domains_turn_away_a_person_from_another_domain(page_for, sso, idp, signed_out):
     page, oauth = oauth_panel(page_for, sso)
     field(oauth, "Allowed Domains").fill("harbour.example")
-    save(page)
+    save(page.get_by_role("dialog"))
     idp.sign_in_as(email=f"skipper-{uuid.uuid4().hex[:6]}@elsewhere.example")
 
     visitor = signed_out()
@@ -123,7 +119,7 @@ def test_allowed_domains_let_a_person_from_the_listed_domain_in(
 ):
     page, oauth = oauth_panel(page_for, sso)
     field(oauth, "Allowed Domains").fill("harbour.example")
-    save(page)
+    save(page.get_by_role("dialog"))
     idp.sign_in_as(email=f"skipper-{uuid.uuid4().hex[:6]}@harbour.example")
 
     visitor = signed_out()
@@ -140,7 +136,7 @@ def test_role_mapping_makes_a_person_with_an_admin_role_an_admin(
     field(oauth, "Roles Claim").fill("roles")
     field(oauth, "Admin Roles").fill("harbourmaster")
     field(oauth, "Allowed Roles").fill("harbourmaster,crew")
-    save(page)
+    save(page.get_by_role("dialog"))
     idp.sign_in_as(roles=["harbourmaster"])
 
     visitor = signed_out()
@@ -158,7 +154,7 @@ def test_group_mapping_puts_a_person_in_the_groups_of_their_claim(
     set_switch(oauth, "Group Mapping")
     set_switch(oauth, "Auto-Create Groups")
     field(oauth, "Group Claim").fill("groups")
-    save(page)
+    save(page.get_by_role("dialog"))
     claims = idp.sign_in_as(groups=[group])
 
     visitor = signed_out()

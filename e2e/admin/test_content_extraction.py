@@ -33,6 +33,7 @@ from playwright.sync_api import Page, expect
 from harness import upstream as reply
 from harness.listener import ReceivedRequest, json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import save
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [
@@ -68,18 +69,13 @@ def pick_engine(page: Page, engine: str):
     return settings
 
 
-def save(page: Page, settings) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def save_tika(page: Page, url: str, version: str) -> None:
     settings = pick_engine(page, "tika")
     settings.get_by_placeholder("Enter Tika Server URL").fill(url)
     settings.get_by_role("combobox").filter(
         has=page.get_by_role("option", name="Tika 4.x")
     ).select_option(version)
-    save(page, settings)
+    save(settings)
 
 
 def ask_about(page: Page, upstream, name: str, mime_type: str, content: bytes) -> str:
@@ -136,7 +132,7 @@ def test_the_external_loader_gets_the_file_with_the_admins_key_and_headers(
     settings.get_by_placeholder("Enter additional headers in JSON format").fill(
         '{"X-Harbour": "north quay"}'
     )
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about(
         page_for(make_user()), upstream, "report.pdf", "application/pdf", b"%PDF-1.4 scanned"
@@ -162,7 +158,7 @@ def test_docling_converts_the_file_with_its_api_key(
     settings = pick_engine(admin_page, "docling")
     settings.get_by_placeholder("Enter Docling Server URL").fill(listener.base_url)
     settings.get_by_placeholder("Enter Docling API Key").fill("docling-key-3")
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about(
         page_for(make_user()), upstream, "report.pdf", "application/pdf", b"%PDF-1.4 scanned"
@@ -207,7 +203,7 @@ def test_datalab_marker_gets_the_file_with_the_key_and_the_switches_turned_on(
         },
     )
     turn_on(settings, "Force OCR")
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_report(page_for, make_user, upstream)
 
@@ -259,7 +255,7 @@ def test_document_intelligence_analyzes_the_file_with_the_key_and_the_model_type
             "Enter Document Intelligence Model": "prebuilt-read",
         },
     )
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_report(page_for, make_user, upstream)
 
@@ -288,7 +284,7 @@ def save_mistral(page: Page, listener, use_base64: bool) -> None:
     )
     if use_base64:
         turn_on(settings, "Use Base64")
-    save(page, settings)
+    save(settings)
 
 
 def test_mistral_ocr_uploads_the_file_reads_it_and_deletes_it(
@@ -340,7 +336,7 @@ def test_paddleocr_vl_parses_the_file_with_its_token(
             "Enter PaddleOCR-vl API Token": "paddle-token-4",
         },
     )
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_report(page_for, make_user, upstream)
 
@@ -362,7 +358,7 @@ def test_mineru_parses_the_file_with_the_parameters_the_admin_typed(
     settings.get_by_placeholder(re.compile('"enable_formula"')).fill(
         '{"enable_ocr": true, "language": "de"}'
     )
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_report(page_for, make_user, upstream)
 

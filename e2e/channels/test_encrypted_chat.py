@@ -29,6 +29,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import make_group
 from harness.channel_quotes import enable_channels
+from utils.admin_settings import save
 from utils.chat_ui import chat_input
 
 # encrypted chat refuses to start outside a secure context
@@ -183,8 +184,7 @@ def test_encrypted_chat_is_offered_once_the_admin_turns_it_on_and_grants_it(
     switch = settings.get_by_role("switch", name="Encrypted channels", exact=True)
     switch.click()
     expect(switch).to_have_attribute("aria-checked", "true")
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!")).to_be_visible()
+    save(settings)
     page = page_for(person)
     _open_conversation(page, channel_id)
     expect(_conversation_menu(page).get_by_role("menuitem", name="Encrypted Chat")).to_have_count(0)

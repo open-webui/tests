@@ -41,6 +41,7 @@ from harness.file_context import file_context_ticked
 from harness.keyword_embeddings import keyword_embedding_env, serve_keyword_embeddings
 from harness.listener import ReceivedRequest, json_answer, listening
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import save
 from utils.chat_surface import EVERYWHERE, MAIN_CHAT, TEMPORARY_SIDE, ChatOpener, ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -160,11 +161,6 @@ def set_switch(settings: Locator, name: str, turn_on: bool) -> None:
     if (switch.get_attribute("aria-checked") == "true") != turn_on:
         switch.click()
     expect(switch).to_have_attribute("aria-checked", "true" if turn_on else "false")
-
-
-def save(settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(settings.page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
 def ask_about_the_notes(chat_for, ranked, reader: Actor, question: str) -> ChatSurface:

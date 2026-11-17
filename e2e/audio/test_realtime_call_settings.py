@@ -39,6 +39,7 @@ from harness.realtime_provider import (
     serving_realtime_provider,
     using_realtime,
 )
+from utils.admin_settings import submit
 from utils.chat_ui import conversation, last_reply
 from utils.voice_call import TURN_TIMEOUT_MS, call_status, start_call
 
@@ -88,7 +89,7 @@ def is_audio_save(response) -> bool:
 def save(page: Page, settings: Locator) -> None:
     # changing the speech engine saves on its own, so wait for this save's answer
     with page.expect_response(is_audio_save) as saved:
-        settings.get_by_role("button", name="Save", exact=True).click()
+        submit(settings)
     assert saved.value.ok, saved.value.text()
 
 

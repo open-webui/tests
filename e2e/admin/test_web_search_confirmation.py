@@ -27,6 +27,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.admin_settings import save
 from utils.chat_surface import EVERYWHERE, ChatSurface
 from utils.chat_ui import expect_reply, open_integrations_menu, send
 
@@ -58,8 +59,7 @@ def save_confirmation(admin_page: Page, turn_on: bool) -> None:
     if turn_on:
         content = settings.get_by_text("Web Search Confirmation Content", exact=True)
         content.locator("xpath=following-sibling::div//textarea").fill(NOTICE)
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save(settings)
 
 
 def turn_web_search_on(chat: ChatSurface) -> None:

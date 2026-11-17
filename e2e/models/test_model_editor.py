@@ -41,6 +41,7 @@ f659c0d12 and fails in a build of it whose list shows names only.
 Retargeted for e32d2f75b, whose editor picks the base model with the chat's model selector (Select
 a base model): the sharing test passes on dev b40891e0a (3 of 3) and fails in a backend copy of it
 that makes every new model readable by everyone.
+Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 """
 
 from __future__ import annotations
@@ -190,7 +191,7 @@ def test_unticking_file_upload_leaves_the_upload_unsupported(page_for, builder, 
         open_menu(page, "More").get_by_role("menuitem", name="Upload Files").click()
 
     editor = open_editor(page, preset)
-    set_checkbox(editor, "Capabilities", "File Upload", False)
+    set_checkbox(editor, "Features", "File Upload", False)
     save(editor)
 
     open_chat_on(page, preset)
@@ -208,7 +209,7 @@ def test_unticking_web_search_takes_the_toggle_out_of_the_chat(
     expect(web_search_toggle(page)).to_be_visible()
 
     editor = open_editor(page, preset)
-    set_checkbox(editor, "Capabilities", "Web Search", False)
+    set_checkbox(editor, "Features", "Web Search", False)
     save(editor)
 
     open_chat_on(page, preset)
@@ -266,7 +267,7 @@ def test_unticking_the_builtin_tools_capability_offers_none_of_them(
 ):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    set_checkbox(editor, "Capabilities", "Builtin Tools", False)
+    set_checkbox(editor, "Features", "Builtin Tools", False)
     save(editor)
 
     open_chat_on(page, preset)

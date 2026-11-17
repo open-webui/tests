@@ -18,6 +18,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from utils.admin_settings import save
 from utils.cached_chat import ask
 from utils.voice_call import start_call, wait_for_transcriptions
 
@@ -44,11 +45,6 @@ def set_voice_mode_prompt(settings: Locator, turn_on: bool) -> None:
     if (switch.get_attribute("aria-checked") == "true") != turn_on:
         switch.click()
     expect(switch).to_have_attribute("aria-checked", "true" if turn_on else "false")
-
-
-def save(settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
 
 
 def first_spoken_request(upstream, typed_requests: int, timeout: float = 60.0) -> dict:

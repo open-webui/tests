@@ -17,11 +17,6 @@ def open_image_settings(page: Page) -> Locator:
     return settings
 
 
-def save_tab(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def connection_dialog(page: Page) -> Locator:
     heading = page.get_by_text("Add Connection", exact=True).or_(
         page.get_by_text("Edit Connection", exact=True)

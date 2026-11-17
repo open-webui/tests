@@ -15,6 +15,7 @@ show them: passes on dev 0401b7522 (3 of 3) and fails in a build of it whose pre
 the edited params.
 Retargeted again for 8d0ff76f2, whose File Upload switch sits in the Capabilities section: passes
 on dev 76ad6f97c (3 of 3) and fails in a build of it whose preview shows the stored model.
+Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 """
 
 from __future__ import annotations
@@ -104,7 +105,7 @@ def test_the_json_preview_shows_unsaved_changes_of_the_editor(page_for, builder,
     editor.get_by_role("button", name="Advanced Params").click()
     setting_button(editor, "Temperature").click()
     editor.get_by_role("spinbutton", name="Temperature").fill("0.3")
-    section(editor, "Capabilities").get_by_role("switch", name="File Upload").click()
+    section(editor, "Features").get_by_role("switch", name="File Upload").click()
 
     expect(editor.locator("textarea[readonly]")).to_have_value(re.compile(re.escape(new_name)))
     shown = _preview(editor)

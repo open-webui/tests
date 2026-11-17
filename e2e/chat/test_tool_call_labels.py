@@ -34,6 +34,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from harness.python_tools import python_tool
+from utils.admin_settings import save
 from utils.cached_chat import turn_on_tool
 from utils.chat_surface import ChatSurface
 from utils.chat_ui import conversation, expect_reply, send
@@ -112,8 +113,7 @@ def test_an_admin_switches_tool_call_labels_on_and_it_is_kept(
     expect(switch).not_to_be_checked()
     switch.click()
     expect(switch).to_be_checked()
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!")).to_be_visible()
+    save(settings)
 
     reopened = page_for(admin, path="/admin/settings/interface").get_by_role("dialog")
     expect(reopened.get_by_role("switch", name="Tool Call Labels")).to_be_checked()

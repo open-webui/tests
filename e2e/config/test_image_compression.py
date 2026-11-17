@@ -22,6 +22,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import save
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -89,8 +90,7 @@ def test_the_admins_image_compression_shrinks_every_accounts_image(
     for label in ("Image Compression Width", "Image Compression Height"):
         field = settings.get_by_text(label, exact=True)
         field.locator("xpath=following-sibling::div//input").fill("20")
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save(settings)
 
     width, height = attach_and_ask(page_for(make_user()), upstream)
 

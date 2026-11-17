@@ -45,6 +45,7 @@ from harness import upstream as reply
 from harness.channel_chat import drawing_model, serve_openai_images
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, image_settings, save_image_settings
 from harness.listener import json_answer
+from utils.admin_settings import save
 from utils.chat_surface import ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -66,7 +67,6 @@ from utils.image_settings import (
     configure_connection,
     open_image_settings,
     save_connection,
-    save_tab,
 )
 from utils.tooltips import tooltip_button
 
@@ -167,7 +167,7 @@ def test_an_admin_sets_up_the_openai_engine_and_it_draws(
     dialog.get_by_placeholder("API Key").fill("sk-drawn")
     add_model_id(dialog, "dall-e-2")
     save_connection(admin_page, dialog)
-    save_tab(admin_page, settings)
+    save(settings)
 
     settings = open_image_settings(admin_page)
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()

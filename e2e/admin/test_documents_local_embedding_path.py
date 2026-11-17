@@ -19,6 +19,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.actors import admin_of
 from harness.instance import LaunchedInstance
 from harness.local_embedding import local_embedding_env, save_keyword_model
+from utils.admin_settings import save
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -63,9 +64,7 @@ def test_saving_the_documents_settings_on_a_local_model_path_shows_no_error(
     ).fill("3")
     dialog.get_by_label("Embedding Batch Size", exact=True).fill("7")
 
-    dialog.get_by_role("button", name="Save", exact=True).click()
-
-    expect(page.get_by_text(SAVED).first).to_be_visible()
+    save(dialog)
     # a toast clears itself after a few seconds, which `to_have_count(0)` would wait for
     shown = page.get_by_text(PATH_ERROR).count()
     assert shown == 0, "Save showed the filesystem path error for a model that is set as a path"

@@ -24,6 +24,7 @@ picks every default tool, the test of the default tool the user may not use fail
 The default terminal tests pass on the dev de68d0ce4 build, which added the Default terminal to
 Model Defaults, and fail on the dev c82ceaf1f build, whose Model Defaults has no Default terminal
 and whose new model starts with none; the test with no default terminal passes on both.
+Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 """
 
 from __future__ import annotations
@@ -158,7 +159,7 @@ def test_a_default_capability_switched_off_refuses_an_image(
     admin_page = page_for(admin)
     settings = open_model_defaults(admin_page)
     open_section(settings, "Model Capabilities")
-    vision = section(settings, "Capabilities").get_by_role("switch", name="Vision")
+    vision = section(settings, "Features").get_by_role("switch", name="Vision")
     expect(vision).to_have_attribute("aria-checked", "true")
     vision.click()
     expect(vision).to_have_attribute("aria-checked", "false")

@@ -43,6 +43,7 @@ from harness.audio_engine import (
 )
 from harness.chat_history import seed_chat
 from harness.listener import Listener, json_answer
+from utils.admin_settings import save
 from utils.chat_ui import chat_input
 from utils.speech_audio import READ_ALOUD_PLAYED
 
@@ -125,11 +126,6 @@ def open_admin_audio(page: Page) -> Locator:
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("combobox", name="Speech-to-Text Engine")).to_be_visible()
     return settings
-
-
-def save_admin_audio(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
 def pick_engines(settings: Locator, speech_to_text: str, text_to_speech: str) -> None:
@@ -228,7 +224,7 @@ def test_an_azure_voice_reads_a_reply_aloud_through_the_admin_tab(
     settings.get_by_role("textbox", name="Endpoint URL").fill(listener.base_url)
     settings.get_by_role("combobox", name="TTS Voice").fill(AZURE_VOICE)
     settings.get_by_role("textbox", name="Output format").fill(AZURE_FORMAT)
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     reader = make_user()
     answer = unique_line()
@@ -254,7 +250,7 @@ def test_azure_transcribes_a_dictation_through_the_admin_tab(
     settings.get_by_role("textbox", name="Azure Region").fill("westus")
     settings.get_by_role("textbox", name="Language Locales").fill("en-US,fr-FR")
     settings.get_by_role("textbox", name="Endpoint URL").fill(listener.base_url)
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     page = voice_page_for(make_user())
     dictate(page)
@@ -276,7 +272,7 @@ def test_a_mistral_voice_reads_a_reply_aloud_through_the_admin_tab(
     settings.get_by_role("textbox", name="API Base URL").fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill(MISTRAL_KEY)
     settings.get_by_role("combobox", name="TTS Voice").fill(MISTRAL_VOICE)
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     reader = make_user()
     answer = unique_line()
@@ -297,7 +293,7 @@ def test_mistral_transcribes_a_dictation_through_the_admin_tab(
     settings.get_by_role("textbox", name="API Base URL").fill(listener.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill(MISTRAL_KEY)
     settings.get_by_role("textbox", name="STT Model").fill("voxtral-test-model")
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     page = voice_page_for(make_user())
     dictate(page)
@@ -342,7 +338,7 @@ def test_response_splitting_decides_how_many_speech_requests_a_reply_makes(
     settings = open_admin_audio(admin_page)
     splitting = settings.get_by_role("combobox").filter(has_text="Paragraphs")
     splitting.select_option(label=label)
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     reader = make_user()
     page = page_for(reader)
@@ -381,7 +377,7 @@ def test_the_admins_speech_to_text_model_is_the_one_the_engine_is_asked_for(
     settings.get_by_role("textbox", name="API Base URL").fill(engine.base_url)
     settings.get_by_role("textbox", name="API Key", exact=True).fill("sk-audio")
     settings.get_by_role("combobox", name="STT Model").fill("whisper-test-model")
-    save_admin_audio(admin_page, settings)
+    save(settings)
 
     page = voice_page_for(make_user())
     dictate(page)
@@ -406,7 +402,7 @@ def test_a_new_admin_default_voice_replaces_the_voice_a_user_picked(
 
     settings = open_admin_audio(admin_page)
     settings.get_by_role("combobox", name="TTS Voice").fill("newscaster")
-    save_admin_audio(admin_page, settings)
+    save(settings)
     second = unique_line()
     read_aloud(page, owner, second)
 

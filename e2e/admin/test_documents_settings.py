@@ -25,6 +25,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import save
 from utils.chat_ui import chat_input, expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -48,11 +49,6 @@ def open_documents(page: Page) -> Locator:
 
 def field(settings: Locator, label: str) -> Locator:
     return settings.get_by_text(label, exact=True).locator("xpath=following-sibling::div//input")
-
-
-def save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
 def set_switch(settings: Locator, name: str, turn_on: bool) -> None:
@@ -101,7 +97,7 @@ def test_a_max_upload_count_refuses_more_files_at_once(admin_page, page_for, mak
     preserve(RETRIEVAL_CONFIG)
     settings = open_documents(admin_page)
     field(settings, "Max Upload Count").fill("1")
-    save(admin_page, settings)
+    save(settings)
     page = page_for(make_user())
 
     choose_files(page, text_file("north.txt", "north"), text_file("south.txt", "south"))
@@ -116,7 +112,7 @@ def test_a_max_upload_size_refuses_a_larger_file(admin_page, page_for, make_user
     preserve(RETRIEVAL_CONFIG)
     settings = open_documents(admin_page)
     field(settings, "Max Upload Size").fill("1")
-    save(admin_page, settings)
+    save(settings)
     page = page_for(make_user())
 
     choose_files(page, text_file("atlas.txt", "x" * (2 * 1024 * 1024)))
@@ -131,7 +127,7 @@ def test_allowed_file_extensions_refuse_a_file_of_another_kind(
     preserve(RETRIEVAL_CONFIG)
     settings = open_documents(admin_page)
     field(settings, "Allowed File Extensions").fill("md")
-    save(admin_page, settings)
+    save(settings)
     page = page_for(make_user())
 
     choose_files(page, text_file("notes.txt", "a plain text note"))
@@ -160,7 +156,7 @@ def test_top_k_decides_how_many_pieces_of_a_file_the_model_gets(
     field(settings, "Top K").fill("2")
     # files under the threshold are handed over whole since 98f7a6146
     field(settings, "Full Text Threshold (Characters)").fill("0")
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_the_guide(page_for(make_user()), upstream)
 
@@ -177,7 +173,7 @@ def test_bypass_embedding_and_retrieval_gives_the_model_the_whole_file(
     field(settings, "Chunk Overlap").fill("0")
     field(settings, "Top K").fill("2")
     set_switch(settings, "Bypass Embedding and Retrieval", turn_on=True)
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_the_guide(page_for(make_user()), upstream)
 
@@ -193,14 +189,14 @@ def test_the_full_text_threshold_and_always_use_full_text_are_kept_after_a_reloa
     set_switch(settings, "Always Use Full Text", turn_on=False)
     expect(field(settings, "Full Text Threshold (Characters)")).to_be_enabled()
     field(settings, "Full Text Threshold (Characters)").fill("4321")
-    save(admin_page, settings)
+    save(settings)
 
     settings = open_documents(admin_page)
     expect(field(settings, "Full Text Threshold (Characters)")).to_have_value("4321")
     set_switch(settings, "Always Use Full Text", turn_on=True)
     # Always Use Full Text sends every file whole, so the threshold has nothing left to decide
     expect(field(settings, "Full Text Threshold (Characters)")).to_be_disabled()
-    save(admin_page, settings)
+    save(settings)
 
     settings = open_documents(admin_page)
     always = settings.get_by_role("switch", name="Always Use Full Text", exact=True)
@@ -227,7 +223,7 @@ def test_a_file_up_to_the_full_text_threshold_reaches_the_model_whole(
     field(settings, "Chunk Overlap").fill("0")
     field(settings, "Top K").fill("2")
     field(settings, "Full Text Threshold (Characters)").fill(str(len(GUIDE) - over))
-    save(admin_page, settings)
+    save(settings)
 
     sent = ask_about_the_guide(page_for(make_user()), upstream)
 

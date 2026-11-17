@@ -48,6 +48,7 @@ from harness import upstream as reply
 from harness.backends import wait_until
 from harness.listener import ReceivedRequest, json_answer
 from harness.plain_http import loopback_url
+from utils.admin_settings import save
 from utils.chat_surface import MAIN_CHAT, SIDE_CHAT, ChatSurface, main_chat, open_new_chat_tab
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -394,8 +395,7 @@ def test_an_admin_picks_the_auto_review_engine_and_its_settings_are_kept(
     settings.get_by_placeholder(default_policy, exact=True).fill(
         "Ask before anything that leaves the harbour."
     )
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!")).to_be_visible()
+    save(settings)
 
     with admin.client() as client:
         stored = client.get(CHAT_CONFIG[0]).json()

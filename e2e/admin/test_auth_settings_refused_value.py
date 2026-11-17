@@ -15,6 +15,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
+from utils.admin_settings import save
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -31,8 +32,7 @@ def _save_jwt_expiry(page: Page, value: str) -> Locator:
     # the field's label is not tied to it, so find it by its example text
     field = settings.get_by_placeholder('e.g.) "30m","1h", "10d".')
     field.fill(value)
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    save(settings)
     return field
 
 

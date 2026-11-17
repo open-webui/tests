@@ -16,6 +16,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import submit
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -45,16 +46,12 @@ def enter_external_loader(settings: Locator, headers: str) -> None:
     settings.get_by_placeholder("Enter additional headers in JSON format").fill(headers)
 
 
-def save(settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-
-
 def test_invalid_headers_are_reported_when_another_engine_is_selected(documents):
     page, settings = documents
     enter_external_loader(settings, "{not json")
     engine(settings).select_option("")
 
-    save(settings)
+    submit(settings)
 
     expect(page.get_by_text(HEADERS_ERROR).first).to_be_visible()
     expect(page.get_by_text(SAVED)).to_have_count(0)
@@ -66,7 +63,7 @@ def test_headers_that_are_not_an_object_are_reported_for_any_engine(documents):
     engine(settings).select_option("tika")
     settings.get_by_placeholder("Enter Tika Server URL").fill("http://127.0.0.1:9")
 
-    save(settings)
+    submit(settings)
 
     expect(page.get_by_text(HEADERS_ERROR).first).to_be_visible()
 
@@ -75,7 +72,7 @@ def test_invalid_headers_are_reported_with_the_external_engine(documents):
     page, settings = documents
     enter_external_loader(settings, "{not json")
 
-    save(settings)
+    submit(settings)
 
     expect(page.get_by_text(HEADERS_ERROR).first).to_be_visible()
     expect(page.get_by_text(SAVED)).to_have_count(0)
@@ -86,7 +83,7 @@ def test_valid_headers_save_with_another_engine_selected(documents):
     enter_external_loader(settings, '{"X-Team": "harbour"}')
     engine(settings).select_option("")
 
-    save(settings)
+    submit(settings)
 
     expect(page.get_by_text(SAVED).first).to_be_visible()
     expect(page.get_by_text(HEADERS_ERROR)).to_have_count(0)

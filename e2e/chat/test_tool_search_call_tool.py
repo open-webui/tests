@@ -91,6 +91,7 @@ from harness.web_retrieval import (
     save_web_settings,
     serve_search_results,
 )
+from utils.admin_settings import save, submit
 from utils.chat_surface import MAIN_CHAT, ChatOpener, ChatSurface
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -888,10 +889,6 @@ def open_interface_settings(page: Page) -> Locator:
     return settings
 
 
-def save_interface(settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-
-
 def stored_chat_config(admin) -> dict:
     with admin.client() as client:
         return client.get(CHAT_CONFIG[0]).json()
@@ -933,8 +930,7 @@ def test_an_admin_picks_the_decisions_engine_and_it_is_kept_and_used(
     decisions_field(settings, "Model").fill("judge-2")
     decisions_field(settings, "Relevance threshold").fill("0.65")
     prompt.fill(DECISIONS_PROMPT)
-    save_interface(settings)
-    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
+    save(settings)
 
     stored = stored_chat_config(admin)
     assert {key: stored[key] for key in DECISIONS_FIELDS} == {
@@ -975,7 +971,7 @@ def test_a_decisions_address_with_credentials_is_refused_with_a_message(interfac
     settings.get_by_label("Search engine").select_option(label="Decisions API")
     decisions_field(settings, "API Base URL").fill("https://user:secret@decide.test/v1")
     decisions_field(settings, "Model").fill("judge-2")
-    save_interface(settings)
+    submit(settings)
 
     expect(
         settings.page.get_by_text(
@@ -998,8 +994,7 @@ def test_the_embeddings_engine_names_the_documents_embedding_model_and_is_kept(
     expect(settings).to_contain_text(f"Uses the Documents embedding model: {model}.")
     link = settings.get_by_role("link", name="Configure in Documents settings")
     expect(link).to_have_attribute("href", "/admin/settings/documents")
-    save_interface(settings)
-    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
+    save(settings)
     assert stored_chat_config(admin)["TOOL_SEARCH_ENGINE"] == "embeddings"
 
     reopened = open_interface_settings(page_for(admin, path="/admin/settings/interface"))

@@ -30,6 +30,7 @@ from playwright.sync_api import Browser, Locator, Page, expect
 
 from harness.actors import Actor
 from harness.instance import LaunchedInstance
+from utils.admin_settings import save
 from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -65,11 +66,6 @@ def _authentication_settings(page: Page) -> Locator:
     settings = page.get_by_role("dialog")
     expect(settings.get_by_text("JWT Expiration", exact=True)).to_be_visible()
     return settings
-
-
-def _save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
 def _status(path: str, key: str, base_url: str) -> int:
@@ -149,7 +145,7 @@ def test_the_endpoint_restriction_lets_the_listed_endpoint_answer_and_refuses_th
     settings.get_by_role("switch", name="API Key Endpoint Restrictions").click()
     settings.get_by_placeholder("e.g.) /api/v1/messages, /api/v1/channels").fill("/api/models")
 
-    _save(admin_page, settings)
+    save(settings)
 
     assert _status("/api/models", key, base_url) == 200
     assert _status(REFUSED_PATH, key, base_url) == 403
@@ -162,7 +158,7 @@ def test_the_session_of_the_same_account_still_reaches_the_refused_endpoint(
     settings = _authentication_settings(admin_page)
     settings.get_by_role("switch", name="API Key Endpoint Restrictions").click()
     settings.get_by_placeholder("e.g.) /api/v1/messages, /api/v1/channels").fill("/api/models")
-    _save(admin_page, settings)
+    save(settings)
     assert _status(REFUSED_PATH, key, account.base_url) == 403
 
     assert _status(REFUSED_PATH, account.token, account.base_url) == 200
@@ -172,7 +168,7 @@ def test_an_account_signing_up_lands_in_the_default_group(admin_page, page, defa
     group_name, _ = default_group
     settings = _authentication_settings(admin_page)
     settings.get_by_role("combobox", name="Default Group").select_option(label=group_name)
-    _save(admin_page, settings)
+    save(settings)
     name, email = _new_visitor()
 
     _sign_up(page, name, email)
@@ -276,7 +272,7 @@ def test_with_the_login_form_off_the_auth_page_offers_no_password_form(
     login_form = settings.get_by_role("switch", name="Login Form")
     expect(login_form).to_be_checked()
     login_form.click()
-    _save(admin_page, settings)
+    save(settings)
 
     page.goto("/auth")
 

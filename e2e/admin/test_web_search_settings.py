@@ -25,6 +25,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.listener import json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
+from utils.admin_settings import save
 from utils.chat_ui import expect_reply, send, turn_on_integration
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -57,11 +58,6 @@ def web_search_tab(page: Page) -> Locator:
 DOMAIN_FILTER = "Enter domains separated by commas (e.g., example.com,site.org,!excludedsite.com)"
 
 
-def save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def search_in_a_chat(page: Page, upstream) -> list[dict]:
     """The model searches once; returns what the provider was sent after the search."""
     answering = reply.answering(QUESTION)
@@ -81,7 +77,7 @@ def test_the_engine_is_asked_for_the_saved_result_count(
     admin_page = page_for(admin)
     settings = web_search_tab(admin_page)
     settings.get_by_placeholder("Search Result Count").fill("2")
-    save(admin_page, settings)
+    save(settings)
 
     search_in_a_chat(page_for(make_user()), upstream)
 
@@ -96,7 +92,7 @@ def test_the_model_gets_only_the_hits_from_the_listed_domains(
     settings = web_search_tab(admin_page)
     settings.get_by_placeholder("Search Result Count").fill("2")
     settings.get_by_placeholder(DOMAIN_FILTER).fill("harbour.example")
-    save(admin_page, settings)
+    save(settings)
 
     requests = search_in_a_chat(page_for(make_user()), upstream)
 
@@ -134,7 +130,7 @@ def test_searxng_is_asked_the_query_in_the_saved_language(
     settings.get_by_placeholder("Enter Searxng Query URL").fill(f"{engine.base_url}/searxng")
     settings.get_by_placeholder("Enter Searxng search language").fill("de")
     settings.get_by_placeholder("Search Result Count").fill("1")
-    save(admin_page, settings)
+    save(settings)
 
     requests = search_in_a_chat(page_for(make_user()), upstream)
 
@@ -174,7 +170,7 @@ def test_the_loader_settings_save_with_web_search_off(page_for, admin, preserve,
     preserve(RETRIEVAL_CONFIG)
     page, settings = loader_tab(page_for, admin, web_search_on=False, engine=engine)
     settings.get_by_placeholder("Timeout", exact=True).fill("15")
-    save(page, settings)
+    save(settings)
 
     assert saved_loader_timeout(admin) == "15"
 

@@ -27,6 +27,7 @@ from harness.ldap_server import (
     save_ldap_settings,
     serve_directory,
 )
+from utils.admin_settings import save
 from utils.chat_ui import chat_input
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -62,11 +63,6 @@ def set_switch(settings: Locator, name: str, turn_on: bool) -> None:
     expect(switch).to_have_attribute("aria-checked", "true" if turn_on else "false")
 
 
-def save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def connect_directory(page: Page, directory, group_mapping: bool = False) -> None:
     settings = open_authentication(page)
     set_switch(settings, "LDAP", turn_on=True)
@@ -85,7 +81,7 @@ def connect_directory(page: Page, directory, group_mapping: bool = False) -> Non
         )
         set_switch(ldap, "Group Mapping", turn_on=True)
         set_switch(ldap, "Auto-Create Groups", turn_on=True)
-    save(page, settings)
+    save(settings)
 
 
 def ldap_sign_in(page: Page, username: str, password: str) -> None:
@@ -151,7 +147,7 @@ def test_with_ldap_switched_off_the_auth_page_asks_for_an_email(page_for, admin,
     settings = open_authentication(admin_page)
     expect(settings.get_by_placeholder("Enter server host")).to_have_value(directory.host)
     set_switch(settings, "LDAP", turn_on=False)
-    save(admin_page, settings)
+    save(settings)
 
     page.goto("/auth")
 

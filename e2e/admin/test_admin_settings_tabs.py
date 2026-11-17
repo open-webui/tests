@@ -47,6 +47,7 @@ from harness.image_engines import (
 )
 from harness.listener import json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
+from utils.admin_settings import save
 from utils.chat_ui import (
     chat_input,
     conversation,
@@ -74,11 +75,6 @@ def _open_tab(page: Page, tab: str) -> Locator:
     return settings
 
 
-def _save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 @pytest.mark.usefixtures("file_context_on")
 def test_a_saved_rag_template_wraps_an_uploaded_file(admin_page, preserve, upstream):
     preserve(RETRIEVAL_CONFIG)
@@ -88,7 +84,7 @@ def test_a_saved_rag_template_wraps_an_uploaded_file(admin_page, preserve, upstr
         "textbox", name="Leave empty to use the default prompt, or enter a custom prompt"
     )
     template.fill(f"{marker}\n<context>{{{{CONTEXT}}}}</context>")
-    _save(admin_page, settings)
+    save(settings)
 
     settings = _open_tab(admin_page, "documents")
     expect(template).to_have_value(f"{marker}\n<context>{{{{CONTEXT}}}}</context>")
@@ -141,7 +137,7 @@ def test_a_saved_search_engine_answers_the_models_web_search(
     )
     settings.get_by_role("textbox", name="Enter External Web Search API Key").fill("search-key")
     settings.get_by_role("switch", name="Bypass Web Loader").click()
-    _save(admin_page, settings)
+    save(settings)
 
     settings = _open_tab(admin_page, "web")
     expect(settings.get_by_role("switch", name="Web Search", exact=True)).to_be_checked()
@@ -201,7 +197,7 @@ def test_a_saved_speech_engine_reads_a_reply_aloud(admin_page, audio_restored, l
         key_box.fill("sk-audio")
     settings.get_by_role("combobox", name="TTS Voice").fill(VOICE)
     settings.get_by_role("combobox", name="TTS Model").fill(SPEECH_MODEL)
-    _save(admin_page, settings)
+    save(settings)
 
     settings = _open_tab(admin_page, "audio")
     expect(settings.get_by_role("combobox", name="Text-to-Speech Engine")).to_have_value("openai")
@@ -234,7 +230,7 @@ def test_a_saved_image_engine_draws_the_models_picture(
     dialog.get_by_placeholder("API Key").fill(GEMINI_API_KEY)
     add_model_id(dialog, IMAGEN_MODEL)
     save_connection(admin_page, dialog)
-    _save(admin_page, settings)
+    save(settings)
 
     settings = _open_tab(admin_page, "images")
     expect(settings.get_by_role("switch", name="Image Generation")).to_be_checked()

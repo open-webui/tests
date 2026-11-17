@@ -36,12 +36,12 @@ from harness.image_engines import (
     save_image_settings,
     serve_automatic1111,
 )
+from utils.admin_settings import save, submit
 from utils.image_settings import (
     PARAMS_PLACEHOLDER,
     configure_connection,
     open_image_settings,
     save_connection,
-    save_tab,
     show_advanced,
 )
 
@@ -118,7 +118,7 @@ def test_saving_with_image_generation_off_asks_for_no_key(page_for, make_user, a
     add = settings.get_by_role("button", name="Add Connection")
     expect(add).to_have_count(0)
     with page.expect_response(lambda response: "/images/config/update" in response.url) as saved:
-        settings.get_by_role("button", name="Save", exact=True).click()
+        submit(settings)
     assert saved.value.ok, (
         f"#32835: saving with image generation off was refused: {saved.value.text()}"
     )
@@ -155,4 +155,4 @@ def test_saving_with_image_edit_off_asks_for_no_edit_key(page_for, make_user, ad
     assert stored["url"] == "http://127.0.0.1:9/v1beta/edited", (
         f"#32835: the keyless Gemini edit connection was not saved: {stored}"
     )
-    save_tab(page, settings)
+    save(settings)

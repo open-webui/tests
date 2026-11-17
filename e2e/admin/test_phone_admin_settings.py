@@ -3,7 +3,8 @@
 On a 390 by 844 touch screen the admin settings open in the settings dialog. Its tab strip scrolls
 sideways, so each admin tab can be brought onto the screen and tapped, and opens its own panel
 within the screen's width. A switch flipped on General and saved with the Save button on the
-screen is stored. In the user list the row's buttons sit past the screen's edge in a table that
+screen, and since f2a30994c (#34534) with the Save of the Unsaved changes dialog it opens, is
+stored. In the user list the row's buttons sit past the screen's edge in a table that
 scrolls sideways; scrolled into view, Edit User opens a dialog that fits the screen and saves.
 
 Discriminates: passes on the ebc6add67 build. In a frontend build of ebc6add67 whose settings tab
@@ -20,6 +21,7 @@ import uuid
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from utils.admin_settings import review_dialog
 from utils.chat_ui import chat_input
 from utils.phone import PHONE, SCREEN, expect_on_screen, expect_reachable, tap_on_screen
 
@@ -91,6 +93,7 @@ def test_a_switch_saved_on_a_phone_is_stored(phone, admin, preserve):
     expect(switch).to_have_attribute("aria-checked", str(not sharing).lower())
 
     tap_on_screen(settings.get_by_role("button", name="Save", exact=True))
+    tap_on_screen(review_dialog(phone).get_by_role("button", name="Save", exact=True))
     expect(phone.get_by_text("Settings saved successfully!").first).to_be_visible()
     with admin.client() as client:
         stored = client.get("/api/v1/auths/admin/config").json()["ENABLE_COMMUNITY_SHARING"]

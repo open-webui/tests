@@ -60,6 +60,7 @@ from harness.image_engines import (
     serve_gemini,
 )
 from harness.listener import json_answer
+from utils.admin_settings import save
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -75,7 +76,6 @@ from utils.image_settings import (
     configure_connection,
     open_image_settings,
     save_connection,
-    save_tab,
     show_advanced,
     verify_connection,
 )
@@ -235,7 +235,7 @@ def test_automatic1111_set_up_in_the_tab_draws_on_its_checkpoint_size_and_steps(
     dialog.get_by_label("Steps", exact=True).fill("12")
     make_public(admin_page, dialog)
     save_connection(admin_page, dialog)
-    save_tab(admin_page, settings)
+    save(settings)
 
     page = page_for(make_user())
     open_image_chat(page)
@@ -280,7 +280,7 @@ def test_a_comfyui_workflow_and_its_node_mapping_from_the_tab_shape_the_queued_g
     dialog.get_by_label("Steps", exact=True).fill("9")
     make_public(admin_page, dialog)
     save_connection(admin_page, dialog)
-    save_tab(admin_page, settings)
+    save(settings)
 
     person = make_user()
     page = page_for(person)
@@ -326,7 +326,7 @@ def test_the_gemini_endpoint_method_picked_in_the_tab_is_the_one_called(
     dialog.get_by_label("Endpoint Method").select_option("generateContent")
     make_public(admin_page, dialog)
     save_connection(admin_page, dialog)
-    save_tab(admin_page, settings)
+    save(settings)
 
     page = page_for(make_user())
     open_image_chat(page)
@@ -391,7 +391,7 @@ def test_an_attached_picture_is_edited_by_the_openai_edit_engine_set_up_in_the_t
     dialog.get_by_label("Edit Image Size").fill("256x256")
     make_public(admin_page, dialog)
     save_connection(admin_page, dialog)
-    save_tab(admin_page, settings)
+    save(settings)
 
     person = make_user()
     page = page_for(person)

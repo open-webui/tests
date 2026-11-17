@@ -39,6 +39,7 @@ from harness.web_retrieval import (
     serve_search_results,
     web_settings_restored,
 )
+from utils.admin_settings import save
 from utils.chat_ui import (
     chat_input,
     conversation,
@@ -148,11 +149,6 @@ def web_search_tab(page: Page) -> Locator:
     return page.get_by_role("dialog")
 
 
-def save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-
 def pick_loader(page: Page, engine: str, fields: dict[str, str]) -> None:
     settings = web_search_tab(page)
     settings.get_by_role("combobox").filter(
@@ -160,7 +156,7 @@ def pick_loader(page: Page, engine: str, fields: dict[str, str]) -> None:
     ).select_option(engine)
     for placeholder, value in fields.items():
         settings.get_by_placeholder(placeholder, exact=True).fill(value)
-    save(page, settings)
+    save(settings)
 
 
 def fetch_in_a_chat(page: Page, reader, link: str, question: str) -> str:
@@ -232,7 +228,7 @@ def test_the_fetch_length_limit_cuts_what_the_model_reads(page_for, reader, read
     admin_page = page_for(reader_admin)
     settings = web_search_tab(admin_page)
     settings.get_by_placeholder("No limit").fill("20")  # the external engine has no other
-    save(admin_page, settings)
+    save(settings)
 
     page = page_for(create_user(reader))
     fetched = fetch_in_a_chat(page, reader, f"{services.base_url}/page", "How long is the log?")
@@ -261,7 +257,7 @@ def test_bypass_embedding_decides_whether_an_attached_page_is_embedded(
     switch = settings.get_by_role("switch", name="Bypass Embedding and Retrieval")
     if (switch.get_attribute("aria-checked") == "true") != bypass:
         switch.click()
-    save(admin_page, settings)
+    save(settings)
     question = f"What is in the lighthouse log ({'bypassed' if bypass else 'embedded'})?"
     reader.upstream.queue(reply.text("Fog every hour.", match=reply.answering(question)))
 
@@ -295,7 +291,7 @@ def read_with_verification(page_for, launched, admin: Actor, link: str, verify: 
     switch = settings.get_by_role("switch", name="Verify SSL Certificate")
     if (switch.get_attribute("aria-checked") == "true") != verify:
         switch.click()
-    save(admin_page, settings)
+    save(settings)
     question = f"Is the lighthouse log signed ({uuid.uuid4().hex[:6]})?"
     return fetch_in_a_chat(page_for(create_user(launched)), launched, link, question)
 

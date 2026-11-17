@@ -36,6 +36,7 @@ on dev 76ad6f97c (3 of 3), and in a build of it whose editor saves the model's s
 loaded every test that saves an edit fails. The Preload files default test passes on dev
 f659c0d12 (3 of 3), and in a backend copy that stores `file_context` off on every model update it
 fails.
+Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 """
 
 from __future__ import annotations
@@ -122,7 +123,7 @@ def preset(builder) -> dict:
 
 def switch_capability(page: Page, model: dict, label: str, checked: bool) -> None:
     editor = open_editor(page, model)
-    set_checkbox(editor, "Capabilities", label, checked)
+    set_checkbox(editor, "Features", label, checked)
     save(editor)
 
 
@@ -194,7 +195,7 @@ def test_preload_files_shows_off_in_native_mode_and_saving_keeps_it_unset(page_f
     page = page_for(builder)
 
     editor = open_editor(page, model)
-    capabilities = section(editor, "Capabilities")
+    capabilities = section(editor, "Features")
     preload = capabilities.get_by_role("switch", name="Preload files", exact=True)
     expect(preload).to_have_attribute("aria-checked", "false")
     # Save stays greyed out until something changed, so the admin renames the model
@@ -362,7 +363,7 @@ def test_an_unticked_capability_is_not_offered_as_a_default_feature(
     expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_be_visible()
     expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()
 
-    set_checkbox(editor, "Capabilities", "Web Search", False)
+    set_checkbox(editor, "Features", "Web Search", False)
 
     expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_have_count(0)
     expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()

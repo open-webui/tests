@@ -35,6 +35,7 @@ from harness import upstream as reply
 from harness.actors import admin_of
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
+from utils.admin_settings import save
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_editor import section
 
@@ -74,11 +75,6 @@ def _open_tab(page: Page) -> Locator:
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("switch", name="Enable sub-agents")).to_be_visible()
     return settings
-
-
-def _save(page: Page, settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
 
 def _fields(settings: Locator) -> dict[str, Locator]:
@@ -142,7 +138,7 @@ def test_every_subagent_setting_saves_and_survives_a_reload(admin_page, admin, p
     fields["SUBAGENTS_MAX_ITERATIONS"].fill("11")
     fields["SUBAGENTS_MAX_OUTPUT"].fill("5000")
     fields["SUBAGENTS_SYSTEM_PROMPT"].fill(prompt)
-    _save(admin_page, settings)
+    save(settings)
 
     expected = {
         "ENABLE_SUBAGENTS": True,
@@ -164,12 +160,12 @@ def test_a_switched_off_setting_stays_off_after_a_reload(admin_page, admin, pres
     fields = _fields(settings)
     fields["ENABLE_SUBAGENTS"].click()
     fields["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    _save(admin_page, settings)
+    save(settings)
     assert _stored(admin)["SUBAGENTS_BACKGROUND_ENABLED"] is True
 
     settings = _open_tab(admin_page)
     _fields(settings)["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    _save(admin_page, settings)
+    save(settings)
 
     stored = _stored(admin)
     assert stored["ENABLE_SUBAGENTS"] is True
@@ -189,11 +185,11 @@ def test_switching_sub_agents_off_keeps_the_limits_for_when_they_come_back(
     fields["SUBAGENTS_MAX_ITERATIONS"].fill("9")
     fields["SUBAGENTS_MAX_OUTPUT"].fill("8000")
     fields["SUBAGENTS_SYSTEM_PROMPT"].fill("Keep it short.")
-    _save(admin_page, settings)
+    save(settings)
 
     settings = _open_tab(admin_page)
     _fields(settings)["ENABLE_SUBAGENTS"].click()
-    _save(admin_page, settings)
+    save(settings)
     assert _stored(admin)["ENABLE_SUBAGENTS"] is False
 
     settings = _open_tab(admin_page)
@@ -273,7 +269,7 @@ def test_the_model_is_offered_delegation_only_while_sub_agents_are_on(
 
     settings = _open_tab(admin_page)
     _fields(settings)["ENABLE_SUBAGENTS"].click()
-    _save(admin_page, settings)
+    save(settings)
     off = _ask_in_new_chat(admin_page, "is delegation off?", upstream)
 
     assert {"delegate_task", "timer"} <= set(_offered(on))
@@ -290,7 +286,7 @@ def test_the_background_switch_decides_whether_the_model_may_delegate_in_the_bac
 
     settings = _open_tab(admin_page)
     _fields(settings)["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    _save(admin_page, settings)
+    save(settings)
     with_background = _ask_in_new_chat(admin_page, "may you delegate in the background?", upstream)
 
     def arguments(request: dict) -> set[str]:

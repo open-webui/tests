@@ -19,6 +19,7 @@ from playwright.sync_api import expect
 
 from harness.actors import admin_of
 from harness.mfa import admin_session
+from utils.admin_settings import submit
 
 pytestmark = [
     pytest.mark.journey,
@@ -51,7 +52,7 @@ def test_requiring_an_authenticator_signs_everyone_out_into_setup(switchable, pa
     require.click()
     settings.get_by_role("switch", name=EXEMPT_SSO).click()
     expect(settings.get_by_role("switch", name=EXEMPT_PROXY)).not_to_be_checked()
-    settings.get_by_role("button", name="Save", exact=True).click()
+    submit(settings)
 
     expect(page).to_have_url(re.compile(r"/auth"))
     with switchable.client(admin.token) as client:

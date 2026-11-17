@@ -41,6 +41,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from harness.backends import wait_until
 from harness.chat_history import seed_chat
+from utils.admin_settings import save
 from utils.cached_chat import attach
 from utils.chat_ui import chat_input, conversation, expect_reply, open_input_menu, send
 from utils.setting_rows import setting_button
@@ -88,11 +89,6 @@ def set_switch(settings: Locator, name: str, turn_on: bool) -> None:
 
 def prompt_field(settings: Locator, label: str) -> Locator:
     return settings.get_by_text(label, exact=True).locator("xpath=following-sibling::div//textarea")
-
-
-def save(settings: Locator) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(settings.page.get_by_text("Settings saved successfully!")).to_be_visible()
 
 
 def set_title_generation(admin_client, turn_on: bool) -> None:

@@ -23,6 +23,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from utils.admin_settings import save
 from utils.chat_ui import expect_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -76,11 +77,6 @@ def _open_general_settings(page: Page):
     return settings
 
 
-def _save(page: Page, settings) -> None:
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(page.get_by_text(SAVED).first).to_be_visible()
-
-
 def _close_button(page: Page):
     return page.get_by_role("button", name="Close Banner")
 
@@ -93,7 +89,7 @@ def test_an_admin_adds_a_banner_and_a_user_sees_its_type_and_text(
     settings.get_by_role("button", name="Add banner").click()
     settings.get_by_label("Type").select_option("Warning")
     settings.get_by_label("Content").fill(text)
-    _save(admin_page, settings)
+    save(settings)
 
     saved = _saved_banners(admin)
     assert [(b["type"], b["content"], b["dismissible"]) for b in saved] == [("warning", text, True)]
@@ -133,7 +129,7 @@ def test_an_admin_can_save_a_banner_without_remembered_dismissal(admin_page, adm
     settings.get_by_label("Type").select_option("Error")
     settings.get_by_label("Content").fill("Outage in progress")
     settings.get_by_role("switch", name="Remember Dismissal").click()
-    _save(admin_page, settings)
+    save(settings)
 
     assert [b["dismissible"] for b in _saved_banners(admin)] == [False]
 
@@ -203,7 +199,7 @@ def test_an_admin_removes_a_banner_and_users_stop_seeing_it(
 
     settings = _open_general_settings(admin_page)
     settings.get_by_role("button", name="Delete").first.click()
-    _save(admin_page, settings)
+    save(settings)
 
     assert [b["content"] for b in _saved_banners(admin)] == ["Stays for everyone"]
     user_page.reload()

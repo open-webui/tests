@@ -35,6 +35,7 @@ model's default, so nothing is left to save (gone default); a default picked wit
 having the terminal (may use it); no terminal list read on reconnect or on an access change
 (group, granted while open); a chat opening on a terminal the person lost (taken away, the admin
 case; for a user the page's own check still unpicks it).
+Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 """
 
 from __future__ import annotations
@@ -509,7 +510,7 @@ def test_a_default_terminal_that_is_gone_reads_unavailable_and_none_takes_it_off
 
 
 def terminal_capability(editor: Locator) -> Locator:
-    return section(editor, "Capabilities").get_by_role("switch", name="Terminal", exact=True)
+    return section(editor, "Features").get_by_role("switch", name="Terminal", exact=True)
 
 
 @pytest.mark.slow
@@ -534,7 +535,7 @@ def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
     builder = create_user(socketless, role="admin")
     model = make_model(by=owner)
     editor = open_model_editor(builder, page_for, model)
-    capabilities = section(editor, "Capabilities")
+    capabilities = section(editor, "Features")
     expect(capabilities.get_by_role("switch", name="Vision", exact=True)).to_be_visible()
     expect(terminal_capability(editor)).to_have_count(0)
     expect(editor.get_by_text("No terminal servers available")).to_have_count(0)

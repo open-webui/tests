@@ -28,6 +28,7 @@ from harness.audio_engine import AUDIO_CONFIG, TRANSCRIPT
 from harness.chat_history import seed_chat
 from harness.hosted_speech import serving_speech_hosts, speech_hosts_env
 from harness.listener import json_answer
+from utils import admin_settings
 from utils.chat_ui import chat_input, conversation
 from utils.speech_audio import READ_ALOUD_PLAYED, silent_wav
 
@@ -112,7 +113,7 @@ def test_elevenlabs_from_the_audio_tab_reads_a_reply_in_the_users_own_voice(
     settings.get_by_role("textbox", name="API Key").fill(ELEVENLABS_KEY)
     settings.get_by_role("combobox", name="TTS Voice").fill(ADMIN_VOICE)
     settings.get_by_role("combobox", name="TTS Model").fill(MODEL)
-    save(admin_page, settings)
+    admin_settings.save(settings)
 
     owner = create_user(hosted)
     page = page_for(owner)
@@ -147,7 +148,7 @@ def test_deepgram_from_the_audio_tab_transcribes_dictation_in_the_users_language
     settings.get_by_role("combobox", name="Speech-to-Text Engine").select_option(label="Deepgram")
     settings.get_by_role("textbox", name="API Key").fill(DEEPGRAM_KEY)
     settings.get_by_placeholder("Select a model (optional)").fill("nova-3")
-    save(admin_page, settings)
+    admin_settings.save(settings)
 
     page = voice_page_for(create_user(hosted))
     tab = users_audio_tab(page)

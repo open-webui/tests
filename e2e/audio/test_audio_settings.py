@@ -43,6 +43,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.audio_engine import AUDIO_CONFIG, SPEECH_MODEL, TRANSCRIPT, VOICE, AudioEngine
 from harness.chat_history import seed_chat
+from utils import admin_settings
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.speech_audio import silent_wav
 from utils.voice_call import TURN_TIMEOUT_MS, start_call
@@ -248,8 +249,7 @@ def test_the_web_api_engines_hide_their_controls_for_the_admin_and_the_user(
     expect(settings.get_by_role("textbox", name="API Key")).to_have_count(0)
     expect(settings.get_by_role("combobox", name="STT Model")).to_have_count(0)
     expect(settings.get_by_text("Supported MIME Types")).to_have_count(0)
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+    admin_settings.save(settings)
 
     page = page_for(make_user())
     tab = audio_tab(page)

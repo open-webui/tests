@@ -45,6 +45,7 @@ from harness import upstream as reply
 from harness.actors import Actor, admin_of, create_user
 from harness.listener import Listener, json_answer
 from harness.web_retrieval import LOCAL_WEB_FETCH
+from utils.admin_settings import save
 from utils.chat_surface import MAIN_CHAT, ChatOpener
 from utils.chat_ui import Chat, expect_reply, send
 from utils.tooltips import tooltip_button
@@ -272,15 +273,13 @@ def test_an_admin_switching_user_webhooks_on_and_off_shows_and_hides_the_section
     general = admin_page.get_by_role("dialog")
 
     general.get_by_role("switch", name="User Webhooks").click()
-    general.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text(SAVED)).to_be_visible()
+    save(general)
     user_page = page_for(account)
     offered = _open_notifications(user_page)
     expect(offered.get_by_text("Notification Targets", exact=True)).to_be_visible()
 
     general.get_by_role("switch", name="User Webhooks").click()
-    general.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text(SAVED).last).to_be_visible()
+    save(general)
     user_page.reload()
     withdrawn = _open_notifications(user_page)
     expect(withdrawn.get_by_text("Notification Targets", exact=True)).to_have_count(0)

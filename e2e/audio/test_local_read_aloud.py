@@ -31,6 +31,7 @@ from harness.actors import admin_of, create_user
 from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
 from harness.local_voices import local_voices_env, save_tiny_speech, speaker
+from utils.admin_settings import save
 from utils.chat_surface import DRAGGED_TAB, MAIN_CHAT, SIDE_CHAT, ChatOpener
 from utils.speech_audio import READ_ALOUD_PLAYED
 
@@ -128,8 +129,7 @@ def test_the_speaker_named_in_the_audio_tab_reads_the_answer(page_for, speaking_
         model_box = settings.get_by_role("combobox", name="TTS Model")
         expect(model_box).to_have_value(FIRST_SPEAKER)
         model_box.fill(named_speaker)
-        settings.get_by_role("button", name="Save", exact=True).click()
-        expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
+        save(settings)
 
         chat = speaking_chat_for(owner, chat_id=chat_id)
         page = chat.page

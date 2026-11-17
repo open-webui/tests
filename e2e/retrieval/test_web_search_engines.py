@@ -41,6 +41,7 @@ from harness.search_apis import (
     serving_search_apis,
 )
 from harness.web_retrieval import LOCAL_WEB_FETCH, web_settings_restored
+from utils.admin_settings import submit
 from utils.chat_ui import (
     conversation,
     expect_reply,
@@ -106,7 +107,7 @@ def fill_engine_form(page: Page, engine: Engine, values: dict[str, str]) -> None
         if setting in values:
             settings.get_by_placeholder(placeholder, exact=True).fill(values[setting])
     settings.get_by_placeholder("Search Result Count").fill("2")
-    settings.get_by_role("button", name="Save", exact=True).click()
+    submit(settings)
 
 
 def set_up_engine(page: Page, engine: Engine, apis: SearchApis) -> None:

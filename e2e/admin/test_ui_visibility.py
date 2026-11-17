@@ -28,6 +28,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.chat_history import seed_chat
+from utils.admin_settings import submit
 from utils.chat_ui import chat_input, conversation, open_add_context, open_input_menu
 from utils.setting_rows import setting_button
 from utils.sidebar_chats import chat_menu, chat_row
@@ -118,7 +119,7 @@ def test_attach_webpage_switched_off_leaves_the_users_menu_but_not_the_admins(
     switch.click()
     expect(switch).to_have_attribute("aria-checked", "false")
     with admin_page.expect_response(lambda response: VISIBILITY in response.url) as saved:
-        settings.get_by_role("button", name="Save", exact=True).click()
+        submit(settings)
     assert saved.value.ok, saved.value.text()
 
     user_menu = open_add_context(page_for(make_user()))
