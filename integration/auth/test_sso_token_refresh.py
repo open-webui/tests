@@ -15,20 +15,34 @@ for its discovery document, deleted the SSO session, so every tool using the use
 token got none until they signed in again. Such an answer now keeps the session and the next call
 refreshes with the same refresh token, while a refused refresh still drops it.
 
+Regression #34581: once a person reached `OAUTH_MAX_SESSIONS_PER_USER`, the next sign-in pruned
+the sessions created first, so a device signed in early and still in use lost its session to
+sessions nobody had used since. The cap now drops the sessions refreshed least recently.
+
 Discriminates: in a backend copy, returning the stored token without checking its expiry in the
 SSO `get_oauth_token` fails the refresh and the refused-refresh tests (no refresh is tried). The
 API-call test passes with the #32820 fix and fails on dev ca8f451cc (no Authorization header).
 The outage test (all three cases) is red on dev e1d272252 until the fix (branch
 fix/sso-refresh-keeps-session-on-transient-error) merges: there nothing is forwarded once the
 provider is back, as the session is gone. It passes on the fix branch.
+The session-cap test passes with the #34581 fix and fails on dev e1d272252 (the device still in
+use is the session pruned).
 """
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from harness.listener import json_answer
-from harness.oidc_provider import oauth_settings, shared_provider, sign_in, sso_env
+from harness.oidc_provider import (
+    oauth_settings,
+    session_user,
+    shared_provider,
+    sign_in,
+    sso_env,
+)
 from harness.second_provider import OPENAI_CONFIG, attach
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source, pytest.mark.slow]
@@ -36,6 +50,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source,
 EXPIRING_SOON = 60  # inside the five minutes before expiry in which Open WebUI refreshes
 TOOL_SPEC = {"openapi": "3.0.0", "info": {"title": "SSO tools", "version": "1"}, "paths": {}}
 SSO_MODEL = "sso-protected-model"
+MAX_SESSIONS = 10  # the OAUTH_MAX_SESSIONS_PER_USER default
 COMPLETION = {
     "id": "sso",
     "object": "chat.completion",
@@ -178,4 +193,37 @@ def test_an_api_call_forwards_the_token_to_a_system_oauth_model_connection(
     [sent] = listener.requests_to("/v1/chat/completions")
     assert sent.headers.get("Authorization") == f"Bearer {access_token}", (
         f"the connection got {sent.headers.get('Authorization')!r} instead of the user's token"
+    )
+
+
+def next_second() -> None:
+    """Wait for the clock's next whole second, the resolution stored sessions keep time in."""
+    second = int(time.time())
+    while int(time.time()) == second:
+        time.sleep(0.05)
+
+
+@pytest.mark.regression
+def test_the_session_cap_keeps_the_device_still_in_use(sso, idp, tool_server):
+    """Narrow (#34581): at the cap the sign-in prunes an unused session, not the first device's."""
+    idp.token_lifetime = EXPIRING_SOON
+    with oauth_settings(sso, ENABLE_OAUTH_ROLE_MANAGEMENT=True):
+        idp.sign_in_as(roles=["admin"])
+        first_device = sign_in(sso)
+        next_second()
+        unused = [sign_in(sso) for _ in range(MAX_SESSIONS - 1)]
+        next_second()
+        assert forwarded_token(first_device.browser, tool_server), "the tool got no token"
+        assert refresh_grants(idp), "using the first device did not refresh its session"
+        newest = sign_in(sso)
+
+    assert all(result.token for result in [first_device, *unused, newest]), "a sign-in failed"
+    account_id = session_user(sso, newest.token)["id"]
+    with sso.client() as admin:
+        listed = admin.get(f"/api/v1/users/{account_id}/oauth/sessions")
+    assert listed.status_code == 200, listed.text
+    stored = {session["id"] for session in listed.json()}
+    assert len(stored) == MAX_SESSIONS, f"{len(stored)} sessions stored, the cap is {MAX_SESSIONS}"
+    assert first_device.browser.cookies.get("oauth_session_id") in stored, (
+        "the cap pruned the session of the device still in use, not one nobody used (#34581)"
     )
