@@ -122,6 +122,8 @@ def test_a_keyboard_user_tabs_into_a_messages_actions_beside_that_message(people
     post_message(member, channel_id, "see you at the pier")
     post_message(author, channel_id, "bring the tickets")
     page = _open_channel(page_for, author, channel_id)
+    # the message box takes focus a moment after it shows; a click before that loses focus to it
+    expect(chat_input(page)).to_be_focused()
     _message(page, "see you at the pier").get_by_text("see you at the pier").click()
     page.mouse.move(0, 0)
 
