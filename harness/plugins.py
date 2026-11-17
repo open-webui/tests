@@ -38,4 +38,6 @@ def installed_function(
                 client.post(f"/api/v1/functions/id/{function_id}/toggle/global").raise_for_status()
             yield function_id
         finally:
-            client.delete(f"/api/v1/functions/id/{function_id}/delete")
+            # the creating connection can idle out on the server while the test runs
+            with admin.client() as fresh:
+                fresh.delete(f"/api/v1/functions/id/{function_id}/delete")

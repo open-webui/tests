@@ -30,4 +30,6 @@ def python_tool(admin: Actor, source: str, name: str = "Test tools") -> Iterator
         try:
             yield tool_id
         finally:
-            client.delete(f"/api/v1/tools/id/{tool_id}/delete")
+            # the creating connection can idle out on the server while the test runs
+            with admin.client() as fresh:
+                fresh.delete(f"/api/v1/tools/id/{tool_id}/delete")
