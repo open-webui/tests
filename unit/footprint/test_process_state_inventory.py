@@ -48,6 +48,7 @@ KNOWN = {
     "EVENT_QUEUES": "socket/main.py, one queue per active stream channel, popped on its end",
     "LOCAL_AUTHENTICATED_SIDS": "socket/main.py, sockets on this worker, discarded on disconnect",
     "_CONNECTION_POOL": "utils/redis.py, one entry per distinct connection parameter tuple",
+    "_store_list_cache": "retrieval/external.py, one per connection id, overwritten, never removed",
     "_installed_requirements": "utils/plugin.py, distinct requirement strings, never removed",
     "Config.DEFAULTS": "models/config.py, one entry per config key, replaced at boot",
     "get_builtin_function_introspection()": "utils/tools.py, one entry per builtin tool",
