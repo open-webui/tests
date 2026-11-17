@@ -3,10 +3,11 @@
 Since 0.13.4 a model can draw an interactive chart, diagram or calculator in the chat with the
 Visualizations builtin tool (`render_visualization`). It is off by default: a model is offered it
 only once Visualizations is ticked under its Builtin Tools (`meta.builtinTools.visualizations`).
-The tool's description, which tells the model when and how to draw, is the built-in prompt the
-chat config reports as `DEFAULT_VISUALIZATION_PROMPT_TEMPLATE` until the admin writes one under
-Admin Settings > Interface > Visualization Prompt (`VISUALIZATION_PROMPT_TEMPLATE`); a blank one
-brings the built-in prompt back and a save that leaves the field out keeps it. The tool checks
+The tool's description, which tells the model when and how to draw, is a built-in prompt until
+the admin writes one under Admin Settings > Interface > Visualization Prompt
+(`VISUALIZATION_PROMPT_TEMPLATE`); a blank one brings the built-in prompt back and a save that
+leaves the field out keeps it. Since b462a23a7 the chat config no longer reports the built-in
+prompt, so the test reads it from the tool the model is offered. The tool checks
 what the model drew and answers `{"status": "accepted"}`, or names what is wrong: an empty title
 or html, an unknown library. The browser side is e2e/chat/test_visualizations.py.
 
@@ -106,8 +107,6 @@ def test_the_tool_is_described_by_the_built_in_prompt_until_the_admin_writes_one
     admin, make_user, upstream, chat_config_restored
 ):
     person = make_user()
-    built_in = chat_config(admin)["DEFAULT_VISUALIZATION_PROMPT_TEMPLATE"]
-    assert "chart" in built_in, f"the built-in prompt is not about drawing: {built_in!r}"
     own = f"Draw only tide tables for the harbour {uuid.uuid4().hex[:8]}."
 
     with preset(admin, {"visualizations": True}) as model_id:
@@ -121,13 +120,13 @@ def test_the_tool_is_described_by_the_built_in_prompt_until_the_admin_writes_one
         save_chat_config(admin, VISUALIZATION_PROMPT_TEMPLATE="   ")
         blank_description = offered(person, upstream, model_id)[TOOL]["description"]
 
-    assert default_description == built_in, (
-        f"the tool did not carry the built-in prompt: {default_description[:200]!r}"
+    assert "chart" in default_description, (
+        f"the tool did not carry the built-in prompt about drawing: {default_description[:200]!r}"
     )
     assert own_description == own, (
         f"the tool did not carry the admin's prompt: {own_description[:200]!r}"
     )
-    assert blank_description == built_in, (
+    assert blank_description == default_description, (
         f"a blank prompt did not bring the built-in one back: {blank_description[:200]!r}"
     )
 
