@@ -15,9 +15,11 @@ for its discovery document, deleted the SSO session, so every tool using the use
 token got none until they signed in again. Such an answer now keeps the session and the next call
 refreshes with the same refresh token, while a refused refresh still drops it.
 
-Regression #34581: once a person reached `OAUTH_MAX_SESSIONS_PER_USER`, the next sign-in pruned
-the sessions created first, so a device signed in early and still in use lost its session to
-sessions nobody had used since. The cap now drops the sessions refreshed least recently.
+Regression #34581: signing out kept the browser's stored session, and once a person reached
+`OAUTH_MAX_SESSIONS_PER_USER` the next sign-in pruned the sessions created first, so a device
+signed in early and still in use lost its session to signed-out ones. Signing out now drops the
+browser's session when the person keeps another one for the provider (a person's only session
+stays for automations and API keys), and the cap drops the sessions refreshed least recently.
 
 Discriminates: in a backend copy, returning the stored token without checking its expiry in the
 SSO `get_oauth_token` fails the refresh and the refused-refresh tests (no refresh is tried). The
@@ -25,8 +27,9 @@ API-call test passes with the #32820 fix and fails on dev ca8f451cc (no Authoriz
 The outage test (all three cases) is red on dev e1d272252 until the fix (branch
 fix/sso-refresh-keeps-session-on-transient-error) merges: there nothing is forwarded once the
 provider is back, as the session is gone. It passes on the fix branch.
-The session-cap test passes with the #34581 fix and fails on dev e1d272252 (the device still in
-use is the session pruned).
+The session-cap, refresh-order and sign-out tests pass with the #34581 fix and fail on dev
+e1d272252 (the device still in use is the session pruned; the signed-out session stays stored).
+The test that keeps a person's only session passes on both.
 """
 
 from __future__ import annotations
@@ -203,27 +206,89 @@ def next_second() -> None:
         time.sleep(0.05)
 
 
+def stored_session_ids(sso, account_id: str) -> set[str]:
+    """The ids of the SSO sessions the admin sees stored for an account."""
+    with sso.client() as admin:
+        listed = admin.get(f"/api/v1/users/{account_id}/oauth/sessions")
+    if listed.status_code == 400:  # the endpoint answers 400 when none are stored
+        return set()
+    assert listed.status_code == 200, listed.text
+    return {session["id"] for session in listed.json()}
+
+
 @pytest.mark.regression
-def test_the_session_cap_keeps_the_device_still_in_use(sso, idp, tool_server):
-    """Narrow (#34581): at the cap the sign-in prunes an unused session, not the first device's."""
+def test_signing_in_and_out_elsewhere_keeps_the_first_devices_session(sso, idp):
+    """Narrow (#34581), the issue's repro: sign-ins and sign-outs on another browser up to the
+    cap leave the first device's session stored."""
+    with oauth_settings(sso, ENABLE_OAUTH_ROLE_MANAGEMENT=True):
+        idp.sign_in_as(roles=["admin"])
+        first_device = sign_in(sso)
+        next_second()
+        for _ in range(MAX_SESSIONS):
+            elsewhere = sign_in(sso)
+            assert elsewhere.token, f"a sign-in failed: {elsewhere.error}"
+            signed_out = elsewhere.browser.post("/api/v1/auths/signout")
+            assert signed_out.status_code == 200, signed_out.text
+
+    stored = stored_session_ids(sso, session_user(sso, first_device.token)["id"])
+    assert first_device.browser.cookies.get("oauth_session_id") in stored, (
+        "signing in and out elsewhere pruned the first device's session (#34581)"
+    )
+    assert len(stored) == 1, f"{len(stored)} sessions stored, the signed-out ones stayed"
+
+
+@pytest.mark.regression
+def test_the_session_cap_keeps_the_session_refreshed_last(sso, idp, tool_server):
+    """Narrow (#34581): at the cap the sign-in prunes a session nobody refreshed, not the first
+    device's, which refreshed its token after the others signed in."""
     idp.token_lifetime = EXPIRING_SOON
     with oauth_settings(sso, ENABLE_OAUTH_ROLE_MANAGEMENT=True):
         idp.sign_in_as(roles=["admin"])
         first_device = sign_in(sso)
         next_second()
-        unused = [sign_in(sso) for _ in range(MAX_SESSIONS - 1)]
+        idle = [sign_in(sso) for _ in range(MAX_SESSIONS - 1)]
         next_second()
         assert forwarded_token(first_device.browser, tool_server), "the tool got no token"
         assert refresh_grants(idp), "using the first device did not refresh its session"
         newest = sign_in(sso)
 
-    assert all(result.token for result in [first_device, *unused, newest]), "a sign-in failed"
-    account_id = session_user(sso, newest.token)["id"]
-    with sso.client() as admin:
-        listed = admin.get(f"/api/v1/users/{account_id}/oauth/sessions")
-    assert listed.status_code == 200, listed.text
-    stored = {session["id"] for session in listed.json()}
+    assert all(result.token for result in [first_device, *idle, newest]), "a sign-in failed"
+    stored = stored_session_ids(sso, session_user(sso, newest.token)["id"])
     assert len(stored) == MAX_SESSIONS, f"{len(stored)} sessions stored, the cap is {MAX_SESSIONS}"
     assert first_device.browser.cookies.get("oauth_session_id") in stored, (
-        "the cap pruned the session of the device still in use, not one nobody used (#34581)"
+        "the cap pruned the session refreshed last, not one nobody refreshed (#34581)"
     )
+
+
+@pytest.mark.regression
+def test_signing_out_drops_the_session_when_another_one_is_kept(sso, idp):
+    """Narrow (#34581): the signed-out browser's session goes, the other browser's stays."""
+    with oauth_settings(sso, ENABLE_OAUTH_ROLE_MANAGEMENT=True):
+        idp.sign_in_as(roles=["admin"])
+        staying, leaving = sign_in(sso), sign_in(sso)
+    assert staying.token and leaving.token, "a sign-in failed"
+    account_id = session_user(sso, staying.token)["id"]
+    leaving_id = leaving.browser.cookies.get("oauth_session_id")
+    assert leaving_id in stored_session_ids(sso, account_id)
+
+    signed_out = leaving.browser.post("/api/v1/auths/signout")
+
+    assert signed_out.status_code == 200, signed_out.text
+    stored = stored_session_ids(sso, account_id)
+    assert leaving_id not in stored, "signing out kept the browser's stored session (#34581)"
+    assert staying.browser.cookies.get("oauth_session_id") in stored, "the other browser lost its"
+
+
+def test_signing_out_keeps_a_persons_only_session(sso, idp):
+    """Nearby: a person's only session stays, as automations and API keys use it after sign-out."""
+    with oauth_settings(sso, ENABLE_OAUTH_ROLE_MANAGEMENT=True):
+        idp.sign_in_as(roles=["admin"])
+        only = sign_in(sso)
+    assert only.token, f"the sign-in failed: {only.error}"
+    account_id = session_user(sso, only.token)["id"]
+    only_id = only.browser.cookies.get("oauth_session_id")
+
+    signed_out = only.browser.post("/api/v1/auths/signout")
+
+    assert signed_out.status_code == 200, signed_out.text
+    assert stored_session_ids(sso, account_id) == {only_id}, "the only session was dropped"
