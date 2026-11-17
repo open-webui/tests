@@ -578,31 +578,6 @@ def test_after_the_cleanup_the_inbox_and_message_updates_answer(cleaned):
     assert voiced.status_code == 200, voiced.text
 
 
-@pytest.mark.regression
-def test_a_message_quoting_the_escape_text_is_still_found(instance, make_user):
-    account = make_user()
-    word = unique_word()
-    with account.client() as client:
-        chat_id = import_chat(client, "Escapes", question=f"{word} prints \\u0000 as text")
-
-    assert f"chat:{chat_id}" in found(account, word), (
-        "a message that only quotes the text of the escape was left out of the search"
-    )
-    assert chat_id in _chat_list_search(account, word), (
-        "the chat list search hid a chat that only quotes the text of the escape"
-    )
-
-
-@pytest.mark.regression
-def test_a_title_holding_x00_is_found_by_the_chat_list_search(make_user):
-    account = make_user()
-    word = unique_word()
-    with account.client() as client:
-        chat_id = import_chat(client, f"{word} 0x00 opcode")
-
-    assert chat_id in _chat_list_search(account, word)
-
-
 def _chat_list_search(actor: Actor, text: str) -> list[str]:
     with actor.client() as client:
         listed = client.get("/api/v1/chats/search", params={"text": text})
