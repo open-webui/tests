@@ -356,7 +356,8 @@ class Tools:
 '''
 
 
-CREATED = '{\n  "id": "2",\n  "created": true\n}'
+# A JSON tool result reaches the chat and the model compact since 47cf51eb7 (#34640).
+CREATED = '{"id":"2","created":true}'
 
 
 def in_pieces(text: str, size: int = 7) -> list[str]:
