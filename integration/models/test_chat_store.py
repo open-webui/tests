@@ -49,6 +49,10 @@ fix-concurrent-new-tag; the existing-tag test passes on both.
 On dev eecba38c5 the #34126 out-of-date edit test fails (the chat opens on `a1`) and passes with
 the fix 967471e29 on branch fix/stale-save-reopens-older-turn; the up-to-date and older-branch
 saves pass on both.
+
+The history search and the older-message edit also run on a stored 130 MB chat (`fat_chat`):
+the word in one early message is found, and the edit keeps the open position and every message.
+Both pass on dev f8a518648 on SQLite and Postgres.
 """
 
 from __future__ import annotations
@@ -118,14 +122,19 @@ def client(owner):
 # --- 0800c21c6: search reads the current storage format -----------------------------------
 
 
-def test_search_finds_text_that_lives_only_in_the_history(client):
+def test_search_finds_text_that_lives_only_in_the_history(owner, client, fat_chat):
     word = unique_word()
     chat_id = create_chat(
         client,
         {"history": history("m1", message("m1", None, [], "user", content=f"the {word} plan"))},
     )
+    fat = fat_chat(owner, "fat-130mb")
 
     assert search(client, word) == [chat_id], "the text of a current conversation was not searched"
+    found = search(client, fat.manifest["search_term"])
+    assert found == [fat.chat_id], (
+        f"a word in one early message of a long chat was not found: {found}"
+    )
 
 
 def test_search_matches_every_word_of_a_query_in_any_order(client):
@@ -186,7 +195,7 @@ def test_an_ordinary_newest_message_stays_where_it_is(client):
     assert read_chat(client, chat_id)["history"]["currentId"] == "followup"
 
 
-def test_editing_an_older_message_keeps_the_current_position(client):
+def test_editing_an_older_message_keeps_the_current_position(owner, client, fat_chat):
     chat_id = create_chat(
         client,
         {
@@ -204,6 +213,21 @@ def test_editing_an_older_message_keeps_the_current_position(client):
     stored = read_chat(client, chat_id)["history"]
     assert stored["messages"]["old"]["content"] == "edited"
     assert stored["currentId"] == "newest", "editing an older message moved the reader onto it"
+
+    fat = fat_chat(owner, "fat-130mb")
+    first, newest = fat.manifest["first_user"], fat.manifest["last_reply"]
+    edited = client.post(
+        f"/api/v1/chats/{fat.chat_id}/messages/{first}", json={"content": "edited"}
+    )
+    assert edited.status_code == 200, edited.text[:500]
+
+    stored = read_chat(client, fat.chat_id)["history"]
+    assert stored["messages"][first]["content"] == "edited"
+    assert stored["currentId"] == newest, "editing an older message of a long chat moved the reader"
+    assert len(stored["messages"]) == fat.manifest["messages"], (
+        f"the long chat holds {len(stored['messages'])} of its {fat.manifest['messages']} "
+        "messages after the edit"
+    )
 
 
 def test_a_new_message_still_becomes_the_current_position(client):

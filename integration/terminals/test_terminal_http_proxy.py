@@ -27,6 +27,10 @@ Discriminates: passes on dev c15f28649. In backend copies of it, one edit each:
   edecad351: both cases of the cookie test fail on dev 485103cde (only the last cookie arrives);
 * the `Location` rewrite dropped: the port redirect test fails;
 * the page rewrite dropped (`_port_browser_html` not called): the port page test fails.
+
+The chat address test also runs in a stored 130 MB chat (`fat_chat`) whose coding agent ran on
+this terminal, so the proxy looks up the agent's session in the whole chat. It passes on dev
+f8a518648 on SQLite and Postgres; with the chat id no longer read, both cases fail.
 """
 
 from __future__ import annotations
@@ -81,12 +85,17 @@ def terminal_id(admin, preserve, person, terminal) -> str:
     return _shared(admin, person, terminal)
 
 
+@pytest.mark.parametrize("chat", ["short", "fat-130mb"])
 def test_a_call_under_a_chats_address_names_that_chat_to_the_terminal(
-    person, terminal, terminal_id
+    person, terminal, terminal_id, fat_chat, chat
 ):
     terminal.route("GET", "/files/cwd", json_answer({"cwd": "/home/user"}))
     with person.client() as client:
-        chat_id, _ = seed_chat(client, [{"role": "user", "content": "where am I"}])
+        if chat == "short":
+            chat_id, _ = seed_chat(client, [{"role": "user", "content": "where am I"}])
+        else:
+            # a long chat whose coding agent ran on this terminal, so its session is looked up
+            chat_id = fat_chat(person, chat, terminal_id=terminal_id).chat_id
         in_chat = client.get(f"/api/v1/terminals/{terminal_id}/chats/{chat_id}/files/cwd")
         outside = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
 

@@ -14,6 +14,9 @@ test red (the stranger's chat is archived too), dropping archived chats from the
 (78550396d reverted) turns the tag test red, and marking chats read without the owner filter
 turns the read test red. The folder delete test passes on dev f36490bf2 and fails with 97f5c4e97
 reverted (the archived chat is deleted with the folder).
+
+Export all also streams a stored 130 MB chat (`fat_chat`) whole, every message of it, and
+leaves its internal sub-agent chats out; this passes on dev f8a518648 on SQLite and Postgres.
 """
 
 from __future__ import annotations
@@ -148,8 +151,11 @@ def test_unarchive_all_brings_the_chats_and_their_tags_back(owner, stranger_chat
 # --------------------------------------------------------------------------- export
 
 
-def test_export_all_streams_every_chat_of_the_account_including_archived(owner, stranger_chat):
+def test_export_all_streams_every_chat_of_the_account_including_archived(
+    owner, stranger_chat, fat_chat
+):
     _, stranger_chat_id = stranger_chat
+    fat = fat_chat(owner, "fat-130mb")
     with owner.client() as client:
         kept_id = create_chat(client, "Kept")
         archived_id = create_chat(client, "Put away")
@@ -157,13 +163,20 @@ def test_export_all_streams_every_chat_of_the_account_including_archived(owner, 
 
         exported = client.get("/api/v1/chats/all")
 
-    assert exported.status_code == 200, exported.text
+    assert exported.status_code == 200, exported.text[:500]
     assert exported.headers["content-type"].startswith("application/x-ndjson")
     lines = [json.loads(line) for line in exported.text.splitlines() if line]
     assert {chat["id"]: chat["title"] for chat in lines} == {
         kept_id: "Kept",
         archived_id: "Put away",
+        fat.chat_id: fat.manifest["title"],
     }
+    [long_chat] = [chat for chat in lines if chat["id"] == fat.chat_id]
+    exported_messages = len(long_chat["chat"]["history"]["messages"])
+    assert exported_messages == fat.manifest["messages"], (
+        f"the long chat was exported with {exported_messages} of its "
+        f"{fat.manifest['messages']} messages"
+    )
     assert stranger_chat_id not in exported.text
 
 

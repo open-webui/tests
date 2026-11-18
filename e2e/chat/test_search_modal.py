@@ -40,6 +40,9 @@ channel Search button test passes on dev e8c0ad85e and fails on a build of 6113e
 off dev of Nov 5, before the button), where no search opens on the channel's messages. The
 plain-HTTP Copy link test fails on dev b6534c58f (nothing is copied) and passes with the fix for
 #33927.
+
+The message text test also finds the one early message of a stored 130 MB chat (`fat_chat`)
+holding the word, highlighted; it passes on dev f8a518648.
 """
 
 from __future__ import annotations
@@ -143,9 +146,10 @@ def test_the_sidebar_entry_finds_a_chat_by_its_title_and_opens_it(page_for, make
 
 
 def test_the_shortcut_finds_a_chat_by_its_message_text_and_highlights_the_match(
-    page_for, make_user
+    page_for, make_user, fat_chat
 ):
     account = make_user()
+    fat = fat_chat(account, "fat-130mb")
     word = unique_word()
     with account.client() as client:
         import_chat(client, "Untitled trip", question=f"Where does the {word} live?")
@@ -159,6 +163,12 @@ def test_the_shortcut_finds_a_chat_by_its_message_text_and_highlights_the_match(
     expect(found).to_be_visible()
     expect(found).to_contain_text(f"Where does the {word} live?")
     expect(found.get_by_role("mark")).to_have_text(word)
+
+    # a word in one early message of a long chat
+    search(dialog, fat.manifest["search_term"])
+    long_chat = result(dialog, fat.manifest["title"])
+    expect(results(dialog)).to_have_count(1)
+    expect(long_chat.get_by_role("mark")).to_have_text(fat.manifest["search_term"])
 
 
 @pytest.fixture

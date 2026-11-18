@@ -33,6 +33,12 @@ Discriminates: these pass on dev 485103cde. Mutations in a backend copy: the mod
 keys a resumed session must match (the switching tests); the effort never read from the
 parameters (the effort tests); the provider dropped from those keys (the other agent test); the
 model name only URL-quoted in the id (the listing test).
+
+In a stored 130 MB chat (`fat_chat`) whose coding agent stretch ran on Claude Code, the next
+message after the agent's newest reply resumes the conversation stored in its signed session and
+sends the agent only the new message. Discriminates: passes on dev f8a518648 on SQLite and
+Postgres; in a backend copy that never looks up the stored session the agent is sent the whole
+long chat and the test fails.
 """
 
 from __future__ import annotations
@@ -45,6 +51,7 @@ import uuid
 from dataclasses import dataclass, replace
 
 import httpx
+import jwt
 import pytest
 
 from harness.chat import ChatTurn, send_message, wait_for_reply
@@ -416,6 +423,38 @@ def test_the_next_message_resumes_the_agents_own_conversation(
     ran_in = native_agent_terminal.conversations(native.provider)[-2:]
     assert len(ran_in) == 2 and ran_in[0] == ran_in[1], (
         f"the second turn did not resume the conversation of the first: {ran_in}"
+    )
+
+
+def test_in_a_long_chat_the_next_message_resumes_the_conversation_stored_in_it(
+    make_user, connect, native_agent_terminal, fat_chat
+):
+    person = make_user()
+    terminal_id = connect(person)
+    home = str(native_agent_terminal.terminal.home)
+    fat = fat_chat(person, "fat-130mb", terminal_id=terminal_id, cwd=home)
+    agent_reply = fat.manifest["agent_reply"]
+
+    with person.client() as client:
+        stored = client.get(f"/api/v1/chats/{fat.chat_id}")
+        assert stored.status_code == 200, stored.text
+        token = stored.json()["chat"]["history"]["messages"][agent_reply]["meta"]["agent"]
+        session_id = jwt.decode(token, options={"verify_signature": False})["session_id"]
+        reply = _ask(
+            client,
+            terminal_id,
+            CLAUDE,
+            "what did you find?",
+            chat_id=fat.chat_id,
+            parent_id=agent_reply,
+        )
+
+    assert "error" not in reply, f"the turn in the long chat failed: {reply.get('error')}"
+    assert reply["content"].startswith("claude-code heard: what did you find? ["), (
+        f"the agent was sent the whole long chat again: {reply['content'][:300]!r}"
+    )
+    assert native_agent_terminal.conversations("claude-code")[-1] == session_id, (
+        f"the turn did not resume the conversation {session_id} stored in the long chat"
     )
 
 

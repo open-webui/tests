@@ -37,6 +37,11 @@ buttons (open-webui/open-webui#34014), a side chat showed one answer of several 
 (open-webui/open-webui#34036); fix PR open-webui/open-webui#34064. On dev c15f28649 those side
 chat variants are red. A temporary side chat is left out of the tests that reload, as the chat is
 gone after the reload.
+
+A reply edited in a stored long chat (`fat_chat`, the 10 MB one) keeps the edit after a reload
+and the chat keeps every message. It passes on dev f8a518648. On the 130 MB chat it is red on that
+dev: the page shows the chat's newest turn only after 7.4s unthrottled and 30.6s at the default
+fourfold slow mode, past the default wait.
 """
 
 from __future__ import annotations
@@ -362,6 +367,31 @@ def test_saving_an_edited_reply_keeps_the_edit_after_a_reload(chat, upstream):
     chat = chat.reload()
     expect_reply(chat, "a reply without the typo")
     expect(conversation(chat).get_by_text("with a typo")).to_be_hidden()
+
+
+def test_an_edited_reply_of_a_long_chat_keeps_the_edit_after_a_reload(
+    page_for, make_user, fat_chat
+):
+    owner = make_user()
+    fat = fat_chat(owner, "fat-10mb")
+    edited = f"the newest reply, edited {uuid.uuid4().hex[:6]}"
+    page = page_for(owner, path=f"/c/{fat.chat_id}")
+
+    _reply_buttons(page).get_by_role("button", name="Edit").last.click()
+    last_reply(page).get_by_role("textbox", name="Text").fill(edited)
+    last_reply(page).get_by_role("button", name="Save", exact=True).click()
+    expect_reply(page, edited)
+
+    page.reload()
+    expect_reply(page, edited)
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/chats/{fat.chat_id}")
+    assert stored.status_code == 200, stored.text[:500]
+    messages = stored.json()["chat"]["history"]["messages"]
+    assert len(messages) == fat.manifest["messages"], (
+        f"the long chat holds {len(messages)} of its {fat.manifest['messages']} messages "
+        "after the edit"
+    )
 
 
 @pytest.mark.chat_surfaces(*EVERY_LASTING_PLACE)

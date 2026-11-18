@@ -10,6 +10,11 @@ Discriminates: passes on dev 30f3f6a8f; in a frontend build whose header menu wr
 text without the replies the header text, copy and text PDF tests fail, with the sidebar menu's
 text download writing nothing the sidebar text test fails, and with both menus exporting an empty
 list the two JSON tests fail.
+
+A stored long chat (`fat_chat`, the 10 MB one) opens on its newest turn and its header JSON
+export holds every message; this passes on dev f8a518648. On the 130 MB chat it is red on that
+dev, as the page shows the newest turn only after 7.4s unthrottled and 30.6s at the default
+fourfold slow mode.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.chat_history import seed_chat
+from utils.chat_ui import conversation
 from utils.clipboard import read_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -164,3 +170,27 @@ def test_a_pdf_without_styling_is_written_from_the_chat_text(page_for, owner, ch
     assert written.startswith(b"%PDF-")
     assert SECOND_ANSWER.encode() in written
     assert b"### ASSISTANT" in written
+
+
+def test_a_long_chat_opens_on_its_newest_turn_and_exports_whole(
+    page_for, owner, fat_chat, tmp_path
+):
+    fat = fat_chat(owner, "fat-10mb")
+    with owner.client() as client:
+        stored = client.get(f"/api/v1/chats/{fat.chat_id}")
+    assert stored.status_code == 200, stored.text[:500]
+    messages = stored.json()["chat"]["history"]["messages"]
+    newest_question = messages[messages[fat.manifest["last_reply"]]["parentId"]]["content"]
+
+    page = page_for(owner, path=f"/c/{fat.chat_id}")
+    expect(conversation(page).get_by_text(newest_question.split(". ")[0])).to_be_visible()
+    page.get_by_label("Chat actions").click()
+    saved = _download(page, page.get_by_role("menu"), "Export chat (.json)", tmp_path)
+
+    exported = _exported_chat(saved)
+    assert exported["id"] == fat.chat_id
+    exported_messages = len(exported["chat"]["history"]["messages"])
+    assert exported_messages == fat.manifest["messages"], (
+        f"the long chat was exported with {exported_messages} of its "
+        f"{fat.manifest['messages']} messages"
+    )
