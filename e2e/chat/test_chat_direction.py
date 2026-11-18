@@ -19,6 +19,7 @@ import re
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from harness import upstream as reply
 from utils.chat_surface import ChatSurface
@@ -65,6 +66,21 @@ def _left_edge(locator: Locator) -> float:
     return locator.evaluate("element => element.getBoundingClientRect().left")
 
 
+def _left_edge_once_left_of(locator: Locator, limit: float) -> float:
+    """The left edge once it has moved left of `limit`, or where it stayed.
+
+    The page applies a new direction only once the server has saved it, after the dialog closed.
+    """
+    try:
+        locator.page.wait_for_function(
+            "([element, limit]) => element.getBoundingClientRect().left < limit",
+            arg=[locator.element_handle(), limit],
+        )
+    except PlaywrightTimeoutError:
+        pass  # the caller's assertion reports where it stayed
+    return _left_edge(locator)
+
+
 def _message_text(chat: ChatSurface, role: str) -> Locator:
     return conversation(chat).locator(f".chat-{role}").locator("p").first
 
@@ -75,7 +91,9 @@ def test_rtl_moves_the_users_message_from_the_right_edge_to_the_left(chat_page):
 
     _choose(chat_page, "RTL")
 
-    assert _left_edge(message) < right_side / 2, "the message stayed on the right"
+    assert _left_edge_once_left_of(message, right_side / 2) < right_side / 2, (
+        "the message stayed on the right"
+    )
 
 
 def test_rtl_moves_the_replys_text_toward_the_avatars_new_side(chat_page):
@@ -84,7 +102,9 @@ def test_rtl_moves_the_replys_text_toward_the_avatars_new_side(chat_page):
 
     _choose(chat_page, "RTL")
 
-    assert _left_edge(text) < avatar_on_left, "the reply did not shift with the avatar"
+    assert _left_edge_once_left_of(text, avatar_on_left) < avatar_on_left, (
+        "the reply did not shift with the avatar"
+    )
 
 
 def test_rtl_makes_the_composer_read_right_to_left_and_auto_restores_it(chat_page):

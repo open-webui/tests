@@ -149,6 +149,7 @@ from harness.listener import json_answer
 from harness.open_terminal import HOME_TAB, SHELL_TAB, serving_open_terminal
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
+    SessionEnded,
     configure_terminals,
     read_grant,
     serving_terminal,
@@ -1606,7 +1607,11 @@ def test_the_git_panel_follows_changes_as_they_happen_and_says_when_it_no_longer
 
     terminal.route("GET", "/git/status", json_answer(_repository_status("tides.txt")))
     for session in list(watching):
-        session.send(json.dumps({"type": "fs:change", "path": f"{SCRIPTED_HOME}/tides.txt"}))
+        # the page restarts a watcher whenever its panel reconfigures; the new one gets fs:ready
+        try:
+            session.send(json.dumps({"type": "fs:change", "path": f"{SCRIPTED_HOME}/tides.txt"}))
+        except SessionEnded:
+            pass
     expect(changes).to_contain_text("1 changed")
     sync.hover()
     expect(page.get_by_role("tooltip").filter(has_text="Fetch")).to_be_visible()

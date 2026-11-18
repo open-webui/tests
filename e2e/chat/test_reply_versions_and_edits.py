@@ -379,7 +379,16 @@ def test_an_edited_reply_of_a_long_chat_keeps_the_edit_after_a_reload(
 
     _reply_buttons(page).get_by_role("button", name="Edit").last.click()
     last_reply(page).get_by_role("textbox", name="Text").fill(edited)
-    last_reply(page).get_by_role("button", name="Save", exact=True).click()
+    # the page shows the edit at once but uploads the whole long chat to save it; a reload
+    # before that upload ends loses the edit
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/api/v1/chats/{fat.chat_id}")
+        )
+    ) as saved:
+        last_reply(page).get_by_role("button", name="Save", exact=True).click()
+    assert saved.value.status == 200, f"saving the edit got {saved.value.status}"
     expect_reply(page, edited)
 
     page.reload()
