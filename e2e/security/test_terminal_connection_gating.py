@@ -21,6 +21,15 @@ the same check removed there the message after the switch-off is answered with n
 Retargeted for 6f2fc7bc7: passes on dev c15f28649 with its build, and in a backend copy whose
 `find_terminal_connection` and `get_terminal_tools` drop their `enabled` checks the second
 message is answered "ready" with no refusal.
+
+Issue open-webui/open-webui#34643: while a Terminals orchestrator could not list its terminals
+for a moment, the page left them out of the terminal menu and dropped the person's pick for good,
+on the new chat page and in a saved chat, also across a reload. A pick now stays until the person
+changes it: its button reads "Unavailable terminal" during the outage, the Terminal menu offers
+it under that name to clear it, and once the orchestrator is back the next message is offered the
+terminal's tools with no further reload. Discriminates: fails on a dev build from before the fix
+(dcde707f0, whose terminal picker code is identical to 47cf51eb7: after the reload the pick is
+gone and the button is not shown), passes with the fix on branch fix/terminal-deselect-outage.
 """
 
 from __future__ import annotations
@@ -39,8 +48,9 @@ from harness.terminal_server import (
     read_grant,
     serving_terminal,
 )
+from harness.terminals import share_template
 from integration.stateful_redis import StatefulRedis
-from utils.cached_chat import pick_terminal
+from utils.cached_chat import choose_terminal, pick_terminal
 from utils.chat_ui import conversation, send, split_screen
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -123,3 +133,79 @@ def test_a_terminal_switched_off_mid_chat_offers_no_tools(page_for, cached_insta
         "a switched-off terminal still hands its tools to a chat"
     )
     assert terminal.requests_to("/execute") == []
+
+
+# --- #34643: a pick on an orchestrator survives a brief outage and a reload ----------------
+
+TEMPLATES = "/api/v1/terminals/templates"
+TEMPLATE = {"id": "tpl-1", "data": {"name": "Workbench", "scope": "user"}}
+OUTAGE_PROMPTS = ("what is in the workbench?", "and in the build folder?")
+
+
+def _set_templates_up(orchestrator, up: bool) -> None:
+    if up:
+        orchestrator.route("GET", TEMPLATES, json_answer([TEMPLATE]))
+    else:
+        orchestrator.route("GET", TEMPLATES, json_answer({"detail": "Unavailable"}, status=503))
+
+
+def test_a_picked_terminal_stays_through_an_orchestrator_outage_and_a_reload(
+    page_for, admin, make_user, preserve, upstream
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    member = make_user()
+    with serving_terminal() as orchestrator:
+        _set_templates_up(orchestrator, True)
+        orchestrator.route("GET", f"{TEMPLATES}/{TEMPLATE['id']}", json_answer(TEMPLATE))
+        orchestrator.route("GET", "/openapi.json", json_answer(RUN_COMMAND_SPEC))
+        orchestrator.route("POST", "/files/cwd", json_answer({"cwd": "/"}))
+        connection = orchestrator.connection(
+            name="Orchestrator",
+            key="orchestrator-key",
+            auth_type="bearer",
+            server_type="orchestrator",
+            config={"access_grants": [read_grant(member.id)]},
+        )
+        terminal_id = f"template:{connection['id']}:{TEMPLATE['id']}"
+        with admin.client() as client:
+            configure_terminals(client, connection)
+            share_template(client, terminal_id, read_grant(member.id))
+
+        page = page_for(member)
+        choose_terminal(page, "Workbench")
+        unavailable = page.get_by_role("main").get_by_role(
+            "button", name="Unavailable terminal", exact=True
+        )
+        # first on the new chat page, then in the saved chat its message creates
+        for prompt in OUTAGE_PROMPTS:
+            _set_templates_up(orchestrator, False)
+            page.reload()
+            expect(unavailable).to_be_visible()
+            _set_templates_up(orchestrator, True)
+            upstream.queue(reply.text("ready", match=reply.answering(prompt)))
+            send(page, prompt)
+            expect(conversation(page).get_by_text("ready", exact=True).last).to_be_visible()
+            expect(page).to_have_url(re.compile("/c/"))
+
+        # a pick that is missing from the menu is still cleared from it, and stays cleared
+        _set_templates_up(orchestrator, False)
+        page.reload()
+        unavailable.click()
+        page.get_by_role("menu").get_by_role("menuitemradio", name="Unavailable terminal").click()
+        expect(unavailable).to_have_count(0)
+        _set_templates_up(orchestrator, True)
+        page.reload()
+        unpicked = page.get_by_role("main").get_by_role("button", name="Terminal", exact=True)
+        expect(unpicked).to_be_visible()
+
+    for prompt in OUTAGE_PROMPTS:
+        offered = [
+            tool["function"]["name"]
+            for request in upstream.chat_requests()
+            if reply.answering(prompt)(request)
+            for tool in request.get("tools", [])
+        ]
+        assert "run_command" in offered, (
+            f"after the orchestrator came back, {prompt!r} went out without the picked terminal "
+            f"(#34643); the model was offered {offered}"
+        )
