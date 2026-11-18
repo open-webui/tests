@@ -45,6 +45,10 @@ turns.
    the model or when the provider refuses the replay, named the tool calls only of messages that
    carried them in provider form. A saved reply keeps its calls as output items, so the summary
    never learned which tools ran with which arguments. It now names them; their results stay out.
+12. Opening a chat with compaction off (open-webui/open-webui#34670): `GET /api/v1/chats/{id}`
+   read every stored message of the chat again for the usage estimate and then dropped it, so a
+   130 MB chat opened no faster with compaction off than with it on. It now skips that read
+   while compaction is off.
 
 Twin of unit/chat/test_context_compaction.py.
 
@@ -71,6 +75,10 @@ with the fix.
 
 The saved-tool-call cases fail on dev 262a8c6f7 (the plain prompt has no read_log) and pass with
 the #34139 fix.
+
+The compaction-off open case fails on dev d74882eee (the 130 MB chat opens as fast with compaction
+on as off, on SQLite and Postgres) and passes with the fix of open-webui/open-webui#34670 (about
+1.4 times faster with it off).
 """
 
 from __future__ import annotations
@@ -104,6 +112,9 @@ COMPACTION_MODEL = "compaction-model"
 FOLLOW_UP = "question 2"
 TOOL_RESULT_ROW = "tide table row "
 TOOL_ANSWER = "The harbour log is clean."
+OPENS_TIMED = 7
+# the 130 MB chat opens about 1.4 times slower with compaction on than off, 1.0 times before the fix
+ON_TO_OFF_RATIO_FLOOR = 1.15
 
 
 def is_summary_request(body: dict) -> bool:
@@ -315,6 +326,41 @@ def test_nothing_is_compacted_or_reported_while_compaction_is_off(user, upstream
     assert context_usage is None
     assert summary_requests(upstream) == []
     assert len(main_call(upstream)) == 8
+
+
+def fastest_opens(
+    client: httpx.Client, chat_id: str, compaction
+) -> dict[bool, tuple[float, dict | None]]:
+    """The quickest uncompressed open of the chat with compaction on and off, alternating."""
+    opens = {True: [], False: []}
+    for _ in range(OPENS_TIMED):
+        for enabled in (True, False):
+            compaction(ENABLE_CONTEXT_COMPACTION=enabled)
+            started = time.perf_counter()
+            opened = client.get(f"/api/v1/chats/{chat_id}", headers={"Accept-Encoding": "identity"})
+            seconds = time.perf_counter() - started
+            assert opened.status_code == 200, opened.text[:300]
+            opens[enabled].append((seconds, opened.json()["context_usage"]))
+    return {enabled: min(timed, key=lambda pair: pair[0]) for enabled, timed in opens.items()}
+
+
+def test_with_compaction_off_opening_a_130_mb_chat_skips_the_usage_estimate(
+    make_user, fat_chat, compaction
+):
+    owner = make_user()
+    large = fat_chat(owner, "fat-130mb")
+    with owner.client() as client:
+        fastest = fastest_opens(client, large.chat_id, compaction)
+    (on_seconds, usage_when_on), (off_seconds, usage_when_off) = fastest[True], fastest[False]
+
+    assert usage_when_on and usage_when_on["tokens"] > 0, (
+        f"with compaction on the chat reported no context usage: {usage_when_on}"
+    )
+    assert usage_when_off is None, f"with compaction off the chat reported {usage_when_off}"
+    assert on_seconds / off_seconds > ON_TO_OFF_RATIO_FLOOR, (
+        f"the 130 MB chat opened in {off_seconds:.3f} s with compaction off and {on_seconds:.3f} s "
+        f"with it on; with it off the open should skip reading the chat again for the estimate"
+    )
 
 
 def one_question_in_three_long_parts() -> list[dict]:
