@@ -46,6 +46,12 @@ agent, on the first message or a later one (open-webui/open-webui#34660). Each a
 now reaches the agent with its own message only, and a message without one sends none.
 Discriminates: passes on fix/agent-chat-images, fails on dev d74882eee (no turn gets its
 picture).
+
+While an agent waits for the person to allow a command, Open WebUI looks up the waiting reply
+twice a second, and that lookup read every message of the chat to return one, so in the 130 MB
+chat the server kept working for as long as nobody answered (open-webui/open-webui#34674). It
+now reads only that reply. Discriminates: passes on perf/send-reads-less (under 0.1 s of server
+CPU in 6 s of waiting on SQLite and Postgres), fails on dev d74882eee (about 1 s).
 """
 
 from __future__ import annotations
@@ -61,6 +67,7 @@ import httpx
 import jwt
 import pytest
 
+from harness.backends import read_rows
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import AgentTerminal, connect_agent_terminal, model_id
 from harness.fake_native_agent import (
@@ -88,6 +95,9 @@ UPLOADED_DATA = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaPgPAAIDAYAkYfWXAAAAAElFTkSuQmCC"
 )
 WHOLE_USAGE = {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+IDLE_SECONDS = 6
+# CPU the server may spend while an agent waits in the 130 MB chat: under 0.1 s with the fix
+IDLE_CPU_BOUND = 0.4
 
 
 @dataclass(frozen=True)
@@ -463,6 +473,60 @@ def test_in_a_long_chat_the_next_message_resumes_the_conversation_stored_in_it(
     )
     assert native_agent_terminal.conversations("claude-code")[-1] == session_id, (
         f"the turn did not resume the conversation {session_id} stored in the long chat"
+    )
+
+
+def _stored_pending_call(instance, turn: ChatTurn) -> dict:
+    """The agent's request once it is stored, read from the reply's own row so the wait loads
+    nothing more of the long chat."""
+    deadline = time.monotonic() + REPLY_TIMEOUT
+    while time.monotonic() < deadline:
+        rows = read_rows(
+            instance,
+            "SELECT output FROM chat_message WHERE id = :id",
+            {"id": f"{turn.chat_id}-{turn.assistant_message_id}"},
+        )
+        output = rows[0]["output"] if rows else None
+        output = (json.loads(output) if isinstance(output, str) else output) or []
+        pending = [item for item in output if item.get("status") == "pending"]
+        if pending:
+            return pending[0]
+        time.sleep(0.1)
+    raise AssertionError("the agent never asked in the long chat")
+
+
+def test_in_a_long_chat_an_agent_waiting_for_permission_leaves_the_server_idle(
+    instance, make_user, connect, native_agent_terminal, fat_chat, tool_permissions
+):
+    person = make_user()
+    terminal_id = connect(person)
+    home = str(native_agent_terminal.terminal.home)
+    fat = fat_chat(person, "fat-130mb", terminal_id=terminal_id, cwd=home)
+
+    with person.client() as client:
+        turn = _send(
+            client,
+            terminal_id,
+            CLAUDE,
+            "[permission] clean up",
+            chat_id=fat.chat_id,
+            parent_id=fat.manifest["agent_reply"],
+            params={"tool_approval_mode": "ask"},
+        )
+        asked = _stored_pending_call(instance, turn)
+        started = instance.cpu_seconds()
+        time.sleep(IDLE_SECONDS)  # nobody answers: the server only waits
+        waiting_cpu = instance.cpu_seconds() - started
+        answered = _resolve(client, turn, asked["call_id"], action="approve")
+        reply = wait_for_reply(client, turn, REPLY_TIMEOUT)
+
+    assert waiting_cpu < IDLE_CPU_BOUND, (
+        f"while the agent waited {IDLE_SECONDS} s for permission in the 130 MB chat the server "
+        f"burned {waiting_cpu:.2f} s of CPU; waiting should cost next to nothing"
+    )
+    assert answered.status_code == 200, answered.text
+    assert reply["content"] == f"Permission outcome: {CLAUDE.allowed}", (
+        f"the agent did not get the person's answer in the long chat: {reply}"
     )
 
 
