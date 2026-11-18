@@ -39,6 +39,13 @@ message after the agent's newest reply resumes the conversation stored in its si
 sends the agent only the new message. Discriminates: passes on dev f8a518648 on SQLite and
 Postgres; in a backend copy that never looks up the stored session the agent is sent the whole
 long chat and the test fails.
+
+In a saved chat the page sends only the system prompt and keeps a picture uploaded with the
+paperclip on the user message, so with Chat Uploads in Default mode the picture never reached the
+agent, on the first message or a later one (open-webui/open-webui#ISSUE). Each attached picture
+now reaches the agent with its own message only, and a message without one sends none.
+Discriminates: passes on fix/agent-chat-images, fails on dev d74882eee (no turn gets its
+picture).
 """
 
 from __future__ import annotations
@@ -66,6 +73,7 @@ from harness.fake_native_agent import (
 )
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
+from integration.tools.test_terminal_coding_agents import after_the_second_of
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -511,6 +519,107 @@ def test_the_system_prompt_and_a_picture_reach_the_agent(
         f"{native.provider} did not get the system prompt as instructions: {instructions!r}"
     )
     assert pictures == expected, f"{native.provider} did not get both pictures (#33992): {pictures}"
+
+
+def _upload_picture(client: httpx.Client, data: str) -> dict:
+    """Upload a PNG and return it as the page keeps it on the user message."""
+    uploaded = client.post(
+        "/api/v1/files/", files={"file": ("photo.png", base64.b64decode(data), "image/png")}
+    )
+    assert uploaded.status_code == 200, f"uploading the picture failed: {uploaded.text}"
+    file_id = uploaded.json()["id"]
+    return {
+        "type": "file",
+        "id": file_id,
+        "url": file_id,
+        "name": "photo.png",
+        "content_type": "image/png",
+        "status": "uploaded",
+    }
+
+
+def _pictures_per_turn(terminal: AgentTerminal, native: Native) -> list[list[str]]:
+    """The base64 data of the pictures each turn of the agent got, oldest first."""
+    received = terminal.messages(native.provider)
+    if native is CLAUDE:
+        return [
+            [
+                block["source"]["data"]
+                for block in message["message"]["content"]
+                if block["type"] == "image"
+            ]
+            for message in received
+            if message.get("type") == "user"
+        ]
+    if native is CODEX:
+        return [
+            [
+                part["url"].split(",")[1]
+                for part in message["params"]["input"]
+                if part["type"] == "image"
+            ]
+            for message in received
+            if message.get("method") == "turn/start"
+        ]
+    return [
+        [image["data"] for image in message["images"]]
+        for message in received
+        if message.get("type") == "prompt"
+    ]
+
+
+@each_agent
+def test_a_picture_attached_in_a_saved_chat_reaches_the_agent_with_its_message_only(
+    native, make_user, connect, native_agent_terminal
+):
+    person = make_user()
+    terminal_id = connect(person)
+    turns_before = len(_pictures_per_turn(native_agent_terminal, native))
+
+    with person.client() as client:
+        first_picture = _upload_picture(client, PIXEL_DATA)
+        second_picture = _upload_picture(client, UPLOADED_DATA)
+        # a saved chat's request carries no messages; the upload stays on the user message
+        first = _send(
+            client,
+            terminal_id,
+            native,
+            "what is on this?",
+            messages=[],
+            message_files=[first_picture],
+        )
+        first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
+        after_the_second_of(first_reply)
+        second = _send(
+            client,
+            terminal_id,
+            native,
+            "anything else?",
+            messages=[],
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+        )
+        second_reply = wait_for_reply(client, second, REPLY_TIMEOUT)
+        after_the_second_of(second_reply)
+        third = _send(
+            client,
+            terminal_id,
+            native,
+            "and on this one?",
+            messages=[],
+            message_files=[second_picture],
+            chat_id=first.chat_id,
+            parent_id=second.assistant_message_id,
+        )
+        third_reply = wait_for_reply(client, third, REPLY_TIMEOUT)
+
+    for reply in (first_reply, second_reply, third_reply):
+        assert "error" not in reply, f"a turn failed: {reply.get('error')}"
+    pictures = _pictures_per_turn(native_agent_terminal, native)[turns_before:]
+    assert pictures == [[PIXEL_DATA], [], [UPLOADED_DATA]], (
+        f"{native.provider} did not get each picture with its own message only (#ISSUE): "
+        f"{[[data[:16] for data in turn] for turn in pictures]}"
+    )
 
 
 def test_a_codex_turn_runs_with_the_models_default_effort_or_the_persons_pick(
