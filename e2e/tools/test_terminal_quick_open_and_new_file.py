@@ -37,6 +37,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from e2e.conftest import APP_LOADED
 from harness import upstream as reply
+from harness.backends import wait_until
 from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -64,12 +65,16 @@ def folder(open_terminal) -> Path:
 
 
 @pytest.fixture
-def chat(page_for, make_user, admin, preserve, open_terminal, upstream) -> Page:
+def person(make_user):
+    return make_user()
+
+
+@pytest.fixture
+def chat(page_for, person, admin, preserve, open_terminal, upstream) -> Page:
     """A chat of a fresh account with the Open Terminal picked and one answered question.
 
     A terminal is picked before the first message, and only a saved chat keeps its tabs."""
     preserve(TERMINAL_SERVERS_CONFIG)
-    person = make_user()
     connection = open_terminal.connection(config={"access_grants": [read_grant(person.id)]})
     with admin.client() as client:
         configure_terminals(client, connection)
@@ -101,8 +106,22 @@ def _open_by_name(page: Page, folder: Path, name: str) -> None:
     expect(page.get_by_role("tab", name=name)).to_have_attribute("aria-selected", "true")
 
 
-def _reloaded(page: Page) -> None:
-    """Reload and wait for the app to load again, as `page_for` does for the first load."""
+def _stored_tabs(person, page: Page) -> list[str]:
+    """The tabs the server holds for the chat open in `page`."""
+    chat_id = page.url.rsplit("/", 1)[-1]
+    with person.client() as client:
+        response = client.get(f"/api/v1/chats/{chat_id}/view")
+    assert response.status_code == 200, response.text
+    state = response.json()["state"]
+    return [tab["label"] for tab in state["panels"]["tabs"]] if state else []
+
+
+def _reloaded(page: Page, person, keeps: str) -> None:
+    """Reload once the server holds the tab `keeps`, and wait for the app to load again, as
+    `page_for` does for the first load."""
+    # the page saves its tabs a moment after a change, and a reload before that loses them
+    saved = wait_until(lambda: keeps in _stored_tabs(person, page), timeout=10)
+    assert saved, f"the tab {keeps} was never saved: {_stored_tabs(person, page)}"
     page.reload()
     page.wait_for_function(APP_LOADED, timeout=REPLY_TIMEOUT_MS)
 
@@ -137,7 +156,7 @@ def _save_as(page: Page, panel: Locator, folder: Path, name: str) -> Locator:
     return dialog
 
 
-def test_quick_open_finds_a_file_by_name_and_opens_it_in_a_tab(chat, folder):
+def test_quick_open_finds_a_file_by_name_and_opens_it_in_a_tab(chat, person, folder):
     expect(chat_input(chat)).to_be_focused()
     dialog = _quick_open(chat)
 
@@ -153,7 +172,7 @@ def test_quick_open_finds_a_file_by_name_and_opens_it_in_a_tab(chat, folder):
     expect(chat.get_by_role("tab", name="tide-table.md")).to_have_attribute("aria-selected", "true")
     expect(chat.get_by_role("tabpanel", name="tide-table.md")).to_contain_text("High water at six.")
 
-    _reloaded(chat)
+    _reloaded(chat, person, keeps="tide-table.md")
     expect(chat.get_by_role("tabpanel", name="tide-table.md")).to_contain_text("High water at six.")
 
 
@@ -229,7 +248,9 @@ def test_saving_over_an_existing_file_asks_before_replacing_it(chat, folder):
     assert (folder / "tide-table.md").read_text() == "Replaced tide table."
 
 
-def test_closing_a_typed_new_file_asks_first_and_a_reload_never_brings_it_back(chat, folder):
+def test_closing_a_typed_new_file_asks_first_and_a_reload_never_brings_it_back(
+    chat, person, folder
+):
     """Regression (open-webui#34538): after closing the Untitled tab left the saved tabs unchanged,
     0e59b66af saved no later tab change, so the file tab opened next was gone after the reload."""
     panel = _untitled(chat)
@@ -249,7 +270,7 @@ def test_closing_a_typed_new_file_asks_first_and_a_reload_never_brings_it_back(c
     # an empty Untitled tab beside a file tab: after a reload only the file's tab is back
     _open_by_name(chat, folder, "tide-table.md")
     _untitled(chat)
-    _reloaded(chat)
+    _reloaded(chat, person, keeps="tide-table.md")
     expect(chat.get_by_role("tabpanel", name="tide-table.md")).to_contain_text("High water at six.")
     expect(chat.get_by_role("tab", name="Untitled-1")).to_have_count(0)
 

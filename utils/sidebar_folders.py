@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 
 from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 _ROWS = "[id^='folder-'][id$='-button']"
 
@@ -41,8 +42,17 @@ def click_folder_menu_button(row: Locator) -> None:
 
     Hovering the name instead opens its preview after a moment, and the preview covers the button.
     """
-    row.get_by_role("button").first.hover()
-    row.get_by_role("button").last.click()
+    toggle, menu_button = row.get_by_role("button").first, row.get_by_role("button").last
+    # a folder above still unfolding moves the row from under the mouse, which hides the button
+    for _ in range(3):
+        toggle.hover()
+        try:
+            menu_button.click(timeout=3_000)
+            return
+        except PlaywrightTimeoutError:
+            continue
+    toggle.hover()
+    menu_button.click()
 
 
 def open_advanced(dialog: Locator) -> None:
