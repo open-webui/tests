@@ -9,8 +9,8 @@ in the model editor and asks again: that category's tools are gone and every oth
 offered. The Time & Calculation category and the Builtin Tools capability as a whole are covered in
 e2e/models/test_model_editor.py, Sub-agents in e2e/admin/test_subagents_settings.py; the Code
 Interpreter is legacy and left out. Visualizations, off by default since 0.13.4, works the other
-way: ticking it offers its one tool and changes nothing else. Since 0.13.4 Chat History also
-offers `search_users`.
+way: ticking it offers its one tool and changes nothing else. Since dev cb19060e8 `search_users`
+has a Users category of its own, apart from Chat History.
 
 Discriminates: passes on the dev ebc6add67 build. In a backend copy whose builtin tools ignore the
 model's unticked categories every case fails (the category's tools are still offered); in a
@@ -22,6 +22,8 @@ settings as they were loaded every case fails. The Visualizations test fails, be
 in a backend copy of dev 485103cde that offers Visualizations to every model. On the dev
 485103cde build every test here stops at the editor's save, which no longer leaves the editor
 (test drift in the shared `utils/model_editor` helper, which still expects the models list).
+Retargeted for cb19060e8, which moves `search_users` from Chat History to a Users category: the
+chat history and users cases pass on the dev 2e0e9f25c build (5 of 5).
 """
 
 from __future__ import annotations
@@ -65,7 +67,8 @@ FAMILIES = {
             "delete_memory",
         },
     ),
-    "chat history": ("Chat History", {"search_chats", "view_chat", "search_users"}),
+    "chat history": ("Chat History", {"search_chats", "view_chat"}),
+    "users": ("Users", {"search_users"}),
     "notes": ("Notes", {"search_notes", "view_note", "write_note", "replace_note_content"}),
     "knowledge": (
         "Knowledge Base",
