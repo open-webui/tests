@@ -52,7 +52,7 @@ from harness.chat_history import seed_chat
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.folder_page import folder_chat
 from utils.sidebar_chats import chat_menu, chat_row
-from utils.sidebar_folders import drag, folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, drag, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -326,10 +326,7 @@ def test_a_reading_member_cannot_drop_a_chat_into_the_shared_folder(page_for, cr
 
 def open_row_menu(page: Page, name: str) -> Locator:
     sidebar = open_sidebar(page)
-    row = folder_row(sidebar, name)
-    # focus on the name shows the row's buttons like a hover, and keeps them shown while it slides
-    folder_link(sidebar, name).focus()
-    row.get_by_role("button").last.click()
+    click_folder_menu_button(folder_row(sidebar, name))
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitem", name="Export")).to_be_visible()
     return menu

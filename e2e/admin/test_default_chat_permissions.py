@@ -61,7 +61,7 @@ from utils.chat_ui import (
     side_chat_tab,
 )
 from utils.model_selector import SELECTOR_BUTTON
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_row
 from utils.user_menu import open_settings
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -215,8 +215,7 @@ def folder_menu_entries(page: Page, name: str) -> Locator:
     expect(folders).to_be_visible()
     if folders.get_attribute("aria-expanded") != "true":
         folders.click()
-    folder_link(sidebar, name).focus()
-    folder_row(sidebar, name).get_by_role("button").last.click()
+    click_folder_menu_button(folder_row(sidebar, name))
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitem", name="Delete")).to_be_visible()
     return menu

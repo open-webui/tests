@@ -59,7 +59,7 @@ from harness.chat_history import seed_chat
 from harness.comments import switch_comments
 from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface, surface_of
 from utils.chat_ui import artifacts_pane, conversation
-from utils.sidebar_folders import folder_link, folder_row
+from utils.sidebar_folders import click_folder_menu_button, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -117,10 +117,8 @@ def _reloaded(sidebar: Locator) -> Locator:
 
 
 def _folder_menu(sidebar: Locator, name: str) -> Locator:
-    """Open the "More" menu on the folder's row, a button shown while the row has focus."""
-    row = folder_row(sidebar, name)
-    folder_link(sidebar, name).focus()
-    row.get_by_role("button").last.click()
+    """Open the "More" menu on the folder's row, a button shown while the row is hovered."""
+    click_folder_menu_button(folder_row(sidebar, name))
     return sidebar.page.get_by_role("menu")
 
 
