@@ -5,17 +5,20 @@ Issue open-webui/open-webui#34656.
 A profile image picked in the model editor was stored as base64 text inside the model's settings,
 so an animated GIF of a few MB was read, parsed and sent back on every read of the model. The fix
 (branch perf/model-profile-image-files) has the editor upload the picture as a file and the model
-keep only its `/api/v1/files/<id>/content` link, checked like a background image on every save.
-Before it, the server dropped such a link on save, so the model fell back to the default logo.
+keep only its `/api/v1/files/<id>/content` link. Every save checks that the saver can read the file
+and that its type is one PROFILE_IMAGE_ALLOWED_MIME_TYPES allows, with no fixed size limit. Before
+it, the server dropped such a link on save, so the model fell back to the default logo.
 
-Over HTTP the fix shows as: a model saved with a file link keeps it, its reads stay a few hundred
-bytes, its profile image route serves the file to whoever may read the model and the default logo
-to anyone else, a file the saver cannot read is refused, and the export still carries the picture
-inline. A profile image saved as a data URI keeps loading as before.
+Over HTTP the fix shows as: a model saved with a file link to a picture over 5 MiB keeps it, its
+reads stay a few hundred bytes, its profile image route serves the file to whoever may read the
+model and the default logo to anyone else, a file the saver cannot read or of a type outside
+PROFILE_IMAGE_ALLOWED_MIME_TYPES is refused, and the export still carries the picture inline. A
+profile image saved as a data URI keeps loading as before.
 
-Discriminates: passes on perf/model-profile-image-files, fails on dev 2e0e9f25c (the file link is
+Discriminates: passes on perf/model-profile-image-files, fails on dev 7686e6329 (the file link is
 dropped on save, so the model reads back without it, the reader gets the default logo, the foreign
-file is accepted with 200 and the export carries no picture).
+file is accepted with 200 and the export carries no picture), and fails on the first fix commit
+be0e57134, which held profile image files to a fixed 5 MiB and refused the picture with 400.
 """
 
 from __future__ import annotations
@@ -42,10 +45,10 @@ MODEL_READ_LIMIT = 64 * 1024
 
 
 def _large_animated_gif() -> bytes:
-    """About 3.5 MB of noise frames, under the 5 MiB limit for an image file."""
+    """About 6 MB of noise frames, over the 5 MiB a background image may have."""
     noise = random.Random(7)
     frames = [
-        Image.frombytes("L", (256, 256), noise.randbytes(256 * 256)).convert("P") for _ in range(40)
+        Image.frombytes("L", (256, 256), noise.randbytes(256 * 256)).convert("P") for _ in range(70)
     ]
     buffer = io.BytesIO()
     frames[0].save(
@@ -57,11 +60,11 @@ def _large_animated_gif() -> bytes:
 LARGE_GIF = _large_animated_gif()
 
 
-def _upload(client: httpx.Client, content: bytes) -> str:
+def _upload(client: httpx.Client, content: bytes, content_type: str = "image/gif") -> str:
     uploaded = client.post(
         "/api/v1/files/",
         params={"process": "false"},
-        files={"file": ("mascot.gif", content, "image/gif")},
+        files={"file": ("mascot.gif", content, content_type)},
     )
     assert uploaded.status_code == 200, uploaded.text
     return f"/api/v1/files/{uploaded.json()['id']}/content"
@@ -131,13 +134,14 @@ def test_a_profile_image_saved_as_a_file_loads_and_stays_out_of_model_reads(admi
     assert opened.status_code != 200, "someone without access to the model opened its picture"
 
 
-def test_a_file_the_saver_cannot_read_is_refused_as_a_profile_image(admin, make_user):
+def test_a_foreign_file_or_a_disallowed_type_is_refused_as_a_profile_image(admin, make_user):
     builder = make_user()
     make_group(admin, [builder], permissions={"workspace": {"models": True}})
     with admin.client() as client:
         foreign_url = _upload(client, LARGE_GIF)
     with builder.client() as client:
         own_url = _upload(client, LARGE_GIF)
+        notes_url = _upload(client, b"plain notes", "text/plain")
     model_id = _create(builder, own_url)
 
     with builder.client() as client:
@@ -151,11 +155,15 @@ def test_a_file_the_saver_cannot_read_is_refused_as_a_profile_image(admin, make_
                 params={"id": model_id},
                 json=_model_form(model_id, foreign_url, []),
             ),
+            "notes": client.post(
+                "/api/v1/models/create",
+                json=_model_form(f"mascot-{uuid.uuid4().hex[:8]}", notes_url, []),
+            ),
         }
         kept = client.get("/api/v1/models/model", params={"id": model_id}).json()
     refused = {route: response.status_code for route, response in attempts.items()}
-    assert refused == {"create": 403, "update": 403}, (
-        f"saving someone else's file as a profile image was answered {refused}"
+    assert refused == {"create": 403, "update": 403, "notes": 400}, (
+        f"saving someone else's file or a text file as a profile image was answered {refused}"
     )
     assert kept["meta"]["profile_image_url"] == own_url
 
