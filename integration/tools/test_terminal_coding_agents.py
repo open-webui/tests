@@ -59,6 +59,14 @@ reply, since its old session already holds the reply being replaced. Discriminat
 c82ceaf1f; in a backend copy of it that keeps resuming the old session on a regeneration the
 regeneration test goes red. Open WebUI tells such a branch apart by whole-second timestamps, so
 the continue test sends its second message only after the second the first reply was stored in.
+
+With the terminal's Chat Uploads on Filesystem the page writes an attached file into the terminal
+and keeps it on the message only, never in the request's files, so the agent was never told its
+path (open-webui/open-webui#34652, since a2845c9e6 in 0.13.1). The filesystem test sends it that
+way: the agent is told the path once, the next message does not repeat it, a file of another
+terminal is refused, and an API client that sends the file on the request alone, with no stored
+message, still gets it to the agent. Discriminates: passes with the fix on dev 2e0e9f25c; fails
+on dev 2e0e9f25c (the prompt carries no path).
 """
 
 from __future__ import annotations
@@ -559,6 +567,73 @@ def test_a_file_attached_to_the_message_reaches_the_agent_in_its_terminal(
     prompt = agent_terminal.received("session/prompt")[-1]["prompt"][-1]["text"]
     assert f"Attached files in this environment:\n{copy}" in prompt, (
         f"the agent was not told where the attached file is: {prompt!r}"
+    )
+
+
+def test_with_chat_uploads_on_filesystem_the_agent_is_told_the_attached_files_path_once(
+    make_user, connect, agent_terminal
+):
+    person = make_user()
+    terminal = connect(person, config={"chat_uploads": "filesystem"})
+    # the page writes the file into the terminal and keeps it on the message only
+    brief = agent_terminal.terminal.home / f"brief-{uuid.uuid4().hex[:6]}.txt"
+    brief.write_text("ship it on friday\n")
+    attached = {
+        "type": "filesystem",
+        "id": str(brief),
+        "path": str(brief),
+        "url": str(brief),
+        "name": brief.name,
+        "status": "processed",
+        "terminal_id": terminal["id"],
+        "session_id": None,
+    }
+
+    with person.client() as client:
+        first = ask_agent(client, terminal["id"], "read the brief", message_files=[attached])
+        first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
+        first_prompt = agent_terminal.received("session/prompt")[-1]["prompt"][-1]["text"]
+        after_the_second_of(first_reply)
+        second = ask_agent(
+            client,
+            terminal["id"],
+            "anything else?",
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+        )
+        second_reply = wait_for_reply(client, second, REPLY_TIMEOUT)
+        second_prompt = agent_terminal.received("session/prompt")[-1]["prompt"][-1]["text"]
+        after_the_second_of(second_reply)
+        foreign = ask_agent(
+            client,
+            terminal["id"],
+            "read this one too",
+            chat_id=first.chat_id,
+            parent_id=second.assistant_message_id,
+            message_files=[{**attached, "terminal_id": "another-terminal"}],
+        )
+        foreign_reply = wait_for_reply(client, foreign, REPLY_TIMEOUT)
+        # an API client may send the file on the request alone, with no stored message
+        api = ask_agent(
+            client, terminal["id"], "read it over the api", files=[attached], user_message=None
+        )
+        api_reply = wait_for_reply(client, api, REPLY_TIMEOUT)
+        api_prompt = agent_terminal.received("session/prompt")[-1]["prompt"][-1]["text"]
+
+    assert "error" not in first_reply, f"the agent turn failed: {first_reply.get('error')}"
+    assert f"Attached files in this environment:\n{brief}" in first_prompt, (
+        f"the agent was not told where the attached file is: {first_prompt!r}"
+    )
+    assert "error" not in second_reply, f"the next agent turn failed: {second_reply.get('error')}"
+    assert str(brief) not in second_prompt, (
+        f"the next message told the agent about the earlier file again: {second_prompt!r}"
+    )
+    assert "Attachment belongs to another terminal" in str(foreign_reply.get("error")), (
+        f"a file of another terminal was not refused: {foreign_reply}"
+    )
+    assert "error" not in api_reply, f"the API agent turn failed: {api_reply.get('error')}"
+    assert f"Attached files in this environment:\n{brief}" in api_prompt, (
+        f"a file sent on the API request alone did not reach the agent: {api_prompt!r}"
     )
 
 
