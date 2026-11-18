@@ -4,7 +4,10 @@ The admin adds a banner in the General settings (type, content, remembered dismi
 removes it again; a user sees its type label and rendered content on a new chat and not in an
 open one. Every banner has a close button (the docs still say otherwise). A dismissible one
 stays closed after a reload (the browser remembers its id), one saved without "Remember
-Dismissal" comes back on the next load.
+Dismissal" comes back on the next load. A banner a user closed while its dismissal was remembered
+stayed hidden for good after the admin turned "Remember Dismissal" off, issue
+open-webui/open-webui#34683. It now comes back on the next load, and is hidden again once the
+switch is back on.
 
 Discriminates: passes on the 176d31d1d frontend; in frontend copies, with the admin's Save not
 sending the banner list the add and remove tests fail, with dismissals never stored the reload test
@@ -13,6 +16,8 @@ gone), with any stored dismissal hiding all banners the replaced-banner test fai
 list or the dismissal switch unbound the add and save tests fail, with the label fixed to Info the
 other three type tests fail, with the content shown as plain text the markdown test fails and with
 the new-chat condition dropped the open-chat test fails (the banner shows above a running chat).
+The #34683 test fails on the dev d74882eee frontend (the closed banner stays hidden with "Remember
+Dismissal" off) and passes with the fix.
 """
 
 from __future__ import annotations
@@ -162,6 +167,28 @@ def test_a_banner_without_remembered_dismissal_closes_only_until_the_next_load(
     page.reload()
 
     expect(page.get_by_text("Planned downtime")).to_be_visible()
+
+
+@pytest.mark.regression
+def test_a_closed_banner_comes_back_once_its_dismissal_is_no_longer_remembered(
+    admin, page_for, make_user, no_banners
+):
+    notice = _banner("Read the updated policy")
+    always_shown = _banner("Always here", dismissible=False)
+    _publish(admin, [notice, always_shown])
+    page = page_for(make_user())
+    expect(page.get_by_text("Read the updated policy")).to_be_visible()
+    _close_button(page).first.click()
+    expect(page.get_by_text("Read the updated policy")).to_be_hidden()
+
+    _publish(admin, [{**notice, "dismissible": False}, always_shown])
+    page.reload()
+    expect(page.get_by_text("Read the updated policy")).to_be_visible()
+
+    _publish(admin, [notice, always_shown])
+    page.reload()
+    expect(page.get_by_text("Always here")).to_be_visible()
+    expect(page.get_by_text("Read the updated policy")).to_be_hidden()
 
 
 def test_a_replaced_banner_is_new_to_a_user_who_closed_the_old_one(
