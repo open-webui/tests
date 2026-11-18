@@ -1,6 +1,6 @@
 """Regression: a large model profile image was carried by every read of the model.
 
-Issue open-webui/open-webui#ISSUE.
+Issue open-webui/open-webui#34656.
 
 A profile image picked in the model editor was stored as base64 text inside the model's settings,
 so an animated GIF of a few MB was read, parsed and sent back on every read of the model. The fix
