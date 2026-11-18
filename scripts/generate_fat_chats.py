@@ -672,7 +672,10 @@ class Conversation:
         delegations = [(0.3, False), (0.45, True)]
         parent: dict | None = None
         turn = 0
-        while self.size < self.target or turn < 100:
+        branched = False
+        # a side branch below a reply needs one more turn on top of it, so the final reply is a leaf
+        while self.size < self.target or turn < 100 or branched:
+            branched = False
             progress = self.size / self.target
             # a stretch late in the chat is answered by the terminal's coding agent
             by_agent = 0.62 <= progress < 0.78
@@ -715,6 +718,7 @@ class Conversation:
                 reply = self.assistant(self.main, question, self.budget())
             if not by_agent and rng.random() < 0.05:
                 self.branch(reply, rng.randint(1, 3))
+                branched = True
             parent = reply
             turn += 1
         self.notable["last_reply"] = parent["id"]
