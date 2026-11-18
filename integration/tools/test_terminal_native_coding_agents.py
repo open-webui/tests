@@ -42,7 +42,7 @@ long chat and the test fails.
 
 In a saved chat the page sends only the system prompt and keeps a picture uploaded with the
 paperclip on the user message, so with Chat Uploads in Default mode the picture never reached the
-agent, on the first message or a later one (open-webui/open-webui#ISSUE). Each attached picture
+agent, on the first message or a later one (open-webui/open-webui#34660). Each attached picture
 now reaches the agent with its own message only, and a message without one sends none.
 Discriminates: passes on fix/agent-chat-images, fails on dev d74882eee (no turn gets its
 picture).
@@ -617,7 +617,8 @@ def test_a_picture_attached_in_a_saved_chat_reaches_the_agent_with_its_message_o
         assert "error" not in reply, f"a turn failed: {reply.get('error')}"
     pictures = _pictures_per_turn(native_agent_terminal, native)[turns_before:]
     assert pictures == [[PIXEL_DATA], [], [UPLOADED_DATA]], (
-        f"{native.provider} did not get each picture with its own message only (#ISSUE): "
+        f"{native.provider} did not get each picture with its own message only "
+        f"(open-webui/open-webui#34660): "
         f"{[[data[:16] for data in turn] for turn in pictures]}"
     )
 
