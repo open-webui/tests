@@ -1,10 +1,10 @@
 """Journey: the chat input's Terminal menu lists a person's terminals and keeps the chat's pick.
 
 Rebuilt on dev after 0.13.3 (3d98e86e2, f4cf2ca0c, c647f3f42, 41179ba85, titled `refac`). The
-menu lists the terminals of the admin's connections under Terminals; the cog beside
-Terminals, for admins only, opens the admin's Integrations settings. The picked terminal carries
-a check and names the menu's button; picking it again unpicks it, and picking another terminal
-unpicks the first.
+menu lists the terminals of the admin's connections under Machines (Terminals before 7686e6329);
+the cog beside Machines, for admins only, opens the admin's Integrations settings. The picked
+terminal carries a check and names the menu's button; picking it again unpicks it, and picking
+another terminal unpicks the first.
 In a saved chat the pick is stored on the chat and is back when the chat is opened again. Since
 d42988f0c a pick shows at once and is saved in the background, so one the server refuses stays
 picked on the page, says why and is not stored: the chat opens again without it (before, a
@@ -176,7 +176,7 @@ def _stored_terminal(person, chat_id: str) -> str | None:
     return stored.json()["chat"].get("terminal_id")
 
 
-def test_the_terminals_heading_offers_admins_alone_a_cog_to_their_integrations_settings(
+def test_the_machines_heading_offers_admins_alone_a_cog_to_their_integrations_settings(
     page_for, make_user, connect
 ):
     owner, person = make_user(role="admin"), make_user()
@@ -185,7 +185,7 @@ def test_the_terminals_heading_offers_admins_alone_a_cog_to_their_integrations_s
     page = page_for(owner)
 
     menu = open_terminal_menu(page)
-    assert [line.lower() for line in _menu_lines(menu)] == ["terminals", shared.lower()], (
+    assert [line.lower() for line in _menu_lines(menu)] == ["machines", shared.lower()], (
         f"the admin's Terminal menu reads {_menu_lines(menu)}"
     )
     tooltip_button(menu, "Settings", role="menuitem").click()
@@ -195,7 +195,7 @@ def test_the_terminals_heading_offers_admins_alone_a_cog_to_their_integrations_s
 
     person_page = page_for(person)
     menu = open_terminal_menu(person_page)
-    assert [line.lower() for line in _menu_lines(menu)] == ["terminals", shared.lower()], (
+    assert [line.lower() for line in _menu_lines(menu)] == ["machines", shared.lower()], (
         f"a regular person's Terminal menu reads {_menu_lines(menu)}"
     )
     expect(menu.get_by_role("menuitem", name="Settings")).to_have_count(0)

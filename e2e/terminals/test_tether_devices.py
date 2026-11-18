@@ -85,7 +85,7 @@ def _open_terminal_menu(page: Page) -> Locator:
     expect(chat_input(page)).to_be_visible()
     tooltip_button(page.get_by_role("main"), "Terminal").click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_text("Terminals", exact=True)).to_be_visible()
+    expect(menu.get_by_text("Machines", exact=True)).to_be_visible()
     return menu
 
 

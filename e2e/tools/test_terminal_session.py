@@ -72,7 +72,7 @@ def fake_terminal():
 def _terminal_section(page: Page) -> Locator:
     page.goto("/admin/settings/integrations")
     settings = page.get_by_role("dialog")
-    section = settings.get_by_role("heading", name="Terminal", exact=True).locator("xpath=..")
+    section = settings.get_by_role("heading", name="Machines", exact=True).locator("xpath=..")
     expect(section.get_by_text("Open Terminal", exact=True)).to_be_visible()
     return section
 

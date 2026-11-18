@@ -3411,7 +3411,7 @@
     "e2e/terminals/test_terminal_menu.py::test_a_terminal_picked_before_the_first_message_is_saved_with_the_new_chat[main chat-chromium]": 5.277,
     "e2e/terminals/test_terminal_menu.py::test_the_picked_terminal_is_checked_and_named_and_picking_it_again_unpicks_it[chromium]": 8.342,
     "e2e/terminals/test_terminal_menu.py::test_the_terminal_and_its_folder_cannot_be_changed_while_a_reply_is_written[chromium]": 5.535,
-    "e2e/terminals/test_terminal_menu.py::test_the_terminals_heading_offers_admins_alone_a_cog_to_their_integrations_settings[chromium]": 7.36,
+    "e2e/terminals/test_terminal_menu.py::test_the_machines_heading_offers_admins_alone_a_cog_to_their_integrations_settings[chromium]": 7.36,
     "e2e/terminals/test_terminal_options_menu.py::test_a_plain_terminal_offers_its_system_info_and_files_and_nothing_to_manage[chromium]": 5.426,
     "e2e/terminals/test_terminal_options_menu.py::test_an_open_system_info_closes_when_the_person_loses_the_terminal[chromium]": 4.422,
     "e2e/terminals/test_tether_devices.py::test_a_person_picks_their_device_under_your_devices_and_the_model_runs_a_command_on_it[chromium]": 5.918,
