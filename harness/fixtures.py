@@ -16,6 +16,7 @@ import pytest
 
 from harness import upstream as upstream_module
 from harness.actors import Actor, admin_of, create_user
+from harness.fat_chats import FatChat, delete_fat_chat, import_fat_chat
 from harness.file_context import file_context_ticked
 from harness.host_names import c_ares_refusal_problem
 from harness.instance import LaunchedInstance, launch
@@ -124,6 +125,21 @@ def make_user(instance: LaunchedInstance) -> Callable[..., Actor]:
         return create_user(instance, role=role, **options)
 
     return factory
+
+
+@pytest.fixture
+def fat_chat(instance: LaunchedInstance) -> Generator[Callable[..., FatChat], None, None]:
+    """`fat_chat(owner, name, **options)` imports a stored fat chat for `owner` into the shared
+    instance (`harness.fat_chats.import_fat_chat`) and deletes it after the test."""
+    imported: list[tuple[Actor, FatChat]] = []
+
+    def load(owner: Actor, name: str, **options) -> FatChat:
+        imported.append((owner, import_fat_chat(instance, owner, name, **options)))
+        return imported[-1][1]
+
+    yield load
+    for owner, fat in imported:
+        delete_fat_chat(owner, fat)
 
 
 @pytest.fixture

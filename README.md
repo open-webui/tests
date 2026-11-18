@@ -19,12 +19,13 @@ Upstream refactors its internals daily and changes its API and UI rarely, so a b
 tests/
 ├── conftest.py            # loads the harness fixtures; drift label and skeptic note on failures
 ├── harness/               # scratch instances, the scripted model provider, accounts, local services
+├── data/fat_chats/        # stored long chats (1 to 130 MB) that harness/fat_chats.py imports
 ├── integration/<area>/    # httpx tests against the scratch instance, by subsystem
 ├── e2e/<area>/            # Playwright tests against the same instance, by subsystem
 ├── unit/<area>/           # source-level tests that nothing further out can see
 ├── frontend/              # vitest over src/lib
 ├── utils/                 # browser helpers (chat_ui.py: send, read replies)
-├── scripts/               # e2e_instance.py (a manual instance), junit_summary.py (CI), seed_upgrade_data.py
+├── scripts/               # e2e_instance.py (a manual instance), junit_summary.py (CI), seed_upgrade_data.py, generate_fat_chats.py
 └── docs/                  # the test contract
 ```
 

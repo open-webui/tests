@@ -22,7 +22,7 @@ Once an integration twin covers a unit test's narrow layer, delete the unit test
 
 ## The harness
 
-`harness/` boots a scratch backend per session from `OPEN_WEBUI_SOURCE_DIR`, serving the checkout's built frontend when there is one, with a scripted OpenAI-shaped model provider as its only connection. The fixtures in `harness/fixtures.py` are available everywhere: `instance`, `upstream` (script replies with `upstream.queue(...)`, read what was sent with `upstream.chat_requests()`), `admin`, `user`, `make_user`, `preserve` (restores global settings a test changes), `instance_with` (a further instance for env-only settings) and `listener` (a local service for the instance to call). `harness.chat` sends messages the way the web client does. The browser suite adds `page_for(actor)`, one signed-in browser per account.
+`harness/` boots a scratch backend per session from `OPEN_WEBUI_SOURCE_DIR`, serving the checkout's built frontend when there is one, with a scripted OpenAI-shaped model provider as its only connection. The fixtures in `harness/fixtures.py` are available everywhere: `instance`, `upstream` (script replies with `upstream.queue(...)`, read what was sent with `upstream.chat_requests()`), `admin`, `user`, `make_user`, `preserve` (restores global settings a test changes), `instance_with` (a further instance for env-only settings), `listener` (a local service for the instance to call) and `fat_chat` (a stored long chat of 1 to 130 MB with branches, tool calls and an agent's sessions, imported for an account). `harness.chat` sends messages the way the web client does. The browser suite adds `page_for(actor)`, one signed-in browser per account.
 
 ```
 OPEN_WEBUI_SOURCE_DIR=/path/to/checkout/backend python -m pytest integration e2e -q
@@ -65,6 +65,7 @@ def test_a_read_grant_does_not_expose_the_source(admin, make_user):
 
 - **Own your state.** Give anything a test changes to an account from `make_user()`, so the shared `user` stays as the next test expects it. Change a global setting only after `preserve(...)`, which restores it; `preserve(..., on=extra)` does the same on an `instance_with` instance.
 - **Script the model, then read what it was sent.** `upstream.queue(reply.text(...), reply.tool_call(name, args), reply.error(500))` decides the replies; `upstream.chat_requests()` shows the payload Open WebUI built. Assert on that, on stored chats (`harness.chat.wait_for_reply`) and on `instance.log_since(offset)`: all three outlive a refactor that renames every internal.
+- **Test on a long chat where length matters.** Opening, listing, searching, exporting and editing chats, and anything that reads a chat's messages per request (terminal and agent requests), also run on a stored fat chat from `fat_chat(owner, name)`. Never build a large chat on the fly; the stored ones are made once by `scripts/generate_fat_chats.py`.
 - **Keep outside services local.** Point the setting at a `listener` (or a fake in `harness/`) and assert on what it received, so the instance only ever talks to localhost.
 - **Env-only settings get their own instance** through `instance_with({...})`. Reuse one env set across modules where you can; each boot costs several seconds. Mark the tests that use one `slow`.
 
