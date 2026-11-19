@@ -12,7 +12,10 @@ SKILL.md's preview a link to another file of the skill opens that file. When the
 in another tab meanwhile, Save warns that a newer version exists and keeps the draft, and Reload
 latest shows the other tab's work.
 A revision written in a file's Compare revision view and applied to the draft is what Save stores
-for that file, and the file's Copy puts the open file on the clipboard.
+for that file, and the file's Copy puts the open file on the clipboard. Files selected with a
+Shift-click are deselected by Escape and by a click on the empty part of the file list, after
+which a click opens a file again (open-webui/open-webui#34690, fix PR #34691); Escape that closes
+the delete question or a row's menu leaves the selection alone.
 
 Discriminates: passes on the dev 178de3666 build. In a frontend copy, an editor that sends only
 SKILL.md on create turns the create test red; one whose save keeps a renamed file under its old
@@ -23,6 +26,8 @@ red. The compare and copy tests pass on the dev 3b8205505 build; a build of it w
 keeps the original turns the compare test red, and one whose Copy copies the file's saved content
 turns the copy test red. The drop test passes on the dev 58fb2453b build (the drop came in with
 e5aa83b84); a build of it whose skill editor takes no drop turns it red at "Drop to upload".
+The selection test passes on a build of the fix and fails on the dev
+d74882eee build, whose skill editor matches dev 58fb2453b (both files still selected after Escape).
 """
 
 from __future__ import annotations
@@ -274,3 +279,43 @@ def test_copy_puts_the_open_file_on_the_clipboard(page_for, owner):
     expect(page.get_by_text("Copied to clipboard")).to_be_visible()
     copied = read_text(page)
     assert copied == "High water at three.\n", f"Copy put {copied!r} on the clipboard"
+
+
+def _shift_click(page: Page, name: str) -> None:
+    file_row(page, name).get_by_text(name, exact=True).click(modifiers=["Shift"])
+
+
+@pytest.mark.regression
+def test_escape_and_a_click_on_empty_space_clear_the_selected_files(page_for, owner):
+    skill_id = new_id("ropes")
+    files = {"SKILL.md": skill_md(skill_id, "Coil it."), "hemp.md": "", "nylon.md": "Nylon rope.\n"}
+    create(owner, files, skill_id=skill_id)
+    page = page_for(owner)
+    _open_skill(page, skill_id)
+    checked = page.get_by_role("main").get_by_role("checkbox", checked=True)
+
+    _shift_click(page, "hemp.md")
+    _shift_click(page, "nylon.md")
+    expect(checked).to_have_count(2)
+    page.get_by_role("main").get_by_role("button", name="Delete selected").click()
+    expect(page.get_by_text("Delete selected files?")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.get_by_text("Delete selected files?")).to_have_count(0)
+    expect(checked, "Escape on the delete question kept the selection").to_have_count(2)
+    file_row(page, "hemp.md").hover()
+    file_row(page, "hemp.md").get_by_label("More", exact=True).click()
+    expect(page.get_by_role("menuitem", name="Rename", exact=True)).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menuitem", name="Rename", exact=True)).to_have_count(0)
+    expect(checked, "Escape on a row's menu kept the selection").to_have_count(2)
+
+    page.keyboard.press("Escape")
+    expect(checked, "files still selected after Escape").to_have_count(0)
+
+    _shift_click(page, "hemp.md")
+    expect(checked).to_have_count(1)
+    last_row = file_row(page, "SKILL.md").bounding_box()
+    page.mouse.click(last_row["x"] + 20, last_row["y"] + last_row["height"] + 80)
+    expect(checked, "files still selected after a click below the list").to_have_count(0)
+    open_row(page, "nylon.md")
+    expect(code_editor(page), "a click opens a file again").to_contain_text("Nylon rope.")
