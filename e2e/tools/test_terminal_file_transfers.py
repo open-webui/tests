@@ -27,10 +27,11 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, expect
 
 from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
+from utils.computer_drag import drag_from_the_computer, drop
 from utils.file_browser import (
     choose_action,
     connected_browser,
@@ -104,38 +105,15 @@ def test_upload_folder_makes_the_folder_with_its_subfolders_on_the_terminal(brow
     expect_listed(browser, "crates/", "manifest.txt")
 
 
-def _drag_from_the_computer(page: Page, onto: Locator, *paths: Path) -> dict:
-    """Bring files or folders of this computer over `onto` and hold them there; returns what
-    `_drop` needs."""
-    box = onto.bounding_box()
-    assert box, "the place to drop on is not on the page"
-    session = page.context.new_cdp_session(page)
-    held = {
-        "x": box["x"] + box["width"] / 2,
-        "y": box["y"] + box["height"] / 2,
-        "data": {"items": [], "files": [str(path) for path in paths], "dragOperationsMask": 1},
-    }
-    # the page offers no way to start a drag of the computer's own files
-    session.send("Input.dispatchDragEvent", {"type": "dragEnter", **held})
-    session.send("Input.dispatchDragEvent", {"type": "dragOver", **held})
-    return {"session": session, **held}
-
-
-def _drop(held: dict) -> None:
-    session = held.pop("session")
-    session.send("Input.dispatchDragEvent", {"type": "drop", **held})
-    session.detach()
-
-
 def test_files_and_a_folder_dropped_from_the_computer_land_in_the_open_folder(
     browser, quay, cargo, tmp_path
 ):
     lone = tmp_path / "tide-table.txt"
     lone.write_text("high at six\n")
 
-    held = _drag_from_the_computer(browser.page, browser, cargo, lone)
+    held = drag_from_the_computer(browser.page, browser, cargo, lone)
     expect(browser.get_by_role("status").filter(has_text="Drop to upload")).to_be_visible()
-    _drop(held)
+    drop(held)
 
     expect(row(browser, "tide-table.txt")).to_be_visible()
     expect(row(browser, "cargo")).to_be_visible()

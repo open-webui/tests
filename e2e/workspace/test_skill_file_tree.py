@@ -5,9 +5,12 @@ file made with the file list's Actions > New File; Save & Create stores both and
 skill. Opening a saved skill lists its files with folders collapsed; a person edits a file, renames
 one from its row menu, deletes another after confirming and saves with a description of the
 change, which the server keeps as a new version with that message. A picture added with Actions >
-Upload is saved with its bytes and shown as a picture. In SKILL.md's preview a link to another
-file of the skill opens that file. When the skill was saved in another tab meanwhile, Save warns
-that a newer version exists and keeps the draft, and Reload latest shows the other tab's work.
+Upload is saved with its bytes and shown as a picture. Files and a folder dragged from the computer
+over the open file show "Drop to upload" and are saved like uploaded ones, leaving the open file's
+text as it was, and a file over 10 MiB is refused with the same reason as Upload gives. In
+SKILL.md's preview a link to another file of the skill opens that file. When the skill was saved
+in another tab meanwhile, Save warns that a newer version exists and keeps the draft, and Reload
+latest shows the other tab's work.
 A revision written in a file's Compare revision view and applied to the draft is what Save stores
 for that file, and the file's Copy puts the open file on the clipboard.
 
@@ -18,7 +21,8 @@ sent as text turns the upload test red; a preview that leaves relative links alo
 preview test red; and an editor that does not show a version conflict turns the conflict test
 red. The compare and copy tests pass on the dev 3b8205505 build; a build of it whose Apply to draft
 keeps the original turns the compare test red, and one whose Copy copies the file's saved content
-turns the copy test red.
+turns the copy test red. The drop test passes on the dev 58fb2453b build (the drop came in with
+e5aa83b84); a build of it whose skill editor takes no drop turns it red at "Drop to upload".
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ from harness.skill_files import (
     skill_md,
 )
 from utils.clipboard import read_text
+from utils.computer_drag import drag_from_the_computer, drop
 from utils.skill_editor import actions, code_editor, file_row, open_row, replace_text, row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -148,6 +153,45 @@ def test_an_uploaded_picture_is_saved_with_its_bytes_and_shown(page_for, owner):
 
     expect(page.get_by_text("Skill updated successfully")).to_be_visible()
     assert read(owner, skill["id"], "flag.png") == PNG
+
+
+def test_files_and_a_folder_dropped_on_the_editor_are_saved_like_uploads(page_for, owner, tmp_path):
+    skill = _tide_skill(owner)
+    instructions = read(owner, skill["id"], "SKILL.md")
+    page = page_for(owner)
+    _open_skill(page, skill["id"])
+    picture = tmp_path / "flag.png"
+    picture.write_bytes(PNG)
+    charts = tmp_path / "harbour"
+    charts.mkdir()
+    (charts / "chart.md").write_text("Harbour chart.\n")
+    oversized = tmp_path / "soundings.bin"
+    oversized.write_bytes(b"\0" * (10 * 1024 * 1024 + 1))
+
+    held = drag_from_the_computer(page, code_editor(page), picture, charts)
+    expect(
+        page.get_by_role("main").get_by_role("status").filter(has_text="Drop to upload")
+    ).to_be_visible()
+    drop(held)
+    expect(file_row(page, "flag.png")).to_be_visible()
+    expect(file_row(page, "harbour")).to_be_visible()
+    expect(page.get_by_text("Drop to upload")).to_have_count(0)
+    drop(drag_from_the_computer(page, code_editor(page), oversized))
+    expect(page.get_by_text("Files must be at most 10 MiB")).to_be_visible()
+    _save(page)
+
+    expect(page.get_by_text("Skill updated successfully")).to_be_visible()
+    saved = set(files(owner, skill["id"]))
+    assert saved == {
+        "SKILL.md",
+        "flag.png",
+        "harbour/chart.md",
+        "references/tables.md",
+        "references/charts.md",
+    }, f"the skill saved {sorted(saved)} after the drop"
+    assert read(owner, skill["id"], "flag.png") == PNG
+    assert read(owner, skill["id"], "harbour/chart.md") == b"Harbour chart.\n"
+    assert read(owner, skill["id"], "SKILL.md") == instructions, "the drop changed SKILL.md's text"
 
 
 def test_a_link_in_the_preview_opens_the_linked_file(page_for, owner):
