@@ -6,12 +6,10 @@ in Elo order with their won and lost counts, its column headers re-sort it both 
 row opens the tags its ratings were given in the rating form. The Feedback tab lists each rating,
 filters by model, lets the admin delete an entry and exports what the filter shows as JSON or CSV.
 Deleting the last rating of the model the tab is narrowed to shows all ratings again.
-An arena model the admin adds in the Evaluations settings, limited to one model and made public,
-answers a user through that model, and rating its reply names the model that answered. The admin
-settings decide where evaluations show: switching message rating off removes the thumbs from a
-reply, switching arena models off removes their section from the Evaluations settings and the
-model from the selector. Since #34138 an arena model's Clone button opens the arena dialog filled in
-from it under the name with "(Clone)" added, and saving it adds a second arena model.
+A router model the admin adds under Router Models in Admin Settings > Models, picking at random
+between two models and made public, answers a user through one of them, and rating its reply names
+the model that answered. Switching message rating off in the admin settings removes the thumbs
+from a reply.
 
 Two tests stay red on dev ebc6add67. The CSV export reads each rating's chat from the rating data,
 where it is never stored (the chat sits in the rating's meta), so its chat_id column is always
@@ -23,16 +21,13 @@ opened, so the rating is saved without the form for a score, a reason, a comment
 Discriminates: passes on dev 176d31d1d; in a frontend copy, sorting the leaderboard the other
 way round turns the ranking test red, swapping its won and lost columns turns the counts test
 red, a model filter that is never applied turns the filter test red, a delete that never reaches
-the server turns the delete test red, always showing the thumbs turns the message rating test
-red and always showing the arena section turns the arena test red. On dev ebc6add67, in one
-frontend build, column headers that do nothing turn the header test red, a model dialog that
-leaves out the top tags the tags test, an export that ignores the model filter the JSON test and
-a rating form without the arena's answer the added arena test. The added arena test makes the
-model public from the Visibility menu that replaced the arena dialog's Private and Public select:
-it passes on dev b40891e0a, and a frontend copy of it whose menu changes nothing turns it red.
-The last rating test passes on dev f659c0d12 and fails in a frontend copy with 88cf7f209
-(#33794) undone (the tab stays on the deleted model and lists nothing). The clone test passes on
-dev 485103cde and fails in a frontend build whose Clone dialog opens empty.
+the server turns the delete test red and always showing the thumbs turns the message rating test
+red. On dev ebc6add67, in one frontend build, column headers that do nothing turn the header
+test red, a model dialog that leaves out the top tags the tags test, an export that ignores the
+model filter the JSON test and a rating form without the arena's answer the added arena test, now
+the added router model test, retargeted to router models on dev 53d741157, where it passes. The
+last rating test passes on dev f659c0d12 and fails in a frontend copy with 88cf7f209 (#33794)
+undone (the tab stays on the deleted model and lists nothing).
 """
 
 from __future__ import annotations
@@ -50,11 +45,11 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.actors import Actor
 from harness.python_tools import EVERYONE_READS
+from harness.router_models import ROUTER_MODELS_CONFIG
 from harness.upstream import MOCK_MODEL_ID
 from utils.access_control import choose_visibility
 from utils.chat_ui import conversation, expect_reply, replies, send
-from utils.model_selector import model_search, select_model
-from utils.tooltips import tooltip_button
+from utils.model_selector import select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -259,91 +254,6 @@ def test_switching_message_rating_off_removes_the_thumbs_from_a_reply(
     expect(conversation(page).get_by_role("button", name="Bad Response")).to_have_count(0)
 
 
-@pytest.fixture
-def arena_model(admin, preserve) -> Iterator[str]:
-    """The name of a public arena model that the admin's settings list."""
-    preserve(("/api/v1/evaluations/config", "/api/v1/evaluations/config"))
-    tag = uuid.uuid4().hex[:8]
-    name = f"Arena {tag}"
-    grants = [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
-    arena = {
-        "id": f"arena-{tag}",
-        "name": name,
-        "meta": {"model_ids": [MOCK_MODEL_ID], "access_grants": grants},
-    }
-    with admin.client() as client:
-        saved = client.post(
-            "/api/v1/evaluations/config",
-            json={"ENABLE_EVALUATION_ARENA_MODELS": True, "EVALUATION_ARENA_MODELS": [arena]},
-        )
-        assert saved.status_code == 200, saved.text
-        yield name
-        client.post("/api/v1/models/model/delete", json={"id": arena["id"]})
-
-
-def _offered_in_selector(page: Page, name: str, reopen: bool = True) -> Locator:
-    if reopen:
-        page.goto("/")
-        page.get_by_role("button", name=re.compile("^Selected model")).click()
-    model_search(page).fill(name)
-    available = page.get_by_role("listbox", name="Available models")
-    return available.get_by_role("option", name=f"Select {name} model")
-
-
-def test_switching_arena_models_off_hides_them_in_the_settings_and_the_selector(
-    page_for, make_user, arena_model
-):
-    admin_page = page_for(make_user(role="admin"), path="/admin/settings/evaluations")
-    settings = admin_page.get_by_role("dialog")
-    expect(settings.get_by_text(arena_model)).to_be_visible()
-    expect(_offered_in_selector(page_for(make_user()), arena_model)).to_be_visible()
-
-    admin_page.get_by_role("switch", name="Arena Models").click()
-    expect(settings.get_by_text(arena_model)).to_have_count(0)
-    settings.get_by_role("button", name="Save", exact=True).click()
-    expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
-
-    user_page = page_for(make_user())
-    expect(_offered_in_selector(user_page, reply.MOCK_MODEL_ID)).to_have_count(1)  # list loaded
-    expect(_offered_in_selector(user_page, arena_model, reopen=False)).to_have_count(0)
-
-
-def test_cloning_an_arena_model_adds_a_second_one_filled_in_from_it(
-    page_for, make_user, arena_model, admin
-):
-    clone_name = f"{arena_model} (Clone)"
-    clone_id = f"{arena_model.lower().replace(' ', '-')}-clone"
-    admin_page = page_for(make_user(role="admin"), path="/admin/settings/evaluations")
-    settings = admin_page.get_by_role("dialog")
-    original = settings.get_by_text(arena_model, exact=True)
-    expect(original).to_be_visible()
-
-    try:
-        # the arena's row holds its name and its own Clone button
-        row = original.locator("xpath=ancestor::div[.//button[@aria-label='Clone']][1]")
-        row.get_by_role("button", name="Clone", exact=True).click()
-        clone = admin_page.get_by_role("dialog").filter(
-            has=admin_page.get_by_placeholder("Model Name")
-        )
-        expect(clone.get_by_placeholder("Model Name")).to_have_value(clone_name)
-        expect(clone.get_by_text(MOCK_MODEL_ID, exact=True)).to_be_visible()
-        clone.get_by_role("button", name="Save", exact=True).click()
-        expect(clone).to_be_hidden()
-
-        expect(settings.get_by_text(clone_name, exact=True)).to_be_visible()
-        expect(settings.get_by_text(arena_model, exact=True)).to_be_visible()
-        with admin.client() as client:
-            stored = client.get("/api/v1/evaluations/config").json()["EVALUATION_ARENA_MODELS"]
-        by_name = {model["name"]: model for model in stored}
-        assert set(by_name) == {arena_model, clone_name}, f"stored arena models: {list(by_name)}"
-        assert by_name[clone_name]["id"] == clone_id
-        assert by_name[clone_name]["meta"]["model_ids"] == [MOCK_MODEL_ID]
-        assert by_name[arena_model]["id"] != clone_id
-    finally:
-        with admin.client() as client:
-            client.post("/api/v1/models/model/delete", json={"id": clone_id})
-
-
 def test_rating_the_first_reply_of_a_comparison_opens_the_rating_form(
     make_contender, make_user, page_for, upstream
 ):
@@ -452,41 +362,40 @@ def test_the_csv_export_lists_each_rating_with_its_chat(duel, admin, page_for):
     )
 
 
-@pytest.fixture
-def arena_settings(admin, preserve) -> Iterator[list[str]]:
-    """Restores the evaluation settings; delete the arena model ids appended to the list."""
-    preserve(("/api/v1/evaluations/config", "/api/v1/evaluations/config"))
-    added: list[str] = []
-    yield added
-    with admin.client() as client:
-        for model_id in added:
-            client.post("/api/v1/models/model/delete", json={"id": model_id})
+def _stored_reply(rater: Actor) -> dict:
+    """The rater's only reply, as the server stored it."""
+    with rater.client() as client:
+        [chat] = client.get("/api/v1/chats/").json()
+        stored = client.get(f"/api/v1/chats/{chat['id']}").json()
+    return next(
+        message
+        for message in stored["chat"]["history"]["messages"].values()
+        if message["role"] == "assistant"
+    )
 
 
-def test_an_arena_model_added_in_the_settings_answers_through_its_model_and_names_it(
-    page_for, make_user, make_contender, arena_settings, admin, upstream
+def test_a_router_model_added_in_the_settings_answers_through_its_model_and_names_it(
+    page_for, make_user, make_contender, preserve, admin, upstream
 ):
-    contender_id, contender = make_contender()
-    tag = uuid.uuid4().hex[:8]
-    name = f"Blind Duel {tag}"
-    arena_settings.append(f"blind-duel-{tag}")
-    admin_page = page_for(make_user(role="admin"), path="/admin/settings/evaluations")
-    settings = admin_page.get_by_role("dialog")
-    switch = settings.get_by_role("switch", name="Arena Models")
-    if switch.get_attribute("aria-checked") != "true":
-        switch.click()
-    tooltip_button(settings, "Add Arena Model").click()
-    arena = admin_page.get_by_role("dialog").filter(has=admin_page.get_by_placeholder("Model Name"))
-    arena.get_by_placeholder("Model Name").fill(name)
-    choices = arena.get_by_role("combobox").filter(has_text="Select a model")
-    choices.select_option(label=contender)
-    choices.locator("xpath=following-sibling::div//button").click()
-    expect(arena.get_by_text(contender, exact=True)).to_be_visible()
-    choose_visibility(arena, "Public")
-    arena.get_by_role("button", name="Save", exact=True).click()
-    expect(arena).to_be_hidden()
-    expect(settings.get_by_text(name)).to_be_visible()
-    settings.get_by_role("button", name="Save", exact=True).click()
+    preserve(ROUTER_MODELS_CONFIG)
+    contenders = dict([make_contender(), make_contender()])
+    name = f"Blind Duel {uuid.uuid4().hex[:8]}"
+    admin_page = page_for(make_user(role="admin"), path="/admin/settings/models")
+    admin_page.get_by_role("button", name="Add Router Model").click()
+    router = admin_page.get_by_role("dialog", name="Add Router Model")
+    router.get_by_placeholder("Model Name").fill(name)
+    for contender in contenders.values():
+        router.get_by_role("button", name="Add model").click()
+        router.get_by_role("combobox", name="Select a model").last.select_option(label=contender)
+    router.get_by_role("combobox", name="Strategy").select_option(label="Random")
+    router.get_by_role("button", name="Access", exact=True).click()
+    access = admin_page.get_by_role("dialog", name="Access Control")
+    choose_visibility(access, "Public")
+    expect(access.get_by_text("Accessible to all users")).to_be_visible()
+    admin_page.keyboard.press("Escape")
+    expect(access).to_be_hidden()
+    router.get_by_role("button", name="Save", exact=True).click()
+    expect(router).to_be_hidden()
     expect(admin_page.get_by_text("Settings saved successfully!").first).to_be_visible()
 
     rater = make_user()
@@ -497,6 +406,10 @@ def test_an_arena_model_added_in_the_settings_answers_through_its_model_and_name
     expect_reply(page, ANSWER)
     _rate(page, 0, "Bad Response")
 
-    expect(conversation(page)).to_contain_text(f'This response was generated by "{contender}"')
+    picked = _stored_reply(rater).get("selectedModelId")
+    assert picked in contenders, f"the router answered through {picked}, not one of its models"
+    expect(conversation(page)).to_contain_text(
+        f'This response was generated by "{contenders[picked]}"'
+    )
     feedback = _open_evaluations(admin, page_for, "feedback")
-    expect(_feedback_row(feedback, rater, contender_id)).to_have_count(1)
+    expect(_feedback_row(feedback, rater, picked)).to_have_count(1)
