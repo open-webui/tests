@@ -250,7 +250,8 @@ def test_a_picked_terminal_skill_is_a_mention_the_model_reads_from_the_terminal(
 
     question = _send_a_terminal_skill_mention(page, upstream, cellar)
 
-    mention = _sent_message(page).get_by_role("button", name=f"$machine:{cellar.terminal_skill}")
+    # the skill id is Open Terminal's own, which still starts with terminal:
+    mention = _sent_message(page).get_by_role("button", name=f"$terminal:{cellar.terminal_skill}")
     expect(mention).to_be_visible()
     asked = next(filter(reply.answering(question), upstream.chat_requests()))
     read = "\n".join(reply.context_results(asked, "view_skill"))
@@ -299,17 +300,17 @@ def test_a_sent_terminal_skill_mention_still_reads_as_a_mention_after_a_reload(
     page = page_for(person)
     choose_terminal(page, terminal_name)
     _send_a_terminal_skill_mention(page, upstream, cellar)
-    mention = _sent_message(page).get_by_role("button", name=f"$machine:{cellar.terminal_skill}")
+    mention = _sent_message(page).get_by_role("button", name=f"$terminal:{cellar.terminal_skill}")
     expect(mention).to_be_visible()
 
     page.reload()
     expect(chat_input(page)).to_be_visible()
     expect_reply(page, "Gently.")
 
-    # red on dev c15f28649: the message reads "<$machine:pressing-…|pressing-…>" until a skill
+    # red on dev c15f28649: the message reads "<$terminal:pressing-…|pressing-…>" until a skill
     # list is opened (finding open-webui-terminal-skills-unknown-until-listed)
     expect(mention).to_be_visible()
-    expect(_sent_message(page)).not_to_contain_text("<$machine:")
+    expect(_sent_message(page)).not_to_contain_text("<$terminal:")
 
 
 def test_the_more_menu_offers_a_terminals_skills_before_anything_is_typed(
