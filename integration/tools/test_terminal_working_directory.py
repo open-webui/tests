@@ -2,12 +2,12 @@
 
 New in 0.13.1. The chat input's working directory menu (beside the Terminal menu) picks a folder
 on the selected terminal for a new chat, and the page sends it with the chat's first message as
-`terminal_cwd`. A folder's settings can name a default terminal and a working directory on it,
+`machine_cwd`. A folder's settings can name a default terminal and a working directory on it,
 which apply to new chats started in the folder. For a terminal the admin connected, the server
 moves the new chat's terminal session to that folder before the first reply (4955624d2), so every
 command the model runs in the chat runs there and the `run_command` description names it; a
 folder that does not exist refuses the chat with "Working directory is unavailable". An empty
-`terminal_cwd`, the menu's "No folder", keeps a folder chat in the terminal's own directory
+`machine_cwd`, the menu's "No folder", keeps a folder chat in the terminal's own directory
 (834c47ee0). The folder's defaults are read only for a folder the user may write to.
 
 A real Open Terminal runs the commands; its `run_command` answer names the folder it ran in.
@@ -124,7 +124,7 @@ def _session_cwd(actor, terminal_id: str, chat_id: str) -> str:
     """The chat's folder as its page reads it back through the instance, e.g. after a reload."""
     with actor.client() as client:
         answer = client.get(
-            f"/api/v1/terminals/{terminal_id}/files/cwd", headers={"X-Session-Id": chat_id}
+            f"/api/v1/machines/{terminal_id}/files/cwd", headers={"X-Session-Id": chat_id}
         )
     assert answer.status_code == 200, answer.text
     return answer.json()["cwd"]
@@ -136,7 +136,7 @@ def _kept_with_the_chat(actor, chat_id: str) -> tuple[str | None, str | None]:
         found = client.get(f"/api/v1/chats/{chat_id}")
     assert found.status_code == 200, found.text
     chat = found.json()["chat"]
-    return chat.get("terminal_id"), chat.get("working_directory")
+    return chat.get("machine_id"), chat.get("working_directory")
 
 
 def _failed_reply(actor, **options) -> str:
@@ -163,7 +163,7 @@ def test_a_new_chat_runs_the_models_commands_in_the_chosen_directory(
     chosen = _directory(open_terminal)
 
     chat_id, requests = _where_pwd_ran(
-        member, upstream, terminal_id=terminal_id, terminal_cwd=str(chosen)
+        member, upstream, machine_id=terminal_id, machine_cwd=str(chosen)
     )
 
     assert _ran_in(requests) == str(chosen), "the model's command ignored the chosen directory"
@@ -182,10 +182,10 @@ def test_a_new_chat_without_a_directory_runs_in_the_terminals_own(
     member, terminal_id, open_terminal, upstream
 ):
     _where_pwd_ran(
-        member, upstream, terminal_id=terminal_id, terminal_cwd=str(_directory(open_terminal))
+        member, upstream, machine_id=terminal_id, machine_cwd=str(_directory(open_terminal))
     )
 
-    chat_id, requests = _where_pwd_ran(member, upstream, terminal_id=terminal_id)
+    chat_id, requests = _where_pwd_ran(member, upstream, machine_id=terminal_id)
 
     assert _ran_in(requests) == str(open_terminal.home), (
         "a chat with no directory chosen ran somewhere other than the terminal's home"
@@ -197,14 +197,14 @@ def test_a_new_chat_without_a_directory_runs_in_the_terminals_own(
 
 def test_a_later_message_keeps_the_chats_directory(member, terminal_id, open_terminal, upstream):
     chosen = _directory(open_terminal)
-    chat_id, _ = _where_pwd_ran(member, upstream, terminal_id=terminal_id, terminal_cwd=str(chosen))
+    chat_id, _ = _where_pwd_ran(member, upstream, machine_id=terminal_id, machine_cwd=str(chosen))
 
     _, requests = _where_pwd_ran(
         member,
         upstream,
         chat_id=chat_id,
-        terminal_id=terminal_id,
-        terminal_cwd=str(_directory(open_terminal, "elsewhere")),
+        machine_id=terminal_id,
+        machine_cwd=str(_directory(open_terminal, "elsewhere")),
     )
 
     assert _ran_in(requests) == str(chosen), (
@@ -216,7 +216,7 @@ def test_a_missing_directory_refuses_the_new_chat(member, terminal_id, open_term
     before = len(upstream.chat_requests())
 
     error = _failed_reply(
-        member, terminal_id=terminal_id, terminal_cwd=str(open_terminal.home / "no-such-folder")
+        member, machine_id=terminal_id, machine_cwd=str(open_terminal.home / "no-such-folder")
     )
 
     assert UNAVAILABLE in error, f"a chat in a missing folder did not say so: {error}"
@@ -224,7 +224,7 @@ def test_a_missing_directory_refuses_the_new_chat(member, terminal_id, open_term
 
 
 def test_a_directory_that_is_not_a_path_is_refused(member, terminal_id):
-    error = _failed_reply(member, terminal_id=terminal_id, terminal_cwd=["/etc"])
+    error = _failed_reply(member, machine_id=terminal_id, machine_cwd=["/etc"])
 
     assert "Invalid working directory" in error, error
 
@@ -234,7 +234,7 @@ def test_a_folder_chat_gets_the_folders_terminal_and_directory(
 ):
     default = _directory(open_terminal)
     folder_id = _create_folder(
-        member, {"terminal_id": terminal_id, "working_directory": str(default)}
+        member, {"machine_id": terminal_id, "working_directory": str(default)}
     )
 
     chat_id, requests = _where_pwd_ran(member, upstream, folder_id=folder_id)
@@ -252,12 +252,12 @@ def test_a_directory_chosen_for_the_chat_wins_over_the_folders(
 ):
     folder_id = _create_folder(
         member,
-        {"terminal_id": terminal_id, "working_directory": str(_directory(open_terminal))},
+        {"machine_id": terminal_id, "working_directory": str(_directory(open_terminal))},
     )
     chosen = _directory(open_terminal, "chosen")
 
     _, requests = _where_pwd_ran(
-        member, upstream, folder_id=folder_id, terminal_id=terminal_id, terminal_cwd=str(chosen)
+        member, upstream, folder_id=folder_id, machine_id=terminal_id, machine_cwd=str(chosen)
     )
 
     assert _ran_in(requests) == str(chosen)
@@ -268,11 +268,11 @@ def test_no_folder_chosen_in_a_folder_chat_runs_in_the_terminals_own(
 ):
     folder_id = _create_folder(
         member,
-        {"terminal_id": terminal_id, "working_directory": str(_directory(open_terminal))},
+        {"machine_id": terminal_id, "working_directory": str(_directory(open_terminal))},
     )
 
     _, requests = _where_pwd_ran(
-        member, upstream, folder_id=folder_id, terminal_id=terminal_id, terminal_cwd=""
+        member, upstream, folder_id=folder_id, machine_id=terminal_id, machine_cwd=""
     )
 
     assert _ran_in(requests) == str(open_terminal.home), (
@@ -292,13 +292,13 @@ def test_the_folders_directory_stays_with_the_folders_terminal(
     folder_id = _create_folder(
         member,
         {
-            "terminal_id": folders_terminal["id"],
+            "machine_id": folders_terminal["id"],
             "working_directory": str(_directory(open_terminal)),
         },
     )
 
     _, requests = _where_pwd_ran(
-        member, upstream, folder_id=folder_id, terminal_id=other_terminal["id"]
+        member, upstream, folder_id=folder_id, machine_id=other_terminal["id"]
     )
 
     assert _ran_in(requests) == str(open_terminal.home), (
@@ -313,17 +313,17 @@ def test_a_folder_default_terminal_the_user_may_not_use_is_refused(
     private = open_terminal.connection(config={"access_grants": [read_grant(make_user().id)]})
     with admin.client() as client:
         configure_terminals(client, private)
-    plain = _create_folder(member, {"terminal_id": private["id"]})
+    plain = _create_folder(member, {"machine_id": private["id"]})
     with_directory = _create_folder(
         member,
-        {"terminal_id": private["id"], "working_directory": str(_directory(open_terminal))},
+        {"machine_id": private["id"], "working_directory": str(_directory(open_terminal))},
     )
     before = len(upstream.chat_requests())
 
     plain_error = _failed_reply(member, folder_id=plain)
     directory_error = _failed_reply(member, folder_id=with_directory)
 
-    not_found = f"Terminal unavailable: Terminal server '{private['id']}' not found"
+    not_found = f"Machine unavailable: Machine '{private['id']}' not found"
     assert not_found in plain_error, f"the folder lent a terminal: {plain_error}"
     assert UNAVAILABLE in directory_error, directory_error
     assert len(upstream.chat_requests()) == before, "the model was asked with that terminal"
@@ -345,7 +345,7 @@ def test_only_a_folder_the_user_may_write_to_lends_its_defaults(
         configure_terminals(client, connection)
     default = _directory(open_terminal)
     folder_id = _create_folder(
-        owner, {"terminal_id": connection["id"], "working_directory": str(default)}
+        owner, {"machine_id": connection["id"], "working_directory": str(default)}
     )
     shared = {"reader": ["read"], "writer": ["read", "write"]}.get(role, [])
     with owner.client() as client:

@@ -3,9 +3,9 @@
 open-webui 0.12.5 `b420726ff`: with a terminal selected in the chat, the `generate_image` and
 `edit_image` tools upload each new picture to that terminal's working folder, named after its
 file id so two pictures never overwrite each other. The tool result the model reads and the
-image stored on the reply carry the picture's `terminal_path`, so the model can work on it with
+image stored on the reply carry the picture's `machine_path`, so the model can work on it with
 the terminal's tools. A failed copy leaves the picture in the chat and carries a
-`terminal_error` instead; without a terminal nothing is sent to one.
+`machine_error` instead; without a terminal nothing is sent to one.
 
 A fake terminal answers the working folder and takes the uploads, and the image engine is a
 listener answering as OpenAI's image endpoints. The legacy handler that generates before the
@@ -177,7 +177,7 @@ def test_a_drawn_image_is_copied_into_the_terminal_working_folder(
 ):
     server, terminal_id = terminal
 
-    told, stored, picture = _draw(painter, upstream, image_engine, tool, terminal_id=terminal_id)
+    told, stored, picture = _draw(painter, upstream, image_engine, tool, machine_id=terminal_id)
 
     assert picture == GENERATED_PNG
     uploads = server.requests_to("/files/upload")
@@ -190,9 +190,9 @@ def test_a_drawn_image_is_copied_into_the_terminal_working_folder(
     assert content == GENERATED_PNG, "the terminal got different bytes than the chat shows"
 
     expected_path = f"{WORKDIR}/{told['id']}.png"
-    assert told.get("terminal_path") == expected_path, f"the model was not told the path: {told}"
-    assert stored.get("terminal_path") == expected_path, f"the reply's image has no path: {stored}"
-    assert "terminal_error" not in told
+    assert told.get("machine_path") == expected_path, f"the model was not told the path: {told}"
+    assert stored.get("machine_path") == expected_path, f"the reply's image has no path: {stored}"
+    assert "machine_error" not in told
 
 
 @pytest.mark.parametrize("failing", ["upload", "working-folder"])
@@ -208,12 +208,12 @@ def test_a_failed_copy_is_reported_and_the_image_still_shows(
         server.route("GET", "/files/cwd", json_answer({"detail": "starting"}, 503))
         expected_error = TERMINAL_UNAVAILABLE
 
-    told, stored, picture = _draw(painter, upstream, image_engine, tool, terminal_id=terminal_id)
+    told, stored, picture = _draw(painter, upstream, image_engine, tool, machine_id=terminal_id)
 
     assert picture == GENERATED_PNG, "the picture was lost with the failed copy"
-    assert told.get("terminal_error") == expected_error, f"the model was told {told}"
-    assert stored.get("terminal_error") == expected_error, f"the reply's image: {stored}"
-    assert "terminal_path" not in told and "terminal_path" not in stored
+    assert told.get("machine_error") == expected_error, f"the model was told {told}"
+    assert stored.get("machine_error") == expected_error, f"the reply's image: {stored}"
+    assert "machine_path" not in told and "machine_path" not in stored
 
 
 @pytest.mark.parametrize("tool", DRAWINGS)
@@ -225,7 +225,7 @@ def test_without_a_terminal_nothing_is_copied(painter, upstream, image_engine, t
     assert picture == GENERATED_PNG
     assert server.received == [], f"a chat without a terminal reached it: {server.received}"
     for image in (told, stored):
-        assert "terminal_path" not in image and "terminal_error" not in image, image
+        assert "machine_path" not in image and "machine_error" not in image, image
 
 
 # edit_image reading its source picture from the selected terminal
@@ -234,7 +234,7 @@ SOURCE_FOLDER = "/home/user/my pictures"
 FORMATS = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 NOT_AN_IMAGE_FORMAT = "Image must be PNG, JPEG, WebP, or GIF."
 TOO_LARGE = "Image must be at most 25 megapixels."
-NO_REACHABLE_TERMINAL = "Reading files requires a terminal connection reachable by Open WebUI."
+NO_REACHABLE_TERMINAL = "Reading files requires a machine connection reachable by Open WebUI."
 
 
 def _picture(file_format: str, size: tuple[int, int] = (3, 2), mode: str = "RGB") -> bytes:
@@ -287,7 +287,7 @@ def test_a_picture_on_the_terminal_is_edited_from_its_path(
     source = _picture(file_format)
     _serve_file(server, path, source)
 
-    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+    told, edits = _edit_from(painter, upstream, image_engine, path, machine_id=terminal_id)
 
     assert told.get("status") == "success", f"editing {path} failed; the model was told {told}"
     reads = server.requests_to("/files/view")
@@ -315,7 +315,7 @@ def test_a_terminal_file_that_is_no_supported_picture_is_refused_before_the_engi
     path = f"{SOURCE_FOLDER}/source"
     _serve_file(server, path, content)
 
-    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+    told, edits = _edit_from(painter, upstream, image_engine, path, machine_id=terminal_id)
 
     assert server.requests_to("/files/view"), "the terminal was never asked for the file"
     assert expected_error in (told.get("error") or ""), f"the model was told {told}"
@@ -328,7 +328,7 @@ def test_a_picture_of_exactly_25_megapixels_is_edited(painter, upstream, image_e
     source = _picture("png", (5000, 5000), "1")
     _serve_file(server, path, source)
 
-    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+    told, edits = _edit_from(painter, upstream, image_engine, path, machine_id=terminal_id)
 
     assert told.get("status") == "success", f"a 25 megapixel picture was refused: {told}"
     assert [picture for _, picture in _sent_pictures(edits[0])] == [source]
@@ -339,9 +339,9 @@ def test_a_path_the_terminal_cannot_read_is_reported(painter, upstream, image_en
     _serve_file(server, f"{SOURCE_FOLDER}/other.png", _picture("png"))
     missing = f"{SOURCE_FOLDER}/missing.png"
 
-    told, edits = _edit_from(painter, upstream, image_engine, missing, terminal_id=terminal_id)
+    told, edits = _edit_from(painter, upstream, image_engine, missing, machine_id=terminal_id)
 
-    assert told.get("error") == f"Could not read {missing} from the terminal.", told
+    assert told.get("error") == f"Could not read {missing} from the machine.", told
     assert edits == []
 
 
@@ -375,7 +375,7 @@ def test_a_terminal_file_over_50_megabytes_is_not_read_as_a_picture(
     # no picture at either size, so a file within the limit fails later, on its content
     _serve_file(server, path, b"\0" * size)
 
-    told, edits = _edit_from(painter, upstream, image_engine, path, terminal_id=terminal_id)
+    told, edits = _edit_from(painter, upstream, image_engine, path, machine_id=terminal_id)
 
     assert expected_error in (told.get("error") or ""), (
         f"for a terminal file of {size} bytes the model was told {told}"

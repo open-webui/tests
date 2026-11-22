@@ -92,7 +92,7 @@ def test_a_notebook_cell_runs_on_the_terminal_for_the_person_who_opened_it(
     full_terminal, make_user
 ):
     person, other = make_user(), make_user()
-    terminal = f"/api/v1/terminals/{full_terminal(person, other)}"
+    terminal = f"/api/v1/machines/{full_terminal(person, other)}"
     tag = uuid.uuid4().hex[:8]
     path = f"notebooks-{tag}/sums.ipynb"
     with person.client() as client:
@@ -136,7 +136,7 @@ def test_a_browser_tab_in_chrome_mode_shows_a_page_served_in_the_terminal(
     full_terminal, full_open_terminal, make_user
 ):
     person = make_user()
-    terminal = f"/api/v1/terminals/{full_terminal(person)}"
+    terminal = f"/api/v1/machines/{full_terminal(person)}"
     tag = uuid.uuid4().hex[:8]
     port = 20000 + uuid.uuid4().int % 20000
     page = f"<html><head><title>Harbour {tag}</title></head><body><h1>Keeper {tag}</h1></body>"
@@ -208,7 +208,7 @@ def test_a_browser_tab_in_chrome_mode_shows_a_page_served_in_the_terminal(
 def test_the_desktop_is_a_vnc_screen_with_sound(full_terminal, make_user):
     person, stranger = make_user(), make_user()
     terminal_id = full_terminal(person)
-    terminal = f"/api/v1/terminals/{terminal_id}"
+    terminal = f"/api/v1/machines/{terminal_id}"
     with person.client() as client:
         desktop = client.get(f"{terminal}/desktop")
         screenshot = client.get(f"{terminal}/desktop/screenshot")
@@ -250,30 +250,30 @@ def test_a_terminals_image_decides_whether_it_has_notebooks_and_a_desktop(
     path = f"sums-{tag}.ipynb"
     with admin.client() as client:
         full = create_template(client, connection, image=full_terminal_image, memory_limit="1Gi")[
-            "terminal_id"
+            "machine_id"
         ]
-        slim = create_template(client, connection)["terminal_id"]
+        slim = create_template(client, connection)["machine_id"]
         features = {}
         for name, terminal_id in (("full", full), ("slim", slim)):
             assert wait_until(
-                lambda: client.get(f"/api/v1/terminals/{terminal_id}/files/cwd").status_code == 200,
+                lambda: client.get(f"/api/v1/machines/{terminal_id}/files/cwd").status_code == 200,
                 30,
             ), f"the {name} terminal's machine did not start:\n{terminals.logs()[-2000:]}"
-            config = client.get(f"/api/v1/terminals/{terminal_id}/api/config")
+            config = client.get(f"/api/v1/machines/{terminal_id}/api/config")
             assert config.status_code == 200, config.text
             features[name] = config.json()["features"]
         written = client.post(
-            f"/api/v1/terminals/{full}/files/write",
+            f"/api/v1/machines/{full}/files/write",
             json={"path": path, "content": _notebook(f"print('{tag}', 6 * 7)")},
         )
         assert written.status_code == 200, f"writing the notebook failed: {written.text}"
-        opened = client.post(f"/api/v1/terminals/{full}/notebooks", json={"path": path})
+        opened = client.post(f"/api/v1/machines/{full}/notebooks", json={"path": path})
         assert opened.status_code == 200, f"opening the notebook failed: {opened.text}"
         ran = client.post(
-            f"/api/v1/terminals/{full}/notebooks/{opened.json()['id']}/execute",
+            f"/api/v1/machines/{full}/notebooks/{opened.json()['id']}/execute",
             json={"cell_index": 0},
         )
-        missing = client.post(f"/api/v1/terminals/{slim}/notebooks", json={"path": path})
+        missing = client.post(f"/api/v1/machines/{slim}/notebooks", json={"path": path})
 
     assert (features["full"]["notebooks"], features["full"]["desktop"]) == (True, True), (
         f"the terminal on the full image reports {features['full']}"

@@ -61,7 +61,7 @@ SPEC = {
     },
 }
 NOT_FOUND = json_answer({"detail": "Skill not found"}, status=404)
-SKILL_MD_ONLY = "Terminal skills support SKILL.md only; use terminal tools for supporting files."
+SKILL_MD_ONLY = "Machine skills support SKILL.md only; use terminal tools for supporting files."
 CHANGED = "Skill changed while reading. Call view_skill again and restart reading."
 
 
@@ -155,7 +155,7 @@ def _skill_calls(member, upstream, terminal_id: str, *calls: tuple[str, dict]) -
         reply.text("ready", match=mentioned),
     )
     with member.client() as client:
-        _, message = ask(client, prompt, terminal_id=terminal_id)
+        _, message = ask(client, prompt, machine_id=terminal_id)
     assert message["content"] == "ready", f"the reply did not arrive: {message}"
     final = reply.conversation(_requests_answering(upstream, prompt)[-1])
     results = {
@@ -172,7 +172,7 @@ def test_the_skills_of_the_picked_terminal_are_listed_for_the_model(shelf, membe
     skill_id = shelf.put(name, "Run make ship.")
 
     on_the_terminal = _first_request(
-        member, upstream, f"what can you do {_tag()}", terminal_id=shelf.terminal_id
+        member, upstream, f"what can you do {_tag()}", machine_id=shelf.terminal_id
     )
     without = _first_request(member, upstream, f"what can you do {_tag()}")
 
@@ -198,7 +198,7 @@ def test_a_terminal_that_refuses_its_skill_list_leaves_the_reply_without_skills(
     shelf.server.route("GET", "/skills", json_answer(shelf.listing(), status=status))
 
     request = _first_request(
-        member, upstream, f"what can you do {_tag()}", terminal_id=shelf.terminal_id
+        member, upstream, f"what can you do {_tag()}", machine_id=shelf.terminal_id
     )
 
     assert shelf.server.requests_to("/skills"), "the terminal was never asked for its skills"
@@ -326,7 +326,7 @@ def test_a_terminal_skill_picked_with_the_skills_tool_off_arrives_whole(
             member,
             upstream,
             prompt,
-            terminal_id=shelf.terminal_id,
+            machine_id=shelf.terminal_id,
             model=model_id,
             skill_ids=[skill_id],
         )
@@ -347,7 +347,7 @@ def test_a_message_that_only_mentions_a_terminal_skill_carries_its_name(
     upstream.queue(reply.text("ready", match=reply.mentioning(name)))
 
     with _model_without_the_skills_tool(admin) as model_id, member.client() as client:
-        _, message = ask(client, f"<${skill_id}>", terminal_id=shelf.terminal_id, model=model_id)
+        _, message = ask(client, f"<${skill_id}>", machine_id=shelf.terminal_id, model=model_id)
 
     assert message["content"] == "ready", f"the reply did not arrive: {message}"
     [request] = _requests_answering(upstream, name)

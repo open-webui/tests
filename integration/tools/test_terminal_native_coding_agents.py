@@ -176,7 +176,7 @@ def _send(client: httpx.Client, terminal_id: str, native: Native, text: str, **e
         client,
         text,
         model=model_id(terminal_id, native.model, native.provider),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
         **extra,
     )
 
@@ -228,7 +228,7 @@ def test_claude_code_codex_and_pi_are_offered_with_their_models_and_codex_with_i
     terminal_id = connect(person)
 
     with person.client() as client:
-        listed = client.get("/api/models", params={"terminal_id": terminal_id})
+        listed = client.get("/api/models", params={"machine_id": terminal_id})
     assert listed.status_code == 200, f"the model list failed: {listed.text}"
     offered = {model["id"]: model for model in listed.json()["data"] if model.get("agent")}
 
@@ -712,7 +712,7 @@ def test_a_codex_turn_runs_with_the_models_default_effort_or_the_persons_pick(
             "/api/chat/completions",
             json={
                 "model": codex,
-                "terminal_id": terminal_id,
+                "machine_id": terminal_id,
                 "messages": [{"role": "user", "content": "with an effort it does not have"}],
                 "stream": True,
                 "params": {"model_controls": {codex: {"reasoning_effort": "extreme"}}},
@@ -743,7 +743,7 @@ def test_switching_to_another_model_of_the_same_agent_resumes_its_session_and_fo
 
     with person.client() as client:
         first = _send(
-            client, terminal_id, native, "remember the word lantern", terminal_cwd=str(started_in)
+            client, terminal_id, native, "remember the word lantern", machine_cwd=str(started_in)
         )
         first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
         assert "error" not in first_reply, f"the first turn failed: {first_reply.get('error')}"
@@ -756,7 +756,7 @@ def test_switching_to_another_model_of_the_same_agent_resumes_its_session_and_fo
             "what was the word?",
             chat_id=first.chat_id,
             parent_id=first.assistant_message_id,
-            terminal_cwd=str(home),
+            machine_cwd=str(home),
             history=[
                 {"role": "user", "content": "remember the word lantern"},
                 {"role": "assistant", "content": first_reply["content"]},

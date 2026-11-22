@@ -1,6 +1,6 @@
 """Journey: a shell session through Open WebUI carries what the terminal sends and how it ends.
 
-The page opens a terminal's shell on `/api/v1/terminals/<id>/api/terminals/<session>` and signs
+The page opens a terminal's shell on `/api/v1/machines/<id>/api/terminals/<session>` and signs
 in with its first message. Open WebUI opens the same session on the terminal and relays both
 ways: text and binary output arrive as the terminal sent them, in order, and what the person
 types reaches the terminal. When the terminal closes the session, the page's session closes with
@@ -377,7 +377,7 @@ def test_a_stream_that_does_not_sign_in_is_closed_before_the_terminal_hears_of_i
     person, terminal_id = person_with_terminal
     terminal.clear()
     url = person.base_url.replace("http://", "ws://", 1) + (
-        f"/api/v1/terminals/{terminal_id}/api/terminals/{uuid.uuid4().hex}"
+        f"/api/v1/machines/{terminal_id}/api/terminals/{uuid.uuid4().hex}"
     )
 
     with connect_socket(url, proxy=None, open_timeout=10, close_timeout=2) as page_side:
@@ -433,7 +433,7 @@ def test_a_stream_for_a_chat_the_person_cannot_write_to_is_refused_saying_so(
     "address,expected",
     [
         pytest.param(None, (1011, ""), id="terminal-down"),
-        pytest.param("", (4003, "Terminal server URL not configured"), id="no-address"),
+        pytest.param("", (4003, "Machine URL not configured"), id="no-address"),
     ],
 )
 def test_a_session_on_a_terminal_that_cannot_be_reached_ends_with_the_code_for_it(
@@ -610,7 +610,7 @@ def _browser_tab_stream(person, terminal, terminal_id: str) -> str:
     tab = {"id": f"tab-{tag}", "token": f"capability-{tag}"}
     terminal.route("POST", "/browser/sessions", json_answer(tab))
     with person.client() as client:
-        opened = client.post(f"/api/v1/terminals/{terminal_id}/browser/sessions", json={})
+        opened = client.post(f"/api/v1/machines/{terminal_id}/browser/sessions", json={})
     assert opened.status_code == 200, f"opening a Browser tab failed: {opened.text}"
     return f"browser/view/{tab['id']}/{opened.json()['token']}/ws"
 

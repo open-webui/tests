@@ -83,7 +83,7 @@ from harness.upstream import MOCK_MODEL_ID
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 REPLY_TIMEOUT = 60.0
-UNAVAILABLE = "Agent model is unavailable in the selected terminal"
+UNAVAILABLE = "Agent model is unavailable on the selected machine"
 DISCONNECTED = "Agent environment disconnected. Reconnect before continuing this chat."
 PIXEL = (
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQ"
@@ -115,7 +115,7 @@ def connect(admin, agents):
 
 def _listed(client: httpx.Client, terminal_id: str, **params) -> tuple[set[str], set[str]]:
     """The agent models and the other models the model list shows for the terminal."""
-    listed = client.get("/api/models", params={"terminal_id": terminal_id, **params})
+    listed = client.get("/api/models", params={"machine_id": terminal_id, **params})
     assert listed.status_code == 200, f"the model list failed: {listed.status_code} {listed.text}"
     ids = {model["id"] for model in listed.json()["data"]}
     agent_ids = {listed_id for listed_id in ids if listed_id.startswith("agent:")}
@@ -129,7 +129,7 @@ def _ask(
         client,
         text,
         model=model_id(terminal_id, MODEL, provider),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
         **extra,
     )
     return turn, wait_for_reply(client, turn, REPLY_TIMEOUT)
@@ -183,7 +183,7 @@ def test_only_agents_the_terminal_reports_as_available_are_offered_each_model_on
     agents.catalog = catalog(agent("opencode", *twice), missing)
 
     with person.client() as client:
-        listed = client.get("/api/models", params={"terminal_id": terminal_id}).json()["data"]
+        listed = client.get("/api/models", params={"machine_id": terminal_id}).json()["data"]
         agents.catalog = catalog(agent("opencode", *twice), {**missing, "available": True})
         once_installed, _ = _listed(client, terminal_id)
 
@@ -274,7 +274,7 @@ def test_an_agent_open_webui_has_no_client_for_ends_the_reply_with_the_reason(
         started_for_it = len(agents.starts)
         _, known = _ask(client, terminal_id, "refactor with opencode")
 
-    assert _error(unknown) == "Unsupported terminal agent", (
+    assert _error(unknown) == "Unsupported machine agent", (
         f"the reply of an agent without a client did not say why it failed: {unknown}"
     )
     assert started_for_it == 0, "an agent session was started for an agent without a client"
@@ -358,10 +358,10 @@ def test_an_agent_works_in_the_folder_its_chat_started_in(make_user, agents, con
     terminal_id = connect(person)
 
     with person.client() as client:
-        first, _ = _ask(client, terminal_id, "start in atlas", terminal_cwd="/srv/atlas")
+        first, _ = _ask(client, terminal_id, "start in atlas", machine_cwd="/srv/atlas")
         chosen = agents.starts[-1].options["cwd"]
         browsed = client.post(
-            f"/api/v1/terminals/{terminal_id}/files/cwd",
+            f"/api/v1/machines/{terminal_id}/files/cwd",
             json={"path": "/srv/elsewhere"},
             headers={"X-Session-Id": first.chat_id},
         )
@@ -442,7 +442,7 @@ def test_a_file_of_another_terminal_is_refused_and_one_of_the_agents_own_is_name
         return [
             {
                 "type": "filesystem",
-                "terminal_id": of_terminal,
+                "machine_id": of_terminal,
                 "path": "/srv/notes.txt",
                 "name": "notes.txt",
             }
@@ -453,7 +453,7 @@ def test_a_file_of_another_terminal_is_refused_and_one_of_the_agents_own_is_name
         started_for_it = len(agents.starts)
         _, own = _ask(client, terminal_id, "read the notes", files=notes(terminal_id))
 
-    assert _error(foreign) == "Attachment belongs to another terminal", (
+    assert _error(foreign) == "Attachment belongs to another machine", (
         f"a file of another terminal was not refused: {foreign}"
     )
     assert started_for_it == 0, "the agent was started with a file of another terminal"
@@ -534,7 +534,7 @@ def test_a_typed_form_from_an_agent_is_answered_in_its_types_or_declined(
 
     def answer_with(client: httpx.Client, **given) -> dict:
         turn = send_message(
-            client, "release it", model=model_id(terminal_id, MODEL), terminal_id=terminal_id
+            client, "release it", model=model_id(terminal_id, MODEL), machine_id=terminal_id
         )
         asked = _pending(client, turn)
         answered = client.post(
@@ -675,9 +675,7 @@ def _saves_while(
         release.wait(REPLY_TIMEOUT)
 
     agents.turn = turn
-    sent = send_message(
-        client, "go on", model=model_id(terminal_id, MODEL), terminal_id=terminal_id
-    )
+    sent = send_message(client, "go on", model=model_id(terminal_id, MODEL), machine_id=terminal_id)
     try:
         assert working.wait(REPLY_TIMEOUT), "the agent was never asked"
         stored = _stored_chat(instance, sent.chat_id)
@@ -790,7 +788,7 @@ def test_an_agent_socket_that_stays_away_for_a_minute_ends_the_reply(make_user, 
     agents.turn = leave_for_good
     with person.client() as client:
         turn = send_message(
-            client, "a long task", model=model_id(terminal_id, MODEL), terminal_id=terminal_id
+            client, "a long task", model=model_id(terminal_id, MODEL), machine_id=terminal_id
         )
         started = time.monotonic()
         reply = _with_error(client, turn, wait_for_reply(client, turn, timeout=100))
@@ -836,7 +834,7 @@ def test_a_collaborators_message_goes_on_in_the_owners_agent_session_on_the_owne
             "/api/chat/completions",
             json={
                 "model": model_id(terminal_id, MODEL),
-                "terminal_id": terminal_id,
+                "machine_id": terminal_id,
                 "messages": [{"role": "user", "content": "my own chat"}],
                 "stream": True,
             },

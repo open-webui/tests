@@ -28,7 +28,7 @@ form's default for Auth is `none` (no key reaches the terminal) and where the fo
 unknown fields (the extra field is gone); with the address check dropped from Verify
 Connection it fails on the answer for an empty address.
 
-Every save of the connections is reported as the event `config.terminal_servers.updated`
+Every save of the connections is reported as the event `config.machines.updated`
 with the admin who saved and the number of connections, and a save that is refused reports
 nothing. `policy` and `lifecycle`, the two entries a connection of the policy model before
 templates could be sent with, are not stored; everything else sent is. On dev c15f28649 the
@@ -183,7 +183,7 @@ def test_without_working_directory_context_run_command_names_no_folder(
 ):
     terminal_id = _connect(admin, terminal, member, working_directory_context=False)
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     description = _offered(request)["run_command"]
     assert CWD_LINE not in description and WORKDIR not in description, (
@@ -199,7 +199,7 @@ def test_without_working_directory_context_the_terminal_prompt_and_agents_md_sti
 ):
     terminal_id = _connect(admin, terminal, member, working_directory_context=False)
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     texts = _texts(request)
     assert any(TERMINAL_PROMPT in text for text in texts), "the terminal's system prompt is gone"
@@ -212,7 +212,7 @@ def test_with_working_directory_context_run_command_names_the_folder(
 ):
     terminal_id = _connect(admin, terminal, member, **setting)
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     description = _offered(request)["run_command"]
     assert description.endswith(f"\n\n{CWD_LINE} {WORKDIR}"), description
@@ -222,7 +222,7 @@ def test_with_working_directory_context_run_command_names_the_folder(
 def test_user_shell_tools_always_offers_them_with_no_shell_open(admin, terminal, member, upstream):
     terminal_id = _connect(admin, terminal, member, user_shell_tools="always")
 
-    offered = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    offered = _offered(_chat_request(member, upstream, machine_id=terminal_id))
 
     assert SHELL_TOOLS <= offered.keys(), (
         f"set to Always Include, yet with the shell closed the model got {sorted(offered)}"
@@ -238,9 +238,9 @@ def test_user_shell_tools_always_offers_them_with_no_shell_open(admin, terminal,
 def test_user_shell_tools_auto_follows_the_open_shell(admin, terminal, member, upstream, setting):
     terminal_id = _connect(admin, terminal, member, **setting)
 
-    closed = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    closed = _offered(_chat_request(member, upstream, machine_id=terminal_id))
     _open_shell(terminal, member)
-    opened = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    opened = _offered(_chat_request(member, upstream, machine_id=terminal_id))
 
     assert not SHELL_TOOLS & closed.keys(), f"offered with the shell closed: {sorted(closed)}"
     assert "run_command" in closed
@@ -262,20 +262,16 @@ def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_ke
     key = f"key-{uuid.uuid4().hex[:8]}"
     sent = {"id": connection_id, "url": terminal.base_url, "key": key, "region": "north"}
     with admin.client() as client:
-        saved = client.post(
-            TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": [sent]}
-        )
-        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
-        menu = [entry["id"] for entry in client.get("/api/v1/terminals/").json()]
-        folder = client.get(f"/api/v1/terminals/{connection_id}/files/cwd")
+        saved = client.post(TERMINAL_SERVERS_CONFIG[1], json={"MACHINE_CONNECTIONS": [sent]})
+        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
+        menu = [entry["id"] for entry in client.get("/api/v1/machines/").json()]
+        folder = client.get(f"/api/v1/machines/{connection_id}/files/cwd")
         without_address = client.post(
             TERMINAL_SERVERS_CONFIG[1],
-            json={"TERMINAL_SERVER_CONNECTIONS": [{"id": connection_id, "key": key}]},
+            json={"MACHINE_CONNECTIONS": [{"id": connection_id, "key": key}]},
         )
-        unverified = client.post(
-            "/api/v1/configs/terminal_servers/verify", json={"url": "", "key": key}
-        )
-        still_stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        unverified = client.post("/api/v1/configs/machines/verify", json={"url": "", "key": key})
+        still_stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
 
     assert saved.status_code == 200, saved.text
     expected = {
@@ -303,7 +299,7 @@ def test_a_connection_saved_with_only_its_address_and_key_is_on_and_sends_the_ke
     )
     assert (unverified.status_code, unverified.json().get("detail")) == (
         400,
-        "Terminal server URL is required",
+        "Machine URL is required",
     ), f"Verify Connection without an address answered {unverified.status_code} {unverified.text}"
     assert still_stored == stored, f"a refused save changed the connections: {still_stored}"
 
@@ -315,7 +311,7 @@ import urllib.request
 
 class Event:
     def event(self, event):
-        if event["event"] == "config.terminal_servers.updated":
+        if event["event"] == "config.machines.updated":
             body = json.dumps(event).encode()
             headers = {{"Content-Type": "application/json"}}
             request = urllib.request.Request("{url}", data=body, headers=headers)
@@ -348,7 +344,7 @@ def test_a_save_of_the_connections_is_reported_with_who_saved_and_how_many(
     with installed_function(admin, source):
         with member.client() as client:
             refused = client.post(
-                TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": connections}
+                TERMINAL_SERVERS_CONFIG[1], json={"MACHINE_CONNECTIONS": connections}
             )
         with saver.client() as client:
             configure_terminals(client, *connections)
@@ -358,7 +354,7 @@ def test_a_save_of_the_connections_is_reported_with_who_saved_and_how_many(
         both_saves = _eventually(lambda: reported() if len(reported()) > 1 else None)
 
     assert refused.status_code == 401, f"a user's save answered {refused.status_code}"
-    subject = {"type": "config", "id": "terminal_server.connections"}
+    subject = {"type": "config", "id": "machines.connections"}
     assert saves == [(saver.id, subject, {"count": 2})], (
         f"one save of two connections by an admin, after a refused one, was reported as {saves}"
     )
@@ -374,10 +370,8 @@ def test_a_connection_sent_with_the_policy_of_the_old_model_is_stored_without_it
         lifecycle={"idle_timeout_minutes": 30},
     )
     with admin.client() as client:
-        saved = client.post(
-            TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": [connection]}
-        )
-        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        saved = client.post(TERMINAL_SERVERS_CONFIG[1], json={"MACHINE_CONNECTIONS": [connection]})
+        stored = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
 
     assert saved.status_code == 200, saved.text
     # the kind is stored empty until Verify Connection or the dialog's Save has found it
@@ -385,9 +379,7 @@ def test_a_connection_sent_with_the_policy_of_the_old_model_is_stored_without_it
         name: value for name, value in connection.items() if name not in ("policy", "lifecycle")
     }
     assert stored == [kept], f"the connection was stored as {stored}"
-    assert saved.json()["TERMINAL_SERVER_CONNECTIONS"] == [kept], (
-        f"the save answered with {saved.text}"
-    )
+    assert saved.json()["MACHINE_CONNECTIONS"] == [kept], f"the save answered with {saved.text}"
 
 
 @pytest.mark.parametrize(
@@ -401,7 +393,7 @@ def test_a_terminal_that_cannot_name_its_folder_still_serves_the_turn(
     terminal_id = _connect(admin, terminal, member, working_directory_context=True)
     terminal.route("GET", "/files/cwd", answer)
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     description = _offered(request)["run_command"]
     assert description == "Run a shell command.", (
@@ -438,7 +430,7 @@ def test_the_terminal_prompt_is_read_for_the_person_and_else_as_saved_with_the_c
     _prompt_per_caller(terminal, json_answer({"prompt": TERMINAL_PROMPT}), live)
     terminal_id = _connect(admin, terminal, member)
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     system = "\n".join(
         str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
@@ -467,7 +459,7 @@ def test_a_terminal_that_does_not_announce_a_prompt_is_not_asked_for_one(
     admin, terminal, member, upstream, config
 ):
     terminal_id = _connect(admin, terminal, member)
-    with_prompt = _chat_request(member, upstream, terminal_id=terminal_id)
+    with_prompt = _chat_request(member, upstream, machine_id=terminal_id)
     assert any(TERMINAL_PROMPT in text for text in _texts(with_prompt)), (
         "the terminal's prompt did not arrive while it announced one"
     )
@@ -476,7 +468,7 @@ def test_a_terminal_that_does_not_announce_a_prompt_is_not_asked_for_one(
     _save_again(admin)
     terminal.clear()
 
-    request = _chat_request(member, upstream, terminal_id=terminal_id)
+    request = _chat_request(member, upstream, machine_id=terminal_id)
 
     assert not any(TERMINAL_PROMPT in text for text in _texts(request)), (
         "the model got the prompt of a terminal that announces none"
@@ -488,7 +480,7 @@ def test_a_terminal_that_does_not_announce_a_prompt_is_not_asked_for_one(
 def _save_again(admin) -> None:
     with admin.client() as client:
         saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()
-        configure_terminals(client, *saved["TERMINAL_SERVER_CONNECTIONS"])
+        configure_terminals(client, *saved["MACHINE_CONNECTIONS"])
 
 
 @pytest.mark.parametrize(
@@ -506,9 +498,9 @@ def test_a_shell_check_the_terminal_fails_hides_the_shell_tools_and_the_turn_goe
     terminal_id = _connect(admin, terminal, member, user_shell_tools="auto")
     terminal.route("GET", USER_SHELL_PATH, answer)
 
-    failed = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    failed = _offered(_chat_request(member, upstream, machine_id=terminal_id))
     _open_shell(terminal, member)
-    opened = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+    opened = _offered(_chat_request(member, upstream, machine_id=terminal_id))
 
     assert "run_command" in failed and not SHELL_TOOLS & failed.keys(), (
         f"with a failed shell check the model got {sorted(failed)}"
@@ -529,7 +521,7 @@ def test_a_shell_check_the_terminal_never_answers_does_not_hold_the_turn(
 
     terminal.route("GET", USER_SHELL_PATH, after_the_turn)
     try:
-        offered = _offered(_chat_request(member, upstream, terminal_id=terminal_id))
+        offered = _offered(_chat_request(member, upstream, machine_id=terminal_id))
     finally:
         answered.set()
 

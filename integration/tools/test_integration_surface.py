@@ -398,7 +398,7 @@ def proxied(admin, preserve, terminal):
         connection = terminal.connection(**fields)
         configure_terminals(client, connection)
         terminal.clear()
-        return client.get(f"/api/v1/terminals/{connection['id']}/x")
+        return client.get(f"/api/v1/machines/{connection['id']}/x")
 
     yield send
     client.close()
@@ -410,7 +410,7 @@ def test_an_orchestrator_called_without_a_template_is_never_reached(proxied, ter
 
     assert (answered.status_code, answered.json()) == (
         409,
-        {"detail": "Select a terminal template"},
+        {"detail": "Select a machine template"},
     ), f"a call naming the orchestrator connection itself answered {answered.text}"
     arrived_at = [request.path for request in terminal.received]
     assert arrived_at == [], (

@@ -2,7 +2,7 @@
 
 Opening, reading or changing a Browser tab answers with the terminal's tab and a token. The
 page never gets the terminal's own token: Open WebUI hands out one it signed, and the tab's
-frame loads `/api/v1/terminals/<id>/browser/view/<tab>/<token>/...` with it, without a session,
+frame loads `/api/v1/machines/<id>/browser/view/<tab>/<token>/...` with it, without a session,
 since a sandboxed frame has none. Open WebUI then asks the terminal with the terminal's token,
 the connection's key and the person's id and chat, and passes on only the frame's accept,
 origin, preflight, last-event-id and range headers; a terminal that takes the person's session
@@ -84,7 +84,7 @@ class Tab:
 
     def view(self, path: str = "", token: str | None = None) -> str:
         return (
-            f"/api/v1/terminals/{self.terminal_id}/browser/view/{self.id}/{token or self.token}"
+            f"/api/v1/machines/{self.terminal_id}/browser/view/{self.id}/{token or self.token}"
             f"/{path}"
         )
 
@@ -152,7 +152,7 @@ def _open_tab(person, terminal_id: str) -> Tab:
     with person.client() as client:
         chat_id = seed_chat(client, [{"role": "user", "content": "open the page"}])[0]
         opened = client.post(
-            f"/api/v1/terminals/{terminal_id}/browser/sessions",
+            f"/api/v1/machines/{terminal_id}/browser/sessions",
             headers={"X-Session-Id": chat_id},
             json={"url": "http://example.com/"},
         )
@@ -194,7 +194,7 @@ def test_the_page_gets_a_token_of_open_webui_for_a_tab_and_never_the_terminals_o
     terminal_id = share_terminal(person)["id"]
     tab = _open_tab(person, terminal_id)
     chat = {"X-Session-Id": tab.chat_id}
-    sessions = f"/api/v1/terminals/{terminal_id}/browser/sessions"
+    sessions = f"/api/v1/machines/{terminal_id}/browser/sessions"
     terminal.route("GET", "/browser/sessions", json_answer({"tabs": 1}))
 
     with person.client() as client:
@@ -305,7 +305,7 @@ def test_a_frame_reaches_the_terminal_with_the_sign_in_its_tab_was_opened_with(
     with person.client() as client:
         chat_id = seed_chat(client, [{"role": "user", "content": "open the page"}])[0]
         opened = client.post(
-            f"/api/v1/terminals/{tab_terminal['id']}/browser/sessions",
+            f"/api/v1/machines/{tab_terminal['id']}/browser/sessions",
             headers={"X-Session-Id": chat_id, "Cookie": f"sso=opened-{tag}"},
             json={"url": "http://example.com/"},
         )
@@ -455,9 +455,9 @@ def test_a_token_does_not_outlive_its_persons_access_to_the_terminal_or_the_chat
     assert before == dict.fromkeys(tabs, 200), f"the tabs did not load to begin with: {before}"
     assert after == {
         "kept": (200, _page(tabs["kept"].id)),
-        "unshared": (404, f"Terminal server '{shared['id']}' not found"),
+        "unshared": (404, f"Machine '{shared['id']}' not found"),
         "chat deleted": (403, "Chat access denied"),
-        "switched off": (404, f"Terminal server '{retiring['id']}' not found"),
+        "switched off": (404, f"Machine '{retiring['id']}' not found"),
     }, f"the tabs answered {after} after their people lost the terminal or the chat"
     assert _view_requests(terminal) == [f"GET {tabs['kept'].upstream(page)}"], (
         f"the terminal was asked for {_view_requests(terminal)}"
@@ -488,7 +488,7 @@ def test_a_frames_cross_origin_calls_are_answered_by_the_terminal_and_not_by_ope
         [upstream_preflight] = [entry for entry in terminal.received if entry.method == "OPTIONS"]
         terminal.clear()
         elsewhere = frame.options(
-            f"/api/v1/terminals/{tab.terminal_id}/files/cwd", headers=preflight
+            f"/api/v1/machines/{tab.terminal_id}/files/cwd", headers=preflight
         )
         asked_elsewhere = [entry.path for entry in terminal.received]
 

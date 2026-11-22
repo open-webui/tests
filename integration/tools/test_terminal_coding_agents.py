@@ -117,7 +117,7 @@ def tool_permissions(admin, preserve):
 
 
 def agent_models(client: httpx.Client, terminal_id: str | None) -> list[dict]:
-    params = {"terminal_id": terminal_id} if terminal_id else {}
+    params = {"machine_id": terminal_id} if terminal_id else {}
     listed = client.get("/api/models", params=params)
     assert listed.status_code == 200, f"the model list failed: {listed.text}"
     return [model for model in listed.json()["data"] if model["id"].startswith("agent:")]
@@ -127,7 +127,7 @@ def ask_agent(
     client: httpx.Client, terminal_id: str, text: str, model: str = FAST, **extra
 ) -> ChatTurn:
     return send_message(
-        client, text, model=model_id(terminal_id, model), terminal_id=terminal_id, **extra
+        client, text, model=model_id(terminal_id, model), machine_id=terminal_id, **extra
     )
 
 
@@ -193,8 +193,8 @@ def test_picking_a_terminal_lists_its_installed_agents_models(make_user, connect
     assert fast["name"] == f"opencode/{FAST}", fast
     # the page keeps agent models out of the base model pickers by this marker (d903b4ac0)
     owners = {model["owned_by"] for model in listed}
-    assert owners == {"terminal"}, f"agent models are not marked as terminal models: {owners}"
-    assert fast["agent"] == {"terminal_id": terminal["id"], "provider": "opencode", "model": FAST}
+    assert owners == {"machine"}, f"agent models are not marked as machine models: {owners}"
+    assert fast["agent"] == {"machine_id": terminal["id"], "provider": "opencode", "model": FAST}
     # the terminal knows the other agents too, but none of them is installed there
     assert {model["agent"]["provider"] for model in listed} == {"opencode"}
 
@@ -214,7 +214,7 @@ def test_a_person_without_access_to_the_terminal_gets_no_agent_models_and_cannot
             "/api/chat/completions",
             json={
                 "model": model_id(terminal["id"]),
-                "terminal_id": terminal["id"],
+                "machine_id": terminal["id"],
                 "messages": [{"role": "user", "content": "use their agent"}],
                 "stream": True,
             },
@@ -238,7 +238,7 @@ def test_a_switched_off_terminal_offers_no_agents(make_user, connect):
             "/api/chat/completions",
             json={
                 "model": model_id(terminal["id"]),
-                "terminal_id": terminal["id"],
+                "machine_id": terminal["id"],
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": True,
             },
@@ -477,7 +477,7 @@ def test_an_agent_that_is_not_installed_in_the_terminal_is_refused(make_user, co
             "/api/chat/completions",
             json={
                 "model": model_id(terminal["id"], "some-model", provider="gemini"),
-                "terminal_id": terminal["id"],
+                "machine_id": terminal["id"],
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": True,
             },
@@ -485,7 +485,7 @@ def test_an_agent_that_is_not_installed_in_the_terminal_is_refused(make_user, co
         works = wait_for_reply(client, ask_agent(client, terminal["id"], "hello"), REPLY_TIMEOUT)
 
     assert refused.status_code == 400, f"a missing agent was not refused: {refused.text}"
-    assert refused.json()["detail"] == "Agent model is unavailable in the selected terminal"
+    assert refused.json()["detail"] == "Agent model is unavailable on the selected machine"
     assert "error" not in works, works
 
 
@@ -499,7 +499,7 @@ def test_an_agent_cannot_share_a_turn_with_another_model(make_user, connect):
             "/api/chat/completions",
             json={
                 "model": agent,
-                "terminal_id": terminal["id"],
+                "machine_id": terminal["id"],
                 "messages": [{"role": "user", "content": "both of you"}],
                 "stream": True,
                 "message_ids": [
@@ -585,7 +585,7 @@ def test_with_chat_uploads_on_filesystem_the_agent_is_told_the_attached_files_pa
         "url": str(brief),
         "name": brief.name,
         "status": "processed",
-        "terminal_id": terminal["id"],
+        "machine_id": terminal["id"],
         "session_id": None,
     }
 
@@ -610,7 +610,7 @@ def test_with_chat_uploads_on_filesystem_the_agent_is_told_the_attached_files_pa
             "read this one too",
             chat_id=first.chat_id,
             parent_id=second.assistant_message_id,
-            message_files=[{**attached, "terminal_id": "another-terminal"}],
+            message_files=[{**attached, "machine_id": "another-terminal"}],
         )
         foreign_reply = wait_for_reply(client, foreign, REPLY_TIMEOUT)
         # an API client may send the file on the request alone, with no stored message
@@ -628,7 +628,7 @@ def test_with_chat_uploads_on_filesystem_the_agent_is_told_the_attached_files_pa
     assert str(brief) not in second_prompt, (
         f"the next message told the agent about the earlier file again: {second_prompt!r}"
     )
-    assert "Attachment belongs to another terminal" in str(foreign_reply.get("error")), (
+    assert "Attachment belongs to another machine" in str(foreign_reply.get("error")), (
         f"a file of another terminal was not refused: {foreign_reply}"
     )
     assert "error" not in api_reply, f"the API agent turn failed: {api_reply.get('error')}"
@@ -748,7 +748,7 @@ def test_a_malformed_agent_model_id_is_refused(make_user, connect):
             "/api/chat/completions",
             json={
                 "model": f"agent:{terminal['id']}:opencode",
-                "terminal_id": terminal["id"],
+                "machine_id": terminal["id"],
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": True,
             },
@@ -939,11 +939,11 @@ def test_opening_an_agent_chat_restores_its_agent_terminal_and_folder(
         wait_for_reply(client, turn, REPLY_TIMEOUT)
         opened = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
 
-    selections = {key: opened.get(key) for key in ("models", "terminal_id", "working_directory")}
+    selections = {key: opened.get(key) for key in ("models", "machine_id", "working_directory")}
     assert not any(key in before for key in selections), f"the new chat already had: {before}"
     assert selections == {
         "models": [model_id(terminal["id"])],
-        "terminal_id": terminal["id"],
+        "machine_id": terminal["id"],
         "working_directory": str(agent_terminal.terminal.home),
     }, f"the opened chat does not name its agent, terminal and folder: {selections}"
 

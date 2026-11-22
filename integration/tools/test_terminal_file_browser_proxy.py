@@ -42,7 +42,7 @@ def granted(admin, preserve, make_user, open_terminal):
 
 
 def _base(connection: dict) -> str:
-    return f"/api/v1/terminals/{connection['id']}"
+    return f"/api/v1/machines/{connection['id']}"
 
 
 def _save(client: httpx.Client, connection: dict, folder, name: str, content: bytes, kind: str):
@@ -136,7 +136,7 @@ def test_a_person_without_a_grant_changes_no_file(granted, make_user, open_termi
 
     refused = {action: answer.status_code for action, answer in answers.items()}
     assert refused == {"save": 404, "move": 404, "delete": 404}, f"the stranger got {refused}"
-    not_found = {"error": f"Terminal server '{connection['id']}' not found"}
+    not_found = {"error": f"Machine '{connection['id']}' not found"}
     assert all(answer.json() == not_found for answer in answers.values()), (
         f"the refusals read {[answer.text for answer in answers.values()]}"
     )

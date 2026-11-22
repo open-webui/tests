@@ -10,8 +10,8 @@ without an OAuth sign-in: no credential), names the person (`X-User-Id`) and the
 all reach the model as the tool's result with an `error` in it, and the reply goes on. The error
 of a timed out call is empty on dev, which leaves the model without a reason (red test, draft
 issue named in it). A terminal whose tool list cannot be read (the document answers an error,
-has no `paths`, or has no operation) fails the reply with "Terminal unavailable: ..." before the
-model is asked, and so does a `terminal_id` that is none of the person's terminals (since
+has no `paths`, or has no operation) fails the reply with "Machine unavailable: ..." before the
+model is asked, and so does a `machine_id` that is none of the person's terminals (since
 44d55bd0f; before, it was passed over); a YAML document is read like a JSON one. Any terminal
 on a model whose Terminal capability is off is passed over: the model answers without terminal
 tools.
@@ -173,7 +173,7 @@ def _command_turn(actor, upstream, terminal_id: str, cookies: dict | None = None
     with actor.client() as client:
         for name, value in (cookies or {}).items():
             client.cookies.set(name, value)
-        turn = send_message(client, prompt, terminal_id=terminal_id)
+        turn = send_message(client, prompt, machine_id=terminal_id)
         message = wait_for_reply(client, turn)
     return turn, message, _command_result(upstream, prompt)
 
@@ -269,7 +269,7 @@ def test_a_command_to_a_terminal_that_went_away_is_handed_to_the_model_as_an_err
         server = running.enter_context(serving_terminal())
         _serve(server)
         terminal_id = _connect(admin, server, member)
-        turn = send_message(client, prompt, terminal_id=terminal_id)
+        turn = send_message(client, prompt, machine_id=terminal_id)
         _wait_until(lambda: _requests_answering(upstream, prompt), "the model was never asked")
         # the model has its tools; the terminal stops before the model's call arrives
         running.close()
@@ -351,10 +351,10 @@ def test_a_terminal_without_a_usable_tool_list_fails_the_message_and_says_why(
     prompt = _prompt()
 
     with member.client() as client:
-        message = wait_for_reply(client, send_message(client, prompt, terminal_id=terminal_id))
+        message = wait_for_reply(client, send_message(client, prompt, machine_id=terminal_id))
 
     failure = (message.get("error") or {}).get("content", "")
-    assert failure.startswith("Terminal unavailable:") and terminal_id in failure, (
+    assert failure.startswith("Machine unavailable:") and terminal_id in failure, (
         f"the message did not fail on its terminal: {message}"
     )
     assert reason in failure, f"the message does not say what is wrong: {failure}"
@@ -364,9 +364,9 @@ def test_a_terminal_without_a_usable_tool_list_fails_the_message_and_says_why(
     terminal.route("GET", "/openapi.json", json_answer(SPEC))
     with admin.client() as client:
         saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()
-        configure_terminals(client, *saved["TERMINAL_SERVER_CONNECTIONS"])
+        configure_terminals(client, *saved["MACHINE_CONNECTIONS"])
     assert "run_command" in _offered(
-        upstream, _plain_turn(member, upstream, terminal_id=terminal_id)
+        upstream, _plain_turn(member, upstream, machine_id=terminal_id)
     )
 
 
@@ -388,17 +388,17 @@ def test_a_terminal_id_that_is_none_of_the_persons_terminals_fails_the_message(
     admin, terminal, member, upstream
 ):
     terminal_id = _connect(admin, terminal, member)
-    known = _plain_turn(member, upstream, terminal_id=terminal_id)
+    known = _plain_turn(member, upstream, machine_id=terminal_id)
     assert "run_command" in _offered(upstream, known), "the person's own terminal gave no tools"
     terminal.clear()
     unknown_id = f"terminal-{uuid.uuid4().hex[:8]}"
     prompt = _prompt()
 
     with member.client() as client:
-        message = wait_for_reply(client, send_message(client, prompt, terminal_id=unknown_id))
+        message = wait_for_reply(client, send_message(client, prompt, machine_id=unknown_id))
 
     failure = (message.get("error") or {}).get("content", "")
-    assert failure.startswith("Terminal unavailable:") and unknown_id in failure, (
+    assert failure.startswith("Machine unavailable:") and unknown_id in failure, (
         f"the message did not fail on the unknown terminal: {message}"
     )
     assert not _requests_answering(upstream, prompt), "the model was asked all the same"
@@ -415,8 +415,8 @@ def test_a_model_with_the_terminal_capability_off_gets_nothing_of_a_picked_termi
         preset_with_capabilities(admin, {"terminal": False}) as without,
         preset_with_capabilities(admin, {"terminal": True}) as with_terminal,
     ):
-        allowed = _plain_turn(member, upstream, terminal_id=terminal_id, model=with_terminal)
-        refused = _plain_turn(member, upstream, terminal_id=terminal_id, model=without)
+        allowed = _plain_turn(member, upstream, machine_id=terminal_id, model=with_terminal)
+        refused = _plain_turn(member, upstream, machine_id=terminal_id, model=without)
 
     agents_md = f"# AGENTS.md\n\n{AGENTS_MD}"
     assert "run_command" in _offered(upstream, allowed)

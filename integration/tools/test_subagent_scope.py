@@ -562,7 +562,7 @@ def test_the_terminal_of_the_chat_is_offered_to_the_subagent_and_answers_it(
         server.route("POST", "/files/view", json_answer({"content": "LOG-LINE"}))
         connection = server.connection()
         configure_terminals(chat, connection)
-        ask(chat, prompt, terminal_id=connection["id"])
+        ask(chat, prompt, machine_id=connection["id"])
         calls = server.requests_to("/files/view")
 
     first, *_, last = sub_requests(upstream, task)

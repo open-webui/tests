@@ -277,7 +277,7 @@ def dead_terminal(instance, admin, preserve):
 def test_an_unreachable_terminal_logs_one_line_and_no_traceback(instance, admin, dead_terminal):
     offset = instance.log_size()
     with admin.client() as client:
-        proxied = client.post(f"/api/v1/terminals/{dead_terminal}/api/files", json={})
+        proxied = client.post(f"/api/v1/machines/{dead_terminal}/api/files", json={})
 
     assert proxied.status_code == 502, proxied.text
     assert len(_log_lines(instance, offset, "Terminal proxy error")) == 1
@@ -290,7 +290,7 @@ def test_a_client_that_hangs_up_mid_body_is_handled(instance, admin, dead_termin
     offset = instance.log_size()
     address = urlsplit(instance.base_url)
     head = (
-        f"POST /api/v1/terminals/{dead_terminal}/api/files HTTP/1.1\r\n"
+        f"POST /api/v1/machines/{dead_terminal}/api/files HTTP/1.1\r\n"
         f"Host: {address.netloc}\r\nAuthorization: Bearer {admin.token}\r\n"
         "Content-Type: application/json\r\nContent-Length: 4096\r\n\r\n"
     )
@@ -307,7 +307,7 @@ def test_a_client_that_hangs_up_mid_body_is_handled(instance, admin, dead_termin
 
 def test_an_unknown_terminal_is_still_refused(admin, dead_terminal):
     with admin.client() as client:
-        proxied = client.post("/api/v1/terminals/no-such-terminal/api/files", json={})
+        proxied = client.post("/api/v1/machines/no-such-terminal/api/files", json={})
 
     assert proxied.status_code == 404
 
@@ -430,11 +430,11 @@ def test_an_mcp_server_that_restarts_mid_reply_is_called_again(
 # --- f1a64ccfc2: an empty cache is a hit, an absent one is no error ------------------------
 
 TOOL_CACHE_KEY = "open-webui:tool_servers"
-TERMINAL_CACHE_KEY = "open-webui:terminal_servers"
+TERMINAL_CACHE_KEY = "open-webui:machines"
 SAVED_SERVERS = {TOOL_CACHE_KEY: 0, TERMINAL_CACHE_KEY: 1}
 DECODE_ERRORS = {
     TOOL_CACHE_KEY: "Error fetching tool_servers from Redis",
-    TERMINAL_CACHE_KEY: "Error fetching terminal_servers from Redis",
+    TERMINAL_CACHE_KEY: "Error fetching machines from Redis",
 }
 
 
@@ -474,7 +474,7 @@ def list_tools(instance) -> list[str]:
 def chat_on_terminal(instance, terminal_id: str) -> None:
     instance.upstream.queue(reply.text("files listed"))
     with admin_of(instance).client() as client:
-        _, message = ask(client, "list my files", terminal_id=terminal_id)
+        _, message = ask(client, "list my files", machine_id=terminal_id)
     assert message["content"] == "files listed", f"the chat on the terminal failed: {message}"
 
 

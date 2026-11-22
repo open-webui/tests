@@ -59,7 +59,7 @@ def _model_is_sent_agents_md(terminal, make_user, upstream, home: str) -> bool:
     server.route("GET", "/files/cwd", json_answer({"cwd": home, "home": home}))
     upstream.queue(reply.text("ready"))
     with make_user(role="admin").client() as client:
-        _, message = ask(client, "tidy up the docs", terminal_id=terminal_id)
+        _, message = ask(client, "tidy up the docs", machine_id=terminal_id)
     assert message["content"] == "ready", message
     sent = [entry["content"] for entry in upstream.chat_requests()[-1]["messages"]]
     return f"# AGENTS.md\n\n{AGENTS_MD}" in sent
@@ -110,7 +110,7 @@ def _turn_on_a_terminal_whose_file_read_answers(terminal, make_user, upstream, a
     prompt = f"tidy up the docs {uuid.uuid4().hex[:8]}"
     upstream.queue(reply.text("ready", match=reply.answering(prompt)))
     with make_user(role="admin").client() as client:
-        _, message = ask(client, prompt, terminal_id=terminal_id)
+        _, message = ask(client, prompt, machine_id=terminal_id)
     assert message["content"] == "ready", f"the reply did not arrive: {message}"
     [request] = [entry for entry in upstream.chat_requests() if reply.answering(prompt)(entry)]
     assert len(server.requests_to("/files/read")) == 1, "the terminal was not asked for the file"

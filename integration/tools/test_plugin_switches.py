@@ -183,7 +183,7 @@ def test_the_config_reports_which_plugin_kinds_are_on(switched_off, admin, plugi
             "enable_tools",
             "enable_functions",
             "enable_tool_servers",
-            "enable_terminal_servers",
+            "enable_machines",
         )
     }
     assert reported == {
@@ -191,7 +191,7 @@ def test_the_config_reports_which_plugin_kinds_are_on(switched_off, admin, plugi
         "enable_tools": switch != TOOLS,
         "enable_functions": switch != FUNCTIONS,
         "enable_tool_servers": switch != TOOL_SERVERS_SWITCH,
-        "enable_terminal_servers": switch != TOOL_SERVERS_SWITCH,
+        "enable_machines": switch != TOOL_SERVERS_SWITCH,
     }, f"with {switch or 'every switch on'} the web client is told {reported}"
 
 
@@ -209,7 +209,7 @@ def test_the_config_reports_terminal_servers_only_while_a_connection_is_switched
         ]:
             configure_terminals(client, *connections)
             features = client.get("/api/config").json()["features"]
-            reported[label] = features.get("enable_terminal_servers")
+            reported[label] = features.get("enable_machines")
 
     assert reported == {"none": False, "only switched off": False, "one switched on": True}, (
         f"by its saved terminal connections the web client is told {reported}"
@@ -336,14 +336,14 @@ def test_terminal_servers_are_listed_and_reached_unless_tool_servers_are_off(
     switched_off, admin, upstream, plugins, switch
 ):
     with _on(switched_off(switch), admin).client() as client:
-        listed = client.get("/api/v1/terminals/")
-        proxied = client.get(f"/api/v1/terminals/{plugins.terminal_id}/x")
+        listed = client.get("/api/v1/machines/")
+        proxied = client.get(f"/api/v1/machines/{plugins.terminal_id}/x")
         reached = plugins.terminal.requests_to("/x")
         if switch != TOOL_SERVERS_SWITCH:
             _reload_terminals(client)
         plugins.terminal.clear()
         # a message sent with the terminal picked, as a page loaded before the switch sends it
-        offered = offered_tools(client, upstream, terminal_id=plugins.terminal_id)
+        offered = offered_tools(client, upstream, machine_id=plugins.terminal_id)
 
     assert listed.status_code == 200, listed.text
     listed_ids = {terminal["id"] for terminal in listed.json()}
@@ -370,14 +370,14 @@ def _reload_terminals(client) -> None:
     """Saves the stored terminals again through this instance, so its Redis copy holds them."""
     saved = client.get(TERMINAL_SERVERS_CONFIG[0])
     assert saved.status_code == 200, saved.text
-    configure_terminals(client, *saved.json()["TERMINAL_SERVER_CONNECTIONS"])
+    configure_terminals(client, *saved.json()["MACHINE_CONNECTIONS"])
 
 
 def _calls_to_servers(plugins: Plugins, listener) -> int:
     return len(plugins.terminal.received) + len(listener.requests_to("/openapi.json"))
 
 
-TEMPLATES = "/api/v1/terminals/templates"
+TEMPLATES = "/api/v1/machines/templates"
 
 
 def _server_routes(plugins: Plugins, listener) -> dict[str, tuple[str, str, dict | None]]:
@@ -391,9 +391,9 @@ def _server_routes(plugins: Plugins, listener) -> dict[str, tuple[str, str, dict
             "/api/v1/configs/tool_servers/verify",
             openapi_connection(listener.base_url, "Verify"),
         ),
-        "/api/v1/configs/terminal_servers/verify": (
+        "/api/v1/configs/machines/verify": (
             "POST",
-            "/api/v1/configs/terminal_servers/verify",
+            "/api/v1/configs/machines/verify",
             {"url": terminal_url, "auth_type": "none"},
         ),
         "terminal status": ("GET", f"{TEMPLATES}/connections/{terminal_id}/status", None),
@@ -409,7 +409,7 @@ def _server_routes(plugins: Plugins, listener) -> dict[str, tuple[str, str, dict
 
 SERVER_ROUTES = [
     "/api/v1/configs/tool_servers/verify",
-    "/api/v1/configs/terminal_servers/verify",
+    "/api/v1/configs/machines/verify",
     "terminal status",
     "terminal create",
     "terminal settings",
@@ -433,7 +433,7 @@ def test_the_server_config_routes_refuse_while_tool_servers_are_off(
 
 @pytest.mark.parametrize("switch", [None, TOOLS, FUNCTIONS])
 @pytest.mark.parametrize(
-    "route", ["/api/v1/configs/tool_servers/verify", "/api/v1/configs/terminal_servers/verify"]
+    "route", ["/api/v1/configs/tool_servers/verify", "/api/v1/configs/machines/verify"]
 )
 def test_the_server_config_routes_answer_with_another_switch_off(
     switched_off, admin, listener, plugins, switch, route

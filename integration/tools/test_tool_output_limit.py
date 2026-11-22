@@ -108,7 +108,7 @@ def test_a_cut_tool_result_is_saved_in_full_to_the_chats_terminal(
 ):
     before = _saved_outputs(open_terminal.home)
 
-    result, stored = _run_report(member, upstream, report_tool, terminal_id=terminal_id)
+    result, stored = _run_report(member, upstream, report_tool, machine_id=terminal_id)
 
     kept, _, note = result.rpartition("\n\n")
     assert kept == REPORT[:LIMIT], f"the model did not get the report's first {LIMIT} characters"

@@ -60,7 +60,7 @@ from integration.stateful_redis import StatefulRedis
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
 TOOL_SERVERS_CONFIG = ("/api/v1/configs/tool_servers", "/api/v1/configs/tool_servers")
-TERMINAL_CACHE_KEY = "open-webui:terminal_servers"
+TERMINAL_CACHE_KEY = "open-webui:machines"
 
 
 def _openapi(operation_id: str, path: str) -> dict:
@@ -179,7 +179,7 @@ def _chat_on_terminal(launched, terminal_id: str) -> list[str]:
     """Chat with the terminal selected; returns the names of the tools the model was offered."""
     launched.upstream.queue(reply.text("ready"))
     with launched.client() as client:
-        _, message = ask(client, "list my files", terminal_id=terminal_id)
+        _, message = ask(client, "list my files", machine_id=terminal_id)
     assert message["content"] == "ready", f"the chat on the terminal failed: {message}"
     offered = launched.upstream.chat_requests()[0].get("tools", [])
     return [tool["function"]["name"] for tool in offered]
@@ -217,7 +217,8 @@ def test_a_populated_cache_is_used_without_refetching(shared_redis, cached_termi
 
 ORCHESTRATOR_KEY = "orchestrator-key-0123"
 TEMPLATE = {"id": "tpl-1", "data": {"name": "Workbench", "scope": "user"}}
-TEMPLATES = "/api/v1/terminals/templates"
+TEMPLATES = "/api/v1/machines/templates"
+ORCHESTRATOR_TEMPLATES = "/api/v1/terminals/templates"
 
 
 def _requiring(credential: str, answer: Answer) -> Callable[[TerminalRequest], Answer]:
@@ -236,9 +237,9 @@ def session_orchestrator():
     """A terminal orchestrator that answers its admin and spec routes only with its key."""
     with serving_terminal() as terminal:
         for method, path, answer in [
-            ("GET", TEMPLATES, json_answer([TEMPLATE])),
-            ("POST", TEMPLATES, json_answer(TEMPLATE, status=201)),
-            ("GET", f"{TEMPLATES}/{TEMPLATE['id']}", json_answer(TEMPLATE)),
+            ("GET", ORCHESTRATOR_TEMPLATES, json_answer([TEMPLATE])),
+            ("POST", ORCHESTRATOR_TEMPLATES, json_answer(TEMPLATE, status=201)),
+            ("GET", f"{ORCHESTRATOR_TEMPLATES}/{TEMPLATE['id']}", json_answer(TEMPLATE)),
             ("GET", "/api/v1/terminals/status", json_answer({"version": "0.4.1"})),
             ("GET", "/files/cwd", json_answer({"cwd": "/home/user"})),
             ("GET", "/openapi.json", json_answer(_openapi("run_command", "/execute"))),
@@ -255,7 +256,7 @@ def test_a_session_terminal_is_verified_with_its_orchestrator_key(admin, session
     }
 
     with admin.client() as client:
-        answered = client.post("/api/v1/configs/terminal_servers/verify", json=target)
+        answered = client.post("/api/v1/configs/machines/verify", json=target)
 
     assert (answered.status_code, answered.json()) == (
         200,
@@ -267,7 +268,7 @@ def test_a_session_terminal_is_verified_with_its_orchestrator_key(admin, session
 
 
 def _menu(client, terminal_id: str):
-    listed = client.get("/api/v1/terminals/")
+    listed = client.get("/api/v1/machines/")
     return listed.status_code, [entry["name"] for entry in listed.json()]
 
 
@@ -280,11 +281,11 @@ def _status(client, terminal_id: str):
 def _create(client, terminal_id: str):
     form = {"id": str(uuid.uuid4()), "connection_id": terminal_id.split(":")[1], "data": {}}
     answered = client.post(TEMPLATES, json=form)
-    return answered.status_code, answered.json().get("terminal_id")
+    return answered.status_code, answered.json().get("machine_id")
 
 
 def _command(client, terminal_id: str):
-    answered = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+    answered = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
     return answered.status_code, answered.json()
 
 
@@ -346,7 +347,7 @@ def test_a_session_terminal_offers_its_tools_and_runs_them_as_the_user(
     )
 
     with member.client() as client:
-        _, message = ask(client, prompt, terminal_id=connection["id"])
+        _, message = ask(client, prompt, machine_id=connection["id"])
 
     assert message["content"] == "listed", (
         "a chat on a terminal with Session auth never got its tools, since the tool list was "
@@ -368,7 +369,7 @@ def test_saving_connections_fetches_a_tool_list_from_terminals_and_none_from_an_
     with serving_terminal() as terminal, admin.client() as client:
         terminal.route("GET", "/openapi.json", json_answer(_openapi("run_command", "/execute")))
         configure_terminals(client, orchestrator, terminal.connection())
-        menu = [entry["name"] for entry in client.get("/api/v1/terminals/").json()]
+        menu = [entry["name"] for entry in client.get("/api/v1/machines/").json()]
         fetched_from_terminal = len(terminal.requests_to("/openapi.json"))
 
     assert fetched_from_terminal == 1, (
@@ -376,7 +377,7 @@ def test_saving_connections_fetches_a_tool_list_from_terminals_and_none_from_an_
     )
     assert sorted(menu) == ["Fake terminal", "Workbench"], f"the terminal menu shows {menu}"
     asked = [request.path for request in session_orchestrator.received]
-    assert asked == [TEMPLATES], (
+    assert asked == [ORCHESTRATOR_TEMPLATES], (
         "an orchestrator has no tools of its own, its terminals are asked one by one; saving "
         f"and listing asked it for {asked}"
     )
