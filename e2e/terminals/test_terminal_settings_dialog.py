@@ -8,35 +8,36 @@ Access button reads Private or Shared and opens the sharing: people and groups, 
 never everyone. Instances lists the terminal's instances by whose they are (the person, the
 chat and its owner, or the terminal's name for one shared instance) with Running or Stopped; an
 instance's menu restarts, stops and deletes it after asking, starts it without asking, and opens
-System info and the files of an instance the person can reach. What gets an instance of its own
-is locked while instances exist. Delete machine says how many instances go with it. A rename, a
-share, an unshare and a delete reach the open pages of everyone who has the terminal without a
-reload. A person who may only use the terminal is offered none of this.
+System info and the files of a running instance, another person's included. What gets an
+instance of its own is locked while instances exist. Delete machine says how many instances go
+with it. A rename, a share, an unshare and a delete reach the open pages of everyone who has the
+terminal without a reload. A person who may only use the terminal is offered none of this.
 
 The real Terminals service runs on Docker (`harness.terminals`); without its images or Docker
 the tests skip. The two tests that kept fields the dialog does not show are in
 e2e/admin/test_terminal_connection_settings.py.
 
-`test_system_info_and_files_are_not_offered_for_another_persons_chat_machine` is red on dev
-c15f28649: both are offered there and fail with "Chat access denied" (finding
-`open-webui-terminal-settings-offers-info-and-files-for-others-chat-machine`).
+Since dev 205c2e97c whoever manages a terminal (write access to its connection) reaches another
+person's instance as that person would: Machine settings offers System info and View files on
+it, and View files shows that person's files. The backend side is pinned in
+integration/terminals/test_terminals_scopes.py.
 
-Discriminates: the other nine pass on the dev c15f28649 build with Terminals 0.4.1 and Open
-Terminal 0.17.7. In a backend copy: with a terminal's changes no longer pushed to the people
-who have it, the rename, sharing and deleting tests fail (the other person's menu keeps the old
-state); with the owner's name left out of a chat's machine, the per chat test fails; with the
-person's name left out of a user's machine, the machines, locked and refused tests fail (the row
-reads Deleted user); with everyone taken for a writer of the connection, the offered test fails
-(the reader gets New terminal and their calls are answered). On a build of a frontend copy with
-one change to the dialog each: the start directory not read from the stored terminal (the shows
-what is stored test) and CPU left out of the Advanced line (the same test); the lock left out
-(the locked test: the choice stays open with a machine); the Access button always Private and
-sharing with everyone on offer (the sharing test); the machine count of Delete terminal fixed
-at 0 (the deleting test); another person's machine treated as one's own (the machines test: it
-offers System info and View files) and Stop no longer asking (the same test); System info and
-View files never offered (the own machine test); New terminal offered to everyone and Terminal
-settings on every terminal (the offered test); the error of a failed request not shown (the
-refused test).
+Discriminates: all nine pass on dev b393504d9 (frontend build 99e7b89be) with Terminals 0.4.1
+and Open Terminal 0.17.7. In a backend copy: with a terminal's changes no longer pushed to the
+people who have it, the rename, sharing and deleting tests fail (the other person's menu keeps
+the old state); with the owner's name left out of a chat's machine, the per chat test fails;
+with the person's name left out of a user's machine, the machines, locked and refused tests fail
+(the row reads Deleted user); with everyone taken for a writer of the connection, the offered
+test fails (the reader gets New terminal and their calls are answered). On a build of a frontend
+copy with one change to the dialog each: the start directory not read from the stored terminal
+(the shows what is stored test) and CPU left out of the Advanced line (the same test); the lock
+left out (the locked test: the choice stays open with a machine); the Access button always
+Private and sharing with everyone on offer (the sharing test); the machine count of Delete
+terminal fixed at 0 (the deleting test); another person's machine opened as one's own (the
+machines test: its View files shows the manager's files) and Stop no longer asking (the same
+test); System info and View files never offered (the own machine test); New terminal offered to
+everyone and Terminal settings on every terminal (the offered test); the error of a failed
+request not shown (the refused test).
 """
 
 from __future__ import annotations
@@ -411,21 +412,43 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
     terminal = managed_terminal()
     writer, reader = terminal.writer, terminal.reader
     tag = uuid.uuid4().hex[:8]
+    marker = {writer.name: f"writer-{tag}.txt", reader.name: f"reader-{tag}.txt"}
     for person in (writer, reader):
-        terminal.run(person, f"echo kept-{tag} > ~/kept.txt && echo lost-{tag} > /tmp/lost.txt")
+        terminal.run(
+            person,
+            f"echo kept-{tag} > ~/kept.txt && echo lost-{tag} > /tmp/lost.txt"
+            f" && touch ~/{marker[person.name]}",
+        )
+    [reader_machine] = [m for m in terminals.instances() if m["context_id"] == f"user:{reader.id}"]
     page = page_for(writer)
     dialog = open_terminal_settings(page, terminal.name)
 
     expect(instances_heading(dialog, 2)).to_be_visible()
     expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     expect(instance_row(dialog, reader.name)).to_contain_text("Running")
-    assert instance_actions(open_instance_menu(dialog, reader.name)) == [
+    # whoever manages the terminal reaches another person's machine as its owner would (205c2e97c)
+    menu = open_instance_menu(dialog, reader.name)
+    assert instance_actions(menu) == [
+        "System info",
+        "View files",
         "Restart",
         "Stop",
         "Delete instance",
     ]
+    menu.get_by_role("menuitem", name="View files", exact=True).click()
+    files = page.get_by_role("dialog", name=f"Files on {reader.name}", exact=True)
+    expect(files.get_by_text(marker[reader.name], exact=True)).to_be_visible()
+    expect(files.get_by_text(marker[writer.name], exact=True)).to_have_count(0)
+    _close(files)
 
-    page.get_by_role("menu").get_by_role("menuitem", name="Stop", exact=True).click()
+    open_instance_menu(dialog, reader.name).get_by_role(
+        "menuitem", name="System info", exact=True
+    ).click()
+    info = page.get_by_role("dialog", name=f"System info for {reader.name}", exact=True)
+    expect(info.get_by_text(terminals.hostname(reader_machine["id"]))).to_be_visible()
+    _close(info)
+
+    open_instance_menu(dialog, reader.name).get_by_role("menuitem", name="Stop", exact=True).click()
     _confirm(
         page,
         f"Stop {reader.name}?",
