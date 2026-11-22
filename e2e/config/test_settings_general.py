@@ -29,6 +29,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 DARK = re.compile(r"(^|\s)dark(\s|$)")
 SYSTEM_PROMPT = "Answer every question as a lighthouse keeper would."
+SYSTEM_PROMPT_PLACEHOLDER = "Enter system prompt here"
 
 
 def general_tab(page: Page) -> Locator:
@@ -95,7 +96,7 @@ def test_a_chosen_language_relabels_the_app_and_is_kept_after_a_reload(page_for,
 def test_the_system_prompt_and_temperature_reach_the_model(page_for, make_user, upstream):
     page = page_for(make_user())
     tab = general_tab(page)
-    tab.get_by_role("textbox").fill(SYSTEM_PROMPT)
+    tab.get_by_placeholder(SYSTEM_PROMPT_PLACEHOLDER).fill(SYSTEM_PROMPT)
     setting_button(tab, "Model parameters").click()
     setting_button(tab, "Temperature").click()
     tab.get_by_role("spinbutton", name="Temperature").fill("0.35")
@@ -107,7 +108,7 @@ def test_the_system_prompt_and_temperature_reach_the_model(page_for, make_user, 
 
     page.reload()
     tab = general_tab(page)
-    expect(tab.get_by_role("textbox")).to_have_value(SYSTEM_PROMPT)
+    expect(tab.get_by_placeholder(SYSTEM_PROMPT_PLACEHOLDER)).to_have_value(SYSTEM_PROMPT)
     setting_button(tab, "Model parameters").click()
     expect(tab.get_by_role("spinbutton", name="Temperature")).to_have_value("0.35")
 
