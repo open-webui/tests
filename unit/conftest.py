@@ -121,9 +121,9 @@ def owui_module(open_webui_backend: Path):
 
 
 @pytest.fixture(scope="session")
-def terminals_router_module(owui_module):
-    """`open_webui.routers.terminals` (_sanitize_proxy_path)."""
-    return owui_module("open_webui.routers.terminals")
+def machines_router_module(owui_module):
+    """`open_webui.routers.machines` (_sanitize_proxy_path)."""
+    return owui_module("open_webui.routers.machines")
 
 
 @pytest.fixture(scope="session")

@@ -2,8 +2,9 @@
 
 `26f37426b`: `build_tool_server_headers` formatted `Bearer {key}` in every bearer branch, so a
 connection without a credential sent a bare `Authorization: Bearer `. All branches now go through
-`bearer_auth_header`. `81b9afb73`: `get_terminal_servers` trusted an empty list another worker
-cached, hiding configured terminals; it now rebuilds unless no enabled connection has a url.
+`bearer_auth_header`. `81b9afb73`: `get_terminal_servers` (now `get_machines`) trusted an empty
+list another worker cached, hiding configured terminals; it now rebuilds unless no enabled
+connection has a url.
 
 integration/tools/test_tool_server_auth_and_terminal_cache.py pins both through the API. What
 stays here cannot be seen from outside: the header audit covers the session, system OAuth and
@@ -77,10 +78,10 @@ async def test_an_empty_cached_list_is_a_hit_when_no_connection_could_serve(
     app.state.redis = cache
 
     async def read_setting(key: str, default=None):
-        return connections if key == "terminal_server.connections" else default
+        return connections if key == "machines.connections" else default
 
     with patch.object(config.Config, "get", read_setting):
-        servers = await tools.get_terminal_servers(Request({"type": "http", "app": app}))
+        servers = await tools.get_machines(Request({"type": "http", "app": app}))
 
     assert servers == []
     cache.set.assert_not_awaited()
