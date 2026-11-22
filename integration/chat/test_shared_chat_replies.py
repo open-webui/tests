@@ -315,12 +315,12 @@ def test_going_back_to_clone_only_freezes_a_fresh_snapshot(make_user, upstream):
 
 SELECTIONS = {
     "models": ["harbour-model"],
-    "terminal_id": "harbour-terminal",
+    "machine_id": "harbour-machine",
     "working_directory": "/home/user/harbour",
 }
 
 
-def test_a_member_allowed_to_reply_saves_the_chats_model_terminal_and_folder(make_user, upstream):
+def test_a_member_allowed_to_reply_saves_the_chats_model_machine_and_folder(make_user, upstream):
     owner, member = make_user(), make_user()
     chat_id, _ = _answered(owner, upstream, "which berth is free?")
     _share(owner, chat_id, _read_grants(member), "continue")

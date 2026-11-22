@@ -10,7 +10,7 @@ server that records whether anything reached it.
 
 Since the terminal rework on dev (6f2fc7bc7) one lookup serves every entry point, and a terminal
 that is switched off or not granted to the caller answers exactly as an id that does not exist:
-404 "Terminal server '<id>' not found" on the proxy, close 4004 on the WebSocket and "not found"
+404 "Machine '<id>' not found" on the proxy, close 4004 on the WebSocket and "not found"
 in a chat. Before it they answered 403 and 4003 with "disabled" or "Access denied".
 
 A chat with a terminal selected is the fourth entry point. Without Redis every chat rebuilds the
@@ -79,15 +79,15 @@ def _granted_to(actor: Actor) -> dict:
 
 def _listed(caller: Actor, connection: dict, terminal: FakeTerminalServer) -> bool:
     with caller.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     listed.raise_for_status()
     return any(entry["id"] == connection["id"] for entry in listed.json())
 
 
 def _proxied(caller: Actor, connection: dict, terminal: FakeTerminalServer) -> bool:
     with caller.client() as client:
-        response = client.get(f"/api/v1/terminals/{connection['id']}/probe")
-        unknown = client.get(f"/api/v1/terminals/{UNKNOWN_ID}/probe")
+        response = client.get(f"/api/v1/machines/{connection['id']}/probe")
+        unknown = client.get(f"/api/v1/machines/{UNKNOWN_ID}/probe")
     assert unknown.status_code == 404, unknown.text
     reached = bool(terminal.requests_to("/probe"))
     if reached:
@@ -159,7 +159,7 @@ def test_a_disabled_terminal_closes_the_session_like_one_that_does_not_exist(
     for label, terminal_id in [("disabled", disabled["id"]), ("unknown", UNKNOWN_ID)]:
         with terminal_session(member.base_url, member.token, terminal_id) as session:
             closes[label] = close_of(session, timeout=10)
-    assert closes["disabled"] == closes["unknown"] == (4004, "Terminal server not found"), closes
+    assert closes["disabled"] == closes["unknown"] == (4004, "Machine not found"), closes
     assert not terminal.sessions, "the switched-off terminal was asked for a shell"
 
 
@@ -169,7 +169,7 @@ def test_a_session_closed_before_it_signs_in_logs_no_error(instance, save, membe
     save(connection)
     log_offset = instance.log_size()
     url = member.base_url.replace("http://", "ws://", 1) + (
-        f"/api/v1/terminals/{connection['id']}/api/terminals/{uuid.uuid4().hex}"
+        f"/api/v1/machines/{connection['id']}/api/terminals/{uuid.uuid4().hex}"
     )
     with connect(url, proxy=None, open_timeout=10, close_timeout=2):
         pass
@@ -199,7 +199,7 @@ def test_a_terminal_saved_without_the_enabled_flag_stays_in_service(
     del legacy["enabled"]
     with admin.client() as client:
         imported = client.post(
-            "/api/v1/configs/import", json={"config": {"terminal_server.connections": [legacy]}}
+            "/api/v1/configs/import", json={"config": {"machines.connections": [legacy]}}
         )
     assert imported.status_code == 200, imported.text
     assert ENTRY_POINTS[entry_point](member, legacy, terminal)
@@ -311,7 +311,7 @@ def _switch_off_by_import(launched, connection: dict) -> None:
     with launched.client() as client:
         imported = client.post(
             "/api/v1/configs/import",
-            json={"config": {"terminal_server.connections": [{**connection, "enabled": False}]}},
+            json={"config": {"machines.connections": [{**connection, "enabled": False}]}},
         )
     assert imported.status_code == 200, imported.text
 
@@ -320,7 +320,7 @@ def _chat_on_terminal(launched, member: Actor, connection: dict) -> tuple[dict, 
     """The stored reply and the tools the model was offered; none if it was never asked."""
     launched.upstream.queue(reply.text("ready"))
     with member.client() as client:
-        _, message = ask(client, "list my files", terminal_id=connection["id"])
+        _, message = ask(client, "list my files", machine_id=connection["id"])
     requests = launched.upstream.chat_requests()
     offered = [
         tool["function"]["name"] for request in requests for tool in request.get("tools", [])
@@ -338,7 +338,7 @@ def test_a_chat_gets_no_tools_from_a_disabled_terminal_still_cached(cached_termi
     assert "run_command" not in offered, "a switched-off terminal still hands its tools to a chat"
     assert terminal.received == [], "the chat reached the switched-off terminal"
     error = (message.get("error") or {}).get("content", "")
-    assert "Terminal unavailable" in error and "not found" in error, message
+    assert "Machine unavailable" in error and "not found" in error, message
 
 
 @pytest.mark.slow

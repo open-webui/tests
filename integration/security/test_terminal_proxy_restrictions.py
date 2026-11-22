@@ -71,7 +71,7 @@ def proxy_under(admin, preserve, terminal):
         connection = terminal.connection(url=terminal.base_url + base_path)
         configure_terminals(client, connection)
         terminal.clear()
-        return lambda path: client.get(f"/api/v1/terminals/{connection['id']}/{path}")
+        return lambda path: client.get(f"/api/v1/machines/{connection['id']}/{path}")
 
     yield sender
     client.close()
@@ -113,12 +113,12 @@ def test_a_shared_terminal_gives_no_way_to_the_orchestrators_admin_api(
     reader = make_user()
     connection = connect_terminals(read_grant(reader.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
         share_template(client, terminal_id, read_grant(reader.id))
 
     with reader.client() as client:
-        own_folder = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
-        refused = client.get(f"/api/v1/terminals/{terminal_id}/{path}")
+        own_folder = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
+        refused = client.get(f"/api/v1/machines/{terminal_id}/{path}")
 
     assert own_folder.status_code == 200, f"the shared terminal did not answer: {own_folder.text}"
     assert (refused.status_code, refused.json()) == (403, {"error": "Path not allowed"}), (

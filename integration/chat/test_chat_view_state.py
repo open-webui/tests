@@ -14,7 +14,9 @@ account removes its views, deleting a chat (alone, with its folder or with all o
 chats) removes every person's view of it, and deleting the owner's account removes the views
 others saved of the owner's chats. A save the browser drops halfway (the tab closed or reloaded
 while the layout was being saved) leaves no error traceback in the server log and the next save
-works (open-webui/open-webui#33924).
+works (open-webui/open-webui#33924). Since df6be8c3a a view names its machine with
+`selectedMachineId` and a tab's `machineId`; one saved with the former `selectedTerminalId` and
+`terminalId` is taken and read back under the new keys.
 
 Discriminates: passes on dev f659c0d12; on d4e8493cc^ and v0.13.0 there is no such route. In
 backend copies of f659c0d12: `ChatViewStates.get` reading any viewer's row fails the privacy
@@ -49,7 +51,7 @@ def _view(label: str = "Chat", ratio: float = 0.35) -> dict:
     """A conversation pane beside a Files pane, as the workspace saves it after a split."""
     return {
         "schemaVersion": 1,
-        "selectedTerminalId": "terminal-a",
+        "selectedMachineId": "terminal-a",
         "panels": {
             "tabs": [
                 {"id": "main-chat", "kind": "chat", "label": label},
@@ -57,7 +59,7 @@ def _view(label: str = "Chat", ratio: float = 0.35) -> dict:
                     "id": "files:terminal-a",
                     "kind": "files",
                     "label": "Files",
-                    "terminalId": "terminal-a",
+                    "machineId": "terminal-a",
                     "directory": "/home/user/project",
                 },
                 {"id": "comments", "kind": "comments", "label": "Comments"},
@@ -151,6 +153,15 @@ def test_each_person_reads_back_only_the_view_they_saved(admin, make_user):
     _saved(owner, chat_id, moved)
     assert _read_state(owner, chat_id) == moved
     assert _read_state(reader, chat_id) == readers_view
+
+    # a client from before Terminals became Machines still saves, read back under the new keys
+    legacy = _view("Owner's trip", ratio=0.4)
+    legacy["selectedTerminalId"] = legacy.pop("selectedMachineId")
+    legacy["panels"]["tabs"][1]["terminalId"] = legacy["panels"]["tabs"][1].pop("machineId")
+    _saved(owner, chat_id, legacy)
+    assert _read_state(owner, chat_id) == _view("Owner's trip", ratio=0.4), (
+        "a view saved with the former machine keys did not come back under the new ones"
+    )
 
 
 def test_a_person_who_cannot_open_the_chat_gets_404(make_user):

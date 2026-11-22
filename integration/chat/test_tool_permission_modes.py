@@ -37,8 +37,8 @@ client's policy block left in the system prompt fails both forged-policy cases.
 
 The tools of a terminal the admin connected follow the same modes. Ask holds a terminal call
 back until its account allows it; the allowed call then runs on the terminal the message was
-sent with, naming its person and chat, and the page is told of it (`terminal:run_command`,
-`terminal:write_file`) as after a call that needed no approval. A denied call never reaches the
+sent with, naming its person and chat, and the page is told of it (`machine:run_command`,
+`machine:write_file`) as after a call that needed no approval. A denied call never reaches the
 terminal. In Auto the Decisions reviewer is told that the call runs on a terminal and on which.
 On dev c15f28649 in a backend copy: a chat with a terminal never paused in Ask and its terminal
 calls never held back fails the Ask, the denied and the reviewer terminal tests, the terminal not
@@ -783,7 +783,7 @@ def test_ask_pauses_a_terminal_call_and_runs_it_on_that_terminal_once_allowed(
     queue_terminal_call(upstream, question, name)
     with connected(operator) as tab, operator.client() as client:
         turn = send_message(
-            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "ask"}
+            client, question, machine_id=terminal_id, params={"tool_approval_mode": "ask"}
         )
         wait_until_pending(client, turn)
         assert not server.requests_to(path), "the terminal was called before anyone allowed it"
@@ -791,7 +791,7 @@ def test_ask_pauses_a_terminal_call_and_runs_it_on_that_terminal_once_allowed(
         allowed = resolve(client, turn, "approve")
         assert allowed.status_code == 200, allowed.text
         message = wait_for_reply(client, turn)
-        event = tab.wait_for(turn.chat_id, f"terminal:{name}", **told)
+        event = tab.wait_for(turn.chat_id, f"machine:{name}", **told)
 
     assert message["content"].endswith("Done on the terminal."), message["content"]
     [call] = server.requests_to(path)
@@ -812,7 +812,7 @@ def test_a_denied_terminal_call_never_reaches_the_terminal(
     queue_terminal_call(upstream, question, "run_command")
     with make_user(role="admin").client() as client:
         turn = send_message(
-            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "ask"}
+            client, question, machine_id=terminal_id, params={"tool_approval_mode": "ask"}
         )
         wait_until_pending(client, turn)
         denied = resolve(client, turn, "reject")
@@ -845,14 +845,14 @@ def test_auto_tells_the_reviewer_which_terminal_a_call_runs_on(
     queue_terminal_call(upstream, question, "run_command")
     with make_user(role="admin").client() as client:
         turn = send_message(
-            client, question, terminal_id=terminal_id, params={"tool_approval_mode": "auto"}
+            client, question, machine_id=terminal_id, params={"tool_approval_mode": "auto"}
         )
         message = wait_for_reply(client, turn)
 
     assert message["content"].endswith("Done on the terminal."), message["content"]
     assert len(server.requests_to("/execute")) == 1, "the call rated safe did not run"
     [evidence] = reviewed
-    assert evidence["execution_context"] == {"tool_type": "terminal", "terminal_id": terminal_id}, (
+    assert evidence["execution_context"] == {"tool_type": "terminal", "machine_id": terminal_id}, (
         f"the reviewer was not told where the command runs: {evidence['execution_context']}"
     )
     assert (evidence["tool"]["name"], evidence["arguments"]) == (

@@ -960,7 +960,7 @@ def test_an_open_terminal_only_appends(
     with admin.client() as client:
         configure_terminals(client, connection)
     with person.client() as client:
-        chat = Conversation(client, upstream, cached_setup.id, terminal_id=connection["id"])
+        chat = Conversation(client, upstream, cached_setup.id, machine_id=connection["id"])
         chat.say("hello")
         chat.say(
             "note the ferry time",

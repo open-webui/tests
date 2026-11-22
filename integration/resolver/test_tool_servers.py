@@ -214,7 +214,7 @@ def test_a_terminal_serves_a_chat_by_name(
         connection = server.connection()
         configure_terminals(client, connection)
         upstream.queue(reply.tool_call("run_command", {}), reply.text("done"))
-        _, message = ask(client, "tidy up", terminal_id=connection["id"])
+        _, message = ask(client, "tidy up", machine_id=connection["id"])
 
     assert message["content"] == "done", message
     first, second = upstream.chat_requests()
@@ -235,19 +235,20 @@ def test_a_terminal_is_verified_and_its_orchestrator_is_managed_by_name(
     resolver, name_form, resolving_instance, resolving_admin, preserve
 ):
     preserve(TERMINAL_SERVERS_CONFIG, on=resolving_instance)
-    templates = "/api/v1/terminals/templates"
+    templates = "/api/v1/machines/templates"
+    orchestrator_templates = "/api/v1/terminals/templates"
     template = {"id": "tpl-1", "data": {"name": "Workbench"}}
     renamed = {"id": "tpl-1", "data": {"name": "Bench"}}
     with _terminal_by_name(name_form) as server, resolving_admin.client() as client:
         server.route("GET", "/api/config", json_answer({"features": {}}))
         target = {"url": server.base_url, "key": "", "auth_type": "none"}
-        plain = client.post("/api/v1/configs/terminal_servers/verify", json=target)
-        server.route("GET", templates, json_answer([template]))
-        server.route("POST", templates, json_answer(template, status=201))
-        server.route("GET", f"{templates}/tpl-1", json_answer(template))
-        server.route("PATCH", f"{templates}/tpl-1", json_answer(renamed))
+        plain = client.post("/api/v1/configs/machines/verify", json=target)
+        server.route("GET", orchestrator_templates, json_answer([template]))
+        server.route("POST", orchestrator_templates, json_answer(template, status=201))
+        server.route("GET", f"{orchestrator_templates}/tpl-1", json_answer(template))
+        server.route("PATCH", f"{orchestrator_templates}/tpl-1", json_answer(renamed))
         server.route("GET", "/api/v1/terminals/status", json_answer({"version": "0.4.1"}))
-        orchestrator = client.post("/api/v1/configs/terminal_servers/verify", json=target)
+        orchestrator = client.post("/api/v1/configs/machines/verify", json=target)
         connection = server.connection(
             key="orchestrator-key", auth_type="bearer", server_type="orchestrator"
         )
@@ -259,7 +260,7 @@ def test_a_terminal_is_verified_and_its_orchestrator_is_managed_by_name(
             json={"id": str(uuid.uuid4()), "connection_id": connection["id"], "data": {}},
         )
         changed = client.patch(f"{templates}/{terminal_id}", json={"name": "Bench"})
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
 
     assert (plain.status_code, plain.json()) == (200, {"status": True, "type": "terminal"})
     assert (orchestrator.status_code, orchestrator.json()) == (
@@ -267,11 +268,13 @@ def test_a_terminal_is_verified_and_its_orchestrator_is_managed_by_name(
         {"status": True, "type": "orchestrator"},
     )
     assert (status.status_code, status.json()) == (200, {"version": "0.4.1"})
-    assert (created.status_code, created.json()) == (201, {**template, "terminal_id": terminal_id})
+    assert (created.status_code, created.json()) == (201, {**template, "machine_id": terminal_id})
     assert (changed.status_code, changed.json()) == (200, renamed)
     assert [(entry["id"], entry["name"]) for entry in listed.json()] == [(terminal_id, "Workbench")]
     [written] = [
-        entry for entry in server.requests_to(f"{templates}/tpl-1") if entry.method == "PATCH"
+        entry
+        for entry in server.requests_to(f"{orchestrator_templates}/tpl-1")
+        if entry.method == "PATCH"
     ]
     assert json.loads(written.body) == {"name": "Bench"}
 
@@ -286,10 +289,10 @@ def test_a_terminal_proxies_files_and_sessions_for_the_web_client_by_name(
         server.route("POST", "/files/upload", json_answer({"path": f"{HOME}/a.txt"}))
         connection = server.connection()
         configure_terminals(client, connection)
-        listed = client.get("/api/v1/terminals/")
-        fetched = client.get(f"/api/v1/terminals/{connection['id']}/files/cwd")
+        listed = client.get("/api/v1/machines/")
+        fetched = client.get(f"/api/v1/machines/{connection['id']}/files/cwd")
         uploaded = client.post(
-            f"/api/v1/terminals/{connection['id']}/files/upload", content=b"hello"
+            f"/api/v1/machines/{connection['id']}/files/upload", content=b"hello"
         )
         with terminal_session(
             resolving_instance.base_url, resolving_admin.token, connection["id"]
@@ -311,11 +314,11 @@ def test_a_terminal_proxies_files_and_sessions_for_the_web_client_by_name(
 def test_an_unresolvable_terminal_fails_verify_connection_the_same_way(resolver, resolving_admin):
     target = {"url": UNRESOLVABLE_URL, "key": "", "auth_type": "none"}
     with resolving_admin.client() as client:
-        answer, seconds = timed(client.post, "/api/v1/configs/terminal_servers/verify", json=target)
+        answer, seconds = timed(client.post, "/api/v1/configs/machines/verify", json=target)
 
     assert (answer.status_code, answer.json()) == (
         400,
-        {"detail": "Failed to connect to the terminal server"},
+        {"detail": "Failed to connect to the machine"},
     )
     assert seconds < FAILS_WITHIN, f"the lookup failed only after {seconds:.1f}s"
 
@@ -344,11 +347,11 @@ def test_an_unresolvable_terminal_fails_its_proxy_the_same_way(
     resolver, resolving_admin, gone_terminal
 ):
     with resolving_admin.client() as client:
-        proxied, seconds = timed(client.get, f"/api/v1/terminals/{gone_terminal}/files/cwd")
+        proxied, seconds = timed(client.get, f"/api/v1/machines/{gone_terminal}/files/cwd")
 
     assert proxied.status_code == 502, proxied.text
     assert without_resolver_reason(proxied.json()["error"]) == (
-        f"Terminal proxy error: Cannot connect to host {UNRESOLVABLE}:8080 "
+        f"Machine proxy error: Cannot connect to host {UNRESOLVABLE}:8080 "
         "ssl:default [<resolver reason>]"
     )
     assert seconds < FAILS_WITHIN, f"the lookup failed only after {seconds:.1f}s"
@@ -359,7 +362,7 @@ def test_an_unresolvable_terminal_fails_its_chat_the_same_way(
     resolver, resolving_admin, gone_terminal
 ):
     with resolving_admin.client() as client:
-        answered, seconds = timed(ask, client, "run it", terminal_id=gone_terminal)
+        answered, seconds = timed(ask, client, "run it", machine_id=gone_terminal)
 
     _, message = answered
     assert without_resolver_reason(message["error"]["content"]) == (

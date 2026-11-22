@@ -66,7 +66,7 @@ def proxy_as(admin, preserve, terminal):
             configure_terminals(client, connection)
         terminal.clear()
         with caller.client() as client:
-            response = client.get(f"/api/v1/terminals/{connection['id']}/probe", headers=headers)
+            response = client.get(f"/api/v1/machines/{connection['id']}/probe", headers=headers)
         assert response.status_code == 200, f"the proxy refused: {response.text}"
         [received] = terminal.received
         return received
@@ -130,7 +130,7 @@ def test_a_session_header_naming_someone_elses_chat_is_refused(
     with admin.client() as client:
         configure_terminals(client, connection)
     terminal.clear()
-    probe = f"/api/v1/terminals/{connection['id']}/probe"
+    probe = f"/api/v1/machines/{connection['id']}/probe"
 
     with caller.client() as client:
         refused = client.get(probe, headers={"x-session-id": _saved_chat(someone_else)})
@@ -184,7 +184,7 @@ def test_the_callers_own_oauth_session_token_reaches_the_terminal(sso, idp, pres
     terminal.clear()
 
     response = signed_in.browser.get(
-        f"/api/v1/terminals/{connection['id']}/probe", headers={"x-oauth-access-token": FORGED}
+        f"/api/v1/machines/{connection['id']}/probe", headers={"x-oauth-access-token": FORGED}
     )
 
     assert response.status_code == 200, response.text

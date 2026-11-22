@@ -412,7 +412,7 @@ def test_too_many_requests_from_one_address_are_cut_off(instance):
 # --- session length and the Tether connection ----------------------------------------------------
 
 NINETY_DAYS = 90 * 24 * 3600
-TERMINALS = "/api/v1/terminals/"
+TERMINALS = "/api/v1/machines/"
 
 
 def test_a_session_lasts_ninety_days_from_its_last_use_by_default(instance, make_user):

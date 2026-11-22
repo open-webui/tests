@@ -364,7 +364,7 @@ def test_an_image_in_a_terminals_json_body_is_attached(admin, make_user, upstrea
 
         upstream.queue(reply.tool_call("run_command", {}), reply.text("done"))
         with make_user().client() as client:
-            ask(client, "plot it in the terminal", terminal_id=connection["id"])
+            ask(client, "plot it in the terminal", machine_id=connection["id"])
 
     assert_image_attached_not_serialised(upstream, "terminal")
 

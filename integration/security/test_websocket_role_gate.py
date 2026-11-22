@@ -43,10 +43,10 @@ pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_sour
 
 VERIFIED_ROLES = ("user", "admin")
 VERIFIED_ONLY_ROUTE = "/api/v1/chats/"
-TERMINAL_URL = "/api/v1/terminals/no-such-server/api/terminals/session-1"
+TERMINAL_URL = "/api/v1/machines/no-such-server/api/terminals/session-1"
 REFUSED = (4001, "Invalid token")
 # Past authentication, stopped at the server lookup because none is configured.
-PAST_AUTHENTICATION = (4004, "Terminal server not found")
+PAST_AUTHENTICATION = (4004, "Machine not found")
 ARRIVAL_TIMEOUT = 15.0
 QUIET_PERIOD = 2.0
 

@@ -113,7 +113,7 @@ from harness.voice_avatars import animation, avatar, upload
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
-AGENT_UNAVAILABLE = "Agent model is unavailable in the selected terminal"
+AGENT_UNAVAILABLE = "Agent model is unavailable on the selected machine"
 EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 ENV_NOISE_REDUCTION = {"noise_reduction": {"type": "far_field"}}
 # only the environment credential, unset here, so no token is fetched and nothing leaves the host;
@@ -899,7 +899,7 @@ def test_a_call_with_an_agent_model_opens_through_the_users_terminal(
 @pytest.mark.parametrize(
     ("model_for", "with_terminal", "expected"),
     [
-        (agent_model, False, "Select a terminal to call an agent"),
+        (agent_model, False, "Select a machine to call an agent"),
         (lambda terminal_id: f"agent:{terminal_id}:claude", True, "Invalid agent model"),
         (lambda terminal_id: agent_model(terminal_id, model="opus"), True, AGENT_UNAVAILABLE),
         (lambda terminal_id: agent_model(terminal_id, "codex", "gpt-5"), True, AGENT_UNAVAILABLE),

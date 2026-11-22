@@ -377,7 +377,7 @@ def test_a_version_comes_back_with_its_default_terminal_only_while_the_account_h
         with admin.client() as client:
             configure_terminals(client, shared)
         with curator.client() as client:
-            model = _create(client, "first draft", terminalId=shared["id"])
+            model = _create(client, "first draft", machineId=shared["id"])
             _save(client, model["id"], "second draft")
             while_shared = _set_production(client, model["id"], model["version_id"])
             restored = _model(client, model["id"])
@@ -385,24 +385,24 @@ def test_a_version_comes_back_with_its_default_terminal_only_while_the_account_h
         with admin.client() as client:
             configure_terminals(client, {**shared, "config": {"access_grants": []}})
         with curator.client() as client:
-            menu = client.get("/api/v1/terminals/").json()
+            menu = client.get("/api/v1/machines/").json()
             taken_away = _set_production(client, model["id"], model["version_id"])
             current = _model(client, model["id"])
 
     assert while_shared.status_code == 200, while_shared.text
-    assert (restored["params"]["system"], restored["meta"].get("terminalId")) == (
+    assert (restored["params"]["system"], restored["meta"].get("machineId")) == (
         "first draft",
         shared["id"],
     ), f"the version did not come back with its default terminal: {restored}"
     assert menu == [], f"the account still has terminals: {menu}"
     assert (taken_away.status_code, taken_away.json().get("detail")) == (
         400,
-        "The referenced terminal is missing or inaccessible.",
+        "The referenced machine is missing or inaccessible.",
     ), (
         "a version came back with a default terminal the account no longer has: "
         f"{taken_away.status_code} {taken_away.text}"
     )
-    assert (current["params"]["system"], current["meta"].get("terminalId")) == (
+    assert (current["params"]["system"], current["meta"].get("machineId")) == (
         "third draft",
         None,
     ), f"the refused restore changed the model: {current}"

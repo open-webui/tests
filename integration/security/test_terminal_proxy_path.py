@@ -46,7 +46,7 @@ def proxy(admin, preserve, terminal):
         configure_terminals(client, connection)
     terminal.clear()
     client = admin.client()
-    yield lambda path: client.get(f"/api/v1/terminals/{connection['id']}/{path}")
+    yield lambda path: client.get(f"/api/v1/machines/{connection['id']}/{path}")
     client.close()
 
 

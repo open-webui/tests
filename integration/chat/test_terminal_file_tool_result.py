@@ -19,9 +19,9 @@ image. With the model's Vision capability off it must not be (open-webui/open-we
 test is red on dev until #33345 merges.
 
 The page hears of the model's file calls on the chat's socket, so the file browser follows the
-model: `terminal:display_file` with the path the terminal resolved (and the page asked for) opens
-the viewer for a file that exists and is not shown inline, and `terminal:write_file` and
-`terminal:replace_file_content` name the file that changed. The page number of a `display_file`
+model: `machine:display_file` with the path the terminal resolved (and the page asked for) opens
+the viewer for a file that exists and is not shown inline, and `machine:write_file` and
+`machine:replace_file_content` name the file that changed. The page number of a `display_file`
 call stays with Open WebUI: the terminal is sent the path only.
 
 A connected fake terminal serves the tools; the scripted model calls them and the test reads
@@ -125,7 +125,7 @@ def terminal(admin, preserve):
 def _tool_result(terminal, admin, upstream, name: str, arguments: dict) -> dict:
     _, terminal_id = terminal
     with admin.client() as client:
-        sent_back = run_tool(client, upstream, name, arguments, terminal_id=terminal_id)
+        sent_back = run_tool(client, upstream, name, arguments, machine_id=terminal_id)
     return json.loads(sent_back)
 
 
@@ -152,7 +152,7 @@ def test_a_display_file_call_without_inline_true_still_resolves_the_file(
         "mime_type": "image/png",
         "path": REPORT,
     }
-    assert entry["terminal_id"] == entry["terminal_selector"] == terminal[1]
+    assert entry["machine_id"] == entry["machine_selector"] == terminal[1]
 
 
 def test_an_inline_call_is_marked_displayed(terminal, admin, upstream):
@@ -219,7 +219,7 @@ def test_the_terminal_display_file_also_shows_a_chat_or_knowledge_file(terminal,
 
         prompt = f"which tools are there? ({uuid.uuid4().hex[:8]})"
         upstream.queue(reply.text("done", match=reply.answering(prompt)))
-        ask(client, prompt, terminal_id=terminal_id)
+        ask(client, prompt, machine_id=terminal_id)
     sent = next(request for request in upstream.chat_requests() if reply.answering(prompt)(request))
     offered = [tool["function"] for tool in sent.get("tools") or []]
     display = [tool for tool in offered if tool["name"] == "display_file"]
@@ -265,7 +265,7 @@ def _read_the_chart(terminal, admin, upstream, capabilities: dict) -> list[dict]
         reply.text("a chart", match=reply.mentioning(prompt)),
     )
     with preset_with_capabilities(admin, capabilities) as model_id, admin.client() as client:
-        ask(client, prompt, model=model_id, terminal_id=terminal_id)
+        ask(client, prompt, model=model_id, machine_id=terminal_id)
     requests = [
         request for request in upstream.chat_requests() if reply.mentioning(prompt)(request)
     ]
@@ -300,7 +300,7 @@ def _events_of_a_call(terminal, admin, upstream, name: str, arguments: dict) -> 
         reply.tool_call(name, arguments, match=answering), reply.text("done", match=answering)
     )
     with connected(admin) as tab, admin.client() as client:
-        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        turn, message = ask(client, prompt, machine_id=terminal_id)
         assert message["content"] == "done", f"the reply did not arrive: {message}"
         tab.wait_for(turn.chat_id, "chat:active", active=False)
         return tab.events_of(turn.chat_id)
@@ -310,7 +310,7 @@ def _terminal_events(events: list[dict]) -> list[tuple[str, dict]]:
     return [
         (event["type"], event.get("data"))
         for event in events
-        if str(event.get("type", "")).startswith("terminal:")
+        if str(event.get("type", "")).startswith("machine:")
     ]
 
 
@@ -320,7 +320,7 @@ def _terminal_events(events: list[dict]) -> list[tuple[str, dict]]:
         (
             {"exists": True, "path": REPORT},
             {"path": "report.png", "page": 3},
-            [("terminal:display_file", {"path": REPORT, "page": 3})],
+            [("machine:display_file", {"path": REPORT, "page": 3})],
         ),
         ({"exists": True, "path": REPORT}, {"path": REPORT, "inline": True}, []),
         ({"exists": False, "path": REPORT}, {"path": REPORT}, []),
@@ -346,6 +346,6 @@ def test_a_file_the_model_changes_is_named_to_the_page_as_the_terminal_resolved_
 ):
     events = _events_of_a_call(terminal, admin, upstream, name, {"path": "notes/todo.md"})
 
-    assert _terminal_events(events) == [(f"terminal:{name}", {"path": NOTES})], (
+    assert _terminal_events(events) == [(f"machine:{name}", {"path": NOTES})], (
         f"after {name} the page was told {_terminal_events(events)}"
     )
