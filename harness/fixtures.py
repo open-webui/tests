@@ -305,13 +305,13 @@ def terminals(terminals_service, admin: Actor) -> Generator:
     yield terminals_service
     # through Open WebUI first, which keeps each terminal's shares and drops them with it
     with admin.client() as client:
-        saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
         for connection in saved or []:
             if connection.get("url") != terminals_service.base_url:
                 continue
             for template in terminals_service.templates():
                 client.delete(
-                    f"/api/v1/terminals/templates/template:{connection['id']}:{template['id']}"
+                    f"/api/v1/machines/templates/template:{connection['id']}:{template['id']}"
                 )
     terminals_service.reset()
 
@@ -346,7 +346,7 @@ def shared_terminal(admin: Actor, connect_terminals) -> Callable[..., str]:
         grants = [read_grant(person.id) for person in people]
         connection = connect_terminals(*grants)
         with admin.client() as client:
-            terminal_id = create_template(client, connection, **data)["terminal_id"]
+            terminal_id = create_template(client, connection, **data)["machine_id"]
             share_template(client, terminal_id, *grants)
         return terminal_id
 

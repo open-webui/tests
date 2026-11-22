@@ -13,7 +13,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from utils.tool_servers import connection_row
 
 ADMIN_INTEGRATIONS = "/admin/settings/integrations"
-ADMIN_CONNECTIONS = "/api/v1/configs/terminal_servers"
+ADMIN_CONNECTIONS = "/api/v1/configs/machines"
 PERSONAL_SETTINGS = "/api/v1/users/user/settings/update"
 
 

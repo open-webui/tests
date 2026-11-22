@@ -469,7 +469,7 @@ def create_template(client: httpx.Client, connection: dict, **data) -> dict:
 
     `client` is its creator's and needs write access to the connection. One machine per user
     unless `scope` says otherwise (None for one shared by all, "chat", "model"). The answer
-    carries the `terminal_id` the terminal is picked and called by.
+    carries the `machine_id` the terminal is picked and called by.
     """
     template = {
         "name": f"Terminal {uuid.uuid4().hex[:8]}",
@@ -479,7 +479,7 @@ def create_template(client: httpx.Client, connection: dict, **data) -> dict:
         **data,
     }
     created = client.post(
-        "/api/v1/terminals/templates",
+        "/api/v1/machines/templates",
         json={"id": str(uuid.uuid4()), "connection_id": connection["id"], "data": template},
     )
     assert created.status_code == 201, f"creating the terminal failed: {created.text}"
@@ -489,14 +489,14 @@ def create_template(client: httpx.Client, connection: dict, **data) -> dict:
 def share_template(client: httpx.Client, terminal_id: str, *grants: dict) -> None:
     """Share the terminal the way its Access dialog does; replaces the grants it had."""
     shared = client.post(
-        f"/api/v1/terminals/templates/{terminal_id}/access", json={"access_grants": list(grants)}
+        f"/api/v1/machines/templates/{terminal_id}/access", json={"access_grants": list(grants)}
     )
     assert shared.status_code == 200, f"sharing the terminal failed: {shared.text}"
 
 
 def start_instance(client: httpx.Client, terminal_id: str, **context) -> dict:
     """Start the machine the terminal gives `client`'s user and return its state."""
-    started = client.post(f"/api/v1/terminals/templates/{terminal_id}/start", json=context)
+    started = client.post(f"/api/v1/machines/templates/{terminal_id}/start", json=context)
     assert started.status_code == 200, f"starting the terminal failed: {started.text}"
     return instance_of(client, terminal_id)
 
@@ -508,7 +508,7 @@ def act_on_instance(
 
     `context` names the machine (`user_id`, `chat_id`, `model_id`); without it, the caller's own.
     """
-    base = f"/api/v1/terminals/templates/{terminal_id}"
+    base = f"/api/v1/machines/templates/{terminal_id}"
     if action == "delete":
         return client.request("DELETE", f"{base}/instance", json=context)
     return client.post(f"{base}/{action}", json=context)
@@ -516,14 +516,14 @@ def act_on_instance(
 
 def list_instances(client: httpx.Client, terminal_id: str) -> dict[str, dict]:
     """The machines the terminal's settings list, by context (`user:<id>`, `chat:<id>`, ...)."""
-    listed = client.get(f"/api/v1/terminals/templates/{terminal_id}/instances")
+    listed = client.get(f"/api/v1/machines/templates/{terminal_id}/instances")
     assert listed.status_code == 200, f"listing the terminal's machines failed: {listed.text}"
     return {machine["context_id"]: machine for machine in listed.json()}
 
 
 def instance_of(client: httpx.Client, terminal_id: str, **context) -> dict:
     """The machine the terminal gives `client`'s user: its id and status."""
-    found = client.get(f"/api/v1/terminals/templates/{terminal_id}/instance", params=context)
+    found = client.get(f"/api/v1/machines/templates/{terminal_id}/instance", params=context)
     assert found.status_code == 200, f"reading the terminal's machine failed: {found.text}"
     return found.json()
 
@@ -541,7 +541,7 @@ def execute(
     """
     context = {"X-Session-Id": chat_id, "X-Terminal-Model-Id": model_id}
     return client.post(
-        f"/api/v1/terminals/{terminal_id}/execute",
+        f"/api/v1/machines/{terminal_id}/execute",
         params={"wait": 30},
         headers={name: value for name, value in context.items() if value},
         json={"command": command},

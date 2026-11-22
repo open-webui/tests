@@ -31,7 +31,7 @@ closes a call from the provider's side. `using_realtime(client, fake)` saves the
 call settings on the fake (Call mode Realtime) and restores the audio settings on exit through
 the config import, as `harness.audio_engine` does. `realtime_call(base_url, token, model_id)`
 opens the browser's side of the call against the instance and sends its first-message auth, with
-the terminal picked in the chat as `terminal_id` for a call with an agent model.
+the terminal picked in the chat as `machine_id` for a call with an agent model.
 """
 
 from __future__ import annotations
@@ -419,7 +419,7 @@ def realtime_call(
     url = base_url.replace("http://", "ws://", 1) + "/api/v1/audio/realtime"
     auth = {"type": "auth", "token": token, "model_id": model_id, "chat_id": chat_id}
     if terminal_id is not None:
-        auth["terminal_id"] = terminal_id
+        auth["machine_id"] = terminal_id
     with connect(url, proxy=None, open_timeout=10, close_timeout=2) as session:
         session.send(json.dumps(auth))
         yield session

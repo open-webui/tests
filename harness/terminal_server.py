@@ -52,7 +52,7 @@ from harness.instance import free_port
 from harness.listener import Answer, IPv6HTTPServer, read_body
 
 # The admin endpoint pair, for `preserve(TERMINAL_SERVERS_CONFIG)`.
-TERMINAL_SERVERS_CONFIG = ("/api/v1/configs/terminal_servers", "/api/v1/configs/terminal_servers")
+TERMINAL_SERVERS_CONFIG = ("/api/v1/configs/machines", "/api/v1/configs/machines")
 
 
 @dataclass
@@ -204,7 +204,7 @@ def write_grant(user_id: str) -> dict:
 def configure_terminals(client: httpx.Client, *connections: dict) -> None:
     """Save the terminal connections the way the admin panel does, replacing the current ones."""
     saved = client.post(
-        TERMINAL_SERVERS_CONFIG[1], json={"TERMINAL_SERVER_CONNECTIONS": list(connections)}
+        TERMINAL_SERVERS_CONFIG[1], json={"MACHINE_CONNECTIONS": list(connections)}
     )
     assert saved.status_code == 200, f"saving terminal connections failed: {saved.text}"
 
@@ -390,7 +390,7 @@ def terminal_session(
     session_id = uuid.uuid4().hex
     url = (
         base_url.replace("http://", "ws://", 1)
-        + f"/api/v1/terminals/{terminal_id}/api/terminals/{session_id}"
+        + f"/api/v1/machines/{terminal_id}/api/terminals/{session_id}"
     )
     with connect(url, proxy=None, open_timeout=10, close_timeout=2) as session:
         session.send(json.dumps({"type": "auth", "token": token, "chat_id": chat_id}))
@@ -399,7 +399,7 @@ def terminal_session(
 
 def stream_url(base_url: str, terminal_id: str, path: str) -> str:
     """The address of one of the terminal's WebSockets on the instance."""
-    return base_url.replace("http://", "ws://", 1) + f"/api/v1/terminals/{terminal_id}/{path}"
+    return base_url.replace("http://", "ws://", 1) + f"/api/v1/machines/{terminal_id}/{path}"
 
 
 @contextmanager

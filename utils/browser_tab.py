@@ -122,7 +122,7 @@ def serve_site(
 ) -> None:
     """Write `pages` (file name to HTML) into `folder` of the caller's terminal and serve the
     folder on `port` there; returns once the server answers inside the terminal."""
-    terminal = f"/api/v1/terminals/{terminal_id}"
+    terminal = f"/api/v1/machines/{terminal_id}"
     for name, html in pages.items():
         written = client.post(
             f"{terminal}/files/write",
@@ -162,7 +162,7 @@ def rewrite_page(
     client: httpx.Client, terminal_id: str, path: str, html: str, headers: dict | None = None
 ) -> None:
     written = client.post(
-        f"/api/v1/terminals/{terminal_id}/files/write",
+        f"/api/v1/machines/{terminal_id}/files/write",
         headers=headers,
         json={"path": path, "content": html},
     )
@@ -173,7 +173,7 @@ def open_tabs(client: httpx.Client, terminal_id: str, chat_id: str | None = None
     """The Browser tabs the terminal holds for the caller in that chat (a new chat without),
     as the model's `browser_tabs` tool reads them: `url`, `title`, `mode`, `active`."""
     listed = client.get(
-        f"/api/v1/terminals/{terminal_id}/browser/tabs",
+        f"/api/v1/machines/{terminal_id}/browser/tabs",
         headers={"X-Session-Id": chat_id} if chat_id else None,
     )
     assert listed.status_code == 200, f"listing the Browser tabs failed: {listed.text}"

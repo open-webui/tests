@@ -16,7 +16,7 @@ from playwright.sync_api import Locator, Page, expect
 from utils.chat_ui import chat_input
 from utils.tooltips import tooltip_button
 
-TEMPLATES = "/api/v1/terminals/templates"
+TEMPLATES = "/api/v1/machines/templates"
 
 
 def open_terminal_menu(page: Page, picked: str | None = None) -> Locator:
@@ -96,7 +96,7 @@ def create_terminal(page: Page, dialog: Locator) -> str:
         dialog.get_by_role("button", name="Create", exact=True).click()
     assert created.value.status == 201, f"the terminal was not created: {created.value.text()}"
     expect(dialog).to_be_hidden()
-    return created.value.json()["terminal_id"]
+    return created.value.json()["machine_id"]
 
 
 def save_terminal_settings(page: Page, dialog: Locator, terminal_id: str) -> None:
