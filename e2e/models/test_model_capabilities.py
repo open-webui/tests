@@ -13,7 +13,7 @@ them). Without Image Generation the chat's Image switch is gone although the adm
 generation on. Without Memory a stored memory no longer reaches the model, as context or through the
 memory tools. Without Terminal a new chat drops the terminal picked before and the model is not
 handed it; the Terminal menu itself stays, as since 6ef26be29 picking a terminal also lists its
-agents as models. An unticked capability is no longer offered under Default Features, which since
+agents as models. An unticked capability is no longer offered as a default feature, which since
 98f23b17a (#32963) lists only a capability whose global feature is on, so the test turns web search
 and image generation on first. File Upload, Web Search, Builtin Tools and the Time category are
 covered in e2e/models/test_model_editor.py, Status Updates in e2e/chat/test_status_updates.py; the
@@ -37,6 +37,9 @@ loaded every test that saves an edit fails. The Preload files default test passe
 f659c0d12 (3 of 3), and in a backend copy that stores `file_context` off on every model update it
 fails.
 Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
+Retargeted for 67863f310, which moves the default features into Features under the caption "Start
+enabled in new chats", with the names of their capabilities, and for the terminals to machines
+rename (c5c42fe3b, df6be8c3a), which calls the Terminal capability and the chat's menu Machine.
 """
 
 from __future__ import annotations
@@ -59,6 +62,7 @@ from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings
 from utils.cached_chat import attach
 from utils.chat_ui import conversation, expect_reply, last_reply, open_integrations_menu, send
 from utils.model_editor import (
+    default_features,
     offered_tool_names,
     open_chat_on,
     open_editor,
@@ -315,7 +319,7 @@ def terminal(admin, preserve):
 
 
 def terminal_menu(page: Page, label: str) -> Locator:
-    """The chat's Terminal menu, labelled 'Terminal' or for the terminal picked in it."""
+    """The chat's machine menu, labelled 'Machine' or for the terminal picked in it."""
     return page.get_by_role("main").get_by_role("button", name=label, exact=True)
 
 
@@ -324,13 +328,13 @@ def test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat(
 ):
     page = page_for(builder)
     open_chat_on(page, preset)
-    terminal_menu(page, "Terminal").click()
+    terminal_menu(page, "Machine").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=TERMINAL_NAME).click()
     # since def1d048b a pick opens no file browser; the menu takes the terminal's name
     expect(terminal_menu(page, TERMINAL_NAME)).to_be_visible()
     assert "run_command" in offered_tool_names(sent_request(page, upstream, "list the berths"))
 
-    switch_capability(page, preset, "Terminal", False)
+    switch_capability(page, preset, "Machine", False)
 
     open_chat_on(page, preset)
     request = sent_request(page, upstream, "list the berths again")
@@ -338,7 +342,7 @@ def test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat(
     assert "run_command" not in offered, (
         f"the model was still handed the terminal: {sorted(offered)}"
     )
-    expect(terminal_menu(page, "Terminal")).to_be_visible()
+    expect(terminal_menu(page, "Machine")).to_be_visible()
     expect(
         terminal_menu(page, TERMINAL_NAME), "the new chat kept the picked terminal"
     ).to_have_count(0)
@@ -359,7 +363,7 @@ def test_an_unticked_capability_is_not_offered_as_a_default_feature(
 ):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    defaults = section(editor, "Default Features")
+    defaults = default_features(editor)
     expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_be_visible()
     expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()
 

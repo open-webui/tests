@@ -42,6 +42,8 @@ Retargeted for e32d2f75b, whose editor picks the base model with the chat's mode
 a base model): the sharing test passes on dev b40891e0a (3 of 3) and fails in a backend copy of it
 that makes every new model readable by everyone.
 Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
+Retargeted for 67863f310, which moves the default features into Features under the caption "Start
+enabled in new chats", with the names of their capabilities.
 """
 
 from __future__ import annotations
@@ -69,7 +71,7 @@ from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.chat_ui import chat_input, expect_reply, open_integrations_menu, send
 from utils.member_picker import pick_member
-from utils.model_editor import pick, section, selector_row, set_checkbox
+from utils.model_editor import pick, section, selector_row, set_checkbox, set_default_feature
 from utils.model_selector import model_search
 from utils.setting_rows import setting_button
 from utils.speech_audio import silent_wav
@@ -222,7 +224,7 @@ def test_web_search_as_a_default_feature_is_on_in_a_new_chat(
 ):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    set_checkbox(editor, "Default Features", "Web Search", True)
+    set_default_feature(editor, "Web Search", True)
     save(editor)
 
     open_chat_on(page, preset)

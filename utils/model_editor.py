@@ -1,10 +1,12 @@
 """Editing a model in the workspace's model editor and chatting on it, the way an admin does.
 
 `open_editor` opens the editor of a model by id and waits for its name, `section` opens one of
-the editor's collapsible parts (Capabilities, Default Features, Builtin Tools, Prompts, Voice),
-`set_checkbox` turns a switch in one of them on or off, `pick` ticks or unticks an entry in the
-search list of Tools, Skills, Filters or Actions and `save` saves and waits for the models list.
-`model_default_terminal` is the Default terminal row of the editor or of Model Defaults,
+the editor's collapsible parts (Features, Builtin Tools, Prompts, Voice), `set_checkbox` turns a
+switch in one of them on or off, `default_features` holds the switches under the Features caption
+"Start enabled in new chats" and `set_default_feature` turns one of them on or off, `pick` ticks or
+unticks an entry in the search list of Tools, Skills, Filters or Actions and `save` saves and
+waits for the models list.
+`model_default_terminal` is the Default machine row of the editor or of Model Defaults,
 `expect_model_default_terminal` waits until it shows a terminal and
 `choose_model_default_terminal` picks one in its list.
 `open_chat_on` starts a new chat on the model, `open_menu` opens one of the chat input's menus and
@@ -21,6 +23,8 @@ from harness import upstream as reply
 from utils.chat_surface import ChatSurface
 from utils.chat_ui import Chat, chat_input, expect_reply, send, start_from_link
 
+DEFAULT_FEATURES_CAPTION = re.compile(r"^\s*Start enabled in new chats\s*$")
+
 
 def open_editor(page: Page, model: dict) -> Locator:
     page.goto(f"/workspace/models/edit?id={model['id']}")
@@ -35,18 +39,26 @@ def save(editor: Locator) -> None:
 
 
 def model_default_terminal(editor: Locator) -> Locator:
-    """The Default terminal row, a button named by its label and the terminal it shows."""
-    return editor.get_by_role("button", name=re.compile(r"^Default terminal"))
+    """The default machine, its label followed by the machine it shows: the Default machine row
+    of Model Defaults, or the title of the model editor's Machine section, which holds a Default
+    row."""
+    defaults_row = editor.get_by_role("button", name=re.compile(r"^Default machine"))
+    title = editor.page.locator("summary > span:first-child").get_by_text("Machine", exact=True)
+    editor_section = editor.locator("details").filter(has=title).locator("summary")
+    return defaults_row.or_(editor_section)
 
 
 def expect_model_default_terminal(editor: Locator, name: str) -> None:
-    expect(model_default_terminal(editor)).to_have_accessible_name(
-        re.compile(rf"^Default terminal\W*{re.escape(name)}$")
+    expect(model_default_terminal(editor)).to_have_text(
+        re.compile(rf"^\s*(Default machine|Machine)\W*{re.escape(name)}\s*$")
     )
 
 
 def choose_model_default_terminal(editor: Locator, name: str) -> None:
-    model_default_terminal(editor).click()
+    row = model_default_terminal(editor)
+    if row.evaluate("element => element.tagName") == "SUMMARY":
+        row = section(editor, "Machine").get_by_role("button", name=re.compile(r"^Default\b"))
+    row.click()
     editor.page.get_by_role("menuitem", name=name, exact=True).click()
     expect_model_default_terminal(editor, name)
 
@@ -61,11 +73,33 @@ def section(editor: Locator, title: str) -> Locator:
     return part
 
 
-def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None:
-    switch = section(editor, title).get_by_role("switch", name=label, exact=True)
+def switches(editor: Locator, title: str) -> Locator:
+    """Where the switches of the section `title` sit; in Features only the capability switches,
+    as its default features below them carry the same names."""
+    part = section(editor, title)
+    if title != "Features":
+        return part
+    return part.locator("xpath=./div/div[not(preceding-sibling::p)]")
+
+
+def default_features(editor: Locator) -> Locator:
+    """The switches under the Features caption "Start enabled in new chats"."""
+    caption = section(editor, "Features").locator("p").filter(has_text=DEFAULT_FEATURES_CAPTION)
+    return caption.locator("xpath=following-sibling::div[1]")
+
+
+def _set_switch(switch: Locator, checked: bool) -> None:
     if (switch.get_attribute("aria-checked") == "true") != checked:
         switch.click()
     expect(switch).to_have_attribute("aria-checked", str(checked).lower())
+
+
+def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None:
+    _set_switch(switches(editor, title).get_by_role("switch", name=label, exact=True), checked)
+
+
+def set_default_feature(editor: Locator, label: str, checked: bool) -> None:
+    _set_switch(default_features(editor).get_by_role("switch", name=label, exact=True), checked)
 
 
 def selector_row(editor: Locator, label: str) -> Locator:
