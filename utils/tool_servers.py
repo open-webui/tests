@@ -53,7 +53,7 @@ def verify(form: Locator, label: str = "Verify Connection") -> None:
 
 
 def open_access_control(page: Page, form: Locator) -> Locator:
-    form.get_by_role("button", name="Access Control").click()
+    form.get_by_role("button", name="Access", exact=True).click()
     access = page.get_by_role("dialog").filter(has_text="Access List")
     expect(access).to_be_visible()
     return access
