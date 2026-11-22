@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import Locator, Page, expect
 
 PARAMS_PLACEHOLDER = "Enter additional parameters in JSON format"
@@ -34,12 +36,17 @@ def add_connection(page: Page, settings: Locator, connection_type: str) -> Locat
     return dialog
 
 
+def connection_row(settings: Locator, name: str) -> Locator:
+    """The listed connection called `name`: the innermost block holding its name and Configure."""
+    # the name button also reads out the connection's model ids after the name
+    name_button = settings.page.get_by_role("button", name=re.compile(rf"^{re.escape(name)}(\s|$)"))
+    configure = settings.page.get_by_role("button", name="Configure", exact=True)
+    return settings.locator("div").filter(has=name_button).filter(has=configure).last
+
+
 def configure_connection(page: Page, settings: Locator, name: str) -> Locator:
     """Open the dialog of the saved connection called `name`."""
-    row = settings.get_by_role("button", name="Configure").locator(
-        "xpath=ancestor::div[.//label][1]"
-    )
-    row.filter(has_text=name).get_by_role("button", name="Configure").click()
+    connection_row(settings, name).get_by_role("button", name="Configure", exact=True).click()
     dialog = connection_dialog(page)
     expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
     return dialog
