@@ -1553,7 +1553,7 @@ def test_builtin_tools_stay_in_full_with_defer_builtin_tools_off(
 def test_the_search_instructions_name_no_held_back_tool_and_stay_the_same_for_any_tool_set(
     tool_search, admin, make_user, upstream
 ):
-    tool_search(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False)
+    tool_search(TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False, TOOL_SEARCH_LIST_TOOLS=False)
     with make_user().client() as client:
         with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id:
             desk = request_with(client, upstream, [tool_id])
@@ -1567,6 +1567,33 @@ def test_the_search_instructions_name_no_held_back_tool_and_stay_the_same_for_an
         assert name not in block, f"{name} was named in the instructions: {block}"
     assert TIDE_DESCRIPTION not in json.dumps(desk), "the held-back definition was sent"
     assert WEATHER_DESCRIPTION not in json.dumps(desk), "the held-back definition was sent"
+
+
+def test_the_search_instructions_list_each_held_back_tool_with_a_short_description(
+    chat_settings, admin, make_user, upstream
+):
+    with python_tool(admin, HARBOUR_DESK_TOOLS) as tool_id, make_user().client() as client:
+        chat_settings(ENABLE_TOOL_SEARCH=False)
+        full = offered_specs(request_with(client, upstream, [tool_id]))
+        chat_settings(
+            ENABLE_TOOL_SEARCH=True,
+            TOOL_SEARCH_DEFER_THRESHOLD=0,
+            TOOL_SEARCH_ALWAYS_LOADED=[],
+            TOOL_SEARCH_DEFER_BUILTIN_TOOLS=False,
+            TOOL_SEARCH_LIST_TOOLS=True,
+        )
+        block = available_tools_block(request_with(client, upstream, [tool_id]))
+
+    assert block and "Deferred tools:\n" in block, f"no listing in the instructions: {block}"
+    listing = block.split("Deferred tools:\n")[1].removesuffix("</available_tools>")
+    lines = listing.strip().splitlines()
+    assert [line.split(":")[0] for line in lines] == [f"- {name}" for name in DESK_NAMES], lines
+    for name, line in zip(DESK_NAMES, lines):
+        shown = line.removeprefix(f"- {name}: ")
+        described = " ".join(full[name]["description"].split())
+        assert len(shown) <= 100, f"{name} is listed with {len(shown)} characters: {shown!r}"
+        assert described.startswith(shown.removesuffix("…")), f"{name} is listed as {shown!r}"
+    assert TIDE_DESCRIPTION not in block, "the long description was listed in full"
 
 
 def test_search_tools_returns_the_full_definition_by_exact_name_and_by_keyword(
