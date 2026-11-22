@@ -1,8 +1,7 @@
-"""Driving the Add/Edit Terminal Connection dialog.
+"""Driving the Add/Edit Machine dialog.
 
-An admin opens it from Admin Settings > Integrations and a person from their own Settings >
-Integrations. Save first checks that the server answers (the instance asks it for an admin
-connection, the browser for a personal one) and says so in the dialog when it does not.
+An admin opens it from the Machines section of Admin Settings > Integrations. Save first checks
+that the server answers and says so in the dialog when it does not.
 """
 
 from __future__ import annotations
@@ -18,31 +17,30 @@ PERSONAL_SETTINGS = "/api/v1/users/user/settings/update"
 
 
 def shown_admin_terminal_section(page: Page) -> Locator:
-    """The Terminal section of Admin Settings > Integrations on a page opened there with
+    """The Machines section of Admin Settings > Integrations on a page opened there with
     `page_for(account, path=ADMIN_INTEGRATIONS)`, as it stands."""
-    heading = page.get_by_role("dialog").get_by_text("Open Terminal", exact=True)
-    expect(heading).to_be_visible()
-    return heading.locator("xpath=../..")
+    heading = page.get_by_role("heading", name="Machines", exact=True)
+    section = page.get_by_role("dialog").locator("section").filter(has=heading)
+    expect(section).to_be_visible()
+    return section
 
 
-def terminal_dialog(page: Page, title: str = "Add Terminal Connection") -> Locator:
+def terminal_dialog(page: Page, title: str = "Add Machine") -> Locator:
     dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=title))
     expect(dialog).to_be_visible()
     return dialog
 
 
 def add_terminal(section: Locator) -> Locator:
-    """Open Add Terminal Connection from the admin's or a person's own terminal section, as it
-    stands; returns the dialog."""
-    section.get_by_role("button", name="Add Connection", exact=True).click()
+    """Open Add Machine from the admin's Machines section, as it stands; returns the dialog."""
+    section.get_by_role("button", name="Add Machine", exact=True).click()
     return terminal_dialog(section.page)
 
 
 def edit_terminal(section: Locator, name: str) -> Locator:
-    """Open Edit Terminal Connection of the connection the section lists as `name`; returns the
-    dialog."""
+    """Open Edit Machine of the machine the section lists as `name`; returns the dialog."""
     connection_row(section, name).get_by_role("button", name="Configure", exact=True).click()
-    return terminal_dialog(section.page, "Edit Terminal Connection")
+    return terminal_dialog(section.page, "Edit Machine")
 
 
 def leave_settings(page: Page) -> None:
@@ -107,9 +105,7 @@ def save_terminal(page: Page, dialog: Locator, saved_to: str = ADMIN_CONNECTIONS
     except PlaywrightTimeoutError:
         problem = dialog.get_by_role("alert")
         shown = problem.inner_text() if problem.count() else "nothing"
-        raise AssertionError(
-            f"the terminal connection was not saved; the dialog says: {shown}"
-        ) from None
+        raise AssertionError(f"the machine was not saved; the dialog says: {shown}") from None
     assert saved.value.ok, saved.value.text()
     expect(dialog).to_be_hidden()
 

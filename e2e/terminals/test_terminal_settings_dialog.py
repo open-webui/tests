@@ -1,17 +1,17 @@
-"""Journey: a person manages a terminal of a Terminals connection from its Terminal settings.
+"""Journey: a person manages a terminal of a Terminals connection from its Machine settings.
 
 New on dev after 0.13.3 (6f2fc7bc7, titled `refac`, changed eight times up to c15f28649): a
-person with write access to a Terminals connection opens Terminal settings from a terminal's
-More options in the chat input's Terminal menu. The dialog shows what the terminal is stored
-with and saves changes, a new name included. Its Access button reads Private or Shared and
-opens the sharing: people and groups, for reading, never everyone. Machines lists the
-terminal's machines by whose they are (the person, the chat and its owner, or the terminal's
-name for one shared machine) with Running or Stopped; a machine's menu restarts, stops and
-deletes it after asking, starts it without asking, and opens System info and the files of a
-machine the person can reach. What gets a machine of its own is locked while machines exist.
-Delete terminal says how many machines go with it. A rename, a share, an unshare and a delete
-reach the open pages of everyone who has the terminal without a reload. A person who may only
-use the terminal is offered none of this.
+person with write access to a Terminals connection opens Machine settings (Terminal settings
+before the machines rename) from a terminal's More options in the chat input's Machine menu.
+The dialog shows what the terminal is stored with and saves changes, a new name included. Its
+Access button reads Private or Shared and opens the sharing: people and groups, for reading,
+never everyone. Instances lists the terminal's instances by whose they are (the person, the
+chat and its owner, or the terminal's name for one shared instance) with Running or Stopped; an
+instance's menu restarts, stops and deletes it after asking, starts it without asking, and opens
+System info and the files of an instance the person can reach. What gets an instance of its own
+is locked while instances exist. Delete machine says how many instances go with it. A rename, a
+share, an unshare and a delete reach the open pages of everyone who has the terminal without a
+reload. A person who may only use the terminal is offered none of this.
 
 The real Terminals service runs on Docker (`harness.terminals`); without its images or Docker
 the tests skip. The two tests that kept fields the dialog does not show are in
@@ -66,11 +66,11 @@ from utils.user_terminals import (
     TEMPLATES,
     advanced,
     confirmation,
+    instance_actions,
+    instance_row,
+    instances_heading,
     listed_terminal,
-    machine_actions,
-    machine_row,
-    machines_heading,
-    open_machine_menu,
+    open_instance_menu,
     open_terminal_menu,
     open_terminal_settings,
     save_terminal_settings,
@@ -79,7 +79,7 @@ from utils.user_terminals import (
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-NO_MACHINES = "No machines yet. One starts the first time the terminal is used."
+NO_INSTANCES = "No instances yet. One starts the first time the machine is used."
 
 
 class Managed:
@@ -113,7 +113,7 @@ def managed_terminal(admin, make_user, connect_terminals):
         name = data.pop("name", f"Slipway {uuid.uuid4().hex[:8]}")
         connection = connect_terminals(write_grant(writer.id), read_grant(reader.id))
         with admin.client() as client:
-            terminal_id = create_template(client, connection, name=name, **data)["terminal_id"]
+            terminal_id = create_template(client, connection, name=name, **data)["machine_id"]
             share_template(client, terminal_id, read_grant(reader.id))
         return Managed(admin, writer, reader, connection, terminal_id, name)
 
@@ -251,26 +251,26 @@ def test_separate_machine_per_is_locked_until_the_terminals_machines_are_deleted
     dialog = open_terminal_settings(page, terminal.name)
     choice = dialog.get_by_label("Separate machine per", exact=True)
 
-    expect(machines_heading(dialog, 1)).to_be_visible()
-    expect(machine_row(dialog, writer.name)).to_contain_text("Running")
+    expect(instances_heading(dialog, 1)).to_be_visible()
+    expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     expect(choice).to_be_disabled()
     expect(dialog.get_by_text("Delete all machines to change this.", exact=True)).to_be_visible()
-    expect(dialog.get_by_text(NO_MACHINES, exact=True)).to_have_count(0)
+    expect(dialog.get_by_text(NO_INSTANCES, exact=True)).to_have_count(0)
 
-    open_machine_menu(dialog, writer.name).get_by_role("menuitem", name="Delete machine").click()
+    open_instance_menu(dialog, writer.name).get_by_role("menuitem", name="Delete instance").click()
     asked = confirmation(page, f"Delete {writer.name}?")
     asked.get_by_role("button", name="Cancel", exact=True).click()
     expect(asked).to_be_hidden()
     assert terminals.holding("keel.txt") == {f"user:{writer.id}": f"keel-{tag}\n"}, (
         f"a delete that was cancelled left {terminals.holding('keel.txt')}"
     )
-    open_machine_menu(dialog, writer.name).get_by_role("menuitem", name="Delete machine").click()
+    open_instance_menu(dialog, writer.name).get_by_role("menuitem", name="Delete instance").click()
     with _acts_on_machine(page, terminal.terminal_id, "instance") as deleted:
         _confirm(page, f"Delete {writer.name}?", "Delete", "The machine and its files are deleted.")
     assert deleted.value.ok, f"deleting the machine was refused: {deleted.value.text()}"
 
-    expect(dialog.get_by_text(NO_MACHINES, exact=True)).to_be_visible()
-    expect(machines_heading(dialog, 0)).to_be_visible()
+    expect(dialog.get_by_text(NO_INSTANCES, exact=True)).to_be_visible()
+    expect(instances_heading(dialog, 0)).to_be_visible()
     expect(choice).to_be_enabled()
     expect(dialog.get_by_text("Each person gets their own machine.", exact=True)).to_be_visible()
     assert _machines(terminals, terminal.terminal_id) == {}, (
@@ -306,7 +306,7 @@ def test_a_terminal_shared_from_its_settings_shows_up_at_once_and_goes_when_unsh
             },
         }
         configure_terminals(client, connection)
-        private_id = create_template(client, connection, name=private)["terminal_id"]
+        private_id = create_template(client, connection, name=private)["machine_id"]
         # a new terminal is shared with its creator; this one is shared with nobody
         share_template(client, private_id)
         share_template(client, terminal.terminal_id, read_grant(reader.id), read_grant(member.id))
@@ -358,7 +358,7 @@ def test_deleting_a_terminal_says_how_many_machines_go_and_removes_it_for_everyo
     writer, reader = terminal.writer, terminal.reader
     kept = f"Breakwater {uuid.uuid4().hex[:8]}"
     with terminal.admin.client() as client:
-        kept_id = create_template(client, terminal.connection, name=kept)["terminal_id"]
+        kept_id = create_template(client, terminal.connection, name=kept)["machine_id"]
         share_template(client, kept_id, read_grant(reader.id))
     for person in (writer, reader):
         terminal.run(person, "echo ballast > ballast.txt")
@@ -367,9 +367,9 @@ def test_deleting_a_terminal_says_how_many_machines_go_and_removes_it_for_everyo
     expect(listed_terminal(reader_page, terminal.name)).to_be_visible()
     page = page_for(writer)
     dialog = open_terminal_settings(page, terminal.name)
-    expect(machines_heading(dialog, 2)).to_be_visible()
+    expect(instances_heading(dialog, 2)).to_be_visible()
 
-    dialog.get_by_role("button", name="Delete terminal", exact=True).click()
+    dialog.get_by_role("button", name="Delete machine", exact=True).click()
     asked = confirmation(page, f"Delete {terminal.name}?")
     expect(
         asked.get_by_text("This deletes 2 machines and their files.", exact=True)
@@ -377,7 +377,7 @@ def test_deleting_a_terminal_says_how_many_machines_go_and_removes_it_for_everyo
     asked.get_by_role("button", name="Cancel", exact=True).click()
     expect(asked).to_be_hidden()
     assert len(terminals.holding("ballast.txt")) == 2, "a delete that was cancelled took machines"
-    dialog.get_by_role("button", name="Delete terminal", exact=True).click()
+    dialog.get_by_role("button", name="Delete machine", exact=True).click()
     confirmation(page, f"Delete {terminal.name}?").get_by_role(
         "button", name="Delete", exact=True
     ).click()
@@ -396,10 +396,10 @@ def test_deleting_a_terminal_says_how_many_machines_go_and_removes_it_for_everyo
 
     page.keyboard.press("Escape")
     dialog = open_terminal_settings(page, kept)
-    expect(dialog.get_by_text(NO_MACHINES, exact=True)).to_be_visible()
-    dialog.get_by_role("button", name="Delete terminal", exact=True).click()
+    expect(dialog.get_by_text(NO_INSTANCES, exact=True)).to_be_visible()
+    dialog.get_by_role("button", name="Delete machine", exact=True).click()
     asked = confirmation(page, f"Delete {kept}?")
-    expect(asked.get_by_text("This terminal is deleted.", exact=True)).to_be_visible()
+    expect(asked.get_by_text("This machine is deleted.", exact=True)).to_be_visible()
 
 
 def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_their_menu(
@@ -413,13 +413,13 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
     page = page_for(writer)
     dialog = open_terminal_settings(page, terminal.name)
 
-    expect(machines_heading(dialog, 2)).to_be_visible()
-    expect(machine_row(dialog, writer.name)).to_contain_text("Running")
-    expect(machine_row(dialog, reader.name)).to_contain_text("Running")
-    assert machine_actions(open_machine_menu(dialog, reader.name)) == [
+    expect(instances_heading(dialog, 2)).to_be_visible()
+    expect(instance_row(dialog, writer.name)).to_contain_text("Running")
+    expect(instance_row(dialog, reader.name)).to_contain_text("Running")
+    assert instance_actions(open_instance_menu(dialog, reader.name)) == [
         "Restart",
         "Stop",
-        "Delete machine",
+        "Delete instance",
     ]
 
     page.get_by_role("menu").get_by_role("menuitem", name="Stop", exact=True).click()
@@ -429,20 +429,20 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
         "Stop",
         "Running work stops. Files are kept, and the machine starts again when it is next used.",
     )
-    expect(machine_row(dialog, reader.name)).to_contain_text("Stopped")
-    expect(machine_row(dialog, writer.name)).to_contain_text("Running")
+    expect(instance_row(dialog, reader.name)).to_contain_text("Stopped")
+    expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     assert terminal.machine_state(reader) == "stopped", "the reader's machine was not stopped"
     assert terminal.machine_state(writer) == "running", "the writer's own machine was stopped too"
 
-    assert machine_actions(open_machine_menu(dialog, reader.name)) == ["Start", "Delete machine"]
+    assert instance_actions(open_instance_menu(dialog, reader.name)) == ["Start", "Delete instance"]
     with _acts_on_machine(page, terminal.terminal_id, "start") as started:
         page.get_by_role("menu").get_by_role("menuitem", name="Start", exact=True).click()
     assert started.value.ok, f"starting the machine was refused: {started.value.text()}"
     wait_until_addresses_settle()
-    expect(machine_row(dialog, reader.name)).to_contain_text("Running")
+    expect(instance_row(dialog, reader.name)).to_contain_text("Running")
     assert terminal.machine_state(reader) == "running", "the reader's machine was not started"
 
-    open_machine_menu(dialog, writer.name).get_by_role(
+    open_instance_menu(dialog, writer.name).get_by_role(
         "menuitem", name="Restart", exact=True
     ).click()
     with _acts_on_machine(page, terminal.terminal_id, "restart") as restarted:
@@ -454,7 +454,7 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
         )
     assert restarted.value.ok, f"restarting the machine was refused: {restarted.value.text()}"
     wait_until_addresses_settle()
-    expect(machine_row(dialog, writer.name)).to_contain_text("Running")
+    expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     after = {
         person.name: terminal.run(person, "cat ~/kept.txt; cat /tmp/lost.txt 2>/dev/null; true")
         for person in (writer, reader)
@@ -479,37 +479,40 @@ def test_system_info_and_files_open_for_the_persons_own_running_machine_alone(
     page = page_for(writer)
     dialog = open_terminal_settings(page, terminal.name)
 
-    expect(machines_heading(dialog, 1)).to_be_visible()
-    expect(machine_row(dialog, terminal.name)).to_contain_text("Running")
-    menu = open_machine_menu(dialog, terminal.name)
-    assert machine_actions(menu) == [
+    expect(instances_heading(dialog, 1)).to_be_visible()
+    expect(instance_row(dialog, terminal.name)).to_contain_text("Running")
+    menu = open_instance_menu(dialog, terminal.name)
+    assert instance_actions(menu) == [
         "System info",
         "View files",
         "Restart",
         "Stop",
-        "Delete machine",
+        "Delete instance",
     ]
     menu.get_by_role("menuitem", name="View files", exact=True).click()
     files = page.get_by_role("dialog", name=f"Files on {terminal.name}", exact=True)
     expect(files.get_by_text(f"chart-{tag}.txt")).to_be_visible()
     _close(files)
 
-    open_machine_menu(dialog, terminal.name).get_by_role(
+    open_instance_menu(dialog, terminal.name).get_by_role(
         "menuitem", name="System info", exact=True
     ).click()
     info = page.get_by_role("dialog", name=f"System info for {terminal.name}", exact=True)
     expect(info.get_by_text(terminals.hostname(machine["id"]))).to_be_visible()
     _close(info)
 
-    open_machine_menu(dialog, terminal.name).get_by_role(
+    open_instance_menu(dialog, terminal.name).get_by_role(
         "menuitem", name="Stop", exact=True
     ).click()
     with _acts_on_machine(page, terminal.terminal_id, "stop"):
         confirmation(page, f"Stop {terminal.name}?").get_by_role(
             "button", name="Stop", exact=True
         ).click()
-    expect(machine_row(dialog, terminal.name)).to_contain_text("Stopped")
-    assert machine_actions(open_machine_menu(dialog, terminal.name)) == ["Start", "Delete machine"]
+    expect(instance_row(dialog, terminal.name)).to_contain_text("Stopped")
+    assert instance_actions(open_instance_menu(dialog, terminal.name)) == [
+        "Start",
+        "Delete instance",
+    ]
 
 
 def test_a_machine_of_a_terminal_per_chat_is_named_after_its_chat_and_its_owner(
@@ -523,8 +526,8 @@ def test_a_machine_of_a_terminal_per_chat_is_named_after_its_chat_and_its_owner(
     page = page_for(writer)
 
     dialog = open_terminal_settings(page, terminal.name)
-    expect(machines_heading(dialog, 1)).to_be_visible()
-    row = machine_row(dialog, f"Catch log {tag}")
+    expect(instances_heading(dialog, 1)).to_be_visible()
+    row = instance_row(dialog, f"Catch log {tag}")
     expect(row).to_contain_text(re.compile(rf"Catch log {tag}\s*·\s*{re.escape(reader.name)}"))
     expect(row).to_contain_text("Running")
     _close(dialog)
@@ -533,8 +536,8 @@ def test_a_machine_of_a_terminal_per_chat_is_named_after_its_chat_and_its_owner(
         deleted = client.delete(f"/api/v1/chats/{chat_id}")
         assert deleted.status_code == 200, deleted.text
     dialog = open_terminal_settings(page, terminal.name)
-    expect(machines_heading(dialog, 1)).to_be_visible()
-    expect(machine_row(dialog, "Deleted chat")).to_contain_text("Running")
+    expect(instances_heading(dialog, 1)).to_be_visible()
+    expect(instance_row(dialog, "Deleted chat")).to_contain_text("Running")
 
 
 def test_only_a_person_who_may_write_to_the_connection_is_offered_new_terminal_and_settings(
@@ -547,22 +550,22 @@ def test_only_a_person_who_may_write_to_the_connection_is_offered_new_terminal_a
 
     page = page_for(writer)
     menu = open_terminal_menu(page)
-    expect(menu.get_by_role("menuitem", name="New terminal", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="New machine", exact=True)).to_be_visible()
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
     options = open_terminal_options(page, terminal.name)
-    expect(options.get_by_role("menuitem", name="Terminal settings", exact=True)).to_be_visible()
+    expect(options.get_by_role("menuitem", name="Machine settings", exact=True)).to_be_visible()
     expect(options.get_by_role("menuitem", name="Stop", exact=True)).to_be_visible()
 
     reader_page = page_for(reader)
     menu = open_terminal_menu(reader_page)
     expect(listed_terminal(reader_page, terminal.name)).to_be_visible()
-    expect(menu.get_by_role("menuitem", name="New terminal", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="New machine", exact=True)).to_have_count(0)
     reader_page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
     options = open_terminal_options(reader_page, terminal.name)
     expect(options.get_by_role("menuitem", name="View files", exact=True)).to_be_visible()
-    offered = machine_actions(reader_page.get_by_role("menu").last)
+    offered = instance_actions(reader_page.get_by_role("menu").last)
     assert offered == ["System info", "View files"], f"a reader is offered {offered}"
     with reader.client() as client:
         refused = {
@@ -605,15 +608,15 @@ def test_a_refused_save_or_machine_action_says_why_in_the_dialog_and_changes_not
     with terminal.admin.client() as client:
         only_reading = {"access_grants": [read_grant(writer.id), read_grant(terminal.reader.id)]}
         configure_terminals(client, {**terminal.connection, "config": only_reading})
-    open_machine_menu(dialog, writer.name).get_by_role("menuitem", name="Delete machine").click()
+    open_instance_menu(dialog, writer.name).get_by_role("menuitem", name="Delete instance").click()
     with _acts_on_machine(page, terminal.terminal_id, "instance") as deleted:
         confirmation(page, f"Delete {writer.name}?").get_by_role(
             "button", name="Delete", exact=True
         ).click()
     assert deleted.value.status == 403, f"the delete was answered {deleted.value.status}"
 
-    expect(dialog.get_by_role("alert")).to_have_text("Terminal connection write access required")
-    expect(machine_row(dialog, writer.name)).to_contain_text("Running")
+    expect(dialog.get_by_role("alert")).to_have_text("Machine connection write access required")
+    expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     assert terminals.holding("anchor.txt") == {f"user:{writer.id}": f"anchor-{tag}\n"}, (
         f"the refused delete left {terminals.holding('anchor.txt')}"
     )

@@ -1,8 +1,8 @@
-"""The New terminal and Terminal settings dialog of a terminal on a Terminals orchestrator.
+"""The New machine and Machine settings dialog of a machine on a Terminals orchestrator.
 
-Both open from the chat input's Terminal menu: New terminal from the + beside the Terminals
-heading, for a person who may create terminals on a connection, and Terminal settings from the
-More options of a terminal the person manages. Terminal settings lists the terminal's machines,
+Both open from the chat input's Machine menu: New machine from the + beside the Machines
+heading, for a person who may create machines on a connection, and Machine settings from the
+More options of a machine the person manages. Machine settings lists the machine's instances,
 each with a menu of its own, and every action that stops or deletes something asks first.
 """
 
@@ -20,43 +20,44 @@ TEMPLATES = "/api/v1/machines/templates"
 
 
 def open_terminal_menu(page: Page, picked: str | None = None) -> Locator:
-    """Open the chat input's Terminal menu; returns it. Its button reads the terminal `picked`
+    """Open the chat input's Machine menu; returns it. Its button reads the machine `picked`
     for the chat, if one is."""
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), picked or "Terminal").click()
+    tooltip_button(page.get_by_role("main"), picked or "Machine").click()
     menu = page.get_by_role("menu")
     expect(menu).to_be_visible()
     return menu
 
 
 def listed_terminal(page: Page, name: str) -> Locator:
-    """The terminal `name` in the open Terminal menu."""
+    """The machine `name` in the open Machine menu."""
     return page.get_by_role("menu").get_by_role("menuitemradio", name=name, exact=True)
 
 
 def new_terminal_dialog(page: Page) -> Locator:
-    return page.get_by_role("dialog", name="New terminal", exact=True)
+    return page.get_by_role("dialog", name="New machine", exact=True)
 
 
 def start_new_terminal(page: Page) -> Locator:
-    """Open New terminal from the Terminal menu; returns the dialog."""
-    open_terminal_menu(page).get_by_role("menuitem", name="New terminal", exact=True).click()
+    """Open New machine from the + beside the Machine menu's Machines heading; returns the
+    dialog."""
+    open_terminal_menu(page).get_by_role("menuitem", name="New machine", exact=True).click()
     dialog = new_terminal_dialog(page)
     expect(dialog.get_by_label("Name", exact=True)).to_be_visible()
     return dialog
 
 
 def open_terminal_settings(page: Page, name: str) -> Locator:
-    """Open the Terminal settings of the terminal `name` from the Terminal menu; returns the
-    dialog once it shows the terminal."""
+    """Open the Machine settings of the machine `name` from the Machine menu; returns the
+    dialog once it shows the machine."""
     menu = open_terminal_menu(page)
     row = menu.get_by_role("menuitemradio", name=name, exact=True)
     expect(row).to_be_visible()
     # the row's More button shows on hover
     row.hover()
     menu.get_by_role("menuitem", name=f"More options for {name}").click()
-    page.get_by_role("menuitem", name="Terminal settings", exact=True).click()
-    dialog = page.get_by_role("dialog", name="Terminal settings", exact=True)
+    page.get_by_role("menuitem", name="Machine settings", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Machine settings", exact=True)
     expect(dialog.get_by_label("Name", exact=True)).to_have_value(name)
     return dialog
 
@@ -86,15 +87,15 @@ def suggestions_of(dialog: Locator, label: str) -> list[str]:
 
 
 def create_terminal(page: Page, dialog: Locator) -> str:
-    """Press Create and wait until the terminal is created and the dialog is gone; returns the
-    new terminal's id."""
+    """Press Create and wait until the machine is created and the dialog is gone; returns the
+    new machine's id."""
 
     def creates_it(response) -> bool:
         return response.request.method == "POST" and response.url.endswith(TEMPLATES)
 
     with page.expect_response(creates_it) as created:
         dialog.get_by_role("button", name="Create", exact=True).click()
-    assert created.value.status == 201, f"the terminal was not created: {created.value.text()}"
+    assert created.value.status == 201, f"the machine was not created: {created.value.text()}"
     expect(dialog).to_be_hidden()
     return created.value.json()["machine_id"]
 
@@ -111,30 +112,30 @@ def save_terminal_settings(page: Page, dialog: Locator, terminal_id: str) -> Non
     expect(dialog).to_be_hidden()
 
 
-def machines_heading(dialog: Locator, count: int) -> Locator:
-    """The Machines heading reading `count`."""
-    return dialog.get_by_text(re.compile(rf"^\s*Machines\s*{count}\s*$"))
+def instances_heading(dialog: Locator, count: int) -> Locator:
+    """The Instances heading reading `count`."""
+    return dialog.get_by_text(re.compile(rf"^\s*Instances\s*{count}\s*$"))
 
 
-def machine_row(dialog: Locator, name: str) -> Locator:
-    """The machine `name` in the Machines list, with its owner and Running or Stopped."""
+def instance_row(dialog: Locator, name: str) -> Locator:
+    """The instance `name` in the Instances list, with its owner and Running or Stopped."""
     more = dialog.page.get_by_role("button", name=f"More options for {name}", exact=True)
-    # the innermost box holding the machine's menu button and its state is its row
+    # the innermost box holding the instance's menu button and its state is its row
     return (
         dialog.locator("div").filter(has=more).filter(has_text=re.compile(r"Running|Stopped")).last
     )
 
 
-def open_machine_menu(dialog: Locator, name: str) -> Locator:
-    """Open the menu of the machine `name`; returns it."""
+def open_instance_menu(dialog: Locator, name: str) -> Locator:
+    """Open the menu of the instance `name`; returns it."""
     more = dialog.get_by_role("button", name=f"More options for {name}", exact=True)
     more.click()
     menu = dialog.page.get_by_role("menu")
-    expect(menu.get_by_role("menuitem", name="Delete machine", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Delete instance", exact=True)).to_be_visible()
     return menu
 
 
-def machine_actions(menu: Locator) -> list[str]:
+def instance_actions(menu: Locator) -> list[str]:
     return [entry.strip() for entry in menu.get_by_role("menuitem").all_inner_texts()]
 
 

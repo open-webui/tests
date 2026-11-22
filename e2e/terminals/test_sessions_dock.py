@@ -340,7 +340,7 @@ def _commands(person, connection: dict, chat_id: str) -> dict[str, dict]:
     """The commands the terminal lists for the chat, by command line."""
     with person.client() as client:
         listed = client.get(
-            f"/api/v1/terminals/{connection['id']}/execute", headers={"X-Session-Id": chat_id}
+            f"/api/v1/machines/{connection['id']}/execute", headers={"X-Session-Id": chat_id}
         )
     assert listed.status_code == 200, listed.text
     return {process["command"]: process for process in listed.json()}
@@ -390,7 +390,7 @@ def test_the_commands_the_model_runs_are_listed_with_their_output_and_state_unti
     process = _commands(person, connection, chat_id)[waiting]
     with person.client() as client:
         fed = client.post(
-            f"/api/v1/terminals/{connection['id']}/execute/{process['id']}/input",
+            f"/api/v1/machines/{connection['id']}/execute/{process['id']}/input",
             headers={"X-Session-Id": chat_id},
             json={"input": f"fed-{tag}\\n\\x04"},
         )

@@ -75,7 +75,7 @@ def test_each_new_chats_first_upload_lands_in_that_chats_own_machine(
     name = f"Per chat box {tag}"
     connection = connect_terminals(read_grant(person.id), config={"chat_uploads": "filesystem"})
     with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name, scope="chat")["terminal_id"]
+        terminal_id = create_template(client, connection, name=name, scope="chat")["machine_id"]
         share_template(client, terminal_id, read_grant(person.id))
     first_name, second_name = f"first-{tag}.txt", f"second-{tag}.txt"
 
@@ -114,7 +114,7 @@ def test_a_temporary_chat_offers_no_per_chat_terminal_and_drops_one_picked_befor
     connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
         for name, scope in ((per_chat, "chat"), (shared, None)):
-            terminal_id = create_template(client, connection, name=name, scope=scope)["terminal_id"]
+            terminal_id = create_template(client, connection, name=name, scope=scope)["machine_id"]
             share_template(client, terminal_id, read_grant(person.id))
     page = page_for(person)
     choose_terminal(page, per_chat)
@@ -124,7 +124,7 @@ def test_a_temporary_chat_offers_no_per_chat_terminal_and_drops_one_picked_befor
     expect(page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)).to_be_visible()
 
     expect(picked, "the per chat terminal stayed picked in a temporary chat").to_have_count(0)
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitemradio", name=shared)).to_be_visible()
     expect(menu.get_by_role("menuitemradio", name=per_chat)).to_have_count(0)

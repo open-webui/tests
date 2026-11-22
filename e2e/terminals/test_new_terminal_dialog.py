@@ -1,10 +1,11 @@
 """Journey: a person creates a terminal on a Terminals connection from the chat input.
 
 New on dev after 0.13.3 (6f2fc7bc7, titled `refac`, changed eight times up to c15f28649): a
-person with write access to a Terminals connection finds New terminal (+) beside the Terminals
-heading of the chat input's Terminal menu. The dialog asks for a name, for what gets a machine
-of its own (nobody, each user, each chat, each model) and, under Advanced, for a start
-directory, a setup script, an image, CPU, memory, storage, a network and environment variables.
+person with write access to a Terminals connection finds New machine (+) beside the Machines
+heading of the chat input's Machine menu (New terminal and Terminal before the machines
+rename). The dialog asks for a name, for what gets an instance of its own (nobody, each user,
+each chat, each model) and, under Advanced, for a start directory, a setup script, an image,
+CPU, memory, storage, a network and environment variables.
 Advanced reads what is set there on one line. The connection's limits show under CPU, memory
 and storage and a value past them cannot be created; the image and network fields suggest what
 the connection allows. With two connections to create on, Server chooses one. Create stores the
@@ -15,8 +16,8 @@ The real Terminals service runs on Docker (`harness.terminals`); without its ima
 the tests skip.
 
 `test_the_first_terminal_of_a_connection_is_created_from_the_chat_input` is red on dev
-c15f28649: the chat input shows no Terminal menu until the account has a terminal, so nothing
-leads to New terminal on a new connection (finding
+c15f28649: the chat input shows no Machine menu until the account has a terminal, so nothing
+leads to New machine on a new connection (finding
 `open-webui-no-terminal-menu-before-the-first-terminal`). The other tests start with one
 terminal on the connection for that reason.
 
@@ -167,7 +168,7 @@ def test_separate_machine_per_explains_each_choice_and_the_terminal_keeps_the_on
         f"the terminal made per chat is stored as {_stored(terminals, terminal_id)}"
     )
     with writer.client() as client:
-        listed = {entry["id"]: entry["scope"] for entry in client.get("/api/v1/terminals/").json()}
+        listed = {entry["id"]: entry["scope"] for entry in client.get("/api/v1/machines/").json()}
     assert listed[terminal_id] == "chat", f"the Terminal menu is told its scope is {listed}"
 
 
@@ -354,7 +355,7 @@ def test_with_two_connections_the_server_is_chosen_and_its_limits_and_suggestion
             with admin.client() as client:
                 for template in far_terminals.templates():
                     client.delete(
-                        f"/api/v1/terminals/templates/template:{second['id']}:{template['id']}"
+                        f"/api/v1/machines/templates/template:{second['id']}:{template['id']}"
                     )
 
 

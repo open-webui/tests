@@ -340,14 +340,14 @@ def test_with_no_terminal_picked_new_tab_offers_the_terminal_tabs_and_asks_for_a
         ).to_be_visible()
     menu.get_by_role("menuitem", name=re.compile(r"^New Terminal\b")).click()
 
-    picker = page.get_by_role("dialog", name="Select a terminal")
+    picker = page.get_by_role("dialog", name="Select a machine")
     expect(picker).to_be_visible()
-    search = picker.get_by_role("combobox", name="Select a terminal")
-    options = picker.get_by_role("listbox", name="Terminals").get_by_role("option")
+    search = picker.get_by_role("combobox", name="Select a machine")
+    options = picker.get_by_role("listbox", name="Machines").get_by_role("option")
     expect(options.filter(has_text=shells.name)).to_have_count(1)
     search.fill(f"no such terminal {uuid.uuid4().hex[:6]}")
     expect(options).to_have_count(0)
-    expect(picker.get_by_role("status")).to_have_text("No terminals found")
+    expect(picker.get_by_role("status")).to_have_text("No machines found")
     search.fill(shells.name.split()[-1])
     expect(options).to_have_count(1)
     expect(options).to_have_text(shells.name)
@@ -703,7 +703,7 @@ def _running_shells(person: Actor, terminal_id: str, chat_id: str = "") -> list[
     """The shells the terminal runs for the person, as the page would list them."""
     headers = {"X-Session-Id": chat_id} if chat_id else {}
     with person.client() as client:
-        listed = client.get(f"/api/v1/terminals/{terminal_id}{SHELLS}", headers=headers)
+        listed = client.get(f"/api/v1/machines/{terminal_id}{SHELLS}", headers=headers)
     assert listed.status_code == 200, listed.text
     return [shell["id"] for shell in listed.json()]
 

@@ -15,7 +15,7 @@ server.
 
 Discriminates: passes on the dev c15f28649 build. In a backend copy, with every relayed call
 sent to `/` the device has no `run_command` to offer and the first test fails; with no
-`terminals:changed` sent when a device connects, changes or goes, the second test fails (the
+`machines:changed` sent when a device connects, changes or goes, the second test fails (the
 open page never shows the device). With the user's Tether connections never looked up (dev
 485103cde) the third test fails (no tool server under "Your devices").
 """
@@ -83,7 +83,7 @@ def _serve_terminal(device: TetherDevice) -> None:
 
 def _open_terminal_menu(page: Page) -> Locator:
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_text("Machines", exact=True)).to_be_visible()
     return menu

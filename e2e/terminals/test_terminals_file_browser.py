@@ -68,7 +68,7 @@ def test_the_file_browser_of_a_chat_works_in_that_chats_machine(
     name = f"Per chat box {tag}"
     connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name, scope="chat")["terminal_id"]
+        terminal_id = create_template(client, connection, name=name, scope="chat")["machine_id"]
         share_template(client, terminal_id, read_grant(person.id))
     with person.client() as client:
         first_chat, _ = seed_chat(client, [{"role": "user", "content": f"first {tag}"}])

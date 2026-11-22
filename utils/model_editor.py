@@ -6,8 +6,9 @@ switch in one of them on or off, `default_features` holds the switches under the
 "Start enabled in new chats" and `set_default_feature` turns one of them on or off, `pick` ticks or
 unticks an entry in the search list of Tools, Skills, Filters or Actions and `save` saves and
 waits for the models list.
-`model_default_terminal` is the Default machine row of the editor or of Model Defaults,
-`expect_model_default_terminal` waits until it shows a terminal and
+`machine_part` is the editor's Machine part, `model_default_terminal` the default machine row
+of the editor or of Model Defaults,
+`expect_model_default_terminal` waits until it shows a machine and
 `choose_model_default_terminal` picks one in its list.
 `open_chat_on` starts a new chat on the model, `open_menu` opens one of the chat input's menus and
 `sent_request` sends a question and returns the request the scripted provider got for it.
@@ -38,27 +39,34 @@ def save(editor: Locator) -> None:
     expect(editor.page).to_have_url(re.compile(r"/workspace/models/?$"))
 
 
+def machine_part(editor: Locator) -> Locator:
+    """The model editor's Machine part, which holds the model's default machine."""
+    title = editor.page.locator("summary").get_by_text("Machine", exact=True)
+    return editor.locator("details").filter(has=title)
+
+
 def model_default_terminal(editor: Locator) -> Locator:
-    """The default machine, its label followed by the machine it shows: the Default machine row
-    of Model Defaults, or the title of the model editor's Machine section, which holds a Default
-    row."""
+    """The default machine row, a button named by its label and the machine it shows: Default in
+    the model editor's Machine part, which it opens, or Default machine in Model Defaults."""
+    part = machine_part(editor)
     defaults_row = editor.get_by_role("button", name=re.compile(r"^Default machine"))
-    title = editor.page.locator("summary > span:first-child").get_by_text("Machine", exact=True)
-    editor_section = editor.locator("details").filter(has=title).locator("summary")
-    return defaults_row.or_(editor_section)
+    expect(part.or_(defaults_row).first).to_be_visible()
+    if not part.count():
+        return defaults_row
+    if part.get_attribute("open") is None:
+        part.locator("summary").click()
+    expect(part).to_have_attribute("open", "")
+    return part.get_by_role("button", name=re.compile(r"^Default\b"))
 
 
 def expect_model_default_terminal(editor: Locator, name: str) -> None:
-    expect(model_default_terminal(editor)).to_have_text(
-        re.compile(rf"^\s*(Default machine|Machine)\W*{re.escape(name)}\s*$")
+    expect(model_default_terminal(editor)).to_have_accessible_name(
+        re.compile(rf"^Default( machine)?\W*{re.escape(name)}$")
     )
 
 
 def choose_model_default_terminal(editor: Locator, name: str) -> None:
-    row = model_default_terminal(editor)
-    if row.evaluate("element => element.tagName") == "SUMMARY":
-        row = section(editor, "Machine").get_by_role("button", name=re.compile(r"^Default\b"))
-    row.click()
+    model_default_terminal(editor).click()
     editor.page.get_by_role("menuitem", name=name, exact=True).click()
     expect_model_default_terminal(editor, name)
 

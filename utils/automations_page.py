@@ -148,15 +148,15 @@ def open_page_menu_entry(page: Page, name: str) -> None:
     ).click()
 
 
-def terminal_button(scope: Locator, shown: str = "Terminal") -> Locator:
+def terminal_button(scope: Locator, shown: str = "Machine") -> Locator:
     """The Terminal dropdown, which reads the picked terminal's name once one is picked."""
     return scope.get_by_role("button", name=shown, exact=True).first
 
 
-def open_terminal_menu(page: Page, scope: Locator, shown: str = "Terminal") -> Locator:
+def open_terminal_menu(page: Page, scope: Locator, shown: str = "Machine") -> Locator:
     terminal_button(scope, shown).click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_text("Terminal", exact=True)).to_be_visible()
+    expect(menu.get_by_text("Machine", exact=True)).to_be_visible()
     return menu
 
 
@@ -167,7 +167,7 @@ def toggle_terminal(page: Page, menu: Locator, name: str) -> None:
     expect(page.get_by_role("menu")).to_have_count(0)
 
 
-def close_terminal_menu(page: Page, scope: Locator, shown: str = "Terminal") -> None:
+def close_terminal_menu(page: Page, scope: Locator, shown: str = "Machine") -> None:
     terminal_button(scope, shown).click()
     # a dropdown opened while this one still fades out would be a second menu on the page
     expect(page.get_by_role("menu")).to_have_count(0)

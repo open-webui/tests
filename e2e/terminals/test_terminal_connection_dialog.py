@@ -1,18 +1,19 @@
 """Journey: an admin adds, checks, edits and deletes a terminal connection.
 
-Admin Settings > Integrations > Terminal lists the connections and opens the Add and the Edit
-Terminal Connection dialog, rebuilt in dev 6f2fc7bc7. A connection needs a name and an address;
+Admin Settings > Integrations > Machines lists the connections and opens the Add and the Edit
+Machine dialog, rebuilt in dev 6f2fc7bc7 (named Add and Edit Terminal Connection until the
+machines rename). A connection needs a name and an address;
 its ID is made up when none is typed and cannot be changed later. Verify Connection asks the
 instance what answers at the address: a plain Open Terminal, a Terminals service (the dialog
-then says that terminals are created from the terminal selector) or nothing (the dialog says
+then says that machines are created from the machine selector) or nothing (the dialog says
 so). Save runs the same check first when the kind is not known yet and stores nothing when it
 fails. The address is stored without a trailing slash, the key as typed (it is trimmed where it
 is sent), the auth choice as picked, except that a Terminals service is always stored with
-Bearer. A saved connection is listed at once and offered in the chat input's Terminal menu
+Bearer. A saved connection is listed at once and offered in the chat input's Machine menu
 without a reload. The Edit dialog starts from what is stored each time it opens and keeps the
 connection's switch and the entries it does not show. Access gives the terminal to people and
 groups, Advanced sets where the tool list is read from and whether cookies are forwarded, and
-Delete asks first. A save the instance refuses is reported as "Failed to save terminal servers"
+Delete asks first. A save the instance refuses is reported as "Failed to save machines"
 and stores nothing.
 
 The terminal is the fake from harness/terminal_server.py; a Terminals service is the same fake
@@ -20,10 +21,11 @@ answering the template list. e2e/admin/test_terminal_connection_settings.py hold
 Advanced settings that shape the model's tools, the untouched save and the red test for Auth
 None (the API Key field must be filled in whatever Auth says, so every test here types a key).
 
-Discriminates: passes on the dev c15f28649 build. Each test fails in a frontend build with a
+Discriminates: passes on the dev c15f28649 build and, after the machines rename, on the dev
+99e7b89be build. Each test fails in a frontend build with a
 change of its own, four builds with several changes each. The new connection test: Name not
 required; no ID made up; a new connection started on Default uploads; the list behind the
-Terminal menu not refreshed after a save (also the delete test). The verify test: the kind
+Machine menu not refreshed after a save (also the delete test). The verify test: the kind
 kept when the address changes; a failed check not shown (also the save check test). The save
 check test: a trailing slash kept; a failed check not stopping the save. The Terminals test:
 the picked auth stored. The auth test: the key trimmed when stored; Session and OAuth taken
@@ -33,7 +35,7 @@ an upload setting shown as Filesystem; the ID of a stored connection not locked.
 save test: the failure not reported. The access test: the access list not stored. The
 Advanced test: Forward cookies not stored; the path not stored; the preview joining address
 and path whatever the path is. The delete test: Delete not asking. The list test: the address
-and New Terminal fallbacks dropped.
+and New Machine fallbacks dropped.
 """
 
 from __future__ import annotations
@@ -77,8 +79,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 KEY = "harbour-key"
 SPEC = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
-NO_ANSWER = "Failed to connect to the terminal server"
-TERMINALS_HINT = "Create and configure terminals from the terminal selector."
+NO_ANSWER = "Failed to connect to the machine"
+TERMINALS_HINT = "Create and configure machines from the machine selector."
 AUTH_HINTS = {
     "Bearer": None,
     "None": "No authentication",
@@ -112,7 +114,7 @@ def admin_account(make_user, preserve):
 
 @pytest.fixture
 def open_terminals(page_for, admin_account):
-    """Opens the admin's page on Admin Settings > Integrations; returns it and the Terminal
+    """Opens the admin's page on Admin Settings > Integrations; returns it and the Machines
     section. Call it once the connections the test starts from are stored."""
 
     def open_them() -> tuple[Page, Locator]:
@@ -130,7 +132,7 @@ def _stored_connections(admin_account) -> list[dict]:
     with admin_account.client() as client:
         answer = client.get(TERMINAL_SERVERS_CONFIG[0])
     assert answer.status_code == 200, answer.text
-    return answer.json()["TERMINAL_SERVER_CONNECTIONS"]
+    return answer.json()["MACHINE_CONNECTIONS"]
 
 
 def _stored(admin_account, name: str) -> dict | None:
@@ -147,7 +149,7 @@ def _store(admin_account, *connections: dict) -> None:
 
 def _terminal_menu_of(account) -> list[str]:
     with account.client() as client:
-        answer = client.get("/api/v1/terminals/")
+        answer = client.get("/api/v1/machines/")
     assert answer.status_code == 200, answer.text
     return [entry["name"] for entry in answer.json()]
 
@@ -179,7 +181,7 @@ def test_a_new_connection_needs_a_name_and_an_address_and_is_offered_in_the_chat
     expect(save).to_be_enabled()
     expect(check).to_be_enabled()
     refused = field_the_browser_refuses(dialog)
-    assert refused and refused.startswith('"My Terminal"'), (
+    assert refused and refused.startswith('"My Machine"'), (
         f"a connection without a name is not held back at the Name field: {refused}"
     )
     save.click()
@@ -189,7 +191,7 @@ def test_a_new_connection_needs_a_name_and_an_address_and_is_offered_in_the_chat
     dialog.get_by_label("Name", exact=True).fill(f"  {name} ")
     save_terminal(page, dialog)
 
-    expect(page.get_by_text("Terminal servers saved")).to_be_visible()
+    expect(page.get_by_text("Machines saved")).to_be_visible()
     expect(connection_row(page.get_by_role("dialog"), name)).to_be_visible()
     [stored] = _stored_connections(admin_account)
     made_up_id = stored.pop("id")
@@ -432,10 +434,10 @@ def test_a_save_the_instance_refuses_is_reported_and_stores_nothing(
     assert field_the_browser_refuses(dialog) is None, "the browser holds the save back itself"
     dialog.get_by_role("button", name="Save", exact=True).click()
 
-    expect(page.get_by_text("Failed to save terminal servers")).to_be_visible()
-    expect(page.get_by_text("Terminal servers saved")).to_have_count(0)
+    expect(page.get_by_text("Failed to save machines")).to_be_visible()
+    expect(page.get_by_text("Machines saved")).to_have_count(0)
     with admin.client() as client:
-        after = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        after = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
     assert after == before, f"a refused save changed the stored connection to {after}"
 
 
@@ -589,7 +591,7 @@ def test_a_connection_is_listed_by_its_name_else_its_address_else_as_new_termina
 
     page, section = open_terminals()
 
-    for shown in (name, terminal.base_url, "New Terminal"):
+    for shown in (name, terminal.base_url, "New Machine"):
         expect(connection_row(section, shown)).to_be_visible()
     expect(section.get_by_role("switch")).to_have_count(3)
-    expect(section.get_by_text("No terminal connections configured.")).to_have_count(0)
+    expect(section.get_by_text("No machines configured.")).to_have_count(0)

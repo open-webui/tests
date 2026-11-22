@@ -135,7 +135,7 @@ def machine_files(person, shared_terminal, page_for):
         with person.client() as client:
             for file_name, content in files.items():
                 uploaded = client.post(
-                    f"/api/v1/terminals/{terminal_id}/files/upload",
+                    f"/api/v1/machines/{terminal_id}/files/upload",
                     params={"directory": HOME},
                     files={"file": (file_name, content, "application/octet-stream")},
                 )

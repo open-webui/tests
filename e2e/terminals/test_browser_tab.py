@@ -332,7 +332,7 @@ def test_a_saved_chats_browser_tab_comes_back_after_a_reload_and_reopens_once_it
             f"without a chat: {open_tabs(client, terminal_id)}"
         )
         session_id = client.get(
-            f"/api/v1/terminals/{terminal_id}/browser/tabs", headers={"X-Session-Id": chat_id}
+            f"/api/v1/machines/{terminal_id}/browser/tabs", headers={"X-Session-Id": chat_id}
         ).json()["tabs"][0]["session_id"]
 
     page.reload()
@@ -343,7 +343,7 @@ def test_a_saved_chats_browser_tab_comes_back_after_a_reload_and_reopens_once_it
 
     with person.client() as client:
         closed = client.delete(
-            f"/api/v1/terminals/{terminal_id}/browser/sessions/{session_id}",
+            f"/api/v1/machines/{terminal_id}/browser/sessions/{session_id}",
             headers={"X-Session-Id": chat_id},
         )
         assert closed.status_code == 200, f"ending the tab's session failed: {closed.text}"
@@ -372,7 +372,7 @@ def test_a_page_in_the_tab_cannot_reach_open_webui_even_with_same_origin_preview
     page_for, make_user, shared_terminal
 ):
     page, person, terminal_id, tag = _open_workbench(
-        page_for, make_user, shared_terminal, {"terminalPreviewAllowSameOrigin": True}
+        page_for, make_user, shared_terminal, {"machinePreviewAllowSameOrigin": True}
     )
     probe = (
         '<p id="reach">checking</p><script>'

@@ -111,7 +111,7 @@ def full_workbench(page_for, make_user, admin, preserve, full_open_terminal):
     with person.client() as client:
         for held in open_tabs(client, connection["id"]):
             client.delete(
-                f"/api/v1/terminals/{connection['id']}/browser/sessions/{held['session_id']}"
+                f"/api/v1/machines/{connection['id']}/browser/sessions/{held['session_id']}"
             )
 
 
@@ -187,7 +187,7 @@ def test_a_browser_tab_shows_the_page_in_the_terminals_chrome_and_passes_clicks_
     expect(view.get_by_role("status")).to_have_count(0)
     expect(view.get_by_role("alert")).to_have_count(0)
     with person.client() as client:
-        snapshot = client.get(f"/api/v1/terminals/{terminal_id}/browser/snapshot")
+        snapshot = client.get(f"/api/v1/machines/{terminal_id}/browser/snapshot")
     assert snapshot.status_code == 200, f"the model's snapshot of the tab failed: {snapshot.text}"
     assert f'heading "Keeper {tag}"' in snapshot.json()["snapshot"], (
         f"the Chrome behind the tab does not show the page: {snapshot.text}"

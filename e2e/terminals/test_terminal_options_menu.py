@@ -73,8 +73,8 @@ LISTINGS = {
 }
 SPEC = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
 USES = ["System info", "View files"]
-NOT_RUNNING = ["Start", "Terminal settings"]
-RUNNING = ["Restart", "Stop", "System info", "View files", "Terminal settings"]
+NOT_RUNNING = ["Start", "Machine settings"]
+RUNNING = ["Restart", "Stop", "System info", "View files", "Machine settings"]
 STOP_MESSAGE = (
     "Running work stops. Files are kept, and the machine starts again when it is next used."
 )
@@ -222,7 +222,7 @@ def test_a_plain_terminal_offers_its_system_info_and_files_and_nothing_to_manage
     _close(dialog)
     # viewing a terminal's files leaves the chat without a terminal
     composer = page.get_by_role("main")
-    expect(composer.get_by_role("button", name="Terminal", exact=True)).to_be_visible()
+    expect(composer.get_by_role("button", name="Machine", exact=True)).to_be_visible()
     expect(composer.get_by_role("button", name=name, exact=True)).to_have_count(0)
 
     _choose(page, name, "System info", offered=USES)
@@ -268,7 +268,7 @@ def test_a_manager_starts_stops_and_restarts_their_machine_from_the_terminals_op
     name = f"Slipway {tag}"
     connection = connect_terminals(write_grant(manager.id), read_grant(other.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
+        terminal_id = create_template(client, connection, name=name)["machine_id"]
         share_template(client, terminal_id, read_grant(other.id))
     _run(other, terminal_id, "true")
     page = page_for(manager)
@@ -336,7 +336,7 @@ def test_a_machine_whose_state_cannot_be_read_is_offered_as_one_that_is_not_runn
     name = f"Slipway {uuid.uuid4().hex[:8]}"
     connection = connect_terminals(write_grant(manager.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
+        terminal_id = create_template(client, connection, name=name)["machine_id"]
     _run(manager, terminal_id, "true")
     page = page_for(manager)
     _offered(open_terminal_options(page, name), RUNNING)
@@ -356,13 +356,13 @@ def test_on_a_terminal_with_a_machine_per_chat_the_options_are_about_the_open_ch
     name = f"Per chat berth {tag}"
     connection = connect_terminals(write_grant(manager.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection, name=name, scope="chat")["terminal_id"]
+        terminal_id = create_template(client, connection, name=name, scope="chat")["machine_id"]
     first = _saved_chat(manager, f"first {tag}")
     second = _saved_chat(manager, f"second {tag}")
     page = page_for(manager)
 
     # a chat that is not saved yet has no machine to act on
-    _offered(open_terminal_options(page, name), ["Terminal settings"])
+    _offered(open_terminal_options(page, name), ["Machine settings"])
     close_menu(page)
 
     page.goto(f"/c/{first}")

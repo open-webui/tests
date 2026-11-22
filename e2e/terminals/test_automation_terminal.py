@@ -45,6 +45,7 @@ from utils.automations_page import (
     automation_row,
     close_terminal_menu,
     expect_instructions,
+    new_automation_button,
     open_terminal_menu,
     save_changes,
     terminal_button,
@@ -103,7 +104,7 @@ def _stored(owner, automation_id: str) -> dict:
 
 def _open_create_dialog(page: Page) -> Locator:
     page.goto("/automations")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
+    new_automation_button(page).click()
     dialog = page.get_by_role("dialog")
     wait_until_loaded(dialog)
     return dialog
@@ -166,8 +167,8 @@ def test_a_terminal_and_working_directory_picked_for_an_automation_are_saved_and
     automation_id = _create(page, creating, prompt, title)
 
     stored = _stored(scheduler, automation_id)
-    assert stored["terminal"] == {"server_id": connection["id"], "cwd": DIRECTORY}, (
-        f"the automation was saved with the terminal {stored.get('terminal')}"
+    assert stored["machine"] == {"server_id": connection["id"], "cwd": DIRECTORY}, (
+        f"the automation was saved with the machine {stored.get('machine')}"
     )
 
     details = automation_page(page)
@@ -199,7 +200,7 @@ def test_picking_the_picked_terminal_again_takes_it_and_its_working_directory_of
             "prompt": f"count the nets {uuid.uuid4().hex[:6]}",
             "model_id": MOCK_MODEL_ID,
             "rrule": SCHEDULE,
-            "terminal": {"server_id": connection["id"], "cwd": DIRECTORY},
+            "machine": {"server_id": connection["id"], "cwd": DIRECTORY},
             "target": {"type": "chat"},
         },
     }
@@ -225,8 +226,8 @@ def test_picking_the_picked_terminal_again_takes_it_and_its_working_directory_of
     save_changes(page)
 
     stored = _stored(scheduler, automation_id)
-    assert stored.get("terminal") is None, (
-        f"the terminal taken off in the dialog is still saved: {stored['terminal']}"
+    assert stored.get("machine") is None, (
+        f"the machine taken off in the dialog is still saved: {stored['machine']}"
     )
 
 
@@ -261,6 +262,6 @@ def test_the_agents_of_a_picked_terminal_join_the_models_of_an_automation(
     assert stored["model_id"] == model_id(connection["id"], FAST), (
         f"the automation was saved with the model {stored['model_id']}"
     )
-    assert stored["terminal"]["server_id"] == connection["id"], (
-        f"the agent's automation was saved with the terminal {stored['terminal']}"
+    assert stored["machine"]["server_id"] == connection["id"], (
+        f"the agent's automation was saved with the machine {stored['machine']}"
     )

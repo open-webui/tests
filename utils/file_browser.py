@@ -20,7 +20,7 @@ from harness.terminal_server import configure_terminals, read_grant
 from utils.cached_chat import pick_terminal
 
 LIST_SECONDS = 10
-LOAD_FAILED = "Failed to load directory. Check your Terminal connection in Settings → Integrations."
+LOAD_FAILED = "Failed to load directory. Check the machine in Settings → Integrations."
 
 
 def file_browser(page: Page) -> Locator:

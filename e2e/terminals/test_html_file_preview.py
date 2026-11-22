@@ -163,11 +163,11 @@ def test_an_html_page_on_an_orchestrator_terminal_loads_from_a_link_signed_for_t
             (f"{HOME}/art", "label.png", samples.png(64, 48)),
         ):
             made = client.post(
-                f"/api/v1/terminals/{terminal_id}/files/mkdir", json={"path": directory}
+                f"/api/v1/machines/{terminal_id}/files/mkdir", json={"path": directory}
             )
             assert made.status_code == 200, f"making {directory}: {made.text}"
             uploaded = client.post(
-                f"/api/v1/terminals/{terminal_id}/files/upload",
+                f"/api/v1/machines/{terminal_id}/files/upload",
                 params={"directory": directory},
                 files={"file": (file_name, content, "application/octet-stream")},
             )
