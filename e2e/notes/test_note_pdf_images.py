@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import base64
 import io
-import re
 import time
 
 import numpy
@@ -31,7 +30,7 @@ from pypdf import PdfReader
 
 from harness.actors import Actor
 from utils.note_content import note_images
-from utils.notes_page import note_row
+from utils.notes_page import create_note, note_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -80,9 +79,7 @@ def _wait_until_stored(
 
 def _write_note(page: Page, author: Actor, title: str, with_image: bool) -> str:
     page.goto("/notes")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/notes/[0-9a-f-]+$"))
-    note_id = page.url.rsplit("/", 1)[1]
+    note_id = create_note(page)
 
     editor_page = page.get_by_role("main")
     editor_page.get_by_role("textbox", name="Title").fill(title)

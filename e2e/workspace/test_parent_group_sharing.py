@@ -40,7 +40,7 @@ from harness.group_tree import move_group
 from harness.python_tools import EVERYONE_READS
 from utils.chat_ui import chat_input, open_integrations_menu
 from utils.member_picker import pick_member
-from utils.notes_page import note_rows
+from utils.notes_page import choose, note_rows
 from utils.page_tabs import expect_no_permission
 from utils.workspace_list import item_row
 
@@ -120,10 +120,7 @@ def _read_only_note(page: Page, title: str, listed: str | None = None) -> Locato
     `listed` names a note the account surely reads, so a row missing next to it is truly absent.
     """
     page.goto("/notes")
-    main = page.get_by_role("main")
-    main.get_by_role("button", name="Write", exact=True).click()
-    page.get_by_role("button", name="Read Only", exact=True).click()
-    expect(main.get_by_role("button", name="Read Only", exact=True)).to_be_visible()
+    choose(page, "Filter", "Read Only")
     notes = note_rows(page)
     if listed:
         expect(notes.filter(has_text=listed)).to_be_visible()

@@ -33,6 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from utils.chat_ui import chat_input
+from utils.notes_page import create_note
 from utils.phone import (
     PHONE,
     SCREEN,
@@ -44,7 +45,6 @@ from utils.phone import (
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-NOTE_URL = re.compile(r"/notes/[0-9a-f-]+$")
 # a person's typing pace; keystrokes a few milliseconds apart can overtake each other's saves
 TYPING_DELAY_MS = 100
 
@@ -70,9 +70,7 @@ def open_notes(page: Page) -> None:
 
 def new_note(page: Page) -> str:
     open_notes(page)
-    tap_on_screen(drawer_page(page).get_by_role("button", name="Create", exact=True))
-    expect(page).to_have_url(NOTE_URL)
-    return page.url.rsplit("/", 1)[1]
+    return create_note(page, header=drawer_page(page), press=tap_on_screen)
 
 
 def editor(page: Page) -> Locator:

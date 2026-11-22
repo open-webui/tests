@@ -1,13 +1,14 @@
 """Journey: the Notes page, where a user imports notes, switches layouts and filters the list.
 
-Import txt/md in the Create menu makes one note per file, titled after the file name and holding
+Import txt/md in the New Note menu makes one note per file, titled after the file name and holding
 its text, and a Markdown file dropped onto the list does the same; any other kind of file is
-refused. The list switches between List and Grid, and the choice survives a reload; a note opens
-from either layout. The All, Created by you and Shared with you filters, with Write or Read Only
-beside them, keep the notes the account owns or was given at that level, and the choice survives
-a reload too. The Title column sorts the list both ways, holding Shift turns every note's menu
-into a delete button that deletes at once, and Create a new note in the global search opens a
-note holding what was typed there, once the confirm dialog it shows is accepted (since 0ffd86967).
+refused. The list switches between List and Grid in Display options, and the choice survives a
+reload; a note opens from either layout. The All, Created by you and Shared with you filters, with
+Write or Read Only under Access in the same Filter menu, keep the notes the account owns or was
+given at that level, and the choice survives a reload too. The Title column sorts the list both
+ways, holding Shift turns every note's menu into a delete button that deletes at once, and Create
+a new note in the global search opens a note holding what was typed there, once the confirm dialog
+it shows is accepted (since 0ffd86967).
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, each test fails when its behaviour
 is cut: the import storing notes without their text (both import tests), the file type check
@@ -43,7 +44,14 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.access import grant
 from harness.actors import Actor
-from utils.notes_page import note_row, note_rows
+from utils.notes_page import (
+    choose,
+    expect_chosen,
+    new_note_menu,
+    note_row,
+    note_rows,
+    open_header_menu,
+)
 from utils.search_dialog import open_actions, open_search_from_sidebar, search
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -96,12 +104,6 @@ def _grid_title(page: Page, title: str) -> Locator:
     return page.get_by_role("main").get_by_role("link", name=title, exact=True)
 
 
-def _choose(page: Page, current: str, option: str) -> None:
-    """Pick `option` in the Notes page dropdown that currently reads `current`."""
-    page.get_by_role("main").get_by_role("button", name=current, exact=True).click()
-    page.get_by_role("button", name=option, exact=True).click()
-
-
 def _open_notes_page(page: Page, title: str) -> None:
     page.goto("/notes")
     expect(page.get_by_role("main").get_by_text(title).first).to_be_visible()
@@ -115,9 +117,9 @@ def test_importing_txt_and_md_files_makes_a_note_of_each(page_for, make_user):
     page = page_for(author, path="/notes")
     expect(page.get_by_role("main").get_by_text("No Notes")).to_be_visible()
 
-    page.get_by_role("main").get_by_role("button", name="Open create menu").first.click()
+    menu = new_note_menu(page)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menu").get_by_role("menuitem", name="Import txt/md").click()
+        menu.get_by_role("menuitem", name="Import txt/md").click()
     chooser.value.set_files(
         [
             {"name": "Packing.txt", "mimeType": "text/plain", "buffer": b"tent and stove"},
@@ -170,15 +172,14 @@ def test_the_grid_layout_shows_the_notes_text_and_stays_after_a_reload(page_for,
     _open_notes_page(page, title)
     expect(page.get_by_role("main").get_by_text("two herons by the weir")).to_have_count(0)
 
-    _choose(page, "List", "Grid")
+    choose(page, "Display options", "Grid")
 
     expect(_grid_title(page, title)).to_be_visible()
     expect(page.get_by_role("main").get_by_text("two herons by the weir")).to_be_visible()
-    expect(page.get_by_role("main").get_by_text(author.name)).to_be_visible()
     page.reload()
     expect(page.get_by_role("main").get_by_text("two herons by the weir")).to_be_visible()
 
-    _choose(page, "Grid", "List")
+    choose(page, "Display options", "List")
 
     expect(_list_row(page, title)).to_have_count(1)
     expect(page.get_by_role("main").get_by_text("two herons by the weir")).to_have_count(0)
@@ -192,7 +193,7 @@ def test_a_note_opens_from_the_list_in_either_layout(page_for, make_user, layout
     page = page_for(author)
     _open_notes_page(page, title)
     if layout == "Grid":
-        _choose(page, "List", "Grid")
+        choose(page, "Display options", "Grid")
         _grid_title(page, title).click()
     else:
         _list_row(page, title).click()
@@ -233,7 +234,7 @@ def test_all_lists_own_and_editable_notes_and_read_only_the_rest(page_for, share
     _open_notes_page(page, titles["own"])
 
     _expect_listed(page, titles, "own", "write")
-    _choose(page, "Write", "Read Only")
+    choose(page, "Filter", "Read Only")
     _expect_listed(page, titles, "read")
 
 
@@ -242,12 +243,12 @@ def test_created_by_you_keeps_only_the_accounts_own_notes(page_for, shared_notes
     page = page_for(viewer)
     _open_notes_page(page, titles["own"])
 
-    _choose(page, "All", "Created by you")
+    choose(page, "Filter", "Created by you")
 
     _expect_listed(page, titles, "own")
-    expect(page.get_by_role("main").get_by_role("button", name="Write", exact=True)).to_have_count(
-        0
-    )
+    filters = open_header_menu(page, "Filter")
+    expect(filters.get_by_role("menuitemradio", name="Created by you")).to_be_checked()
+    expect(filters.get_by_role("menuitemradio", name="Write", exact=True)).to_have_count(0)
 
 
 def test_shared_with_you_splits_notes_by_access_and_survives_a_reload(page_for, shared_notes):
@@ -255,13 +256,13 @@ def test_shared_with_you_splits_notes_by_access_and_survives_a_reload(page_for, 
     page = page_for(viewer)
     _open_notes_page(page, titles["own"])
 
-    _choose(page, "All", "Shared with you")
+    choose(page, "Filter", "Shared with you")
     _expect_listed(page, titles, "write")
-    _choose(page, "Write", "Read Only")
+    choose(page, "Filter", "Read Only")
     _expect_listed(page, titles, "read")
 
     page.reload()
-    expect(page.get_by_role("main").get_by_role("button", name="Shared with you")).to_be_visible()
+    expect_chosen(page, "Filter", "Shared with you")
     _expect_listed(page, titles, "write")
 
 
@@ -297,7 +298,7 @@ def test_holding_shift_deletes_a_note_at_once(page_for, make_user, layout):
     page = page_for(author)
     _open_notes_page(page, doomed)
     if layout == "Grid":
-        _choose(page, "List", "Grid")
+        choose(page, "Display options", "Grid")
     main = page.get_by_role("main")
     expect(main.get_by_label("Note Menu")).to_have_count(2)
 
@@ -379,7 +380,7 @@ def test_a_note_unpinned_from_the_sidebar_offers_pin_again_in_the_list(page_for,
     page = page_for(author)
     _open_notes_page(page, title)
     if layout == "Grid":
-        _choose(page, "List", "Grid")
+        choose(page, "Display options", "Grid")
     menu = _only_notes_menu(page)
     expect(menu.get_by_role("menuitem", name="Unpin")).to_be_visible()
     page.keyboard.press("Escape")

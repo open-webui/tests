@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import base64
 import io
-import re
 import time
 
 import pytest
@@ -27,6 +26,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from utils.note_content import note_images
+from utils.notes_page import create_note
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -71,9 +71,7 @@ def _wait_until_stored_image(author: Actor, note_id: str, timeout: float = 15.0)
 
 def _note_with_pasted_image(page: Page, author: Actor) -> tuple[str, Locator]:
     page.goto("/notes")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/notes/[0-9a-f-]+$"))
-    note_id = page.url.rsplit("/", 1)[1]
+    note_id = create_note(page)
     editor = page.get_by_role("main").get_by_label("Write something...")
     editor.click()
     page.keyboard.type(TEXT)

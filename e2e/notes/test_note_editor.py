@@ -34,7 +34,6 @@ on that build without the focus returns.
 
 from __future__ import annotations
 
-import re
 import time
 from datetime import datetime
 
@@ -45,6 +44,7 @@ from harness import upstream as reply
 from harness.actors import Actor
 from utils.note_chat import note_chat_input
 from utils.note_menu import open_note_menu
+from utils.notes_page import create_note
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -54,9 +54,7 @@ TITLE_PROMPT = "Generate a concise title summarizing the content"
 
 def _new_note(page: Page) -> str:
     page.goto("/notes")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/notes/[0-9a-f-]+$"))
-    return page.url.rsplit("/", 1)[1]
+    return create_note(page)
 
 
 def _editor(page: Page) -> Locator:
