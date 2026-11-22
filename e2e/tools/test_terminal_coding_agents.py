@@ -34,7 +34,10 @@ as a base model, while it offers and edits the provider's model.
 Discriminates: these three pass on the dev c15f28649 build. The effort test fails in a backend
 copy that builds no model controls from the catalog (no Model controls row); the folder test
 fails in a backend copy whose `/api/models` does not pass the directory on (the folder's chat is
-offered the agent of the terminal's own directory); the edit and base model test fails on a
+offered the agent of the terminal's own directory). The folder test is red on dev 53d741157:
+since 06b47d455 the folder page sends a new chat from a tab beside it, and that tab takes the
+default model in place of the picked agent model (it passes on dev d74882eee; finding
+`open-webui-folder-page-agent-model-dropped`). The edit and base model test fails on a
 frontend build with the `terminal` checks of the model item menu and the base model list undone.
 
 A Pi agent model pinned to the sidebar opens a new chat on that model (#34168, PR #34171). The
@@ -64,7 +67,7 @@ from harness.terminal_server import (
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
 from utils.chat_controls import choose_model_control, model_control_row
-from utils.chat_surface import open_chat_tab_from, open_sidebar
+from utils.chat_surface import open_chat_tab_from, open_sidebar, start_on_folder_page
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -342,8 +345,10 @@ def test_a_folders_new_chat_offers_the_agents_of_its_terminal_and_directory(
         inside = page_for(person, path=f"/folders/{created.json()['id']}")
         expect(chat_input(inside)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
         select_model(inside, "opencode/model-of-atlas")
-        send(inside, "map the coast")
-        expect_reply(inside, "Scripted agent heard: map the coast")
+        # red on dev 53d741157: the chat tab the folder page opens takes the default model
+        # (finding open-webui-folder-page-agent-model-dropped)
+        folder_chat = start_on_folder_page(inside, "map the coast")
+        expect_reply(folder_chat, "Scripted agent heard: map the coast")
         assert agents.starts[-1].options["cwd"] == "/srv/atlas", (
             f"the folder chat's agent did not start in the folder's directory: {agents.starts[-1]}"
         )
