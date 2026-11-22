@@ -15,6 +15,8 @@ whose markdown paragraphs, lists and list items lose `dir="auto"` the reply test
 Arabic text sits on the left), dropping `dir="ltr"` from the code block turns the code test red,
 dropping `dir="auto"` from the sidebar entry turns the title test red, and a stylesheet that widens
 the chat input past the window for a right-to-left language turns the on-screen tests red.
+Retargeted for 82ca7733f, whose new chat page lists recent chats too: the title is read from
+the sidebar.
 """
 
 from __future__ import annotations
@@ -26,6 +28,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from utils.chat_surface import open_sidebar
 from utils.chat_ui import chat_input, expect_reply, last_reply, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -170,7 +173,7 @@ def test_a_chat_titled_in_arabic_reads_right_to_left_in_the_sidebar(page_for, ma
     created.raise_for_status()
     page = page_for(account)
 
-    entry = page.get_by_text(title)
+    entry = open_sidebar(page).get_by_text(title)
 
     expect(entry).to_be_visible()
     expect(entry).to_have_css("direction", "rtl")

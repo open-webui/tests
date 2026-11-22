@@ -31,6 +31,8 @@ panel stays closed when it has no tab to show, so that test opens it as an admin
 chat offers a side chat. Since 4615d30a6 the panel opens on its empty + menu instead of
 starting a side chat; retargeted, the test passes on dev c165ee14f. Since 617618c9e a window
 768px or wider always shows the tabs, so the test runs in a narrower one.
+Retargeted for 82ca7733f, whose new chat page lists recent chats too: the chats are read from
+the sidebar.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
 from harness.chat import ask
-from utils.chat_surface import MAIN_CHAT, SIDE_CHAT, main_chat, open_new_chat_tab
+from utils.chat_surface import MAIN_CHAT, SIDE_CHAT, main_chat, open_new_chat_tab, open_sidebar
 from utils.chat_ui import (
     chat_input,
     conversation,
@@ -291,7 +293,7 @@ def test_bound_chat_navigation_steps_through_the_sidebars_chats(page_for, accoun
     answers = {older.chat_id: "The older answer.", newer.chat_id: "The newer answer."}
     page = page_for(account)
     # two chats made within one second may be listed either way round
-    chat_links = page.locator('a[href^="/c/"]')
+    chat_links = open_sidebar(page).locator('a[href^="/c/"]')
     expect(chat_links).to_have_count(2)
     top_id, below_id = [link.get_attribute("href").removeprefix("/c/") for link in chat_links.all()]
     page.goto(f"/c/{top_id}")
