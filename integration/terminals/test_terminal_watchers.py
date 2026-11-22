@@ -140,12 +140,12 @@ def way_to(request, admin, make_user, preserve) -> Iterator[Callable[[str], Way]
     def connected(connection: dict) -> dict:
         preserve(TERMINAL_SERVERS_CONFIG)
         with admin.client() as client:
-            saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+            saved = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
             configure_terminals(client, *saved, connection)
         return connection
 
     def through_open_webui(person: Actor, terminal_id: str) -> tuple[str, dict, httpx.Client]:
-        files = file_requests(f"{person.base_url}/api/v1/terminals/{terminal_id}/", person.token)
+        files = file_requests(f"{person.base_url}/api/v1/machines/{terminal_id}/", person.token)
         sign_in = {"type": "auth", "token": person.token}
         return stream_url(person.base_url, terminal_id, "events"), sign_in, files
 
@@ -178,7 +178,7 @@ def way_to(request, admin, make_user, preserve) -> Iterator[Callable[[str], Way]
         grant = read_grant(person.id)
         connection = connected(terminals.connection(config={"access_grants": [grant]}))
         with admin.client() as client:
-            terminal_id = create_template(client, connection)["terminal_id"]
+            terminal_id = create_template(client, connection)["machine_id"]
             share_template(client, terminal_id, grant)
         # what Open WebUI names the person and their terminal by to the orchestrator
         named = {"X-User-Id": person.id, "X-Terminal-Template-Id": terminal_id.split(":")[2]}

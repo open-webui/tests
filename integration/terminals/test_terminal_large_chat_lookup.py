@@ -72,7 +72,7 @@ def terminal_id(admin, preserve, people, terminal) -> str:
 
 
 def _cwd_call(client, terminal_id: str, chat_id: str):
-    return client.get(f"/api/v1/terminals/{terminal_id}/chats/{chat_id}/files/cwd")
+    return client.get(f"/api/v1/machines/{terminal_id}/chats/{chat_id}/files/cwd")
 
 
 def _median_seconds(client, terminal_id: str, chat_id: str) -> float:

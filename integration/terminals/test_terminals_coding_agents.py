@@ -36,18 +36,18 @@ from harness.terminals import execute, output_of
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 REPLY_TIMEOUT = 60.0
-UNAVAILABLE = "Agent model is unavailable in the selected terminal"
+UNAVAILABLE = "Agent model is unavailable on the selected machine"
 
 
 def _agents_offered(client: httpx.Client, terminal_id: str, **params) -> set[str]:
-    listed = client.get("/api/models", params={"terminal_id": terminal_id, **params})
+    listed = client.get("/api/models", params={"machine_id": terminal_id, **params})
     assert listed.status_code == 200, f"the model list failed: {listed.status_code} {listed.text}"
     return {model["id"] for model in listed.json()["data"] if model["id"].startswith("agent:")}
 
 
 def _new_chat(client: httpx.Client, terminal_id: str) -> str:
     created = client.post(
-        "/api/v1/chats/new", json={"chat": {"title": "Agent work", "terminal_id": terminal_id}}
+        "/api/v1/chats/new", json={"chat": {"title": "Agent work", "machine_id": terminal_id}}
     )
     assert created.status_code == 200, f"creating the chat failed: {created.text}"
     return created.json()["id"]
@@ -55,7 +55,7 @@ def _new_chat(client: httpx.Client, terminal_id: str) -> str:
 
 def _agent_turn(client: httpx.Client, terminal_id: str, prompt: str, **extra) -> dict:
     turn = send_message(
-        client, prompt, model=model_id(terminal_id), terminal_id=terminal_id, **extra
+        client, prompt, model=model_id(terminal_id), machine_id=terminal_id, **extra
     )
     return wait_for_reply(client, turn, REPLY_TIMEOUT)
 
@@ -86,7 +86,7 @@ def test_a_person_is_offered_the_agents_of_their_own_machine_and_runs_them_there
             "/api/chat/completions",
             json={
                 "model": model_id(terminal_id),
-                "terminal_id": terminal_id,
+                "machine_id": terminal_id,
                 "messages": [{"role": "user", "content": "use the other machine's agent"}],
                 "stream": True,
             },
@@ -159,7 +159,7 @@ def test_on_a_per_model_terminal_an_agent_gets_the_machine_of_its_own_model_id(
 
     assert (foreign.status_code, foreign.json().get("detail")) == (
         403,
-        "Agent model does not belong to this terminal",
+        "Agent model does not belong to this machine",
     ), f"an agent of another terminal was let into this one: {foreign.status_code} {foreign.text}"
     assert started_for_it == [], f"a machine was started for it: {started_for_it}"
     assert reply.get("content") == f"Agent heard: {prompt} [model {FAST}, folder /home/user]", (

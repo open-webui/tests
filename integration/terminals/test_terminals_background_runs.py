@@ -120,7 +120,7 @@ def _automation(owner, terminal_id: str, prompt: str, **data):
             "prompt": prompt,
             "model_id": MOCK_MODEL_ID,
             "rrule": SCHEDULE,
-            "terminal": {"server_id": terminal_id},
+            "machine": {"server_id": terminal_id},
             **data,
         },
     }
@@ -174,7 +174,7 @@ def test_a_timer_set_in_a_chat_fires_in_that_chats_own_machine(
     )
 
     with person.client() as client:
-        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        turn, message = ask(client, prompt, machine_id=terminal_id)
     # due after two seconds and polled every second
     fired = wait_until(lambda: len(_requests_for(upstream, ring)) == 2, RUN_WAIT)
 
@@ -211,7 +211,7 @@ def test_a_sub_agent_works_in_the_persons_machine(
     )
 
     with person.client() as client:
-        _, message = ask(client, prompt, terminal_id=terminal_id)
+        _, message = ask(client, prompt, machine_id=terminal_id)
 
     assert message.get("content") == "Handed back.", f"the chat did not finish: {message}"
     delegated = _requests_for(upstream, task)
@@ -258,7 +258,7 @@ def test_a_sub_agent_on_a_per_chat_terminal_works_in_the_machine_of_the_chat_tha
     )
 
     with person.client() as client:
-        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        turn, message = ask(client, prompt, machine_id=terminal_id)
         returned = not background or wait_until(lambda: _requests_for(upstream, result), RUN_WAIT)
         delegated = [request for request in upstream.chat_requests() if _handed(task)(request)]
         read_in_the_chat = output_of(
@@ -326,7 +326,7 @@ def test_an_automation_run_starts_in_the_working_directory_saved_with_it(
         output_of(execute(client, terminal_id, f"mkdir {chosen}"))
 
     saved = _automation(
-        scheduler, terminal_id, prompt, terminal={"server_id": terminal_id, "cwd": chosen}
+        scheduler, terminal_id, prompt, machine={"server_id": terminal_id, "cwd": chosen}
     )
     assert saved.status_code == 200, f"saving the automation failed: {saved.text}"
     run = _finished_run(scheduler, saved.json()["id"])
@@ -342,7 +342,7 @@ def test_an_automation_cannot_be_saved_on_a_terminal_not_shared_with_its_owner(
 ):
     connection = connect_terminals(read_grant(scheduler.id))
     with admin.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
     prompt = f"check the moorings {uuid.uuid4().hex[:8]}"
 
     unshared = _automation(scheduler, terminal_id, prompt)
@@ -352,7 +352,7 @@ def test_an_automation_cannot_be_saved_on_a_terminal_not_shared_with_its_owner(
 
     assert (unshared.status_code, unshared.json().get("detail")) == (
         403,
-        "Terminal access denied",
+        "Machine access denied",
     ), f"an automation was saved on someone else's terminal: {unshared.status_code} {unshared.text}"
     assert shared.status_code == 200, f"the shared terminal was refused too: {shared.text}"
 
@@ -362,8 +362,8 @@ def test_a_per_chat_terminal_refuses_an_automation_that_posts_to_a_channel(
 ):
     connection = connect_terminals(read_grant(scheduler.id))
     with admin.client() as client:
-        per_chat = create_template(client, connection, scope="chat")["terminal_id"]
-        per_user = create_template(client, connection, scope="user")["terminal_id"]
+        per_chat = create_template(client, connection, scope="chat")["machine_id"]
+        per_user = create_template(client, connection, scope="user")["machine_id"]
         for terminal_id in (per_chat, per_user):
             share_template(client, terminal_id, read_grant(scheduler.id))
     target = {"type": "channel", "channel_id": _channel_written_by(admin, scheduler)}
@@ -375,7 +375,7 @@ def test_a_per_chat_terminal_refuses_an_automation_that_posts_to_a_channel(
 
     assert (refused.status_code, refused.json().get("detail")) == (
         400,
-        "This terminal requires a chat destination.",
+        "This machine requires a chat destination.",
     ), f"a per-chat terminal was saved for a channel: {refused.status_code} {refused.text}"
     assert to_a_chat.status_code == 200, (
         f"the per-chat terminal was refused for a chat as well: {to_a_chat.text}"

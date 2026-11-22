@@ -66,10 +66,10 @@ from harness.terminals import (
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
-TEMPLATES = "/api/v1/terminals/templates"
-WRITE_REQUIRED = (403, "Terminal connection write access required")
-NO_CONNECTION_ACCESS = (403, "Terminal connection access denied")
-NO_CONNECTION = (404, "Managed terminal connection not found")
+TEMPLATES = "/api/v1/machines/templates"
+WRITE_REQUIRED = (403, "Machine connection write access required")
+NO_CONNECTION_ACCESS = (403, "Machine connection access denied")
+NO_CONNECTION = (404, "Managed machine connection not found")
 # What the terminal's settings dialog and its machine menu call, the deletion last.
 MANAGEMENT_CALLS = [
     ("GET", "", None),
@@ -89,7 +89,7 @@ MANAGEMENT_CALLS = [
 def _menu(actor: Actor) -> dict[str, dict]:
     """The terminals the account's terminal menu offers, by id."""
     with actor.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return {entry["id"]: entry for entry in listed.json()}
 
@@ -202,7 +202,7 @@ def test_a_new_terminal_is_readable_by_its_creator_alone_who_keeps_it_without_wr
     created = _new_terminal(creator, connection["id"], template_id, name=name, scope="user")
 
     assert created.status_code == 201, f"creating the terminal failed: {created.text}"
-    terminal_id = created.json()["terminal_id"]
+    terminal_id = created.json()["machine_id"]
     assert terminal_id == f"template:{connection['id']}:{template_id}", (
         f"the new terminal is called by {terminal_id}"
     )
@@ -273,7 +273,7 @@ def test_a_writer_renames_and_changes_a_terminal_someone_else_created(
     )
     tag = uuid.uuid4().hex[:8]
     with creator.client() as client:
-        terminal_id = create_template(client, connection, name=f"Before {tag}")["terminal_id"]
+        terminal_id = create_template(client, connection, name=f"Before {tag}")["machine_id"]
         share_template(client, terminal_id, read_grant(creator.id), read_grant(reader.id))
     assert _menu(reader)[terminal_id]["name"] == f"Before {tag}", (
         f"the reader's menu shows the shared terminal as {_menu(reader)}"
@@ -306,7 +306,7 @@ def test_a_reader_is_refused_every_management_call_a_writer_makes(
     name = f"Bench {uuid.uuid4().hex[:8]}"
     shares = [("user", reader.id, "read"), ("user", writer.id, "read")]
     with writer.client() as client:
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
+        terminal_id = create_template(client, connection, name=name)["machine_id"]
         share_template(client, terminal_id, read_grant(writer.id), read_grant(reader.id))
 
     refused = _management_answers(reader, terminal_id)
@@ -351,7 +351,7 @@ def two_terminals(make_user, connect_terminals) -> dict:
         private = create_template(client, connection, name=f"Private {tag}", scope=None)
         share_template(
             client,
-            shared["terminal_id"],
+            shared["machine_id"],
             read_grant(people["reader"].id),
             read_grant(people["outsider"].id),
         )
@@ -362,7 +362,7 @@ def test_the_menu_shows_a_writer_every_terminal_and_a_reader_the_ones_shared_wit
     admin, two_terminals
 ):
     shared, private = two_terminals["shared"], two_terminals["private"]
-    both = {shared["terminal_id"], private["terminal_id"]}
+    both = {shared["machine_id"], private["machine_id"]}
 
     menus = {
         role: _menu(actor)
@@ -375,7 +375,7 @@ def test_the_menu_shows_a_writer_every_terminal_and_a_reader_the_ones_shared_wit
         "creator": both,
         "manager": both,
         "admin": both,
-        "reader": {shared["terminal_id"]},
+        "reader": {shared["machine_id"]},
         "onlooker": set(),
         "outsider": set(),
     }, f"the terminal menus show {seen}"
@@ -384,14 +384,14 @@ def test_the_menu_shows_a_writer_every_terminal_and_a_reader_the_ones_shared_wit
         for terminal_id, entry in menus["manager"].items()
     }
     assert listed == {
-        shared["terminal_id"]: (shared["data"]["name"], shared["id"], "user"),
-        private["terminal_id"]: (private["data"]["name"], private["id"], None),
+        shared["machine_id"]: (shared["data"]["name"], shared["id"], "user"),
+        private["machine_id"]: (private["data"]["name"], private["id"], None),
     }, f"the terminals are listed as {listed}"
 
 
 def test_a_terminal_is_used_only_with_a_share_and_access_to_its_connection(two_terminals):
-    shared = two_terminals["shared"]["terminal_id"]
-    private = two_terminals["private"]["terminal_id"]
+    shared = two_terminals["shared"]["machine_id"]
+    private = two_terminals["private"]["machine_id"]
 
     own = _machine(two_terminals["reader"], shared)
     assert own.status_code == 200 and own.json()["status"] == "not_created", (
@@ -409,8 +409,8 @@ def test_a_terminal_is_used_only_with_a_share_and_access_to_its_connection(two_t
         "outsider managing": _answer(_settings(two_terminals["outsider"], shared)),
     }
     assert refused == {
-        "reader, not shared": (403, "Terminal access denied"),
-        "onlooker": (403, "Terminal access denied"),
+        "reader, not shared": (403, "Machine access denied"),
+        "onlooker": (403, "Machine access denied"),
         "outsider, shared": NO_CONNECTION_ACCESS,
         "onlooker managing": WRITE_REQUIRED,
         "outsider managing": NO_CONNECTION_ACCESS,
@@ -424,7 +424,7 @@ def test_a_deleted_terminal_put_back_on_the_orchestrator_is_shared_with_nobody(
     connection = connect_terminals(write_grant(writer.id), read_grant(reader.id))
     with writer.client() as client:
         created = create_template(client, connection)
-        terminal_id = created["terminal_id"]
+        terminal_id = created["machine_id"]
         share_template(client, terminal_id, read_grant(reader.id))
         assert list(_menu(reader)) == [terminal_id], "the shared terminal is not in the menu"
         deleted = client.delete(f"{TEMPLATES}/{terminal_id}")
@@ -441,7 +441,7 @@ def test_a_deleted_terminal_put_back_on_the_orchestrator_is_shared_with_nobody(
         f"the deleted terminal's shares came back with it: {_shares(writer, terminal_id)}"
     )
     assert _menu(reader) == {}, f"the reader has the deleted terminal again: {_menu(reader)}"
-    assert _answer(_machine(reader, terminal_id)) == (403, "Terminal access denied"), (
+    assert _answer(_machine(reader, terminal_id)) == (403, "Machine access denied"), (
         "the reader may use the terminal again through the share it had before its deletion"
     )
 
@@ -452,7 +452,7 @@ def test_a_switched_off_connection_lists_and_serves_none_of_its_terminals(
     writer, reader = make_user(), make_user()
     connection = connect_terminals(write_grant(writer.id), read_grant(reader.id))
     with writer.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
         share_template(client, terminal_id, read_grant(reader.id))
     people = {"admin": admin, "writer": writer, "reader": reader}
     shown = {role: list(_menu(actor)) for role, actor in people.items()}
@@ -495,7 +495,7 @@ def test_an_id_that_names_no_template_is_refused_before_any_server_is_asked(
             configure_terminals(client, connection, plain_connection)
         with writer.client() as client:
             created = create_template(client, connection)
-        template_id, terminal_id = created["id"], created["terminal_id"]
+        template_id, terminal_id = created["id"], created["machine_id"]
         assert _settings(writer, terminal_id).status_code == 200, "the terminal is not readable"
         plain.clear()
         malformed = {
@@ -517,12 +517,12 @@ def test_an_id_that_names_no_template_is_refused_before_any_server_is_asked(
                 for call, path in [
                     ("settings", TEMPLATES + "/{id}"),
                     ("machine", TEMPLATES + "/{id}/instance"),
-                    ("files", "/api/v1/terminals/{id}/files/cwd"),
+                    ("files", "/api/v1/machines/{id}/files/cwd"),
                 ]
             }
 
         expected = {
-            (case, call): (400, "Invalid template terminal ID")
+            (case, call): (400, "Invalid template machine ID")
             if case in malformed
             else NO_CONNECTION
             for case, call in answers
@@ -548,7 +548,7 @@ def test_the_orchestrators_own_refusal_reaches_the_person_in_its_words(
     )
     with writer.client() as client:
         moved = client.patch(
-            f"{TEMPLATES}/{created['terminal_id']}", json={"network_profile": profile}
+            f"{TEMPLATES}/{created['machine_id']}", json={"network_profile": profile}
         )
 
     answers = {
@@ -574,8 +574,8 @@ def test_a_terminal_the_orchestrator_lost_is_gone_for_everyone(
         lost = create_template(client, connection)
         kept = create_template(client, connection)
         for terminal in (lost, kept):
-            share_template(client, terminal["terminal_id"], read_grant(reader.id))
-    assert set(_menu(reader)) == {lost["terminal_id"], kept["terminal_id"]}, (
+            share_template(client, terminal["machine_id"], read_grant(reader.id))
+    assert set(_menu(reader)) == {lost["machine_id"], kept["machine_id"]}, (
         f"the reader's menu shows {list(_menu(reader))}"
     )
 
@@ -583,23 +583,23 @@ def test_a_terminal_the_orchestrator_lost_is_gone_for_everyone(
         removed = service.delete(f"/api/v1/terminals/templates/{lost['id']}")
     assert removed.status_code == 200, f"the orchestrator kept the terminal: {removed.text}"
 
-    assert list(_menu(reader)) == [kept["terminal_id"]], (
+    assert list(_menu(reader)) == [kept["machine_id"]], (
         f"the reader's menu shows {list(_menu(reader))} after the orchestrator lost a terminal"
     )
     gone = (404, "Template not found")
     answers = {
-        "settings": _answer(_settings(writer, lost["terminal_id"])),
-        "machine": _answer(_machine(reader, lost["terminal_id"])),
+        "settings": _answer(_settings(writer, lost["machine_id"])),
+        "machine": _answer(_machine(reader, lost["machine_id"])),
     }
     with writer.client() as client:
-        answers["deletion"] = _answer(client.delete(f"{TEMPLATES}/{lost['terminal_id']}"))
+        answers["deletion"] = _answer(client.delete(f"{TEMPLATES}/{lost['machine_id']}"))
         answers["sharing"] = _answer(
-            client.post(f"{TEMPLATES}/{lost['terminal_id']}/access", json={"access_grants": []})
+            client.post(f"{TEMPLATES}/{lost['machine_id']}/access", json={"access_grants": []})
         )
     assert answers == {call: gone for call in answers}, (
         f"a terminal the orchestrator no longer has is answered for with {answers}"
     )
-    assert _machine(reader, kept["terminal_id"]).status_code == 200, "the other terminal broke"
+    assert _machine(reader, kept["machine_id"]).status_code == 200, "the other terminal broke"
 
 
 def test_a_redirecting_orchestrator_is_asked_with_the_connections_key_and_not_followed(
@@ -646,7 +646,7 @@ def test_a_connection_without_a_key_asks_the_orchestrator_nothing(
     writer = make_user()
     connection = connect_terminals(write_grant(writer.id))
     with writer.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
     assert list(_menu(writer)) == [terminal_id], "the terminal is not in its creator's menu"
     assert _limits(writer, connection["id"]).status_code == 200, "the limits are not readable"
 
@@ -689,7 +689,7 @@ def test_a_stopped_orchestrator_is_reported_while_the_other_terminals_stay_liste
         with admin.client() as client:
             configure_terminals(client, connection, plain_connection)
         with writer.client() as client:
-            terminal_id = create_template(client, connection)["terminal_id"]
+            terminal_id = create_template(client, connection)["machine_id"]
         assert set(_menu(writer)) == {terminal_id, plain_connection["id"]}, (
             f"the menu shows {list(_menu(writer))} while the orchestrator runs"
         )
@@ -757,12 +757,12 @@ def test_without_the_bypass_an_admin_needs_a_grant_once_the_connection_has_grant
         f"an admin cannot create on a connection without grants: {_offered(strict_admin)}"
     )
     with strict_admin.client() as client:
-        own = create_template(client, ungranted)["terminal_id"]
+        own = create_template(client, ungranted)["machine_id"]
     assert list(_menu(strict_admin)) == [own], f"the admin's menu shows {list(_menu(strict_admin))}"
 
     granted = connect(write_grant(writer.id), id=ungranted["id"])
     with writer.client() as client:
-        theirs = create_template(client, granted)["terminal_id"]
+        theirs = create_template(client, granted)["machine_id"]
     assert set(_menu(writer)) == {own, theirs}, f"the writer's menu shows {list(_menu(writer))}"
 
     assert _offered(strict_admin) == [], (
@@ -797,7 +797,7 @@ def test_with_the_bypass_an_admin_manages_a_connection_granted_to_someone_else(
     writer = make_user()
     connection = connect_terminals(write_grant(writer.id))
     with writer.client() as client:
-        theirs = create_template(client, connection)["terminal_id"]
+        theirs = create_template(client, connection)["machine_id"]
 
     assert _offered(admin) == [{"id": connection["id"], "name": connection["name"]}], (
         f"New terminal offers the admin {_offered(admin)}"
@@ -821,7 +821,7 @@ def test_with_tool_servers_off_every_template_call_is_refused(
     connection = connect_terminals()
     with admin.client() as client:
         created = create_template(client, connection)
-    terminal_id = created["terminal_id"]
+    terminal_id = created["machine_id"]
     off_admin, _, connect = on_instance({"ENABLE_TOOL_SERVERS": "false"})
     connect(id=connection["id"])
     disabled = (403, "Tool servers are disabled")

@@ -49,15 +49,15 @@ from harness.terminals import create_template, execute, output_of, share_templat
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
-TEMPLATES = "/api/v1/terminals/templates"
-NOT_SHARED = (403, "Terminal access denied")
+TEMPLATES = "/api/v1/machines/templates"
+NOT_SHARED = (403, "Machine access denied")
 AUDIENCE_REFUSED = (403, "You do not have permission to share with the requested audience")
 
 
 def _menu(actor: Actor) -> list[str]:
     """The ids of the terminals the account's terminal menu offers."""
     with actor.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return [entry["id"] for entry in listed.json()]
 
@@ -98,7 +98,7 @@ def test_sharing_replaces_who_sees_and_uses_a_terminal(make_user, connect_termin
         write_grant(writer.id), read_grant(first.id), read_grant(second.id)
     )
     with writer.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
 
     assert _share(writer, terminal_id, read_grant(first.id)) == (200, None), "sharing failed"
     assert _shares(writer, terminal_id) == [("user", first.id, "read")], (
@@ -136,10 +136,10 @@ def test_a_share_names_a_person_or_a_group_and_is_for_reading(admin, make_user, 
         write_grant(writer.id), read_grant(reader.id), read_grant(other.id)
     )
     with writer.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
         share_template(client, terminal_id, read_grant(reader.id))
     shared_before = [("user", reader.id, "read")]
-    public = (400, "Public terminal sharing is not allowed")
+    public = (400, "Public machine sharing is not allowed")
     read_only = (400, "Template access grants must be read-only")
 
     refused = {
@@ -173,7 +173,7 @@ def test_a_share_names_a_person_or_a_group_and_is_for_reading(admin, make_user, 
     )
     assert _answer(_settings_of(other, terminal_id)) == (
         403,
-        "Terminal connection write access required",
+        "Machine connection write access required",
     ), "a refused write share lets its audience manage the terminal"
 
     accepted = _share(writer, terminal_id, read_grant(reader.id), grant("group", team, "read"))
@@ -196,7 +196,7 @@ def test_a_terminal_shared_with_a_group_is_its_members_until_they_leave(
     connection = connect_terminals(read_grant(member.id), read_grant(colleague.id))
     tag = uuid.uuid4().hex[:8]
     with admin.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
         share_template(client, terminal_id, grant("group", team, "read"))
 
     seen = {"member": _menu(member), "colleague": _menu(colleague)}
@@ -241,7 +241,7 @@ def test_a_person_shares_only_with_the_audiences_their_permissions_allow(
         write_grant(plain.id), write_grant(trusted.id), read_grant(reader.id)
     )
     with plain.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
     to_person, to_group = read_grant(reader.id), grant("group", team, "read")
 
     refused = {
@@ -279,7 +279,7 @@ def _changes(tab: SocketSession) -> int:
     return sum(
         1
         for event in list(tab.events)
-        if (event.get("data") or {}).get("type") == "terminals:changed"
+        if (event.get("data") or {}).get("type") == "machines:changed"
     )
 
 
@@ -304,7 +304,7 @@ def test_every_change_of_a_terminal_is_pushed_to_the_tabs_of_those_who_have_it(
         connected(bystander) as bystanders,
         writer.client() as client,
     ):
-        terminal_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
         _expect_changes("the creation", writer=(writers, 1))
 
         share_template(client, terminal_id, read_grant(reader.id))
@@ -330,7 +330,7 @@ def test_every_change_of_a_terminal_is_pushed_to_the_tabs_of_those_who_have_it(
 
         # one change for all three: a tab gets its events in order, so anything it was
         # wrongly sent before is counted by the time this one arrives
-        other_id = create_template(client, connection)["terminal_id"]
+        other_id = create_template(client, connection)["machine_id"]
         share_template(client, other_id, read_grant(reader.id), read_grant(bystander.id))
         _expect_changes(
             "a share with all three",
@@ -382,7 +382,7 @@ def test_a_change_made_on_one_worker_reaches_a_tab_on_another(workers, terminals
                 connected(reader_on_far) as readers,
                 writer.client() as client,
             ):
-                terminal_id = create_template(client, connection)["terminal_id"]
+                terminal_id = create_template(client, connection)["machine_id"]
                 _expect_changes("the creation", writer=(writers, 1))
                 assert _menu(reader_on_far) == [], (
                     f"the other worker lists an unshared terminal: {_menu(reader_on_far)}"

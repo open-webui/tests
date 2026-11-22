@@ -129,7 +129,7 @@ def new_shell() -> Iterator[Callable[..., str]]:
     def start(person: Actor, terminal_id: str, chat_id: str = "") -> str:
         headers = {"X-Session-Id": chat_id} if chat_id else {}
         with person.client() as client:
-            created = client.post(f"/api/v1/terminals/{terminal_id}/api/terminals", headers=headers)
+            created = client.post(f"/api/v1/machines/{terminal_id}/api/terminals", headers=headers)
         assert created.status_code == 200, f"starting a shell failed: {created.text}"
         started.append((person, terminal_id, created.json()["id"], headers))
         return created.json()["id"]
@@ -138,7 +138,7 @@ def new_shell() -> Iterator[Callable[..., str]]:
     for person, terminal_id, shell_id, headers in started:
         with person.client() as client:
             client.delete(
-                f"/api/v1/terminals/{terminal_id}/api/terminals/{shell_id}", headers=headers
+                f"/api/v1/machines/{terminal_id}/api/terminals/{shell_id}", headers=headers
             )
 
 
@@ -262,7 +262,7 @@ def test_file_changes_and_command_output_arrive_live(a_terminal):
     tag = uuid.uuid4().hex[:8]
     command = f"for n in 1 2 3; do echo line-$n-{tag}; sleep 0.3; done"
     with person.client() as client:
-        folder = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        folder = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
         assert folder.status_code == 200, folder.text
 
         with terminal_socket(person.base_url, person.token, terminal_id, "events") as events:
@@ -271,7 +271,7 @@ def test_file_changes_and_command_output_arrive_live(a_terminal):
             output_of(execute(client, terminal_id, f"touch made-{tag}"))
             changed = json.loads(events.recv(timeout=15))
 
-        started = client.post(f"/api/v1/terminals/{terminal_id}/execute", json={"command": command})
+        started = client.post(f"/api/v1/machines/{terminal_id}/execute", json={"command": command})
         assert started.status_code == 200, started.text
         process_id = started.json()["id"]
 
@@ -338,8 +338,8 @@ def test_a_stream_on_a_terminal_the_person_may_not_use_is_refused_saying_why(
     member, outsider = make_user(), make_user()
     connection = connect_terminals(read_grant(member.id), read_grant(outsider.id))
     with admin.client() as client:
-        per_person = create_template(client, connection)["terminal_id"]
-        per_chat = create_template(client, connection, scope="chat")["terminal_id"]
+        per_person = create_template(client, connection)["machine_id"]
+        per_chat = create_template(client, connection, scope="chat")["machine_id"]
         share_template(client, per_person, read_grant(member.id))
         share_template(client, per_chat, read_grant(member.id))
     chat_id = _saved_chat(member, "a chat with a machine of its own")
@@ -355,9 +355,9 @@ def test_a_stream_on_a_terminal_the_person_may_not_use_is_refused_saying_why(
     assert answers == {
         "shared with them": {"type": "fs:ready"},
         "their saved chat": {"type": "fs:ready"},
-        "the connection itself": (4003, "Select a terminal template"),
-        "not shared with them": (4003, "Terminal access denied"),
-        "no saved chat": (4003, "This terminal requires a saved chat"),
+        "the connection itself": (4003, "Select a machine template"),
+        "not shared with them": (4003, "Machine access denied"),
+        "no saved chat": (4003, "This machine requires a saved chat"),
     }, f"the live file events of the orchestrator's terminals answered {answers}"
     machines = sorted(machine["context_id"] for machine in terminals.instances())
     assert machines == sorted([f"user:{member.id}", f"chat:{chat_id}"]), (
@@ -371,8 +371,8 @@ def test_a_shell_runs_in_the_machine_of_its_person_or_of_its_chat(
     person = make_user()
     connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
-        per_person = create_template(client, connection)["terminal_id"]
-        per_chat = create_template(client, connection, scope="chat")["terminal_id"]
+        per_person = create_template(client, connection)["machine_id"]
+        per_chat = create_template(client, connection, scope="chat")["machine_id"]
         share_template(client, per_person, read_grant(person.id))
         share_template(client, per_chat, read_grant(person.id))
     chat_id = _saved_chat(person, "a chat with a machine of its own")
@@ -427,7 +427,7 @@ def test_an_open_shell_ends_once_its_terminal_is_no_longer_shared_with_the_perso
         f"{RECHECK_BOUND_SECONDS}s after the terminal was unshared the person's shell was "
         "still open"
     )
-    assert closed == (4003, "Terminal access denied"), (
+    assert closed == (4003, "Machine access denied"), (
         f"the shell on the terminal no longer shared with its person ended with {closed}"
     )
     assert kept_runs, "the shell of the person who kept the terminal stopped with the other"

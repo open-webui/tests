@@ -67,7 +67,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 SCHEDULE = "DTSTART:20990101T090000\nRRULE:FREQ=DAILY"
 RUN_WAIT = 60.0
-UNAVAILABLE = "The configured terminal is unavailable for this automation."
+UNAVAILABLE = "The configured machine is unavailable for this automation."
 SHELL_TOOLS = {"read_user_terminal", "send_user_terminal_input"}
 USER_SHELL_PATH = "/api/terminals/user/output"
 
@@ -141,11 +141,11 @@ def _connect(admin, *servers: FakeTerminalServer, shared_with=(), **fields) -> l
     return [connection["id"] for connection in connections]
 
 
-def _form(prompt: str, terminal: dict | None = None, **data) -> dict:
-    """An automation as its editor sends it; `terminal` is `{server_id, cwd}`."""
+def _form(prompt: str, machine: dict | None = None, **data) -> dict:
+    """An automation as its editor sends it; `machine` is `{server_id, cwd}`."""
     data = {"prompt": prompt, "model_id": MOCK_MODEL_ID, "rrule": SCHEDULE, **data}
-    if terminal:
-        data["terminal"] = terminal
+    if machine:
+        data["machine"] = machine
     return {"name": f"Watch {uuid.uuid4().hex[:8]}", "is_active": False, "data": data}
 
 
@@ -160,7 +160,7 @@ def _stored_terminal(owner, automation_id: str) -> dict | None:
     with owner.client() as client:
         read = client.get(f"/api/v1/automations/{automation_id}")
     assert read.status_code == 200, read.text
-    return read.json()["data"].get("terminal")
+    return read.json()["data"].get("machine")
 
 
 def _finished_run(owner, automation_id: str) -> dict:
@@ -242,7 +242,7 @@ def test_an_automation_keeps_the_terminal_and_working_directory_it_was_saved_wit
         cleared = client.post(f"/api/v1/automations/{automation['id']}/update", json=_form(prompt))
         after_clearing = _stored_terminal(scheduler, automation["id"])
 
-    assert automation["data"]["terminal"] == first, (
+    assert automation["data"]["machine"] == first, (
         f"the answer to Create names another terminal: {automation['data']}"
     )
     assert after_create == first, f"the saved automation holds {after_create}"
@@ -380,7 +380,7 @@ def test_an_automation_without_a_terminal_runs_on_the_default_terminal_of_its_mo
                     "id": preset,
                     "base_model_id": MOCK_MODEL_ID,
                     "name": f"Harbour {tag}",
-                    "meta": {"terminalId": model_terminal},
+                    "meta": {"machineId": model_terminal},
                     "params": {},
                     "access_grants": [read_grant(scheduler.id)],
                 },
@@ -460,7 +460,7 @@ def test_the_tools_for_a_persons_open_shell_are_not_offered_to_a_run(
         upstream.queue(reply.text("Looked.", match=reply.answering(prompt)))
 
     with scheduler.client() as client:
-        ask(client, in_a_chat, terminal_id=terminal_id)
+        ask(client, in_a_chat, machine_id=terminal_id)
     automation = _saved(scheduler, _form(in_a_run, {"server_id": terminal_id}))
     run = _finished_run(scheduler, automation["id"])
 
@@ -488,8 +488,8 @@ def test_an_automation_on_a_terminal_with_a_machine_per_model_needs_a_model_its_
     private, name = f"harbour-{tag}", f"moorings-{tag}.txt"
     prompt = f"check the moorings {tag}"
     with admin.client() as client:
-        per_model = create_template(client, connection, scope="model")["terminal_id"]
-        per_user = create_template(client, connection, scope="user")["terminal_id"]
+        per_model = create_template(client, connection, scope="model")["machine_id"]
+        per_user = create_template(client, connection, scope="user")["machine_id"]
         for terminal_id in (per_model, per_user):
             share_template(client, terminal_id, read_grant(scheduler.id))
         created = client.post(
@@ -542,11 +542,11 @@ def test_an_automation_on_a_terminal_with_a_machine_per_model_needs_a_model_its_
 @pytest.mark.parametrize(
     "change, refusal",
     [
-        ("without a terminal", "Select a terminal for the agent."),
+        ("without a terminal", "Select a machine for the agent."),
         ("posting to a channel", "Agent automations require a chat destination."),
         (
             "naming an agent the terminal lacks",
-            "Agent model is unavailable in the configured terminal.",
+            "Agent model is unavailable on the configured machine.",
         ),
     ],
 )
@@ -558,7 +558,7 @@ def test_an_agent_automation_needs_its_terminal_a_chat_and_an_agent_the_terminal
     valid = _form(prompt, {"server_id": terminal_id}, model_id=model_id(terminal_id, FAST))
     changed = json.loads(json.dumps(valid))
     if change == "without a terminal":
-        del changed["data"]["terminal"]
+        del changed["data"]["machine"]
     if change == "posting to a channel":
         changed["data"]["target"] = {
             "type": "channel",
@@ -632,7 +632,7 @@ def test_the_editor_reads_a_terminals_agents_only_for_who_may_use_automations_an
     def agents(account, **params) -> tuple[int, list[str] | dict]:
         with account.client() as client:
             answer = client.get(
-                "/api/v1/automations/models", params={"terminal_id": terminal_id, **params}
+                "/api/v1/automations/models", params={"machine_id": terminal_id, **params}
             )
         if answer.status_code != 200:
             return answer.status_code, answer.json()

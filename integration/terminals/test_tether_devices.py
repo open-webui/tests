@@ -20,7 +20,7 @@ services, which takes its terminal off the list and back, and hands in the renew
 session. A token of another session, of another account or of a plain sign-in ends the
 connection, as does a message the server cannot read, while a frame of no call is ignored. The
 owner's open pages, and nobody else's, are told each time a device comes, changes or goes
-(`terminals:changed`).
+(`machines:changed`).
 
 In a chat. The model gets the device's tools, its system prompt, the AGENTS.md of its home and
 its skills, and its call runs on the device in the owner's name with the chat's id. A picture
@@ -76,7 +76,7 @@ taken unchecked each fail their cases of the refused-hello test; a window not ca
 trimmed and no terminal for version 1 each fail the within-the-rules test.
 Reconnect and updates: the earlier connection left open, or the same id of any account closed,
 fails the reconnect test; a services update that ignores the name, ignores the services or
-takes any name fails the rename test; no `terminals:changed` on connect, on a change or on
+takes any name fails the rename test; no `machines:changed` on connect, on a change or on
 disconnect, and one sent to every page, each fail the pages test; an auth update that takes any
 token, or none, fails the renewal cases; a frame of no call that closes the device, and an
 unreadable frame that is skipped, each fail the frame test.
@@ -148,7 +148,7 @@ CWD = {"cwd": f"{HOME}/work", "home": HOME}
 
 def _terminal_entries(actor) -> list[dict]:
     with actor.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return listed.json()
 
@@ -168,7 +168,7 @@ def _devices(actor) -> dict[str, str]:
 
 def _cwd_of(actor, device: TetherDevice) -> httpx.Response:
     with actor.client() as client:
-        return client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+        return client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
 
 
 def _without_message(answer) -> dict:
@@ -187,7 +187,7 @@ def test_a_call_to_a_devices_terminal_reaches_the_device_as_its_owner_and_is_ans
         return json_answer({"wrote": request.json()["content"]}, status=201)
 
     device.route("POST", "/files/write", written)
-    call = f"/api/v1/terminals/{device.terminal_id}/files/write"
+    call = f"/api/v1/machines/{device.terminal_id}/files/write"
     with owner.client() as client:
         answered = client.post(
             call,
@@ -244,11 +244,11 @@ def test_a_body_larger_than_the_relay_window_crosses_whole_both_ways(make_user, 
     with owner.client() as client:
         client.timeout = 40
         stored = client.post(
-            f"/api/v1/terminals/{device.terminal_id}/files/upload",
+            f"/api/v1/machines/{device.terminal_id}/files/upload",
             content=upload,
             headers={"Content-Type": "application/octet-stream"},
         )
-        fetched = client.get(f"/api/v1/terminals/{device.terminal_id}/files/view")
+        fetched = client.get(f"/api/v1/machines/{device.terminal_id}/files/view")
 
     assert stored.status_code == 200, f"the upload answered {stored.status_code} {stored.text}"
     assert stored.json() == {"sha256": hashlib.sha256(upload).hexdigest()}, (
@@ -268,14 +268,14 @@ def test_a_device_that_hangs_up_mid_call_answers_interrupted_and_leaves_the_list
     device.route("GET", "/files/cwd", json_answer({"cwd": "/home/user"}))
     device.route("POST", "/execute", lambda _request: device.drop())
     with owner.client() as client:
-        before = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+        before = client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
         interrupted = client.post(
-            f"/api/v1/terminals/{device.terminal_id}/execute", json={"command": "make"}
+            f"/api/v1/machines/{device.terminal_id}/execute", json={"command": "make"}
         )
         assert wait_until(lambda: device.terminal_id not in _listed_terminals(owner), 10), (
             "the device stayed on its owner's terminal list after it hung up"
         )
-        after = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+        after = client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
 
     assert (before.status_code, before.json()) == (200, {"cwd": "/home/user"}), before.text
     assert [entry.json() for entry in device.requests_to("/execute")] == [{"command": "make"}]
@@ -320,9 +320,9 @@ def test_an_answer_the_device_breaks_off_interrupts_that_call_only(
     device.route("POST", "/execute", broken)
     with owner.client() as client:
         interrupted = client.post(
-            f"/api/v1/terminals/{device.terminal_id}/execute", json={"command": "make"}
+            f"/api/v1/machines/{device.terminal_id}/execute", json={"command": "make"}
         )
-        after = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+        after = client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
 
     assert len(device.requests_to("/execute")) == 1, "the call never reached the device"
     assert interrupted.status_code == 502, (
@@ -535,7 +535,7 @@ def _changes(tab: SocketSession) -> int:
     return sum(
         1
         for event in list(tab.events)
-        if (event.get("data") or {}).get("type") == "terminals:changed"
+        if (event.get("data") or {}).get("type") == "machines:changed"
     )
 
 
@@ -702,7 +702,7 @@ def test_a_chat_on_a_device_gives_the_model_its_tools_instructions_and_skills_an
     )
 
     with owner.client() as client:
-        turn, message = ask(client, prompt, terminal_id=device.terminal_id)
+        turn, message = ask(client, prompt, machine_id=device.terminal_id)
 
     assert message["content"] == f"built {tag}", f"the reply ended as {message}"
     asked, told = _requests_for(upstream, prompt)
@@ -795,7 +795,7 @@ def test_the_model_is_told_why_when_the_device_is_lost_before_its_call(
     )
 
     with owner.client() as client:
-        turn = send_message(client, prompt, terminal_id=device.terminal_id)
+        turn = send_message(client, prompt, machine_id=device.terminal_id)
         try:
             assert wait_until(lambda: _requests_for(upstream, prompt), 30), (
                 "the turn never reached the model"
@@ -830,7 +830,7 @@ def test_a_device_that_hangs_up_during_the_models_call_tells_the_model_not_to_re
     )
 
     with owner.client() as client:
-        _, message = ask(client, prompt, terminal_id=device.terminal_id)
+        _, message = ask(client, prompt, machine_id=device.terminal_id)
 
     _, answered = _requests_for(upstream, prompt)
     [result] = _tool_results(answered)
@@ -861,7 +861,7 @@ def test_a_device_that_never_answers_a_question_before_the_turn_is_given_up_on_a
     )
 
     with owner.client() as client:
-        _, message = ask(client, prompt, terminal_id=device.terminal_id)
+        _, message = ask(client, prompt, machine_id=device.terminal_id)
 
     asked, told = _requests_for(upstream, prompt)
     [unanswered] = device.requests_to("/api/config")
@@ -888,7 +888,7 @@ def test_a_device_works_on_sixteen_calls_at_once_and_refuses_the_next(make_user,
 
     device.route("GET", "/files/cwd", slow)
     device.route("GET", "/files/list", json_answer({"entries": []}))
-    listing = f"/api/v1/terminals/{device.terminal_id}/files/list"
+    listing = f"/api/v1/machines/{device.terminal_id}/files/list"
 
     with ThreadPoolExecutor(16) as callers, owner.client() as client:
         try:
@@ -926,7 +926,7 @@ def test_an_answer_over_16_mib_arrives_as_a_download_and_is_refused_as_a_page_an
     device.route("GET", "/files/read", (200, text, at_the_limit))
     device.route("GET", "/files/display", (200, text, over_the_limit))
     device.route("GET", "/files/view", (200, download, over_the_limit))
-    base = f"/api/v1/terminals/{device.terminal_id}"
+    base = f"/api/v1/machines/{device.terminal_id}"
 
     with owner.client() as client:
         fits = client.get(f"{base}/files/read")
@@ -1098,7 +1098,7 @@ def test_a_picture_the_model_draws_is_copied_into_the_devices_working_folder(
 
     with owner.client() as client:
         _, message = ask(
-            client, prompt, terminal_id=device.terminal_id, features={"image_generation": True}
+            client, prompt, machine_id=device.terminal_id, features={"image_generation": True}
         )
 
     _, told = _requests_for(upstream, prompt)
@@ -1113,7 +1113,7 @@ def test_a_picture_the_model_draws_is_copied_into_the_devices_working_folder(
         f"the device got {len(content)} bytes that are not the picture"
     )
     assert upload.headers["x-user-id"] == owner.id, upload.headers
-    assert picture.get("terminal_path") == f"{HOME}/work/{picture['id']}.png", (
+    assert picture.get("machine_path") == f"{HOME}/work/{picture['id']}.png", (
         f"the model was not told where the picture is on the device: {picture}"
     )
     assert message["content"] == f"drawn {tag}", f"the reply ended as {message}"
@@ -1276,9 +1276,9 @@ def test_a_terminal_added_in_tether_is_listed_under_its_own_name_and_serves_its_
     terminal_id = f"tether:{device.connection_id}:lab_box"
 
     with owner.client() as client:
-        answered = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        answered = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
     with stranger.client() as client:
-        refused = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        refused = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
 
     assert _devices(owner) == {terminal_id: f"Laptop {tag} · Lab"}, (
         f"the owner's terminal list shows the device as {_devices(owner)}"
@@ -1330,7 +1330,7 @@ def test_a_read_cut_off_by_a_reconnect_is_repeated_on_the_new_connection_and_a_c
         with owner.client() as client:
             client.timeout = 40
             return client.post(
-                f"/api/v1/terminals/tether:{connection_id}/execute", json={"command": "make"}
+                f"/api/v1/machines/tether:{connection_id}/execute", json={"command": "make"}
             )
 
     listed, read_again = _cut_off_then_reconnect(
@@ -1360,7 +1360,7 @@ def test_a_file_read_from_the_page_cut_off_by_a_reconnect_is_repeated(make_user,
     def read(connection_id: str) -> httpx.Response:
         with owner.client() as client:
             client.timeout = 40
-            return client.get(f"/api/v1/terminals/tether:{connection_id}/files/cwd")
+            return client.get(f"/api/v1/machines/tether:{connection_id}/files/cwd")
 
     answered, read_again = _cut_off_then_reconnect(
         owner,

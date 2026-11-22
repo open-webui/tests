@@ -52,7 +52,7 @@ MEBIBYTE = 2**20
 def _listed_terminals(actor) -> dict[str, dict]:
     """The terminals the account's terminal menu offers, by id."""
     with actor.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return {entry["id"]: entry for entry in listed.json()}
 
@@ -60,11 +60,11 @@ def _listed_terminals(actor) -> dict[str, dict]:
 def test_an_admin_connects_the_orchestrator_with_its_key(admin, connect_terminals):
     connection = connect_terminals()
     with admin.client() as client:
-        verify = "/api/v1/configs/terminal_servers/verify"
+        verify = "/api/v1/configs/machines/verify"
         verified = client.post(verify, json=connection)
         wrong_key = client.post(verify, json={**connection, "key": "sk-not-the-key"})
-        offered = client.get("/api/v1/terminals/templates/connections")
-        status = client.get(f"/api/v1/terminals/templates/connections/{connection['id']}/status")
+        offered = client.get("/api/v1/machines/templates/connections")
+        status = client.get(f"/api/v1/machines/templates/connections/{connection['id']}/status")
 
     assert verified.status_code == 200, f"the connection check failed: {verified.text}"
     assert verified.json() == {"status": True, "type": "orchestrator"}, (
@@ -92,7 +92,7 @@ def test_a_person_creates_a_terminal_of_their_own_and_gets_its_machine(
     name = f"Workbench {uuid.uuid4().hex[:8]}"
 
     with owner.client() as client:
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
+        terminal_id = create_template(client, connection, name=name)["machine_id"]
         before = instance_of(client, terminal_id)
         machine = start_instance(client, terminal_id)
 
@@ -118,8 +118,8 @@ def test_a_terminals_machine_runs_under_its_cpu_and_memory_limits(
 
     with admin.client() as client:
         created = create_template(client, connection, cpu_limit="0.5", memory_limit="256Mi")
-        machine = start_instance(client, created["terminal_id"])
-        shown = client.get(f"/api/v1/terminals/templates/{created['terminal_id']}")
+        machine = start_instance(client, created["machine_id"])
+        shown = client.get(f"/api/v1/machines/templates/{created['machine_id']}")
 
     assert shown.status_code == 200, f"the terminal's settings could not be read: {shown.text}"
     settings = shown.json()["data"]
@@ -200,7 +200,7 @@ def test_deleting_a_terminal_removes_its_machine_and_files(
     assert (home / "kept.txt").exists(), "the machine's home is not where the harness looks"
 
     with admin.client() as client:
-        deleted = client.delete(f"/api/v1/terminals/templates/{terminal_id}")
+        deleted = client.delete(f"/api/v1/machines/templates/{terminal_id}")
     with person.client() as client:
         after = execute(client, terminal_id, "echo still here")
 

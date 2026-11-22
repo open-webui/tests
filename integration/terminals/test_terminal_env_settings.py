@@ -1,19 +1,19 @@
 """Journey: the terminal settings an operator can only give in the environment.
 
-Three of them. `TERMINAL_SERVER_CONNECTIONS` names the terminal connections of a new instance,
-which are connected (and their tool lists fetched) while it boots. `TERMINAL_PROXY_HEADERS`
+Three of them. `MACHINE_CONNECTIONS` names the terminal connections of a new instance,
+which are connected (and their tool lists fetched) while it boots. `MACHINE_PROXY_HEADERS`
 adds response headers to every answer of the terminal proxy, ahead of the terminal's own.
-`AIOHTTP_CLIENT_TIMEOUT_TERMINAL` is how long a chat waits for its terminal: unset it takes
+`AIOHTTP_CLIENT_TIMEOUT_MACHINE` is how long a chat waits for its terminal: unset it takes
 `AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA`, a value that is no number means 60 seconds, empty
 and `0` mean no limit. Past the limit the message fails with
-"Terminal '<name>' timed out. It may still be starting. Please try again."
+"Machine '<name>' timed out. It may still be starting. Please try again."
 
 Every instance here is booted with `AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=1`, so a terminal
 timeout that falls back to it shows after one second. The terminal is the fake one, whose
 skill list, the first thing a chat turn asks it for, a test can hold.
 
 `test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins` was red on dev
-c15f28649 and on v0.13.3 (open-webui/open-webui#34092): a header of `TERMINAL_PROXY_HEADERS`
+c15f28649 and on v0.13.3 (open-webui/open-webui#34092): a header of `MACHINE_PROXY_HEADERS`
 whose name is written in another case than the terminal's was sent beside the terminal's own,
 where the docs say the admin's takes precedence. It passes on dev 485103cde (fixed in edecad351).
 
@@ -22,13 +22,13 @@ Discriminates: every other test passes on dev c15f28649. In backend copies of it
   test that uses the named terminal fail;
 * the start-up call of `set_terminal_servers` dropped: the first-boot test and the test with
   a terminal that is down fail (no tool list was fetched while booting);
-* `TERMINAL_PROXY_HEADERS` no longer merged into the answer: the three cases of the header
+* `MACHINE_PROXY_HEADERS` no longer merged into the answer: the three cases of the header
   test fail, and the test of the other case on its first check;
 * the fallback around its JSON parsing dropped: the instance with unreadable headers does not
   boot;
 * a failed tool list raising out of the fetch (`return_exceptions=False`): the test with a
   terminal that is down fails (the working terminal's chat gets no tools);
-* `AIOHTTP_CLIENT_TIMEOUT_TERMINAL` defaulting to 60 without the tool server value: the
+* `AIOHTTP_CLIENT_TIMEOUT_MACHINE` defaulting to 60 without the tool server value: the
   one-second test fails (the message is still waiting when the test gives up on it);
 * a non-number falling back to the tool server value in place of 60, and no limit at all for
   it: the non-number half of the three-second test, then of the minute test, fails;
@@ -163,7 +163,7 @@ class Booted:
 def _boot(instance_with, terminal: HeldTerminal, connections: list[dict], **env) -> Booted:
     fetched_before = len(terminal.server.requests_to("/openapi.json"))
     launched = instance_with(
-        {"TERMINAL_SERVER_CONNECTIONS": json.dumps(connections), **TOOL_SERVER_TIMEOUT, **env}
+        {"MACHINE_CONNECTIONS": json.dumps(connections), **TOOL_SERVER_TIMEOUT, **env}
     )
     fetched = len(terminal.server.requests_to("/openapi.json")) - fetched_before
     return Booted(launched, connections, fetched)
@@ -174,7 +174,7 @@ def configured(instance_with, terminal) -> Booted:
     """An instance whose environment names the terminal and the admin's headers."""
     connection = terminal.connection("Harbour terminal")
     headers = {**ADMIN_HEADERS, **LOWER_CASE_HEADER}
-    return _boot(instance_with, terminal, [connection], TERMINAL_PROXY_HEADERS=json.dumps(headers))
+    return _boot(instance_with, terminal, [connection], MACHINE_PROXY_HEADERS=json.dumps(headers))
 
 
 @pytest.fixture(scope="module")
@@ -186,8 +186,8 @@ def misconfigured(instance_with, terminal) -> Booted:
         instance_with,
         terminal,
         [down, working],
-        TERMINAL_PROXY_HEADERS='{"X-Frame-Options": "DENY"',
-        AIOHTTP_CLIENT_TIMEOUT_TERMINAL="sixty",
+        MACHINE_PROXY_HEADERS='{"X-Frame-Options": "DENY"',
+        AIOHTTP_CLIENT_TIMEOUT_MACHINE="sixty",
     )
 
 
@@ -199,7 +199,7 @@ def unlimited(instance_with, terminal) -> dict[str, Booted]:
             instance_with,
             terminal,
             [terminal.connection("Patient terminal")],
-            AIOHTTP_CLIENT_TIMEOUT_TERMINAL=value,
+            AIOHTTP_CLIENT_TIMEOUT_MACHINE=value,
         )
         for value in ("", "0")
     }
@@ -227,14 +227,14 @@ def _ask_with_terminal(booted: Booted, timeout: float = 60.0) -> Asked:
     provider = booted.instance.upstream
     provider.queue(reply.text("In your home folder.", match=reply.answering(prompt)))
     with booted.instance.client() as client:
-        _, message = ask(client, prompt, timeout=timeout, terminal_id=booted.terminal_id)
+        _, message = ask(client, prompt, timeout=timeout, machine_id=booted.terminal_id)
     requests = [body for body in provider.chat_requests() if reply.answering(prompt)(body)]
     return Asked(message, requests)
 
 
 def _menu(booted: Booted) -> dict[str, str]:
     with booted.instance.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return {entry["id"]: entry["name"] for entry in listed.json()}
 
@@ -242,17 +242,17 @@ def _menu(booted: Booted) -> dict[str, str]:
 def test_a_terminal_named_in_the_environment_is_connected_from_the_first_boot(configured):
     [connection] = configured.connections
     with configured.instance.client() as client:
-        saved = client.get("/api/v1/configs/terminal_servers")
+        saved = client.get("/api/v1/configs/machines")
         features = client.get("/api/config").json()["features"]
-        folder = client.get(f"/api/v1/terminals/{connection['id']}/files/cwd")
+        folder = client.get(f"/api/v1/machines/{connection['id']}/files/cwd")
     asked = _ask_with_terminal(configured)
 
     assert saved.status_code == 200, saved.text
-    assert saved.json() == {"TERMINAL_SERVER_CONNECTIONS": [connection]}, (
+    assert saved.json() == {"MACHINE_CONNECTIONS": [connection]}, (
         f"Admin Settings do not show the connection of the environment: {saved.text}"
     )
     assert _menu(configured) == {connection["id"]: "Harbour terminal"}
-    assert features["enable_terminal_servers"] is True, features
+    assert features["enable_machines"] is True, features
     assert folder.status_code == 200, f"the terminal was not reached: {folder.text}"
     assert configured.fetched_while_booting == 1, (
         f"the terminal's tool list was fetched {configured.fetched_while_booting} times while "
@@ -276,8 +276,8 @@ def test_the_admins_headers_are_on_every_answer_of_the_terminal_and_win_over_its
     configured, path, kept
 ):
     with configured.instance.client() as client:
-        answered = client.get(f"/api/v1/terminals/{configured.terminal_id}/{path}")
-        own_route = client.get("/api/v1/terminals/")
+        answered = client.get(f"/api/v1/machines/{configured.terminal_id}/{path}")
+        own_route = client.get("/api/v1/machines/")
 
     expected = {name.lower(): [value] for name, value in ADMIN_HEADERS.items()}
     sent = {name: answered.headers.get_list(name) for name in expected}
@@ -295,8 +295,8 @@ def test_the_admins_headers_are_on_every_answer_of_the_terminal_and_win_over_its
 def test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins(configured):
     """Red on dev c15f28649 and on v0.13.3 (open-webui/open-webui#34092), fixed in edecad351."""
     with configured.instance.client() as client:
-        added = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/list")
-        answered = client.get(f"/api/v1/terminals/{configured.terminal_id}/files/zone")
+        added = client.get(f"/api/v1/machines/{configured.terminal_id}/files/list")
+        answered = client.get(f"/api/v1/machines/{configured.terminal_id}/files/zone")
 
     assert added.headers.get_list("x-harbour-zone") == ["admin"], (
         f"the admin's header is not on an answer without one: {dict(added.headers)}"
@@ -309,11 +309,11 @@ def test_a_header_the_admin_names_in_another_case_than_the_terminal_still_wins(c
 
 def test_headers_that_are_no_json_add_nothing(misconfigured):
     with misconfigured.instance.client() as client:
-        answered = client.get(f"/api/v1/terminals/{misconfigured.terminal_id}/files/list")
+        answered = client.get(f"/api/v1/machines/{misconfigured.terminal_id}/files/list")
 
     assert answered.status_code == 200, answered.text
     assert answered.headers.get_list("x-frame-options") == ["SAMEORIGIN"], (
-        "with TERMINAL_PROXY_HEADERS unreadable the terminal's own header did not arrive as "
+        "with MACHINE_PROXY_HEADERS unreadable the terminal's own header did not arrive as "
         f"sent: {answered.headers.get_list('x-frame-options')}"
     )
 
@@ -323,7 +323,7 @@ def test_a_terminal_that_is_down_at_boot_leaves_the_instance_and_the_other_termi
 ):
     down, working = misconfigured.connections
     with misconfigured.instance.client() as client:
-        unreachable = client.get(f"/api/v1/terminals/{down['id']}/files/cwd")
+        unreachable = client.get(f"/api/v1/machines/{down['id']}/files/cwd")
     asked = _ask_with_terminal(misconfigured)
 
     assert _menu(misconfigured) == {
@@ -347,7 +347,7 @@ def test_without_a_terminal_timeout_a_chat_waits_as_long_as_for_a_tool_server(co
     terminal.release.set()
     in_time = _ask_with_terminal(configured)
 
-    assert too_slow.error == f"Terminal 'Harbour terminal' {STILL_STARTING}", (
+    assert too_slow.error == f"Machine 'Harbour terminal' {STILL_STARTING}", (
         "with AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=1 and no terminal timeout, a message "
         f"whose terminal did not answer ended as {too_slow.message}"
     )
@@ -378,7 +378,7 @@ def test_a_terminal_timeout_that_is_empty_or_no_number_does_not_fall_back_to_the
     asked = _held_for_three_seconds(terminal, booted)
 
     assert asked.error is None and asked.message["content"] == "In your home folder.", (
-        f"with AIOHTTP_CLIENT_TIMEOUT_TERMINAL={value!r} a terminal that took three seconds "
+        f"with AIOHTTP_CLIENT_TIMEOUT_MACHINE={value!r} a terminal that took three seconds "
         f"was given up on after the tool server timeout of one: {asked.message}"
     )
 
@@ -387,7 +387,7 @@ def test_a_terminal_that_takes_over_a_minute_is_waited_for_only_without_a_time_l
     misconfigured, unlimited, terminal
 ):
     terminal.held.set()
-    patient = {f"AIOHTTP_CLIENT_TIMEOUT_TERMINAL={value!r}": on for value, on in unlimited.items()}
+    patient = {f"AIOHTTP_CLIENT_TIMEOUT_MACHINE={value!r}": on for value, on in unlimited.items()}
     asked_before = len(terminal.server.requests_to("/skills"))
 
     def askers() -> set[str]:
@@ -409,7 +409,7 @@ def test_a_terminal_that_takes_over_a_minute_is_waited_for_only_without_a_time_l
 
     assert both_wait, f"the terminal was not asked by both instances without a limit: {askers()}"
     assert given_up, "a timeout that is no number never gave up on the terminal"
-    assert sixty.result().error == f"Terminal 'Working terminal' {STILL_STARTING}", (
+    assert sixty.result().error == f"Machine 'Working terminal' {STILL_STARTING}", (
         f"a timeout that is no number ended the message as {sixty.result().message}"
     )
     contents = {label: (asked.error, asked.message["content"]) for label, asked in answers.items()}

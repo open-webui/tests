@@ -1,7 +1,7 @@
 """Journey: what a terminal answers reaches the person who asked, through Open WebUI's proxy.
 
 The file browser, previews, downloads and the port preview all call the terminal through
-`/api/v1/terminals/<id>/<path>`. This module pins what comes back on a plain terminal: the
+`/api/v1/machines/<id>/<path>`. This module pins what comes back on a plain terminal: the
 terminal's own status and body, which of its headers are kept (every cookie it sets among them,
 since edecad351 for open-webui/open-webui#34092), that downloads and live updates
 arrive while the terminal is still sending, what a broken-off answer and a connection without
@@ -96,8 +96,8 @@ def test_a_call_under_a_chats_address_names_that_chat_to_the_terminal(
         else:
             # a long chat whose coding agent ran on this terminal, so its session is looked up
             chat_id = fat_chat(person, chat, terminal_id=terminal_id).chat_id
-        in_chat = client.get(f"/api/v1/terminals/{terminal_id}/chats/{chat_id}/files/cwd")
-        outside = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        in_chat = client.get(f"/api/v1/machines/{terminal_id}/chats/{chat_id}/files/cwd")
+        outside = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
 
     assert (in_chat.status_code, in_chat.json()) == (200, {"cwd": "/home/user"}), (
         f"the call under the chat's address was not answered: {in_chat.status_code} {in_chat.text}"
@@ -119,7 +119,7 @@ def test_a_refusal_or_failure_of_the_terminal_reaches_the_person_as_it_is(
 
     with person.client() as client:
         answered = client.post(
-            f"/api/v1/terminals/{terminal_id}/files/write", json={"path": "a", "content": "b"}
+            f"/api/v1/machines/{terminal_id}/files/write", json={"path": "a", "content": "b"}
         )
 
     assert (answered.status_code, answered.json()) == (status, reason), (
@@ -150,7 +150,7 @@ def test_the_terminals_own_headers_arrive_except_those_of_its_connection(
     )
 
     with person.client() as client:
-        answered = client.get(f"/api/v1/terminals/{terminal_id}/files/view")
+        answered = client.get(f"/api/v1/machines/{terminal_id}/files/view")
 
     assert answered.status_code == 200, answered.text
     kept = {
@@ -212,7 +212,7 @@ def test_every_cookie_the_terminal_sets_reaches_the_person(
     )
 
     with person.client() as client:
-        answered = client.get(f"/api/v1/terminals/{terminal_id}/{path}")
+        answered = client.get(f"/api/v1/machines/{terminal_id}/{path}")
 
     assert answered.status_code == 200, answered.text
     assert answered.headers.get_list("set-cookie") == cookies, (
@@ -256,7 +256,7 @@ def test_a_download_or_live_update_arrives_while_the_terminal_is_still_sending(
             person.client() as client,
             client.stream(
                 "GET",
-                f"/api/v1/terminals/{terminal_id}/{path}",
+                f"/api/v1/machines/{terminal_id}/{path}",
                 timeout=httpx.Timeout(120.0, read=PIECE_BOUND_SECONDS),
             ) as answered,
         ):
@@ -314,7 +314,7 @@ def test_a_json_answer_arrives_whole_once_the_terminal_has_sent_all_of_it(
     )
 
     with person.client() as client:
-        answered = client.get(f"/api/v1/terminals/{terminal_id}/files/list")
+        answered = client.get(f"/api/v1/machines/{terminal_id}/files/list")
 
     assert (answered.status_code, answered.json()) == (200, {"entries": []}), (
         f"an answer the terminal sent in two pieces arrived as {answered.status_code} "
@@ -330,14 +330,14 @@ def test_a_connection_saved_without_an_address_says_so(admin, preserve, person, 
     terminal.route("GET", "/files/cwd", json_answer({"cwd": "/home/user"}))
     without_address = _shared(admin, person, terminal, url="")
     with person.client() as client:
-        refused = client.get(f"/api/v1/terminals/{without_address}/files/cwd")
+        refused = client.get(f"/api/v1/machines/{without_address}/files/cwd")
     with_address = _shared(admin, person, terminal)
     with person.client() as client:
-        answered = client.get(f"/api/v1/terminals/{with_address}/files/cwd")
+        answered = client.get(f"/api/v1/machines/{with_address}/files/cwd")
 
     assert (refused.status_code, refused.json()) == (
         503,
-        {"error": "Terminal server URL not configured"},
+        {"error": "Machine URL not configured"},
     ), f"a terminal saved without an address answered {refused.status_code} {refused.text}"
     assert answered.status_code == 200, f"the same terminal with its address: {answered.text}"
 
@@ -357,13 +357,13 @@ def test_an_answer_the_terminal_breaks_off_is_reported_as_a_proxy_error(
     log_start = instance.log_size()
 
     with person.client() as client:
-        failed = client.get(f"/api/v1/terminals/{terminal_id}/files/list")
-        afterwards = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
+        failed = client.get(f"/api/v1/machines/{terminal_id}/files/list")
+        afterwards = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
 
     assert failed.status_code == 502, (
         f"an answer the terminal broke off came back as {failed.status_code} {failed.text!r}"
     )
-    assert failed.json()["error"].startswith("Terminal proxy error: "), failed.text
+    assert failed.json()["error"].startswith("Machine proxy error: "), failed.text
     assert "Terminal proxy error: " in instance.log_since(log_start), (
         "the server log says nothing about the broken-off answer"
     )
@@ -390,7 +390,7 @@ def test_a_redirect_of_a_previewed_port_stays_inside_the_preview(
     person, terminal, terminal_id, location, arrives_as
 ):
     terminal.redirect(f"/proxy/{PORT}/app/start", location)
-    prefix = f"/api/v1/terminals/{terminal_id}/proxy/{PORT}/"
+    prefix = f"/api/v1/machines/{terminal_id}/proxy/{PORT}/"
 
     with person.client() as client:
         answered = client.get(f"{prefix}app/start", follow_redirects=False)
@@ -421,12 +421,12 @@ def test_a_page_of_a_previewed_port_loads_its_own_files_through_the_preview(
     terminal.route("GET", f"/proxy/{PORT}/", text_answer(PAGE))
     terminal.route("GET", f"/proxy/{PORT}/data.json", json_answer({"href": "/static/site.css"}))
     terminal.route("GET", "/files/view", text_answer(PAGE))
-    prefix = f"/api/v1/terminals/{terminal_id}/proxy/{PORT}/"
+    prefix = f"/api/v1/machines/{terminal_id}/proxy/{PORT}/"
 
     with person.client() as client:
         page = client.get(prefix)
         data = client.get(f"{prefix}data.json")
-        outside = client.get(f"/api/v1/terminals/{terminal_id}/files/view")
+        outside = client.get(f"/api/v1/machines/{terminal_id}/files/view")
 
     assert page.status_code == 200, page.text
     for rewritten in (

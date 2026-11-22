@@ -150,7 +150,7 @@ def test_a_sub_agent_in_the_foreground_or_the_background_keeps_the_terminal(
     )
 
     with person.client() as client:
-        ask(client, prompt, terminal_id=terminal_id)
+        ask(client, prompt, machine_id=terminal_id)
     counted = wait_until(lambda: len(_requests(upstream, _handed(task))) == 2, TURN_WAIT)
 
     delegated = _requests(upstream, _handed(task))
@@ -191,7 +191,7 @@ def test_the_turn_a_background_report_starts_keeps_the_chats_terminal(
 
     try:
         with person.client() as client:
-            turn = send_message(client, prompt, terminal_id=terminal_id)
+            turn = send_message(client, prompt, machine_id=terminal_id)
             if chat == "still writing":
                 arrived = wait_until(lambda: _report_waiting_in(client, turn.chat_id), TURN_WAIT)
                 assert arrived, "the report never arrived while the chat was writing"
@@ -232,7 +232,7 @@ def test_a_timer_fires_with_the_terminal_of_its_chat(
     )
 
     with person.client() as client:
-        turn, message = ask(client, prompt, terminal_id=terminal_id)
+        turn, message = ask(client, prompt, machine_id=terminal_id)
     # due after two seconds and polled every second
     fired = wait_until(lambda: len(_requests(upstream, reply.answering(ring))) == 2, TURN_WAIT)
 

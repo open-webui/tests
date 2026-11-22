@@ -24,7 +24,7 @@ tests red. A worker that never forwards a call to the worker holding the device,
 that only knows the devices connected to itself, each fail the five two-worker tests; the
 `X-User-Id` a caller sends passed on to the device fails the call test; a
 connection replaced on another worker and left open fails the reconnect test; a device that
-hangs up without word to the other worker, and no `terminals:changed` at all, each fail the
+hangs up without word to the other worker, and no `machines:changed` at all, each fail the
 hang-up test; a notification for a device on another worker dropped fails the notification
 test; `features.tether` on whatever the WebSocket support fails the flag test. On dev 485103cde,
 a call to a busy device dropped without word by the worker holding it fails the busy test.
@@ -101,7 +101,7 @@ def _on(account: Actor, instance: LaunchedInstance) -> Actor:
 
 def _devices(actor: Actor) -> dict[str, str]:
     with actor.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return {
         entry["id"]: entry["name"] for entry in listed.json() if entry["id"].startswith("tether:")
@@ -112,7 +112,7 @@ def _changes(tab: SocketSession) -> int:
     return sum(
         1
         for event in list(tab.events)
-        if (event.get("data") or {}).get("type") == "terminals:changed"
+        if (event.get("data") or {}).get("type") == "machines:changed"
     )
 
 
@@ -133,7 +133,7 @@ def test_a_call_made_on_another_worker_reaches_the_device_and_comes_back_whole(
     device.route(
         "GET", "/files/view", (200, {"Content-Type": "application/octet-stream"}, download)
     )
-    base = f"/api/v1/terminals/{device.terminal_id}"
+    base = f"/api/v1/machines/{device.terminal_id}"
 
     with _on(owner, far).client() as client:
         stored = client.post(
@@ -221,14 +221,14 @@ def test_a_device_that_hangs_up_interrupts_a_call_made_on_another_worker_and_tel
             "the owner's page on the other worker was not told that the device connected"
         )
         with distant.client() as client:
-            before = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+            before = client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
             interrupted = client.post(
-                f"/api/v1/terminals/{device.terminal_id}/execute", json={"command": "make"}
+                f"/api/v1/machines/{device.terminal_id}/execute", json={"command": "make"}
             )
             assert wait_until(lambda: _devices(distant) == {}, 10), (
                 f"the other worker still lists the device that hung up: {_devices(distant)}"
             )
-            after = client.get(f"/api/v1/terminals/{device.terminal_id}/files/cwd")
+            after = client.get(f"/api/v1/machines/{device.terminal_id}/files/cwd")
         assert wait_until(lambda: _changes(tab) >= 2, 10), (
             "the owner's page on the other worker was not told that the device went"
         )
@@ -250,7 +250,7 @@ def test_a_device_that_connects_again_on_another_worker_takes_the_place_of_its_e
     connection_id, tag = str(uuid.uuid4()), uuid.uuid4().hex[:8]
     earlier = connect_device(owner, on=near, connection_id=connection_id, name=f"Earlier {tag}")
     earlier.route("GET", "/files/cwd", json_answer({"cwd": "/earlier"}))
-    call = f"/api/v1/terminals/tether:{connection_id}/files/cwd"
+    call = f"/api/v1/machines/tether:{connection_id}/files/cwd"
     with owner.client() as client:
         first = client.get(call)
 
@@ -332,7 +332,7 @@ def _cwd(actor: Actor, device_terminal: str) -> httpx.Response | None:
     with actor.client() as client:
         client.timeout = 15
         try:
-            return client.get(f"/api/v1/terminals/{device_terminal}/files/cwd")
+            return client.get(f"/api/v1/machines/{device_terminal}/files/cwd")
         except httpx.TimeoutException:
             return None
 

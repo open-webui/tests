@@ -63,7 +63,7 @@ from harness.upstream import MOCK_MODEL_ID
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 NEVER_STARTED = "Environment has not been created"
-WRITE_ACCESS_REQUIRED = "Terminal connection write access required"
+WRITE_ACCESS_REQUIRED = "Machine connection write access required"
 # the idle sweep runs once a minute, after one idle minute
 IDLE_STOP_SECONDS = 240
 
@@ -73,7 +73,7 @@ def _managed_terminal(connect_terminals, manager, *people, **data) -> str:
     grants = [read_grant(person.id) for person in people]
     connection = connect_terminals(write_grant(manager.id), *grants)
     with manager.client() as client:
-        terminal_id = create_template(client, connection, **data)["terminal_id"]
+        terminal_id = create_template(client, connection, **data)["machine_id"]
         share_template(client, terminal_id, *grants)
     return terminal_id
 
@@ -89,7 +89,7 @@ def _reason(answer: httpx.Response) -> tuple[int, object]:
 
 
 def _menu(client: httpx.Client) -> dict[str, dict]:
-    listed = client.get("/api/v1/terminals/")
+    listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     return {entry["id"]: entry for entry in listed.json()}
 
@@ -107,7 +107,7 @@ def test_a_stopped_machine_keeps_its_files_and_starts_again_with_the_next_comman
         stopped = act_on_instance(client, terminal_id, "stop")
         after = instance_of(client, terminal_id)
         running_containers = terminals.containers(running_only=True)
-        system_info = client.get(f"/api/v1/terminals/{terminal_id}/system/info")
+        system_info = client.get(f"/api/v1/machines/{terminal_id}/system/info")
         still_stopped = instance_of(client, terminal_id)
         printed = output_of(execute(client, terminal_id, "cat ~/kept.txt"))
         again = instance_of(client, terminal_id)
@@ -254,7 +254,7 @@ def test_a_person_who_may_only_use_a_terminal_manages_no_machine(
             action: act_on_instance(client, terminal_id, action)
             for action in ("start", "stop", "restart", "reset", "delete")
         }
-        machines = client.get(f"/api/v1/terminals/templates/{terminal_id}/instances")
+        machines = client.get(f"/api/v1/machines/templates/{terminal_id}/instances")
         after = instance_of(client, terminal_id)
     with manager.client() as client:
         managers_view = list_instances(client, terminal_id)
@@ -326,8 +326,8 @@ def test_the_machine_list_names_whose_machine_each_is(
     connection = connect_terminals(write_grant(manager.id), *grants)
     title = f"Harbour plans {uuid.uuid4().hex[:8]}"
     with manager.client() as client:
-        per_user = create_template(client, connection, scope="user")["terminal_id"]
-        per_chat = create_template(client, connection, scope="chat")["terminal_id"]
+        per_user = create_template(client, connection, scope="user")["machine_id"]
+        per_chat = create_template(client, connection, scope="chat")["machine_id"]
         share_template(client, per_user, *grants)
         share_template(client, per_chat, *grants)
 
@@ -382,8 +382,8 @@ def test_a_manager_starts_a_per_chat_or_per_model_machine_only_by_naming_the_cha
     connection = connect_terminals(write_grant(manager.id))
 
     with manager.client() as client:
-        per_chat = create_template(client, connection, scope="chat")["terminal_id"]
-        per_model = create_template(client, connection, scope="model")["terminal_id"]
+        per_chat = create_template(client, connection, scope="chat")["machine_id"]
+        per_model = create_template(client, connection, scope="model")["machine_id"]
         chat_id = _new_chat(client, "Machines")
         no_chat = act_on_instance(client, per_chat, "start")
         unsaved_chat = act_on_instance(client, per_chat, "start", chat_id="temporary:unsaved")
@@ -395,10 +395,10 @@ def test_a_manager_starts_a_per_chat_or_per_model_machine_only_by_naming_the_cha
         model_machine = instance_of(client, per_model, model_id=MOCK_MODEL_ID)
 
     for label, answer in (("no chat", no_chat), ("an unsaved chat", unsaved_chat)):
-        assert _reason(answer) == (409, "This terminal requires a saved chat"), (
+        assert _reason(answer) == (409, "This machine requires a saved chat"), (
             f"starting a per-chat machine for {label} answered {answer.status_code} {answer.text}"
         )
-    assert _reason(no_model) == (409, "This terminal requires a model"), (
+    assert _reason(no_model) == (409, "This machine requires a model"), (
         f"starting a per-model machine for no model answered {no_model.status_code} {no_model.text}"
     )
     assert started_by_refused == [], f"a refused start left a machine: {started_by_refused}"
@@ -429,10 +429,10 @@ def test_a_terminals_start_folder_and_setup_script_reach_its_machine(
     }
 
     with admin.client() as client:
-        terminal_id = create_template(client, connection, env=env)["terminal_id"]
+        terminal_id = create_template(client, connection, env=env)["machine_id"]
         printed = output_of(execute(client, terminal_id, f"pwd; cat ~/setup-{tag}.txt"))
-        cwd = client.get(f"/api/v1/terminals/{terminal_id}/files/cwd")
-        shown = client.get(f"/api/v1/terminals/templates/{terminal_id}")
+        cwd = client.get(f"/api/v1/machines/{terminal_id}/files/cwd")
+        shown = client.get(f"/api/v1/machines/templates/{terminal_id}")
 
     assert shown.status_code == 200, f"the terminal's settings could not be read: {shown.text}"
     assert shown.json()["data"].get("env") == env, (
@@ -454,13 +454,13 @@ def test_a_terminal_whose_image_the_orchestrator_does_not_have_says_so_on_first_
     reason = f"Image '{absent}' is not present and the pull policy is Never"
 
     with admin.client() as client:
-        terminal_id = create_template(client, connection, image=absent)["terminal_id"]
+        terminal_id = create_template(client, connection, image=absent)["machine_id"]
         command = execute(client, terminal_id, "echo ran")
         started = act_on_instance(client, terminal_id, "start")
         machine = instance_of(client, terminal_id)
         containers = terminals.containers()
         changed = client.patch(
-            f"/api/v1/terminals/templates/{terminal_id}",
+            f"/api/v1/machines/templates/{terminal_id}",
             json={"image": os.environ[OPEN_TERMINAL_IMAGE_ENV]},
         )
         printed = output_of(execute(client, terminal_id, "echo ran"))
@@ -483,7 +483,7 @@ def test_a_terminals_scope_changes_only_once_its_machines_are_deleted(
 ):
     manager = make_user()
     terminal_id = _managed_terminal(connect_terminals, manager, scope="user")
-    settings = f"/api/v1/terminals/templates/{terminal_id}"
+    settings = f"/api/v1/machines/templates/{terminal_id}"
 
     with manager.client() as client:
         output_of(execute(client, terminal_id, "true"))
@@ -571,7 +571,7 @@ def strict_connection(strict_terminals_service, admin, preserve):
     with admin.client() as client:
         for template in strict_terminals_service.templates():
             client.delete(
-                f"/api/v1/terminals/templates/template:{connection['id']}:{template['id']}"
+                f"/api/v1/machines/templates/template:{connection['id']}:{template['id']}"
             )
     strict_terminals_service.reset()
 
@@ -586,7 +586,7 @@ def test_an_image_the_orchestrator_does_not_allow_is_refused_with_its_reason(
 
     with admin.client() as client:
         refused = client.post(
-            "/api/v1/terminals/templates",
+            "/api/v1/machines/templates",
             json={
                 "id": str(uuid.uuid4()),
                 "connection_id": strict_connection["id"],
@@ -594,8 +594,8 @@ def test_an_image_the_orchestrator_does_not_allow_is_refused_with_its_reason(
             },
         )
         menu_after_refusal = _menu(client)
-        terminal_id = create_template(client, strict_connection, image=allowed)["terminal_id"]
-        settings = f"/api/v1/terminals/templates/{terminal_id}"
+        terminal_id = create_template(client, strict_connection, image=allowed)["machine_id"]
+        settings = f"/api/v1/machines/templates/{terminal_id}"
         changed = client.patch(settings, json={"image": other})
         shown = client.get(settings)
 
@@ -619,7 +619,7 @@ def test_a_machine_left_idle_is_stopped_and_starts_again_with_the_next_command(
     line = f"before the idle stop {uuid.uuid4().hex[:8]}"
 
     with admin.client() as client:
-        terminal_id = create_template(client, strict_connection)["terminal_id"]
+        terminal_id = create_template(client, strict_connection)["machine_id"]
         output_of(execute(client, terminal_id, f"echo {line} > ~/kept.txt"))
         started = instance_of(client, terminal_id)
         deadline = time.monotonic() + IDLE_STOP_SECONDS

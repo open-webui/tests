@@ -69,8 +69,8 @@ from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
-NEEDS_SAVED_CHAT = "This terminal requires a saved chat"
-OWNERS_TERMINAL_ONLY = "Use the terminal selected by the chat owner"
+NEEDS_SAVED_CHAT = "This machine requires a saved chat"
+OWNERS_TERMINAL_ONLY = "Use the machine selected by the chat owner"
 
 
 def _reason(answer: httpx.Response) -> tuple[int, object]:
@@ -105,7 +105,7 @@ def _terminals_for(admin, connect_terminals, people, *scopes) -> list[str]:
     terminal_ids = []
     with admin.client() as client:
         for scope in scopes:
-            terminal_id = create_template(client, connection, scope=scope)["terminal_id"]
+            terminal_id = create_template(client, connection, scope=scope)["machine_id"]
             share_template(client, terminal_id, *grants)
             terminal_ids.append(terminal_id)
     return terminal_ids
@@ -143,7 +143,7 @@ def _message_running(person, upstream, chat_id: str, terminal_id: str, command: 
         assert stored.status_code == 200, f"reading the chat failed: {stored.text}"
         last_message = (stored.json()["chat"].get("history") or {}).get("currentId")
         turn = send_message(
-            client, prompt, chat_id=chat_id, parent_id=last_message, terminal_id=terminal_id
+            client, prompt, chat_id=chat_id, parent_id=last_message, machine_id=terminal_id
         )
         return wait_for_reply(client, turn)
 
@@ -190,7 +190,7 @@ def test_each_chat_of_a_per_chat_terminal_has_a_machine_of_its_own(
         second_before = instance_of(client, terminal_id, chat_id=second_chat)
         seen = output_of(execute(client, terminal_id, f"touch ~/{own}; ls ~", second_chat)).split()
         second = instance_of(client, terminal_id, chat_id=second_chat)
-        without_chat = client.get(f"/api/v1/terminals/templates/{terminal_id}/instance")
+        without_chat = client.get(f"/api/v1/machines/templates/{terminal_id}/instance")
 
     assert before["status"] == "not_created", f"the chat had a machine before its use: {before}"
     assert (first["status"], first["context_id"]) == ("running", f"chat:{first_chat}"), (
@@ -267,10 +267,10 @@ def test_a_per_model_terminal_needs_a_model_the_person_may_use(
     with _workspace_model(admin, "Private Desk") as private:
         with person.client() as client:
             no_model = execute(client, terminal_id, "echo ran")
-            no_model_state = client.get(f"/api/v1/terminals/templates/{terminal_id}/instance")
+            no_model_state = client.get(f"/api/v1/machines/templates/{terminal_id}/instance")
             private_model = execute(client, terminal_id, "echo ran", model_id=private)
             private_state = client.get(
-                f"/api/v1/terminals/templates/{terminal_id}/instance", params={"model_id": private}
+                f"/api/v1/machines/templates/{terminal_id}/instance", params={"model_id": private}
             )
             unknown_model = execute(client, terminal_id, "echo ran", model_id="no-such-model")
             started_by_refused = terminals.instances()
@@ -279,7 +279,7 @@ def test_a_per_model_terminal_needs_a_model_the_person_may_use(
             admins = output_of(execute(client, terminal_id, "echo ran", model_id=private))
 
     for label, answer in (("a command", no_model), ("the machine's state", no_model_state)):
-        assert _reason(answer) == (409, "This terminal requires a model"), (
+        assert _reason(answer) == (409, "This machine requires a model"), (
             f"{label} without a model answered {answer.status_code} {answer.text}"
         )
     for label, answer in (
@@ -316,13 +316,13 @@ def test_headers_a_client_adds_pick_no_other_machine(
     with person.client() as client:
         own_chat = _new_chat(client)
         on_user = client.post(
-            f"/api/v1/terminals/{per_user}/execute",
+            f"/api/v1/machines/{per_user}/execute",
             params={"wait": 30},
             headers=forged,
             json={"command": look},
         )
         on_chat = client.post(
-            f"/api/v1/terminals/{per_chat}/execute",
+            f"/api/v1/machines/{per_chat}/execute",
             params={"wait": 30},
             headers={**forged, "X-Session-Id": own_chat},
             json={"command": look},
@@ -352,7 +352,7 @@ def test_a_chat_of_someone_else_opens_no_machine(admin, make_user, connect_termi
     name = f"private-{uuid.uuid4().hex[:8]}.txt"
 
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=per_chat)
+        chat_id = _new_chat(client, machine_id=per_chat)
         output_of(execute(client, per_chat, f"echo owner > ~/{name}", chat_id))
     machines_before = terminals.instances()
     answers = {}
@@ -363,7 +363,7 @@ def test_a_chat_of_someone_else_opens_no_machine(admin, make_user, connect_termi
                 client, per_user, "echo ran", chat_id
             )
             answers[f"{label}'s look at the machine's state"] = client.get(
-                f"/api/v1/terminals/templates/{per_chat}/instance", params={"chat_id": chat_id}
+                f"/api/v1/machines/templates/{per_chat}/instance", params={"chat_id": chat_id}
             )
 
     assert [machine["context_id"] for machine in machines_before] == [f"chat:{chat_id}"], (
@@ -407,7 +407,7 @@ def test_a_collaborator_uses_only_the_terminal_the_chats_owner_picked(
     picked, other = _terminals_for(admin, connect_terminals, [owner, guest], "user", "user")
 
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=picked)
+        chat_id = _new_chat(client, machine_id=picked)
         chat_without_terminal = _new_chat(client)
     _share_chat(owner, chat_id, guest)
     _share_chat(owner, chat_without_terminal, guest)
@@ -415,7 +415,7 @@ def test_a_collaborator_uses_only_the_terminal_the_chats_owner_picked(
         on_picked = execute(client, picked, "echo ran", chat_id)
         on_other = execute(client, other, "echo ran", chat_id)
         on_other_state = client.get(
-            f"/api/v1/terminals/templates/{other}/instance", params={"chat_id": chat_id}
+            f"/api/v1/machines/templates/{other}/instance", params={"chat_id": chat_id}
         )
         nothing_picked = execute(client, picked, "echo ran", chat_without_terminal)
         own_chat = output_of(execute(client, other, "echo ran", _new_chat(client)))
@@ -441,13 +441,13 @@ def test_a_chat_that_stores_another_terminal_refuses_the_one_asked_for(
 ):
     person = make_user()
     first, second = _terminals_for(admin, connect_terminals, [person], "user", "user")
-    changed = "Chat terminal selection changed; refresh the chat"
+    changed = "Chat machine selection changed; refresh the chat"
 
     with person.client() as client:
-        chat_id = _new_chat(client, terminal_id=first)
+        chat_id = _new_chat(client, machine_id=first)
         on_stored = output_of(execute(client, first, "echo ran", chat_id))
         on_other = execute(client, second, "echo ran", chat_id)
-        saved = client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"terminal_id": second}})
+        saved = client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"machine_id": second}})
         on_new = output_of(execute(client, second, "echo ran", chat_id))
         on_old = execute(client, first, "echo ran", chat_id)
 
@@ -470,7 +470,7 @@ def test_a_per_chat_terminal_in_a_shared_chat_follows_the_owners_access(
     name = f"together-{uuid.uuid4().hex[:8]}.txt"
 
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=terminal_id)
+        chat_id = _new_chat(client, machine_id=terminal_id)
     _share_chat(owner, chat_id, guest)
     with admin.client() as client:
         share_template(client, terminal_id, read_grant(owner.id))
@@ -492,10 +492,10 @@ def test_a_per_chat_terminal_in_a_shared_chat_follows_the_owners_access(
     assert "guest" in owners_view, (
         f"the owner does not see the collaborator's file: {owners_view!r}"
     )
-    assert _reason(in_own_chat) == (403, "Terminal access denied"), (
+    assert _reason(in_own_chat) == (403, "Machine access denied"), (
         f"a terminal not shared with the collaborator ran in their own chat: {in_own_chat.text}"
     )
-    assert _reason(owner_lost_access) == (403, "Terminal access denied"), (
+    assert _reason(owner_lost_access) == (403, "Machine access denied"), (
         "the chat's machine still ran after its owner lost the terminal: "
         f"{owner_lost_access.status_code} {owner_lost_access.text}"
     )
@@ -514,7 +514,7 @@ def test_a_collaborators_message_works_on_the_files_the_owners_message_left(
     owners, guests = f"owner-{tag}.txt", f"guest-{tag}.txt"
 
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=terminal_id)
+        chat_id = _new_chat(client, machine_id=terminal_id)
     first = _message_running(owner, upstream, chat_id, terminal_id, f"echo owner > ~/{owners}")
     _share_chat(owner, chat_id, guest)
     second = _message_running(
@@ -547,7 +547,7 @@ def _shared_on_the_owners_access(admin, connect_terminals, owner, guest, scope) 
     the connection but not the terminal; returns the terminal and the chat."""
     (terminal_id,) = _terminals_for(admin, connect_terminals, [owner, guest], scope)
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=terminal_id)
+        chat_id = _new_chat(client, machine_id=terminal_id)
     _share_chat(owner, chat_id, guest)
     with admin.client() as client:
         share_template(client, terminal_id, read_grant(owner.id))
@@ -601,7 +601,7 @@ def test_a_collaborators_message_needs_their_own_access_to_any_other_terminal(
     with owner.client() as client:
         owners_command = output_of(execute(client, terminal_id, "echo ran", chat_id, MOCK_MODEL_ID))
 
-    assert "Terminal access denied" in json.dumps(message.get("error")), (
+    assert "Machine access denied" in json.dumps(message.get("error")), (
         f"the collaborator's message on a terminal not shared with them ended as {message}"
     )
     assert terminals.holding(name) == {}, (
@@ -619,7 +619,7 @@ def test_only_a_collaborator_who_may_reply_reaches_a_shared_chats_per_chat_termi
     owner, other = make_user(), make_user()
     (terminal_id,) = _terminals_for(admin, connect_terminals, [owner, other], "chat")
     with owner.client() as client:
-        chat_id = _new_chat(client, terminal_id=terminal_id)
+        chat_id = _new_chat(client, machine_id=terminal_id)
     if shared_for_reading:
         _share_chat(owner, chat_id, other, share_mode=None)
     name = f"other-{uuid.uuid4().hex[:8]}.txt"
@@ -632,7 +632,7 @@ def test_only_a_collaborator_who_may_reply_reaches_a_shared_chats_per_chat_termi
                 "model": MOCK_MODEL_ID,
                 "messages": [{"role": "user", "content": f"run {name}"}],
                 "chat_id": chat_id,
-                "terminal_id": terminal_id,
+                "machine_id": terminal_id,
                 "id": str(uuid.uuid4()),
                 "user_message": {"id": str(uuid.uuid4()), "role": "user", "content": f"run {name}"},
                 "session_id": f"harness-{uuid.uuid4().hex[:8]}",
@@ -662,18 +662,18 @@ def test_a_collaborator_changes_only_a_chats_models_terminal_and_working_directo
     title = f"Budget {uuid.uuid4().hex[:8]}"
 
     with owner.client() as client:
-        chat_id = _new_chat(client, title=title, terminal_id=picked)
-        read_only_chat = _new_chat(client, title=title, terminal_id=picked)
+        chat_id = _new_chat(client, title=title, machine_id=picked)
+        read_only_chat = _new_chat(client, title=title, machine_id=picked)
     _share_chat(owner, chat_id, guest)
     _share_chat(owner, read_only_chat, reader, share_mode=None)
-    allowed = {"terminal_id": other, "working_directory": "/home/user/plans", "models": ["m"]}
+    allowed = {"machine_id": other, "working_directory": "/home/user/plans", "models": ["m"]}
     with guest.client() as client:
         saved = client.post(f"/api/v1/chats/{chat_id}", json={"chat": allowed})
         on_other = output_of(execute(client, other, "echo ran", chat_id))
         refused = {
             "the title": client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"title": "Mine"}}),
             "the title beside the terminal": client.post(
-                f"/api/v1/chats/{chat_id}", json={"chat": {"title": "Mine", "terminal_id": picked}}
+                f"/api/v1/chats/{chat_id}", json={"chat": {"title": "Mine", "machine_id": picked}}
             ),
             "the messages": client.post(
                 f"/api/v1/chats/{chat_id}", json={"chat": {"history": {"messages": {}}}}
@@ -681,7 +681,7 @@ def test_a_collaborator_changes_only_a_chats_models_terminal_and_working_directo
         }
     with reader.client() as client:
         refused["the terminal of a chat shared for reading"] = client.post(
-            f"/api/v1/chats/{read_only_chat}", json={"chat": {"terminal_id": other}}
+            f"/api/v1/chats/{read_only_chat}", json={"chat": {"machine_id": other}}
         )
     with owner.client() as client:
         stored = client.get(f"/api/v1/chats/{chat_id}").json()
@@ -697,7 +697,7 @@ def test_a_collaborator_changes_only_a_chats_models_terminal_and_working_directo
     assert (stored["title"], stored["chat"]["title"]) == (title, title), (
         f"the chat's title changed: {stored['title']!r} {stored['chat']['title']!r}"
     )
-    assert stored_read_only["chat"].get("terminal_id") == picked, (
+    assert stored_read_only["chat"].get("machine_id") == picked, (
         f"a reader changed the chat's terminal: {stored_read_only['chat']}"
     )
     assert on_other.strip() == "ran", (
@@ -710,16 +710,16 @@ def test_a_terminal_with_an_unknown_scope_is_not_created(admin, connect_terminal
 
     with admin.client() as client:
         refused = client.post(
-            "/api/v1/terminals/templates",
+            "/api/v1/machines/templates",
             json={
                 "id": str(uuid.uuid4()),
                 "connection_id": connection["id"],
                 "data": {"name": "Per galaxy", "scope": "galaxy"},
             },
         )
-        menu_after_refusal = client.get("/api/v1/terminals/").json()
+        menu_after_refusal = client.get("/api/v1/machines/").json()
         created = create_template(client, connection, scope="model")
-        menu = client.get("/api/v1/terminals/").json()
+        menu = client.get("/api/v1/machines/").json()
 
     assert refused.status_code == 422, (
         f"a terminal with an unknown scope answered {refused.status_code} {refused.text}"
@@ -729,5 +729,5 @@ def test_a_terminal_with_an_unknown_scope_is_not_created(admin, connect_terminal
     )
     assert menu_after_refusal == [], f"the refused terminal is in the menu: {menu_after_refusal}"
     assert [(entry["id"], entry["scope"]) for entry in menu] == [
-        (created["terminal_id"], "model")
+        (created["machine_id"], "model")
     ], f"a terminal with a known scope is listed as {menu}"

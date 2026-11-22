@@ -80,7 +80,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 HOME = "/home/user"
 CWD_LINE = "The current working directory is: "
-SAVED_CHAT_NEEDED = "This terminal requires a saved chat"
+SAVED_CHAT_NEEDED = "This machine requires a saved chat"
 SHELL_TOOLS = {"read_user_terminal", "send_user_terminal_input"}
 STILL_STARTING = "timed out. It may still be starting. Please try again."
 # a machine takes longer than this one second to start, and every later call far less
@@ -165,7 +165,7 @@ def _prepare(person, terminal_id: str, command: str) -> None:
 
 
 def _system_info(client: httpx.Client, terminal_id: str) -> httpx.Response:
-    return client.get(f"/api/v1/terminals/{terminal_id}/system/info")
+    return client.get(f"/api/v1/machines/{terminal_id}/system/info")
 
 
 def _machine_of(person, terminal_id: str, **context) -> dict:
@@ -187,7 +187,7 @@ def test_the_models_command_runs_in_the_machine_the_terminals_scope_gives_the_ch
         upstream,
         _run(f"echo high-{tag} > ~/{name} && cat ~/{name}"),
         reply.text("Noted."),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
     )
 
     context = {
@@ -233,7 +233,7 @@ def test_a_terminal_unshared_while_the_reply_runs_refuses_the_models_next_comman
     )
 
     with person.client() as client:
-        turn = send_message(client, prompt, terminal_id=terminal_id)
+        turn = send_message(client, prompt, machine_id=terminal_id)
         try:
             first_ran = wait_until(lambda: len(_requests_for(upstream, prompt)) == 2, 30)
             with admin.client() as sharing:
@@ -248,7 +248,7 @@ def test_a_terminal_unshared_while_the_reply_runs_refuses_the_models_next_comman
     )
     first, second = Exchange(turn, message, _requests_for(upstream, prompt)).results()
     assert "error" not in first, f"the command before the unshare failed: {first}"
-    assert "Terminal access denied" in str(second.get("error")), (
+    assert "Machine access denied" in str(second.get("error")), (
         f"the model was not told the terminal is no longer its to use: {second}"
     )
     assert terminals.holding(after) == {}, (
@@ -270,8 +270,8 @@ def test_a_new_chat_starts_in_the_working_directory_chosen_for_it(
         upstream,
         _run("pwd"),
         reply.text("Looked."),
-        terminal_id=terminal_id,
-        terminal_cwd=chosen,
+        machine_id=terminal_id,
+        machine_cwd=chosen,
     )
 
     (result,) = asked.results()
@@ -284,8 +284,8 @@ def test_a_new_chat_starts_in_the_working_directory_chosen_for_it(
     )
     with person.client() as client:
         stored = client.get(f"/api/v1/chats/{asked.turn.chat_id}").json()["chat"]
-    assert (stored.get("terminal_id"), stored.get("working_directory")) == (terminal_id, chosen), (
-        f"the chat does not keep its terminal and directory: {stored.get('terminal_id')}, "
+    assert (stored.get("machine_id"), stored.get("working_directory")) == (terminal_id, chosen), (
+        f"the chat does not keep its terminal and directory: {stored.get('machine_id')}, "
         f"{stored.get('working_directory')}"
     )
 
@@ -301,8 +301,8 @@ def test_a_working_directory_the_machine_does_not_have_refuses_the_new_chat(
         person,
         upstream,
         reply.text("Looked."),
-        terminal_id=terminal_id,
-        terminal_cwd=f"{HOME}/missing-{uuid.uuid4().hex[:8]}",
+        machine_id=terminal_id,
+        machine_cwd=f"{HOME}/missing-{uuid.uuid4().hex[:8]}",
     )
 
     assert "Working directory is unavailable" in _error_of(asked.message), (
@@ -324,7 +324,7 @@ def test_a_folders_terminal_and_working_directory_apply_to_its_new_chat(
             "/api/v1/folders/",
             json={
                 "name": f"Repo {tag}",
-                "data": {"terminal_id": terminal_id, "working_directory": default},
+                "data": {"machine_id": terminal_id, "working_directory": default},
             },
         )
     assert folder.status_code == 200, f"creating the folder failed: {folder.text}"
@@ -357,8 +357,8 @@ def test_the_machines_own_agents_md_and_skills_reach_the_model(
         f"printf -- '{manual}' > ~/.agents/skills/{skill}/SKILL.md",
     )
 
-    kept = _ask(keeper, upstream, reply.text("Ahoy."), terminal_id=terminal_id)
-    others = _ask(other, upstream, reply.text("Hello."), terminal_id=terminal_id)
+    kept = _ask(keeper, upstream, reply.text("Ahoy."), machine_id=terminal_id)
+    others = _ask(other, upstream, reply.text("Hello."), machine_id=terminal_id)
 
     assert f"# AGENTS.md\n\n{rule}\n" in kept.sent("user"), (
         f"the machine's AGENTS.md did not reach the model: {kept.sent('user')}"
@@ -392,7 +392,7 @@ def test_a_call_the_machine_refuses_is_handed_to_the_model_and_the_reply_goes_on
         reply.tool_call("read_file", {"path": f"{HOME}/missing-{tag}.txt"}),
         _run(f"echo still-here-{tag}"),
         reply.text("Carried on."),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
     )
 
     refused, ran = asked.results()
@@ -417,10 +417,10 @@ def test_a_per_chat_terminal_refuses_a_temporary_chat_and_serves_a_saved_one(
 
     with connected(person) as tab, person.client() as client:
         chat_id = tab.temporary_chat_id()
-        send_message(client, unsaved, terminal_id=terminal_id, chat_id=chat_id, session_id=tab.sid)
+        send_message(client, unsaved, machine_id=terminal_id, chat_id=chat_id, session_id=tab.sid)
         refused = tab.wait_for(chat_id, "chat:message:error")
     started_for_it = terminals.instances()
-    saved = _ask(person, upstream, _run("echo saved"), reply.text("Ran."), terminal_id=terminal_id)
+    saved = _ask(person, upstream, _run("echo saved"), reply.text("Ran."), machine_id=terminal_id)
 
     assert refused["data"]["error"] == {"content": SAVED_CHAT_NEEDED}, (
         f"the temporary chat was not told why its terminal cannot be used: {refused}"
@@ -445,7 +445,7 @@ def test_a_file_preview_link_serves_the_machines_files_without_sign_in_and_read_
     _prepare(person, terminal_id, f"echo '{page}' > ~/tides-{tag}.html")
 
     with person.client() as client:
-        preview = client.post(f"/api/v1/terminals/{terminal_id}/files/preview")
+        preview = client.post(f"/api/v1/machines/{terminal_id}/files/preview")
     assert preview.status_code == 200, f"no preview link: {preview.status_code} {preview.text}"
     link = preview.json()["url"]
     file_link = f"{link}home/user/tides-{tag}.html"
@@ -480,11 +480,11 @@ def _open_shell(instance, person, terminal_id: str, chat_id: str) -> Iterator[Cl
     """The shell a person opens in the chat's Terminal tab, through the instance."""
     with person.client() as client:
         created = client.post(
-            f"/api/v1/terminals/{terminal_id}/api/terminals", headers={"X-Session-Id": chat_id}
+            f"/api/v1/machines/{terminal_id}/api/terminals", headers={"X-Session-Id": chat_id}
         )
     assert created.status_code == 200, f"opening a shell failed: {created.text}"
     address = instance.base_url.replace("http://", "ws://", 1)
-    path = f"/api/v1/terminals/{terminal_id}/api/terminals/{created.json()['id']}"
+    path = f"/api/v1/machines/{terminal_id}/api/terminals/{created.json()['id']}"
     with connect(address + path, proxy=None, open_timeout=10, close_timeout=2) as shell:
         shell.send(json.dumps({"type": "auth", "token": person.token, "chat_id": chat_id}))
         yield shell
@@ -510,7 +510,7 @@ def test_the_model_reads_and_types_in_the_shell_the_person_has_open_in_the_chat(
     terminal_id = shared_terminal(person)
     tag = uuid.uuid4().hex[:8]
 
-    without_a_shell = _ask(person, upstream, reply.text("Hello."), terminal_id=terminal_id)
+    without_a_shell = _ask(person, upstream, reply.text("Hello."), machine_id=terminal_id)
     chat_id = without_a_shell.turn.chat_id
     with _open_shell(instance, person, terminal_id, chat_id) as shell:
         # the sums show only in what the shell prints, never in what was typed
@@ -522,7 +522,7 @@ def test_the_model_reads_and_types_in_the_shell_the_person_has_open_in_the_chat(
             reply.tool_call("read_user_terminal", {}),
             reply.tool_call("send_user_terminal_input", {"input": f"echo $((50+5))-{tag}\n"}),
             reply.text("Typed."),
-            terminal_id=terminal_id,
+            machine_id=terminal_id,
             **_after(person, chat_id),
         )
         typed_by_the_model = _shell_shows(shell, f"55-{tag}")
@@ -565,7 +565,7 @@ def test_a_picture_the_model_draws_is_copied_into_the_chats_machine(
         _run("sha256sum ~/*.png"),
         reply.text("Drawn."),
         matching=reply.mentioning,
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
         features={"image_generation": True},
     )
 
@@ -573,7 +573,7 @@ def test_a_picture_the_model_draws_is_copied_into_the_chats_machine(
     assert len(drawn.get("images") or []) == 1, f"the model was told {drawn}"
     told = drawn["images"][0]
     copy = f"{HOME}/{told['id']}.png"
-    assert told.get("terminal_path") == copy, f"the model was not told where the copy is: {told}"
+    assert told.get("machine_path") == copy, f"the model was not told where the copy is: {told}"
     with person.client() as client:
         picture = client.get(told["url"])
     assert picture.status_code == 200, f"the chat's picture could not be read: {picture.text}"
@@ -597,17 +597,17 @@ def test_a_message_sent_while_the_orchestrator_is_down_fails_with_the_reason(
         connection = stack.connection(config={"access_grants": [read_grant(person.id)]})
         with admin.client() as client:
             configure_terminals(client, connection)
-            terminal_id = create_template(client, connection)["terminal_id"]
+            terminal_id = create_template(client, connection)["machine_id"]
             share_template(client, terminal_id, read_grant(person.id))
         while_up = _ask(
-            person, upstream, _run("echo up"), reply.text("Ran."), terminal_id=terminal_id
+            person, upstream, _run("echo up"), reply.text("Ran."), machine_id=terminal_id
         )
 
     while_down = _ask(
         person,
         upstream,
         reply.text("Answered without the terminal."),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
         **_after(person, while_up.turn.chat_id),
     )
 
@@ -628,7 +628,7 @@ def _reader_on_a_short_timeout(instance_with, preserve, terminals, name: str):
     connection = terminals.connection(config={"access_grants": [read_grant(person.id)]})
     with admin_of(slow).client() as client:
         configure_terminals(client, connection)
-        terminal_id = create_template(client, connection, name=name)["terminal_id"]
+        terminal_id = create_template(client, connection, name=name)["machine_id"]
         share_template(client, terminal_id, read_grant(person.id))
     return slow, person, terminal_id
 
@@ -641,12 +641,12 @@ def test_a_message_sent_while_the_machine_is_still_starting_says_so_and_works_wh
         instance_with, preserve, terminals, f"Workbench {uuid.uuid4().hex[:8]}"
     )
 
-    first = _ask(person, slow.upstream, reply.text("Too early."), terminal_id=terminal_id)
+    first = _ask(person, slow.upstream, reply.text("Too early."), machine_id=terminal_id)
     # the person sends again once the machine is up; System Info starts nothing itself
     with person.client() as client:
         started = wait_until(lambda: _system_info(client, terminal_id).status_code == 200, 60)
     again = _ask(
-        person, slow.upstream, _run("echo started"), reply.text("Ran."), terminal_id=terminal_id
+        person, slow.upstream, _run("echo started"), reply.text("Ran."), machine_id=terminal_id
     )
 
     assert started, f"the machine never finished starting: {terminals.instances()}"
@@ -670,12 +670,12 @@ def test_the_still_starting_message_names_the_terminal_the_person_picked(
     name = f"Workbench {uuid.uuid4().hex[:8]}"
     slow, person, terminal_id = _reader_on_a_short_timeout(instance_with, preserve, terminals, name)
     with person.client() as client:
-        listed = {entry["id"]: entry["name"] for entry in client.get("/api/v1/terminals/").json()}
+        listed = {entry["id"]: entry["name"] for entry in client.get("/api/v1/machines/").json()}
     assert listed == {terminal_id: name}, f"the person's terminal menu shows {listed}"
 
-    first = _ask(person, slow.upstream, reply.text("Too early."), terminal_id=terminal_id)
+    first = _ask(person, slow.upstream, reply.text("Too early."), machine_id=terminal_id)
 
-    assert _error_of(first.message) == f"Terminal '{name}' {STILL_STARTING}", (
+    assert _error_of(first.message) == f"Machine '{name}' {STILL_STARTING}", (
         f"the message names something other than the terminal the person picked ({name}): "
         f"{_error_of(first.message)}"
     )
@@ -687,13 +687,13 @@ def test_a_message_naming_another_terminal_than_the_chats_own_is_refused(
     person = make_user()
     connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
-        first, other = (create_template(client, connection)["terminal_id"] for _ in range(2))
+        first, other = (create_template(client, connection)["machine_id"] for _ in range(2))
         for terminal_id in (first, other):
             share_template(client, terminal_id, read_grant(person.id))
     tag = uuid.uuid4().hex[:8]
 
     started = _ask(
-        person, upstream, _run(f"echo first > ~/{tag}.txt"), reply.text("Ran."), terminal_id=first
+        person, upstream, _run(f"echo first > ~/{tag}.txt"), reply.text("Ran."), machine_id=first
     )
     chat = _after(person, started.turn.chat_id)
     switched = _ask(
@@ -701,12 +701,12 @@ def test_a_message_naming_another_terminal_than_the_chats_own_is_refused(
         upstream,
         _run(f"echo other > ~/{tag}.txt"),
         reply.text("Ran."),
-        terminal_id=other,
+        machine_id=other,
         **chat,
     )
 
     assert "error" not in started.results()[0], f"the chat's own terminal failed: {started.message}"
-    assert _error_of(switched.message) == "Chat terminal selection changed; refresh the chat", (
+    assert _error_of(switched.message) == "Chat machine selection changed; refresh the chat", (
         f"a message naming another terminal was not refused with the reason: {switched.message}"
     )
     assert switched.requests == [], "the model was asked on a terminal the chat does not have"
@@ -726,9 +726,9 @@ def test_a_file_uploaded_for_a_chat_is_where_the_chats_model_works(
     tag = uuid.uuid4().hex[:8]
     name, content = f"manifest-{tag}.txt", f"twelve crates {tag}\n"
 
-    started = _ask(person, upstream, reply.text("Hello."), terminal_id=terminal_id)
+    started = _ask(person, upstream, reply.text("Hello."), machine_id=terminal_id)
     chat_id = started.turn.chat_id
-    base, session = f"/api/v1/terminals/{terminal_id}", {"X-Session-Id": chat_id}
+    base, session = f"/api/v1/machines/{terminal_id}", {"X-Session-Id": chat_id}
     with person.client() as client:
         cwd = client.get(f"{base}/files/cwd", headers=session)
         assert cwd.status_code == 200, f"the chat's working directory could not be read: {cwd.text}"
@@ -744,7 +744,7 @@ def test_a_file_uploaded_for_a_chat_is_where_the_chats_model_works(
         upstream,
         _run(f"cat {uploaded.json()['path']}"),
         reply.text("Read."),
-        terminal_id=terminal_id,
+        machine_id=terminal_id,
         **_after(person, chat_id),
     )
 

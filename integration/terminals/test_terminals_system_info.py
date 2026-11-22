@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 def _system_info(client: httpx.Client, terminal_id: str, chat_id: str | None) -> httpx.Response:
     headers = {"X-Session-Id": chat_id} if chat_id else {}
-    return client.get(f"/api/v1/terminals/{terminal_id}/system/info", headers=headers)
+    return client.get(f"/api/v1/machines/{terminal_id}/system/info", headers=headers)
 
 
 def _system_details(answer: httpx.Response) -> dict:
@@ -61,7 +61,7 @@ def test_a_per_chat_terminal_shows_system_info_only_for_a_saved_chat(
     for label, answer in (("no chat", no_chat), ("a temporary chat", temporary)):
         assert (answer.status_code, answer.json().get("detail")) == (
             409,
-            "This terminal requires a saved chat",
+            "This machine requires a saved chat",
         ), f"System Info for {label} was not refused: {answer.status_code} {answer.text}"
     assert started_by_refused == [], (
         f"a refused System Info started a machine: {started_by_refused}"

@@ -43,7 +43,7 @@ def _terminal_for(admin, connect_terminals, person, scope: str | None) -> str:
     """A terminal of that scope shared with `person`, Chat Uploads on Filesystem; returns its id."""
     connection = connect_terminals(read_grant(person.id), config=FILESYSTEM)
     with admin.client() as client:
-        terminal_id = create_template(client, connection, scope=scope)["terminal_id"]
+        terminal_id = create_template(client, connection, scope=scope)["machine_id"]
         share_template(client, terminal_id, read_grant(person.id))
     return terminal_id
 
@@ -56,7 +56,7 @@ def _new_chat(client: httpx.Client) -> str:
 
 def _upload(client: httpx.Client, terminal_id: str, chat_id: str | None, name: str, content: bytes):
     """Upload into the chat's working directory the way the browser does for a Filesystem upload."""
-    base = f"/api/v1/terminals/{terminal_id}"
+    base = f"/api/v1/machines/{terminal_id}"
     session = {"X-Session-Id": chat_id} if chat_id else {}
     cwd = client.get(f"{base}/files/cwd", headers=session)
     if cwd.status_code != 200:
@@ -87,7 +87,7 @@ def test_the_terminal_list_says_where_chat_uploads_go(
             share_template(client, terminal_id, read_grant(person.id))
 
     with person.client() as client:
-        listed = client.get("/api/v1/terminals/")
+        listed = client.get("/api/v1/machines/")
     assert listed.status_code == 200, listed.text
     by_connection = {
         terminal["id"].split(":")[1]: terminal
@@ -166,7 +166,7 @@ def test_a_per_chat_terminal_refuses_an_upload_for_a_temporary_chat(
 
     assert (refused.status_code, refused.json().get("detail")) == (
         409,
-        "This terminal requires a saved chat",
+        "This machine requires a saved chat",
     ), f"a temporary chat's upload was not refused: {refused.status_code} {refused.text}"
     assert terminals.instances() == [], (
         f"a temporary chat's upload started a machine: {terminals.instances()}"

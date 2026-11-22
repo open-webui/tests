@@ -47,7 +47,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
 EXPIRED = (401, "Browser session expired")
 READ_ONLY = (405, "File preview tokens are read-only")
-UNSHARED = (403, "Terminal access denied")
+UNSHARED = (403, "Machine access denied")
 
 
 def _signed_out(instance) -> httpx.Client:
@@ -67,7 +67,7 @@ def _run(person, terminal_id: str, command: str, context: dict | None = None) ->
     """Run `command` to its end in the person's machine, as they would in its shell."""
     with person.client() as client:
         done = client.post(
-            f"/api/v1/terminals/{terminal_id}/execute",
+            f"/api/v1/machines/{terminal_id}/execute",
             params={"wait": 30},
             headers=context or {},
             json={"command": command},
@@ -80,18 +80,18 @@ def _open_tab(person, terminal_id: str, url: str, context: dict | None = None) -
     """Open a Browser tab on `url` and return the path its frame loads pages under."""
     with person.client() as client:
         opened = client.post(
-            f"/api/v1/terminals/{terminal_id}/browser/sessions",
+            f"/api/v1/machines/{terminal_id}/browser/sessions",
             headers=context or {},
             json={"url": url},
         )
     assert opened.status_code == 200, f"opening the Browser tab failed: {opened.text}"
     tab = opened.json()
-    return f"/api/v1/terminals/{terminal_id}/browser/view/{tab['id']}/{tab['token']}/"
+    return f"/api/v1/machines/{terminal_id}/browser/view/{tab['id']}/{tab['token']}/"
 
 
 def _preview_link(person, terminal_id: str) -> str:
     with person.client() as client:
-        preview = client.post(f"/api/v1/terminals/{terminal_id}/files/preview")
+        preview = client.post(f"/api/v1/machines/{terminal_id}/files/preview")
     assert preview.status_code == 200, f"no preview link: {preview.status_code} {preview.text}"
     return preview.json()["url"]
 
@@ -264,8 +264,8 @@ def test_a_preview_link_fits_no_other_terminal_and_no_browser_tab(
     grant = read_grant(person.id)
     connection = connect_terminals(grant)
     with admin.client() as client:
-        terminal_id = create_template(client, connection)["terminal_id"]
-        other_id = create_template(client, connection)["terminal_id"]
+        terminal_id = create_template(client, connection)["machine_id"]
+        other_id = create_template(client, connection)["machine_id"]
         share_template(client, terminal_id, grant)
         share_template(client, other_id, grant)
     tag = uuid.uuid4().hex[:8]
@@ -276,7 +276,7 @@ def test_a_preview_link_fits_no_other_terminal_and_no_browser_tab(
     token = link.rstrip("/").rsplit("/", 1)[1]
     tab = _open_tab(person, terminal_id, "http://localhost:1/")
     tab_id, tab_token = tab.rstrip("/").split("/")[-2:]
-    view = f"/api/v1/terminals/{terminal_id}/browser/view"
+    view = f"/api/v1/machines/{terminal_id}/browser/view"
 
     with _signed_out(instance) as page:
         own = page.get(f"{link}home/user/{name}")
@@ -284,7 +284,7 @@ def test_a_preview_link_fits_no_other_terminal_and_no_browser_tab(
         runtime = page.get(f"{tab}runtime.js")
         refused = {
             "the link on another terminal": page.get(
-                f"/api/v1/terminals/{other_id}/browser/view/files/{token}/home/user/{name}"
+                f"/api/v1/machines/{other_id}/browser/view/files/{token}/home/user/{name}"
             ),
             "the link's token on a tab": page.get(f"{view}/{tab_id}/{token}/runtime.js"),
             "a tab's token on the files": page.get(f"{view}/files/{tab_token}/home/user/{name}"),
@@ -335,7 +335,7 @@ def test_a_machines_web_server_is_listed_and_previewed_for_its_own_person_only(
     terminal_id = shared_terminal(owner, neighbour)
     tag = uuid.uuid4().hex[:8]
     port = 20000 + uuid.uuid4().int % 20000
-    prefix = f"/api/v1/terminals/{terminal_id}/proxy/{port}/"
+    prefix = f"/api/v1/machines/{terminal_id}/proxy/{port}/"
     with owner.client() as client:
         serve_site(
             client,
@@ -351,7 +351,7 @@ def test_a_machines_web_server_is_listed_and_previewed_for_its_own_person_only(
 
     def seen_by(person) -> tuple[list[dict], httpx.Response, httpx.Response]:
         with person.client() as client:
-            listed = client.get(f"/api/v1/terminals/{terminal_id}/ports")
+            listed = client.get(f"/api/v1/machines/{terminal_id}/ports")
             assert listed.status_code == 200, f"listing the ports failed: {listed.text}"
             servers = [entry for entry in listed.json()["ports"] if entry["port"] == port]
             return servers, client.get(prefix), client.get(f"{prefix}quay.html")
