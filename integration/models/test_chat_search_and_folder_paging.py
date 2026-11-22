@@ -5,11 +5,11 @@
   so chats past the sixtieth never appeared. It now takes `page`, `sort_by` and `sort_dir` and
   answers `total` and `has_more`.
 * `f1ded94` / `a9617ca` background writes during a reply (sources, files, embeds, follow-up
-  suggestions, the arena's pick and the compaction summary) went through the chat upsert, which
-  always bumped `updated_at`, so the sidebar re-sorted mid-reply. The upsert now takes `touch`
-  and the background writers pass `touch=False`. The follow-ups and the arena pick are written
-  deep inside a live reply, so the scripted provider answers them a few seconds late: a write
-  that still moved the chat would show as a later `updated_at`.
+  suggestions, the arena's pick, now a router model's, and the compaction summary) went through
+  the chat upsert, which always bumped `updated_at`, so the sidebar re-sorted mid-reply. The
+  upsert now takes `touch` and the background writers pass `touch=False`. The follow-ups and the
+  router pick are written deep inside a live reply, so the scripted provider answers them a few
+  seconds late: a write that still moved the chat would show as a later `updated_at`.
 * `cc9a445` on PostgreSQL a chat search matched only the legacy flat `chat->'messages'` array,
   while current conversations keep their text in `chat_message` and under
   `chat->'history'->'messages'`. It now matches all three.
@@ -20,7 +20,8 @@ upsert that writes one of those background fields, so a new call site is held to
 Discriminates: passes on upstream dev `bbfa876af`. With the folder route back on one unpaged call
 the paging tests fail; with the chat upsert bumping `updated_at` regardless of `touch` the three
 background event cases fail; on dev ef67cc3fa, with `touch=False` dropped from the follow-ups,
-arena pick and compaction summary writes, those three tests fail; with the PostgreSQL match
+arena pick and compaction summary writes, those three tests fail (the arena pick test is
+retargeted to router models on dev 53d741157, where it passes); with the PostgreSQL match
 back on the legacy array alone the three history searches on PostgreSQL find nothing.
 """
 
@@ -38,6 +39,12 @@ from harness import upstream as reply
 from harness.actors import create_user
 from harness.chat import ChatTurn, send_message
 from harness.instance import LaunchedInstance, launch
+from harness.router_models import (
+    EVERYONE_READS,
+    ROUTER_MODELS_CONFIG,
+    default_routes,
+    save_router_model,
+)
 from harness.upstream import MOCK_MODEL_ID
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -254,9 +261,7 @@ def test_postgres_search_still_finds_legacy_messages_and_nothing_of_other_accoun
 # after the last write that may move the chat: a write that moves it shows as a later updated_at.
 LATE_BY = 2.5
 TASKS_CONFIG = ("/api/v1/tasks/config", "/api/v1/tasks/config/update")
-EVALUATION_CONFIG = ("/api/v1/evaluations/config", "/api/v1/evaluations/config")
 CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
-PUBLIC_READ = [{"principal_type": "user", "principal_id": "*", "permission": "read"}]
 
 
 def stored_chat(client: httpx.Client, chat_id: str) -> dict:
@@ -310,39 +315,36 @@ def test_saving_follow_ups_keeps_the_chats_place(follow_ups_on, make_user, upstr
 
 
 @pytest.fixture
-def arena_model(admin, preserve) -> Iterator[str]:
-    """A public arena model whose pool is the scripted model alone."""
-    preserve(EVALUATION_CONFIG)
-    arena_id = f"arena-{uuid.uuid4().hex[:8]}"
-    arena = {
-        "id": arena_id,
-        "name": f"Arena {arena_id}",
-        "meta": {"model_ids": [MOCK_MODEL_ID], "access_grants": PUBLIC_READ},
-    }
+def router_model(admin, preserve) -> str:
+    """A public router model whose only route is the scripted model."""
+    preserve(ROUTER_MODELS_CONFIG)
+    router_id = f"router-{uuid.uuid4().hex[:8]}"
     with admin.client() as client:
-        saved = client.post(
-            EVALUATION_CONFIG[1],
-            json={"ENABLE_EVALUATION_ARENA_MODELS": True, "EVALUATION_ARENA_MODELS": [arena]},
+        save_router_model(
+            client,
+            router_id,
+            f"Router {router_id}",
+            routes=default_routes(MOCK_MODEL_ID),
+            access_grants=[EVERYONE_READS],
         )
-        assert saved.status_code == 200, saved.text
         client.get("/api/models", params={"refresh": "true"}).raise_for_status()
-    return arena_id
+    return router_id
 
 
-def test_saving_the_arena_pick_keeps_the_chats_place(arena_model, make_user, upstream):
+def test_saving_the_router_pick_keeps_the_chats_place(router_model, make_user, upstream):
     prompt = "pick a contender"
     pieces = ["The ", "pick ", "is ", "made."]
     upstream.queue(
         reply.text(pieces, delay=LATE_BY, chunk_delay=1.0, match=reply.answering(prompt))
     )
     with make_user().client() as client:
-        turn = send_message(client, prompt, model=arena_model)
+        turn = send_message(client, prompt, model=router_model)
         asked = wait_for_message(client, turn, lambda message: message)
         picked = wait_for_message(client, turn, lambda message: message.get("selectedModelId"))
 
     assert picked["chat"]["history"]["messages"][turn.assistant_message_id].get("done") is not True
     assert picked["updated_at"] == asked["updated_at"], (
-        "saving which model the arena picked moved the chat up the sidebar mid-reply"
+        "saving which model the router picked moved the chat up the sidebar mid-reply"
     )
 
 
