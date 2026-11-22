@@ -34,7 +34,9 @@ for everyone (the deleted test); the controls never moved into the More menu (th
 reply-written test is red on dev 485103cde and on 0.13.3: both buttons stay usable while the reply
 is written (#34383); the lock it expects is in the 0.13.3 release notes, and only the MoA merge
 sets the flag the input reads. It passes with the fix on branch
-fix/terminal-folder-unlocked-during-reply (bde3943d3). The cog's target has no mutation of its
+fix/terminal-folder-unlocked-during-reply (bde3943d3). The deleted test is red since 3bfc168d6
+(0.13.4): a load drops a stored pick the machine list lacks, so the admin's page reads Machine
+after the reload, the cause of open-webui/open-webui#34643 (fix PR #34651). The cog's target has no mutation of its
 own. A person's own terminals, listed under Direct, were removed from Open WebUI in 44d55bd0f
 and 4720ff19e and their test with them.
 """
