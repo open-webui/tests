@@ -45,7 +45,12 @@ from harness.terminal_server import (
 from utils.cached_chat import ask, calling, choose_terminal, open_new_terminal, pick_terminal
 from utils.chat_ui import chat_input, last_reply
 from utils.shell_tab import READABLE_SHELL, expect_on_screen, type_into
-from utils.terminal_connections import fill_terminal, save_terminal, terminal_dialog
+from utils.terminal_connections import (
+    add_terminal,
+    fill_terminal,
+    save_terminal,
+    shown_admin_terminal_section,
+)
 from utils.tooltips import tooltip_button
 from utils.user_menu import open_settings
 
@@ -71,8 +76,7 @@ def fake_terminal():
 
 def _terminal_section(page: Page) -> Locator:
     page.goto("/admin/settings/integrations")
-    settings = page.get_by_role("dialog")
-    section = settings.get_by_role("heading", name="Machines", exact=True).locator("xpath=..")
+    section = shown_admin_terminal_section(page)
     expect(section.get_by_text("Open Terminal", exact=True)).to_be_visible()
     return section
 
@@ -88,9 +92,8 @@ def test_a_connected_terminal_opens_a_shell_from_the_chat(
     preserve(TERMINAL_SERVERS_CONFIG)
     page = page_for(make_user(role="admin"), init_script=READABLE_SHELL)
     section = _terminal_section(page)
-    expect(section.get_by_text("No terminal connections configured")).to_be_visible()
-    tooltip_button(section, "Add Connection").click()
-    adding = terminal_dialog(page)
+    expect(section.get_by_text("No machines configured")).to_be_visible()
+    adding = add_terminal(section)
     fill_terminal(adding, NAME, fake_terminal.base_url, key="lab-shell-key")
     save_terminal(page, adding)
     expect(section.get_by_text(NAME)).to_be_visible()
@@ -137,14 +140,14 @@ def test_a_saved_show_files_choice_is_gone_from_settings_and_a_terminal_still_ge
 
     page = page_for(person)
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=NAME).click()
     expect(page.get_by_role("main").get_by_role("button", name=NAME, exact=True)).to_be_visible()
 
     open_settings(page)
     page.get_by_role("tab", name="Interface").click()
     interface = page.locator("#tab-interface")
-    expect(interface.get_by_role("button", name="Terminal File Display")).to_be_visible()
+    expect(interface.get_by_role("button", name="Machine File Display")).to_be_visible()
     expect(interface.get_by_role("switch", name=REMOVED_SETTING)).to_have_count(0)
 
 
@@ -189,12 +192,12 @@ def test_terminal_file_display_decides_where_a_file_the_model_displays_shows(
     expect(page.get_by_role("button", name=opened_beside, exact=True)).to_be_visible()
 
     interface = _interface_settings(page)
-    choice = interface.get_by_role("button", name="Terminal File Display")
+    choice = interface.get_by_role("button", name="Machine File Display")
     expect(choice).to_contain_text("Sidebar")
     choice.click()
     expect(choice).to_contain_text("Inline")
     assert wait_until(
-        lambda: _saved_interface_setting(person, "terminalFileDisplay") == "inline", 10
+        lambda: _saved_interface_setting(person, "machineFileDisplay") == "inline", 10
     ), "the choice was not saved to the account"
 
     inline = page_for(person)
@@ -225,18 +228,18 @@ def test_the_terminal_settings_under_interface_show_only_to_a_person_with_a_term
         configure_terminals(client, connection)
 
     interface = _interface_settings(page_for(with_terminal))
-    expect(interface.get_by_role("button", name="Terminal File Display")).to_be_visible()
-    same_origin = interface.get_by_role("switch", name="Terminal Preview Allow Same Origin")
+    expect(interface.get_by_role("button", name="Machine File Display")).to_be_visible()
+    same_origin = interface.get_by_role("switch", name="Machine Preview Allow Same Origin")
     expect(same_origin).not_to_be_checked()
     same_origin.click()
     expect(same_origin).to_be_checked()
     assert wait_until(
-        lambda: _saved_interface_setting(with_terminal, "terminalPreviewAllowSameOrigin") is True,
+        lambda: _saved_interface_setting(with_terminal, "machinePreviewAllowSameOrigin") is True,
         10,
     ), "the switch was not saved to the account"
 
     interface = _interface_settings(page_for(without))
-    expect(interface.get_by_role("button", name="Terminal File Display")).to_have_count(0)
-    expect(
-        interface.get_by_role("switch", name="Terminal Preview Allow Same Origin")
-    ).to_have_count(0)
+    expect(interface.get_by_role("button", name="Machine File Display")).to_have_count(0)
+    expect(interface.get_by_role("switch", name="Machine Preview Allow Same Origin")).to_have_count(
+        0
+    )

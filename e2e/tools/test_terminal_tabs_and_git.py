@@ -1084,14 +1084,14 @@ def test_a_per_chat_terminal_picked_before_the_first_message_shows_its_files_onc
     orchestrator = connect_terminals(read_grant(person.id))
     with admin.client() as client:
         lighthouse = create_template(client, orchestrator, name="Lighthouse", scope="chat")
-        share_template(client, lighthouse["terminal_id"], read_grant(person.id))
+        share_template(client, lighthouse["machine_id"], read_grant(person.id))
     page, files, folder = _files_in_a_folder_of_harbour(
         page_for, make_user, admin, open_terminal, orchestrator, person
     )
 
     _pick_another_terminal(page, "Harbour", "Lighthouse")
     # a per-chat terminal has no files until its chat exists
-    expect(page.get_by_text("Terminal connection unavailable")).to_be_visible()
+    expect(page.get_by_text("Machine unavailable")).to_be_visible()
     prompt = f"chart the coast {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Charted.", match=reply.answering(prompt)))
     send(page, prompt)
@@ -1757,7 +1757,7 @@ def test_on_a_phone_the_tabs_button_shows_once_a_terminal_is_picked_and_opens_it
     # nothing to show beside a new chat yet
     expect(tabs_button).to_have_count(0)
 
-    tooltip_button(page.get_by_role("main"), "Terminal").tap()
+    tooltip_button(page.get_by_role("main"), "Machine").tap()
     listed_terminal(page, terminal).tap()
     close_menu(page)
     expect(tabs_button).to_have_attribute("aria-expanded", "false")

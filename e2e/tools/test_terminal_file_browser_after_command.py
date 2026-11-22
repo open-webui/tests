@@ -2,7 +2,7 @@
 
 Issue open-webui/open-webui#30051, fix `878c90eaa` (PR open-webui/open-webui#31878). A terminal
 can limit its file browser to a top folder. Every `run_command` the model made sent the page a
-`terminal:run_command` event, which pointed the browser at `/`: outside that top folder, so the
+`machine:run_command` event, which pointed the browser at `/`: outside that top folder, so the
 panel went back to the top folder and closed the open file, and the next command ran there. The
 panel now stays in the folder the user picked and only reloads it.
 

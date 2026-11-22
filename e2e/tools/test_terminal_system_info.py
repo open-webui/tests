@@ -93,7 +93,7 @@ def _connect(admin, preserve, server, person, **fields) -> str:
 
 def _terminal_menu(page: Page) -> Locator:
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     menu = page.get_by_role("menu")
     expect(menu).to_be_visible()
     return menu
@@ -192,7 +192,7 @@ def test_a_per_chat_terminal_offers_no_system_info_before_the_chat_is_saved(
     connection = connect_terminals(read_grant(person.id))
     with admin.client() as client:
         for name, scope in ((per_user, "user"), (per_chat, "chat")):
-            terminal_id = create_template(client, connection, name=name, scope=scope)["terminal_id"]
+            terminal_id = create_template(client, connection, name=name, scope=scope)["machine_id"]
             share_template(client, terminal_id, read_grant(person.id))
     page = page_for(person)
 

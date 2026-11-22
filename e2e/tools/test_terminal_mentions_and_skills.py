@@ -246,7 +246,7 @@ def test_a_picked_terminal_skill_is_a_mention_the_model_reads_from_the_terminal(
 
     question = _send_a_terminal_skill_mention(page, upstream, cellar)
 
-    mention = _sent_message(page).get_by_role("button", name=f"$terminal:{cellar.terminal_skill}")
+    mention = _sent_message(page).get_by_role("button", name=f"$machine:{cellar.terminal_skill}")
     expect(mention).to_be_visible()
     asked = next(filter(reply.answering(question), upstream.chat_requests()))
     read = "\n".join(reply.context_results(asked, "view_skill"))
@@ -281,11 +281,11 @@ def test_a_terminal_skill_switched_on_in_the_skills_menu_is_listed_under_availab
     dialog = page.get_by_role("dialog", name="Available Skills")
     expect(dialog.get_by_text(cellar.workspace_skill, exact=True)).to_be_visible()
     labelled = re.compile(
-        rf"{re.escape(cellar.terminal_skill)}\s*Pressing apples {cellar.tag}\s*Terminal"
+        rf"{re.escape(cellar.terminal_skill)}\s*Pressing apples {cellar.tag}\s*Machine"
     )
     expect(dialog).to_contain_text(labelled)
     # the workspace skill is listed without the label
-    expect(dialog.get_by_text("Terminal", exact=True)).to_have_count(1)
+    expect(dialog.get_by_text("Machine", exact=True)).to_have_count(1)
 
 
 def test_a_sent_terminal_skill_mention_still_reads_as_a_mention_after_a_reload(
@@ -295,17 +295,17 @@ def test_a_sent_terminal_skill_mention_still_reads_as_a_mention_after_a_reload(
     page = page_for(person)
     choose_terminal(page, terminal_name)
     _send_a_terminal_skill_mention(page, upstream, cellar)
-    mention = _sent_message(page).get_by_role("button", name=f"$terminal:{cellar.terminal_skill}")
+    mention = _sent_message(page).get_by_role("button", name=f"$machine:{cellar.terminal_skill}")
     expect(mention).to_be_visible()
 
     page.reload()
     expect(chat_input(page)).to_be_visible()
     expect_reply(page, "Gently.")
 
-    # red on dev c15f28649: the message reads "<$terminal:pressing-…|pressing-…>" until a skill
+    # red on dev c15f28649: the message reads "<$machine:pressing-…|pressing-…>" until a skill
     # list is opened (finding open-webui-terminal-skills-unknown-until-listed)
     expect(mention).to_be_visible()
-    expect(_sent_message(page)).not_to_contain_text("<$terminal:")
+    expect(_sent_message(page)).not_to_contain_text("<$machine:")
 
 
 def test_the_more_menu_offers_a_terminals_skills_before_anything_is_typed(

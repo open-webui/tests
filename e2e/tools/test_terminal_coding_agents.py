@@ -328,7 +328,7 @@ def test_a_folders_new_chat_offers_the_agents_of_its_terminal_and_directory(
                 "/api/v1/folders/",
                 json={
                     "name": f"Atlas {uuid.uuid4().hex[:6]}",
-                    "data": {"terminal_id": connection["id"], "working_directory": "/srv/atlas"},
+                    "data": {"machine_id": connection["id"], "working_directory": "/srv/atlas"},
                 },
             )
         assert created.status_code == 200, f"creating the folder failed: {created.text}"
@@ -399,7 +399,7 @@ def test_a_pinned_pi_agent_model_opens_a_chat_on_that_model(
     name = f"Agent box {uuid.uuid4().hex[:6]}"
     connection = connect_agent_terminal(admin, native_agent_terminal, person, name=name)
     with person.client() as client:
-        listed = client.get("/api/models", params={"terminal_id": connection["id"]})
+        listed = client.get("/api/models", params={"machine_id": connection["id"]})
         assert listed.status_code == 200, listed.text
         # the id as Open WebUI gives it, which the pin stores
         pi = next(m["id"] for m in listed.json()["data"] if m["name"] == "pi/acme/pi-fake")

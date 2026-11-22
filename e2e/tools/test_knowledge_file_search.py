@@ -20,7 +20,6 @@ dev c15f28649 as well, in every way a side chat starts.
 from __future__ import annotations
 
 import dataclasses
-import re
 
 import pytest
 from playwright.sync_api import expect
@@ -90,7 +89,8 @@ def _kb_exec_result(chat_page: tuple[ChatSurface, object], command: str):
     send(chat, "search the notes")
     expect_reply(chat, "searched")
     answer = last_reply(chat)
-    answer.get_by_role("button", name=re.compile("kb_exec")).click()
+    # a builtin call reads its fixed label, not its name
+    answer.get_by_role("button").filter(has_text="Browsed knowledge").click()
     return answer
 
 

@@ -82,6 +82,7 @@ from utils.chat_ui import (
 )
 from utils.model_editor import (
     expect_model_default_terminal,
+    machine_part,
     model_default_terminal,
     section,
 )
@@ -93,7 +94,7 @@ QUAY = "Quay shell"
 SLIP = "Slipway shell"
 BOX = "Dry dock"
 WORKBENCH = "Workbench"
-MIXED_ATTACHMENTS = "Attached files must belong to this chat and the same terminal."
+MIXED_ATTACHMENTS = "Attached files must belong to this chat and the same machine."
 EVERYONE_READS = grant("user", "*", "read")
 CONNECTION_LOST = "Connection lost. Reconnecting..."
 RECONNECTED = "Reconnected"
@@ -155,7 +156,7 @@ def terminals(admin, servers) -> dict[str, dict]:
     return connect(admin, servers, quay=[EVERYONE_READS], slip=[EVERYONE_READS])
 
 
-def terminal_button(page: Page, shown: str = "Terminal") -> Locator:
+def terminal_button(page: Page, shown: str = "Machine") -> Locator:
     """The chat input's Terminal button; it reads the picked terminal's name, else Terminal."""
     return page.get_by_role("main").get_by_role("button", name=shown, exact=True)
 
@@ -163,8 +164,8 @@ def terminal_button(page: Page, shown: str = "Terminal") -> Locator:
 def expect_terminal(page: Page, name: str | None) -> None:
     """The chat input shows `name` as the chat's terminal, or none picked."""
     expect(chat_input(page)).to_be_visible()
-    expect(terminal_button(page, name or "Terminal")).to_be_visible()
-    for other in {QUAY, SLIP, "Unavailable terminal"} - {name}:
+    expect(terminal_button(page, name or "Machine")).to_be_visible()
+    for other in {QUAY, SLIP, "Unavailable machine"} - {name}:
         expect(terminal_button(page, other), f"{other} shows as picked").to_have_count(0)
 
 
@@ -239,8 +240,8 @@ def test_each_chat_opens_on_the_terminal_it_was_started_with(
     assert where_the_command_ran(page, upstream) == SLIP
     on_slip = chat_id_of(page)
 
-    assert stored_chat(person, on_quay).get("terminal_id") == terminals[QUAY]["id"]
-    assert stored_chat(person, on_slip).get("terminal_id") == terminals[SLIP]["id"]
+    assert stored_chat(person, on_quay).get("machine_id") == terminals[QUAY]["id"]
+    assert stored_chat(person, on_slip).get("machine_id") == terminals[SLIP]["id"]
     # Slipway is the page's last pick; the first chat still opens on its own
     open_chat(page, on_quay)
     expect_terminal(page, QUAY)
@@ -276,7 +277,7 @@ def test_a_chat_started_without_a_terminal_opens_without_one_whatever_is_picked_
     expect_terminal(page, None)
     offered = offered_to_the_model(page, upstream)
     assert "run_command" not in offered, f"the chat without a terminal was handed one: {offered}"
-    assert stored_chat(person, plain).get("terminal_id") is None, stored_chat(person, plain)
+    assert stored_chat(person, plain).get("machine_id") is None, stored_chat(person, plain)
 
 
 @pytest.mark.parametrize(
@@ -396,7 +397,7 @@ def make_model(admin) -> Iterator[Callable[..., dict]]:
         model_id = f"berth-{uuid.uuid4().hex[:8]}"
         meta: dict = {"capabilities": {"terminal": True}}
         if terminal_id:
-            meta["terminalId"] = terminal_id
+            meta["machineId"] = terminal_id
         model = {
             "id": model_id,
             "base_model_id": MOCK_MODEL_ID,
@@ -505,12 +506,12 @@ def test_a_default_terminal_that_is_gone_reads_unavailable_and_none_takes_it_off
         save.click()
     assert saved.value.ok, saved.value.text()
     meta = stored_model(admin, model)["meta"]
-    assert "terminalId" not in meta, f"the model still names a default terminal: {meta}"
+    assert "machineId" not in meta, f"the model still names a default terminal: {meta}"
     assert meta.get("capabilities", {}).get("terminal") is True, meta
 
 
 def terminal_capability(editor: Locator) -> Locator:
-    return section(editor, "Features").get_by_role("switch", name="Terminal", exact=True)
+    return section(editor, "Features").get_by_role("switch", name="Machine", exact=True)
 
 
 @pytest.mark.slow
@@ -521,8 +522,9 @@ def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
     connect(admin, servers)
     editor = open_model_editor(make_user(role="admin"), page_for, make_model())
     expect(terminal_capability(editor)).to_be_checked()
-    expect(editor.get_by_text("No terminal servers available")).to_be_visible()
+    # opens the editor's Machine part, where the default machine is chosen
     expect(model_default_terminal(editor)).to_have_count(0)
+    expect(editor.get_by_text("No machines available")).to_be_visible()
 
     # without WebSocket support there is no Tether, so only a connection brings one
     socketless = instance_with({"ENABLE_WEBSOCKET_SUPPORT": "false"})
@@ -538,8 +540,8 @@ def test_the_model_editor_offers_a_terminal_only_where_one_can_be_had(
     capabilities = section(editor, "Features")
     expect(capabilities.get_by_role("switch", name="Vision", exact=True)).to_be_visible()
     expect(terminal_capability(editor)).to_have_count(0)
-    expect(editor.get_by_text("No terminal servers available")).to_have_count(0)
-    expect(model_default_terminal(editor)).to_have_count(0)
+    expect(editor.get_by_text("No machines available")).to_have_count(0)
+    expect(machine_part(editor)).to_have_count(0)
 
     connect(owner, servers, quay=[EVERYONE_READS])
     editor = open_model_editor(builder, page_for, model)
@@ -557,7 +559,7 @@ def save_layout(person, chat_id: str, terminal_id: str) -> None:
         "activeGroupId": "main",
         "layout": {"type": "group", "groupId": "main"},
     }
-    state = {"schemaVersion": 1, "selectedTerminalId": terminal_id, "panels": conversation_only}
+    state = {"schemaVersion": 1, "selectedMachineId": terminal_id, "panels": conversation_only}
     with person.client() as client:
         saved = client.post(f"/api/v1/chats/{chat_id}/view", json={"state": state})
     assert saved.status_code == 200, saved.text

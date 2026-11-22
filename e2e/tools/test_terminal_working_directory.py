@@ -158,7 +158,7 @@ def directory_button(page: Page) -> Locator:
 def pick_terminal(page: Page, name: str) -> None:
     """Pick `name` in the chat input's Terminal menu; the working directory button then shows."""
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name).click()
     expect(directory_button(page)).to_be_visible()
 
@@ -201,7 +201,7 @@ def kept_with_the_chat(person, page: Page) -> tuple[str | None, str | None]:
         found = client.get(f"/api/v1/chats/{urlparse(page.url).path.removeprefix('/c/')}")
     assert found.status_code == 200, found.text
     chat = found.json()["chat"]
-    return chat.get("terminal_id"), chat.get("working_directory")
+    return chat.get("machine_id"), chat.get("working_directory")
 
 
 def open_folder_page(person, page_for, folder_id: str) -> Page:
@@ -253,7 +253,7 @@ def choose_default_terminal(page: Page, scope: Locator, name: str) -> None:
     """Pick `name` in the folder's Default terminal menu, the chat input's Terminal menu."""
     default_terminal(scope).click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name, exact=True).click()
-    expect(default_terminal(scope)).to_have_accessible_name(f"Default terminal: {name}")
+    expect(default_terminal(scope)).to_have_accessible_name(f"Default machine: {name}")
 
 
 def clear_default_terminal(page: Page, scope: Locator, picked: str) -> None:
@@ -262,7 +262,7 @@ def clear_default_terminal(page: Page, scope: Locator, picked: str) -> None:
     entry = page.get_by_role("menu").get_by_role("menuitemradio", name=picked, exact=True)
     expect(entry).to_be_checked()
     entry.click()
-    expect(default_terminal(scope)).to_have_accessible_name("Default terminal: None")
+    expect(default_terminal(scope)).to_have_accessible_name("Default machine: None")
 
 
 def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_reload(
@@ -430,7 +430,7 @@ def test_a_new_chat_in_a_folder_starts_on_its_terminal_and_directory(
     person = make_user()
     folder = _directory(open_terminal)
     folder_id, _ = create_folder(
-        person, {"terminal_id": terminal["id"], "working_directory": str(folder)}
+        person, {"machine_id": terminal["id"], "working_directory": str(folder)}
     )
     page = open_folder_page(person, page_for, folder_id)
 
@@ -469,7 +469,7 @@ def test_a_folders_terminal_replaces_the_terminal_picked_before(
     person = make_user()
     folder = _directory(open_terminal)
     _, name = create_folder(
-        person, {"terminal_id": terminal["id"], "working_directory": str(folder)}
+        person, {"machine_id": terminal["id"], "working_directory": str(folder)}
     )
     page = page_for(person)
     choose_terminal(page, SPARE)
@@ -491,7 +491,7 @@ def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
     folder_id, name = create_folder(person, {})
     page = open_folder_page(person, page_for, folder_id)
     composer = page.get_by_role("main")
-    expect(composer.get_by_role("button", name="Terminal", exact=True)).to_be_visible()
+    expect(composer.get_by_role("button", name="Machine", exact=True)).to_be_visible()
 
     dialog = open_folder_dialog(page, name)
     choose_default_terminal(page, dialog, TERMINAL)
@@ -510,7 +510,7 @@ def switch_terminal(page: Page, picked: str, to: str) -> None:
     composer = page.get_by_role("main")
     composer.get_by_role("button", name=picked, exact=True).click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=to).click()
-    shown = "Terminal" if to == picked else to
+    shown = "Machine" if to == picked else to
     expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
     expect(page.get_by_role("menu")).to_have_count(0)
 
@@ -523,7 +523,7 @@ def harbour_model(admin, terminal):
         "id": model_id,
         "base_model_id": MOCK_MODEL_ID,
         "name": model_id,
-        "meta": {"capabilities": {"terminal": True}, "terminalId": terminal["id"]},
+        "meta": {"capabilities": {"terminal": True}, "machineId": terminal["id"]},
         "params": {},
         "access_grants": [EVERYONE_READS],
     }
@@ -542,7 +542,7 @@ def test_a_terminal_turned_off_or_changed_in_a_folder_chat_stays_when_the_model_
     person = make_user()
     folder_id, _ = create_folder(
         person,
-        {"terminal_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
+        {"machine_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
     )
     page = open_folder_page(person, page_for, folder_id)
     composer = page.get_by_role("main")
@@ -552,7 +552,7 @@ def test_a_terminal_turned_off_or_changed_in_a_folder_chat_stays_when_the_model_
     select_model(page, harbour_model["name"])
 
     expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(harbour_model["name"])
-    shown = "Terminal" if choice == "off" else SPARE
+    shown = "Machine" if choice == "off" else SPARE
     expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
     expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_have_count(0)
     prompt = f"which terminal? {uuid.uuid4().hex[:8]}"
@@ -597,7 +597,7 @@ def test_a_folders_missing_directory_refuses_the_first_message(
     person = make_user()
     folder_id, _ = create_folder(
         person,
-        {"terminal_id": terminal["id"], "working_directory": str(open_terminal.home / "gone")},
+        {"machine_id": terminal["id"], "working_directory": str(open_terminal.home / "gone")},
     )
     page = open_folder_page(person, page_for, folder_id)
     expect(directory_button(page)).to_contain_text("gone")
@@ -634,12 +634,12 @@ def test_the_folder_dialog_saves_a_default_terminal_and_directory(
     expect(page.get_by_text("Folder updated successfully")).to_be_visible()
 
     data = stored_folder_data(person, folder_id)
-    assert (data.get("terminal_id"), data.get("working_directory")) == (
+    assert (data.get("machine_id"), data.get("working_directory")) == (
         terminal["id"],
         f"{folder}/",
     ), data
     reopened = open_folder_dialog(page, name)
-    expect(default_terminal(reopened)).to_have_accessible_name(f"Default terminal: {TERMINAL}")
+    expect(default_terminal(reopened)).to_have_accessible_name(f"Default machine: {TERMINAL}")
     expect(reopened.get_by_label("Working directory")).to_have_value(f"{folder}/")
 
 
@@ -649,7 +649,7 @@ def test_clearing_the_folders_terminal_clears_its_directory(
     person = make_user()
     folder_id, name = create_folder(
         person,
-        {"terminal_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
+        {"machine_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
     )
     page = page_for(person)
     dialog = open_folder_dialog(page, name)
@@ -660,7 +660,7 @@ def test_clearing_the_folders_terminal_clears_its_directory(
     expect(page.get_by_text("Folder updated successfully")).to_be_visible()
 
     data = stored_folder_data(person, folder_id)
-    assert (data.get("terminal_id"), data.get("working_directory")) == (None, None), data
+    assert (data.get("machine_id"), data.get("working_directory")) == (None, None), data
 
 
 @pytest.fixture
@@ -697,7 +697,7 @@ def test_a_models_default_terminal_is_picked_for_its_new_chats(
 
     with admin.client() as client:
         stored = client.get(f"/api/v1/models/model?id={workbench_model['id']}").json()
-    assert stored["meta"].get("terminalId") == terminal["id"], stored["meta"]
+    assert stored["meta"].get("machineId") == terminal["id"], stored["meta"]
     page = page_for(admin, path=f"/?model={workbench_model['id']}")
     expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     expect(directory_button(page)).to_be_visible()

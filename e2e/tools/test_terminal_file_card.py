@@ -65,7 +65,7 @@ CHART = "/home/user/tide-chart.png"
 CHART_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
-UNAVAILABLE = "Terminal unavailable"
+UNAVAILABLE = "Machine unavailable"
 
 
 def _operation(operation_id: str, **properties: dict) -> dict:
@@ -176,7 +176,7 @@ def terminal(admin, preserve, person, log_text):
 def _set_file_display(person, display: str) -> None:
     with person.client() as client:
         saved = client.post(
-            "/api/v1/users/user/settings/update", json={"ui": {"terminalFileDisplay": display}}
+            "/api/v1/users/user/settings/update", json={"ui": {"machineFileDisplay": display}}
         )
     assert saved.status_code == 200, saved.text
 
@@ -342,7 +342,7 @@ def test_an_uploaded_file_the_model_shows_is_a_card_read_from_open_webui(
     expect(chat_input(page)).to_be_visible()
 
     shown = last_reply(page)
-    expect(tooltip_button(page.get_by_role("main"), "Terminal")).to_be_visible()
+    expect(tooltip_button(page.get_by_role("main"), "Machine")).to_be_visible()
     expect(shown.get_by_text(text)).to_be_visible()
     expect(shown.get_by_text(UNAVAILABLE)).to_have_count(0)
 

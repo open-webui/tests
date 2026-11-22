@@ -264,7 +264,7 @@ def test_the_sort_menu_orders_the_list_and_a_second_pick_turns_the_order_around(
 
     with person.client() as client:
         told = client.get(
-            f"/api/v1/terminals/{_terminal_id(client)}/files/list",
+            f"/api/v1/machines/{_terminal_id(client)}/files/list",
             params={"directory": str(quay)},
         )
     assert told.status_code == 200, told.text
@@ -293,7 +293,7 @@ def _wait_for_the_disks_clock() -> None:
 
 
 def _terminal_id(client) -> str:
-    terminals = client.get("/api/v1/terminals/").json()
+    terminals = client.get("/api/v1/machines/").json()
     assert len(terminals) == 1, f"the person should have the one terminal: {terminals}"
     return terminals[0]["id"]
 

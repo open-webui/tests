@@ -12,7 +12,7 @@ refuses it, loads further results as the end of the list comes into view and off
 fails. New Folder, New File, Upload, Delete and Download each say that they failed when the
 terminal refuses them, and a selection the terminal deletes only in part says how many of it went.
 The folder is read again when the browser tab is shown again. A person whose access to the terminal
-is taken away while Files is open sees "Terminal connection unavailable" in its place.
+is taken away while Files is open sees "Machine unavailable" in its place.
 
 Discriminates: passes on the dev c15f28649 build, three runs. Each test fails on a frontend build
 of it (A or B) at the step named. On A: a failed listing read as an empty folder (refused listing
@@ -417,7 +417,5 @@ def test_files_says_the_terminal_is_unavailable_once_the_person_loses_it(
         )
     assert removed.status_code == 200, removed.text
 
-    expect(
-        page.get_by_role("status").filter(has_text="Terminal connection unavailable")
-    ).to_be_visible()
+    expect(page.get_by_role("status").filter(has_text="Machine unavailable")).to_be_visible()
     expect(file_browser(page)).to_have_count(0)
