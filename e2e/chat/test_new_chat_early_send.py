@@ -15,11 +15,12 @@ stays on the new chat), passes with the fix d1511abce and on dev 2b1fb53f4; on 2
 the held-back input and the fix's reset guard removed it fails the same way.
 
 A side chat creates its chat when its first message is sent. From dev c0b90785e its first message
-showed while that chat was still being created; since dev 03d8d3e35 the message stays in the box
-until the chat exists, so a chat that cannot be created leaves the message there to send again.
-The second test holds the creation, then refuses it. It passes on the dev de68d0ce4 build and
-fails on the dev 6a67b5b01 build, which took the message out of the box before the creation
-answered.
+showed while that chat was still being created; dev 03d8d3e35 kept it in the box until the chat
+existed, and since dev c26c928ce it shows at once again, and a chat that cannot be created takes
+the message back into the box to send again. The second test holds the creation, then refuses it:
+the message shows while the creation is held, is back in the box after the refusal and gets its
+reply when sent again. Retargeted for c26c928ce from the box-only behaviour of 03d8d3e35; passes
+on dev 53d741157.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, ma
     expect(conversation(page).get_by_text(question)).to_have_count(0)
 
 
-def test_the_first_message_of_a_side_chat_stays_in_the_box_until_its_chat_is_created(
+def test_the_first_message_of_a_side_chat_comes_back_to_the_box_when_its_chat_is_refused(
     page_for, make_user, upstream
 ):
     # an admin may open side chats whatever the default permissions say
@@ -102,8 +103,8 @@ def test_the_first_message_of_a_side_chat_stays_in_the_box_until_its_chat_is_cre
     try:
         side.send(question)
         wait_until_held(page, creations, "the side chat to be created")
-        expect(side.input).to_contain_text(question)
-        expect(side.conversation.get_by_text(question)).to_have_count(0)
+        expect(side.conversation.get_by_text(question)).to_be_visible()
+        expect(side.input).not_to_contain_text(question)
     finally:
         with page.expect_response("**/api/v1/chats/new"):
             for route in creations:
