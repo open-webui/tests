@@ -62,7 +62,7 @@ from utils.cached_chat import turn_on_tool
 from utils.chat_surface import ChatSurface, main_chat
 from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply
 from utils.model_selector import select_model
-from utils.note_chat import open_note_chat, send_in_note_chat
+from utils.note_chat import expand_note_chat, open_note_chat, send_in_note_chat
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -135,7 +135,7 @@ def test_summarizing_the_note_shows_the_answer_and_leaves_the_note_alone(
     )
     page, editor = _open_note(page_for, author, note_id, text)
 
-    open_note_chat(page)
+    expand_note_chat(page)
     page.get_by_role("button", name=SUMMARIZE_PROMPT).click()
 
     expect_reply(page, "The launch is Friday after QA on Thursday.")
@@ -156,7 +156,7 @@ def test_extracting_action_items_shows_the_answer_and_leaves_the_note_alone(
     )
     page, editor = _open_note(page_for, author, note_id, text)
 
-    open_note_chat(page)
+    expand_note_chat(page)
     page.get_by_role("button", name=ACTION_ITEMS_PROMPT).click()
 
     expect_reply(page, "Ana: book the room. Ben: send the agenda.")
@@ -202,7 +202,7 @@ def test_rewriting_the_selected_text_changes_only_that_part_of_the_note(
     _wait_until_stored(author, note_id, f"{kept}\n{selected}")
     editor.get_by_text(selected).click(click_count=3)
 
-    open_note_chat(page)
+    expand_note_chat(page)
     page.get_by_role("button", name=REWRITE_PROMPT).click()
 
     expect_reply(page, "Rewrote the selected line.")

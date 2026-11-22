@@ -53,7 +53,7 @@ from harness.actors import Actor
 from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
-from utils.note_chat import open_note_chat
+from utils.note_chat import expand_note_chat
 from utils.notes_page import note_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -135,7 +135,7 @@ def test_asking_the_note_chat_to_enhance_rewrites_the_open_note(page_for, make_u
     editor = _note_editor(page)
     expect(editor).to_contain_text("meeting tuesday bring slides")
 
-    open_note_chat(page)
+    expand_note_chat(page)
     page.get_by_role("button", name=ENHANCE_PROMPT).click()
 
     expect_reply(page, "The note is tidied up.")
