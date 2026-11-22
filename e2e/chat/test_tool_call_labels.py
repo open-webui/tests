@@ -5,7 +5,9 @@ switch in Admin Settings > Interface is off by default; switched on and saved it
 a reload. A tool call the model labelled then shows its completed label where the reply would
 say "View Result from <tool>", also after the chat is opened again, and the tool name stays on the
 label as its hover text. Two labelled calls in a row show their labels, joined by a comma, in the
-group summary. A call whose label is unusable shows as before.
+group summary. A call whose label is unusable shows as before: a tool of the user's own reads
+"View Result from <tool>", and since dev 6e5f3fda3 one of Open WebUI's own tools shows its fixed
+label ("Checked the time"). The model's label still wins over the fixed one.
 
 Regression (open-webui/open-webui#33925): a group of three calls where the model left one call
 unlabelled dropped every label from its summary, which read "Exploring 3 read_tide_gauge" while
@@ -37,7 +39,7 @@ from harness.python_tools import python_tool
 from utils.admin_settings import save
 from utils.cached_chat import turn_on_tool
 from utils.chat_surface import ChatSurface
-from utils.chat_ui import conversation, expect_reply, send
+from utils.chat_ui import conversation, expect_reply, send, tool_step
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -216,6 +218,27 @@ def test_a_group_with_one_unlabelled_call_keeps_the_other_labels(
 
 
 def test_a_call_with_an_unusable_label_shows_as_before(
+    labels_switch, chat_for, make_user, upstream, held_gauges
+):
+    tool_name, release = held_gauges
+    release.touch()
+    labels_switch(True)
+    chat = chat_for(make_user())
+    turn_on_tool(chat, tool_name)
+    question = f"read the north gauge {uuid.uuid4().hex[:6]}"
+    answering = reply.answering(question)
+    unusable = {"running": "", "completed": "x" * 121}
+    upstream.queue(
+        reply.Reply(tool_calls=[gauge_call("north", unusable)], match=answering),
+        reply.text("The tide is rising.", match=answering),
+    )
+    send(chat, question)
+    expect_reply(chat, "The tide is rising.")
+
+    expect(conversation(chat).get_by_text("View Result from read_tide_gauge")).to_be_visible()
+
+
+def test_an_open_webui_tool_call_with_an_unusable_label_shows_its_fixed_label(
     labels_switch, chat_for, make_user, upstream
 ):
     labels_switch(True)
@@ -223,4 +246,8 @@ def test_a_call_with_an_unusable_label_shows_as_before(
 
     ask_for_the_time(chat, upstream, {"running": "", "completed": "x" * 121})
 
-    expect(conversation(chat).get_by_text("View Result from get_current_timestamp")).to_be_visible()
+    shown = tool_step(conversation(chat), "Checked the time", "get_current_timestamp")
+    expect(shown).to_be_visible()
+    expect(conversation(chat).get_by_text("View Result from get_current_timestamp")).to_have_count(
+        0
+    )

@@ -77,6 +77,21 @@ def expect_reply(chat: Chat, text: str) -> None:
     expect(last_reply(chat)).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
 
 
+def tool_step(scope: Locator, label: str, tool_name: str) -> Locator:
+    """A call of `tool_name` in `scope` that shows `label`, with the tool's name as hover text.
+
+    Since dev 6e5f3fda3 a call of an Open WebUI tool (the time, web search, code, images, skills)
+    shows a fixed label such as "Checked the time" where it read "View Result from <tool>"."""
+    return scope.get_by_role("button", name=label, exact=True).filter(
+        has=scope.page.get_by_title(tool_name, exact=True)
+    )
+
+
+def steps_summary(scope: Locator) -> Locator:
+    """The summary line of a reply's group of collapsed steps, which opens and closes them."""
+    return scope.get_by_role("button", name="Toggle details")
+
+
 def side_chat_tab(page: Page, question: str) -> Locator:
     """The tab of the side chat opened with `question`, which it takes as its title once saved."""
     return page.get_by_role("tab", name=side_tab_name(question))
