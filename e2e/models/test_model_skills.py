@@ -48,7 +48,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_ui import chat_input, expect_reply, last_reply, send
+from utils.chat_ui import chat_input, expect_reply, last_reply, send, tool_step
 from utils.model_editor import offered_tool_names, pick, selector_row, set_checkbox
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -293,9 +293,7 @@ def test_native_function_calling_lists_the_skill_and_the_viewer_loads_it(
     assert instructions not in manifest, manifest
     assert "view_skill" in offered, sorted(offered)
     assert instructions in tool_results, tool_results
-    expect(
-        last_reply(page).get_by_role("button", name="View Result from view_skill")
-    ).to_be_visible()
+    expect(tool_step(last_reply(page), "Read skill", "view_skill")).to_be_visible()
 
 
 @pytest.mark.usefixtures("lazy_skills")

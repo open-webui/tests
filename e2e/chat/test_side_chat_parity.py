@@ -80,6 +80,7 @@ from utils.chat_ui import (
     send,
     side_chat_panel,
     side_chat_tab,
+    tool_step,
 )
 from utils.clipboard import read_text
 from utils.menus import late_menu_entry
@@ -311,7 +312,8 @@ def test_a_tool_runs_in_a_side_chat_and_its_result_shows_there(
         reply.text("It is just past noon."),
     )
 
-    expect(side_reply(panel).get_by_text("View Result from get_current_timestamp")).to_be_visible()
+    time_check = tool_step(side_reply(panel), "Checked the time", "get_current_timestamp")
+    expect(time_check).to_be_visible()
     results = [
         str(entry["content"])
         for entry in sent_for(upstream, question)["messages"]
@@ -438,7 +440,7 @@ def test_web_search_turned_on_in_a_side_chat_searches_the_web(
     assert "search_web" in offered, f"the side chat's model was offered no web search: {offered}"
     results = json.dumps(sent_for(upstream, asked)["messages"])
     assert web_search_on in results, f"the search's result never reached the model: {results}"
-    search = side_reply(panel).get_by_role("button", name="View Result from search_web")
+    search = tool_step(side_reply(panel), "Searched the web", "search_web")
     expect(search).to_be_visible()
 
 

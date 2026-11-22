@@ -26,7 +26,7 @@ from harness import responses_provider as responses_api
 from harness.chat_history import seed_chat
 from harness.second_provider import OPENAI_CONFIG
 from utils.chat_surface import ChatSurface
-from utils.chat_ui import expect_reply, last_reply, send
+from utils.chat_ui import expect_reply, last_reply, send, tool_step
 from utils.model_selector import select_model
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -52,9 +52,8 @@ def expect_responsive(chat: ChatSurface) -> None:
 def expect_whole_reply(chat: ChatSurface) -> None:
     expect(last_reply(chat)).to_contain_text(BEFORE_THE_TOOL, timeout=RESPONSIVE_MS)
     expect(last_reply(chat)).to_contain_text(AFTER_THE_TOOL, timeout=RESPONSIVE_MS)
-    expect(last_reply(chat).get_by_text("View Result from get_current_timestamp")).to_be_visible(
-        timeout=RESPONSIVE_MS
-    )
+    time_check = tool_step(last_reply(chat), "Checked the time", "get_current_timestamp")
+    expect(time_check).to_be_visible(timeout=RESPONSIVE_MS)
     expect_responsive(chat)
 
 
@@ -89,6 +88,9 @@ def test_a_stored_reply_with_repeated_item_ids_opens_with_text_and_tool_call(cha
         "id": "item_1",
         "call_id": "call_1",
         "name": "get_current_timestamp",
+        # what the server stores on a call of its own tool, which gets the fixed label
+        "tool_id": "builtin:get_current_timestamp",
+        "tool_type": "builtin",
         "arguments": "{}",
         "status": "completed",
     }
