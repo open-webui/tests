@@ -152,6 +152,9 @@ def test_the_tool_still_works_after_the_first_token_expired(
         "the connection did not outlive its first access token (#28319)"
     )
 
-    [refresh] = mcp.auth_server.token_grants("refresh_token")
-    assert refresh["refresh_token"] == connected["refresh_token"]
+    # dev refreshes a token close to expiry on every MCP request, so count no exact number
+    refreshes = mcp.auth_server.token_grants("refresh_token")
+    assert refreshes, "the expired token was never refreshed"
+    assert refreshes[0]["refresh_token"] == connected["refresh_token"]
+    assert connected["access_token"] not in mcp.presented, "the MCP server saw the expired token"
     assert mcp.presented[-1] == mcp.auth_server.issued[-1]["access_token"]

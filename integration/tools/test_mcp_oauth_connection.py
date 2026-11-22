@@ -237,15 +237,24 @@ def test_a_provider_outage_during_the_refresh_keeps_the_connection(
     with person.client() as client:
         ask(client, prompt, tool_ids=[f"server:mcp:{server_id}"])
 
-    assert auth_server.token_grants("refresh_token"), "the refresh was never tried"
+    during_outage = auth_server.token_grants("refresh_token")
+    assert during_outage, "the refresh was never tried"
     assert f"mcp:{server_id}" in stored_sessions(admin, person), (
         f"a {status} from the provider during the refresh deleted the user's MCP sign-in, so "
         "they have to connect again (#33803)"
     )
     auth_server.refresh_outage = None
     assert echo_through_chat(person, upstream, server_id) == PHRASE
-    refreshes = auth_server.token_grants("refresh_token")
-    assert refreshes[-1]["refresh_token"] == connected["refresh_token"]
+    # dev refreshes a token close to expiry on every MCP request, so count no exact number
+    after_outage = auth_server.token_grants("refresh_token")[len(during_outage) :]
+    assert after_outage, "the token was not refreshed once the provider was back"
+    assert after_outage[0]["refresh_token"] == connected["refresh_token"], (
+        "the first refresh after the outage did not use the refresh token the failed one kept"
+    )
+    later_issued = auth_server.issued[auth_server.issued.index(connected) + 1 :]
+    spent = [grant["refresh_token"] for grant in after_outage[1:]]
+    latest = [answer["refresh_token"] for answer in later_issued[: len(spent)]]
+    assert spent == latest, f"a later refresh spent a stale refresh token: {spent} vs {latest}"
     assert mcp.presented[-1] == auth_server.issued[-1]["access_token"]
 
 
