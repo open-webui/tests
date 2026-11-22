@@ -31,6 +31,7 @@ from pathlib import Path
 import jwt
 
 from harness.actors import Actor
+from harness.inflight import wait_until_no_reply_runs
 from harness.instance import WEBUI_SECRET_KEY, LaunchedInstance
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "fat_chats"
@@ -146,8 +147,12 @@ def import_fat_chat(
 
 def delete_fat_chat(owner: Actor, fat: FatChat) -> None:
     with owner.client() as client:
+        # A reply marked done can still be saving; deleting then cancels it mid-write
+        wait_until_no_reply_runs(client, fat.chat_id, timeout=60)
         deleted = client.delete(f"/api/v1/chats/{fat.chat_id}")
-    assert deleted.status_code == 200, f"deleting fat chat {fat.name} failed: {deleted.text}"
+    assert deleted.status_code == 200 and deleted.json() is True, (
+        f"deleting fat chat {fat.name} failed: {deleted.text}"
+    )
 
 
 def _sign_agent_session(message: dict, replaced) -> None:
