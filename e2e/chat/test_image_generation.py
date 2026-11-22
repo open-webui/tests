@@ -51,7 +51,6 @@ from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     Chat,
     chat_input,
-    conversation,
     expect_reply,
     last_reply,
     open_integrations_menu,
@@ -59,6 +58,7 @@ from utils.chat_ui import (
     send,
     show_input_selections,
     start_from_link,
+    tool_step,
     turn_on_integration,
 )
 from utils.image_settings import (
@@ -295,5 +295,6 @@ def test_a_failing_engine_shows_its_error_and_no_picture(
     [result] = tool_results(upstream, "draw a red square")
     assert "error" in json.loads(result), f"the model was not told the engine failed: {result}"
     expect(reply_image(chat)).to_have_count(0)
-    conversation(chat).get_by_text("View Result from generate_image").click()
+    failed = tool_step(last_reply(chat), "Failed to generate image", "generate_image")
+    failed.click()
     expect(last_reply(chat).get_by_text(re.compile("Internal Server Error"))).to_be_visible()

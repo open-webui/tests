@@ -72,7 +72,9 @@ from utils.chat_ui import (
     replies,
     send,
     start_on_default_models,
+    steps_summary,
     stop_button,
+    tool_step,
     turn_temporary,
 )
 
@@ -168,9 +170,19 @@ def thought_button(chat: Chat) -> Locator:
     return last_reply(chat).get_by_role("button", name=THOUGHTS)
 
 
-def explored_button(chat: Chat) -> Locator:
-    """The collapsed group holding a tool call and the thoughts that came with it."""
-    return last_reply(chat).get_by_text("Explored")
+def date_step(chat: Chat) -> Locator:
+    """The reply's `calculate_timestamp` call, under its fixed label since dev 6e5f3fda3."""
+    return tool_step(last_reply(chat), "Calculated date", "calculate_timestamp")
+
+
+def expect_date_group_and_thoughts(chat: Chat) -> None:
+    """Open the group of the date call and its thoughts, then the thoughts."""
+    group = steps_summary(last_reply(chat))
+    expect(group).to_have_text("Calculated date")
+    group.click()
+    expect(date_step(chat)).to_be_visible()
+    thought_button(chat).click()
+    expect(last_reply(chat)).to_contain_text("weighing the two options")
 
 
 def expect_whole_reply(chat: Chat, text: str, thought: bool = False) -> None:
@@ -334,7 +346,7 @@ def test_tool_call_arguments_arriving_in_pieces_reach_the_tool_and_the_answer_fo
     )
 
     chat = reload_and_expect(chat, "Ten days ago it was.")
-    expect(last_reply(chat)).to_contain_text("calculate_timestamp")
+    expect(date_step(chat)).to_be_visible()
 
 
 @on_both_toggle_values
@@ -736,10 +748,7 @@ def test_merged_deltas_with_thoughts_and_a_tool_call_show_the_same_reply_live_an
     send(chat, "what was ten days ago?")
 
     expect_reply(chat, "Ten days ago it was.")
-    expect(last_reply(chat)).to_contain_text("calculate_timestamp")
-    explored_button(chat).click()
-    thought_button(chat).click()
-    expect(last_reply(chat)).to_contain_text("weighing the two options")
+    expect_date_group_and_thoughts(chat)
     sent = [r.json() for r in second_provider.requests_to("/v1/chat/completions")]
     called = [m for m in reply.conversation(sent[1]) if m.get("tool_calls")]
     assert json.loads(called[0]["tool_calls"][0]["function"]["arguments"]) == {
@@ -748,7 +757,4 @@ def test_merged_deltas_with_thoughts_and_a_tool_call_show_the_same_reply_live_an
     }
 
     chat = reload_and_expect(chat, "Ten days ago it was.")
-    expect(last_reply(chat)).to_contain_text("calculate_timestamp")
-    explored_button(chat).click()
-    thought_button(chat).click()
-    expect(last_reply(chat)).to_contain_text("weighing the two options")
+    expect_date_group_and_thoughts(chat)

@@ -7,7 +7,9 @@ read "Explored", so the chat looked stuck until the answer arrived. An unfinishe
 block in a reply that is still streaming now keeps the group on "Exploring".
 
 The scripted model calls a tool, then thinks for a few seconds before it answers, so the page
-shows the finished tool call and the open thinking block together.
+shows the finished tool call and the open thinking block together. Since dev 6e5f3fda3 the
+summary shows the time check's fixed label, "Checked the time", and keeps "Exploring" or
+"Explored" with the tool name in its hover text.
 
 Discriminates: passes on the dev bc2416c5d build; with the group's active check back to tool
 calls only, the header reads "Explored" throughout the thinking and never "Exploring".
@@ -23,7 +25,7 @@ import pytest
 from playwright.sync_api import expect
 
 from harness import upstream as reply
-from utils.chat_ui import expect_reply, last_reply, send
+from utils.chat_ui import expect_reply, last_reply, send, steps_summary
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -32,8 +34,11 @@ ANSWER = "It is now, having thought about it."
 THINKING_SECONDS = 4.0
 
 
-def steps_header(chat, text: str):
-    return last_reply(chat).get_by_text(text, exact=True)
+def steps_header(chat, state: str):
+    """The steps' summary label while it reads `state`, "Exploring" or "Explored", on hover."""
+    return steps_summary(last_reply(chat)).get_by_title(
+        f"{state} get_current_timestamp", exact=True
+    )
 
 
 def wait_for_the_tool_result_to_be_sent(upstream, timeout: float = 30.0) -> None:
@@ -67,9 +72,11 @@ def test_the_steps_read_exploring_while_the_model_thinks_after_a_tool(
     wait_for_the_tool_result_to_be_sent(upstream)
 
     # the group forms once the thinking starts and stays open THINKING_SECONDS
-    expect(steps_header(chat, "Exploring")).to_be_visible(timeout=THINKING_SECONDS * 2 * 1000)
+    exploring = steps_header(chat, "Exploring")
+    expect(exploring).to_be_visible(timeout=THINKING_SECONDS * 2 * 1000)
+    expect(exploring).to_have_text("Checked the time")
     expect_reply(chat, ANSWER)
-    expect(steps_header(chat, "Explored")).to_be_visible()
+    expect(steps_header(chat, "Explored")).to_have_text("Checked the time")
     expect(steps_header(chat, "Exploring")).to_have_count(0)
 
 
@@ -83,5 +90,5 @@ def test_the_steps_of_a_finished_reply_read_explored(chat_for, make_user, upstre
     send(chat, PROMPT)
 
     expect_reply(chat, ANSWER)
-    expect(steps_header(chat, "Explored")).to_be_visible()
+    expect(steps_header(chat, "Explored")).to_have_text("Checked the time")
     expect(steps_header(chat, "Exploring")).to_have_count(0)
