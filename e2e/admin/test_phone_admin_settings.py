@@ -10,7 +10,9 @@ scrolls sideways; scrolled into view, Edit User opens a dialog that fits the scr
 Discriminates: passes on the ebc6add67 build. In a frontend build of ebc6add67 whose settings tab
 strip does not scroll the tabs test goes red at the first admin tab past the screen's edge. In a
 backend copy whose admin config update drops `ENABLE_COMMUNITY_SHARING` the saving test goes red,
-and in one whose user update drops the name the Edit User test.
+and in one whose user update drops the name the Edit User test. Retargeted for aae047766, which
+merges Images and Videos and puts Code Execution and Pipelines behind a Legacy row, and for
+67863f310, which removes the Evaluations tab.
 """
 
 from __future__ import annotations
@@ -37,14 +39,14 @@ ADMIN_TABS = [
     "Integrations",
     "Documents",
     "Audio",
-    "Images",
+    "Images & Videos",
     "Web Search",
     "Code Execution",
     "Pipelines",
-    "Evaluations",
     "Analytics",
     "Database",
 ]
+LEGACY_TABS = ("Code Execution", "Pipelines")
 
 
 @pytest.fixture
@@ -68,10 +70,21 @@ def expect_within_the_width(element: Locator) -> None:
     assert box["x"] >= 0 and box["x"] + box["width"] <= SCREEN["width"] + 0.5, box
 
 
+def open_legacy_tabs(settings: Locator) -> None:
+    """Code Execution and Pipelines sit behind the Legacy row, which opens on a tap."""
+    legacy = settings.get_by_role("button", name="Legacy", exact=True)
+    if legacy.get_attribute("aria-expanded") == "false":
+        expect_reachable(legacy)
+        legacy.tap()
+    expect(legacy).to_have_attribute("aria-expanded", "true")
+
+
 def test_every_admin_tab_can_be_scrolled_onto_the_screen_and_opens_its_panel(phone):
     settings = admin_settings(phone)
 
     for name in ADMIN_TABS:
+        if name in LEGACY_TABS:
+            open_legacy_tabs(settings)
         # General, Interface and Audio are personal tabs too; the admin's come after them
         tab = settings.get_by_role("tab", name=name, exact=True).last
         expect_reachable(tab)
@@ -79,7 +92,7 @@ def test_every_admin_tab_can_be_scrolled_onto_the_screen_and_opens_its_panel(pho
         expect(tab).to_have_attribute("aria-selected", "true")
         panel = settings.locator("nav + div")
         expect_within_the_width(panel)
-        expect_on_screen(panel.get_by_text(re.compile(rf"^{name}")).first)
+        expect_on_screen(panel.get_by_text(re.compile(rf"^{re.escape(name)}")).first)
 
 
 def test_a_switch_saved_on_a_phone_is_stored(phone, admin, preserve):
