@@ -37,10 +37,10 @@ GET /api/v1/configs/connections
 GET /api/v1/configs/export
 GET /api/v1/configs/models
 GET /api/v1/configs/namespace/{namespace}
+GET /api/v1/configs/router_models
 GET /api/v1/configs/subagents
 GET /api/v1/configs/terminal_servers
 GET /api/v1/configs/tool_servers
-GET /api/v1/evaluations/config
 GET /api/v1/evaluations/feedbacks/all/export
 GET /api/v1/evaluations/feedbacks/all/ids
 GET /api/v1/evaluations/feedbacks/list
@@ -101,13 +101,13 @@ POST /api/v1/configs/connections
 POST /api/v1/configs/import
 POST /api/v1/configs/models
 POST /api/v1/configs/oauth/clients/register
+POST /api/v1/configs/router_models
 POST /api/v1/configs/subagents
 POST /api/v1/configs/suggestions
 POST /api/v1/configs/terminal_servers
 POST /api/v1/configs/terminal_servers/verify
 POST /api/v1/configs/tool_servers
 POST /api/v1/configs/tool_servers/verify
-POST /api/v1/evaluations/config
 POST /api/v1/functions/create
 POST /api/v1/functions/id/{id}/toggle
 POST /api/v1/functions/id/{id}/toggle/global
