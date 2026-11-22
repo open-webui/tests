@@ -6,7 +6,10 @@ Open WebUI names the user, the chat and the model to the orchestrator from what 
 itself: the signed-in account, a saved chat that account may write to, a model that account may
 use. A per-chat terminal has no machine for an unsaved chat and a per-model terminal none
 without a model. Headers a client adds pick no other machine, and a chat of someone else opens
-none. In a chat shared for replies a collaborator uses the terminal its owner picked, a per-chat
+none for someone without write access to the terminal's connection. Since 205c2e97c (titled
+`refac`) whoever has that write access, an admin included, reaches another person's machine as
+that person would reach it: a command in the owner's chat runs in the owner's machine. In a chat
+shared for replies a collaborator uses the terminal its owner picked, a per-chat
 terminal runs in that chat's one machine as long as the owner may use the terminal, and the
 collaborator may change the chat's models, terminal and working directory and nothing else. A
 collaborator's message in such a chat works on the files the owner's message left, for a terminal
@@ -26,7 +29,10 @@ model's own machine never starts), and the model's name left out of the machine 
 The check that the person may use the model removed fails the model-access test (a private model's
 machine starts). The caller's `X-User-Id`, `X-Terminal-Template-Id` and `X-Terminal-Chat-Id`
 headers passed on over the resolved ones fails the headers test (the command prints the other
-person's file). The chat access check removed fails the someone-else's-chat test. A `local:` chat
+person's file). The chat access check removed fails the someone-else's-chat test, and so does
+the write access check removed (the stranger's command prints the owner's file). Write access
+ignored, which refuses someone else's chat to everyone, fails the manager test (403 `Chat access
+denied`); both proven on dev e5b098c68. A `local:` chat
 id taken for a saved chat fails the unsaved-chat test (403). The owner's-selection check removed
 fails the collaborator test, the changed-selection check removed fails the selection test, and a
 per-chat terminal checked against the caller in place of the chat's owner fails the owner's-access
@@ -56,7 +62,7 @@ from harness import upstream as reply
 from harness.access import grant
 from harness.chat import send_message, wait_for_reply
 from harness.python_tools import EVERYONE_READS
-from harness.terminal_server import read_grant
+from harness.terminal_server import read_grant, write_grant
 from harness.terminals import (
     create_template,
     execute,
@@ -346,7 +352,9 @@ def test_headers_a_client_adds_pick_no_other_machine(
     )
 
 
-def test_a_chat_of_someone_else_opens_no_machine(admin, make_user, connect_terminals, terminals):
+def test_a_chat_of_someone_else_opens_no_machine_without_write_access_to_the_connection(
+    admin, make_user, connect_terminals, terminals
+):
     owner, stranger = make_user(), make_user()
     per_chat, per_user = _terminals_for(admin, connect_terminals, [owner, stranger], "chat", "user")
     name = f"private-{uuid.uuid4().hex[:8]}.txt"
@@ -355,26 +363,81 @@ def test_a_chat_of_someone_else_opens_no_machine(admin, make_user, connect_termi
         chat_id = _new_chat(client, machine_id=per_chat)
         output_of(execute(client, per_chat, f"echo owner > ~/{name}", chat_id))
     machines_before = terminals.instances()
-    answers = {}
-    for label, account in (("another person", stranger), ("an admin", admin)):
-        with account.client() as client:
-            answers[f"{label}'s command"] = execute(client, per_chat, f"cat ~/{name}", chat_id)
-            answers[f"{label}'s command on a per-user terminal"] = execute(
-                client, per_user, "echo ran", chat_id
-            )
-            answers[f"{label}'s look at the machine's state"] = client.get(
+    with stranger.client() as client:
+        in_chat = {
+            "a command": execute(client, per_chat, f"cat ~/{name}", chat_id),
+            "a command on a per-user terminal": execute(client, per_user, "echo ran", chat_id),
+            "a look at the machine's state": client.get(
                 f"/api/v1/machines/templates/{per_chat}/instance", params={"chat_id": chat_id}
-            )
+            ),
+        }
+        as_the_owner = client.post(
+            f"/api/v1/machines/{per_user}/execute",
+            params={"wait": 30},
+            headers={"X-Terminal-User-Id": owner.id},
+            json={"command": "echo ran"},
+        )
 
     assert [machine["context_id"] for machine in machines_before] == [f"chat:{chat_id}"], (
         f"the owner's chat did not get its machine: {machines_before}"
     )
-    for label, answer in answers.items():
+    for label, answer in in_chat.items():
         assert _reason(answer) == (403, "Chat access denied"), (
             f"{label} naming someone else's chat answered {answer.status_code} {answer.text}"
         )
+    assert _reason(as_the_owner) == (403, "Instance access denied"), (
+        f"a command naming the owner's machine answered {as_the_owner.status_code} "
+        f"{as_the_owner.text}"
+    )
     assert terminals.instances() == machines_before, (
         f"a refused request changed the machines: {terminals.instances()}"
+    )
+
+
+def test_whoever_manages_the_connection_reaches_the_chat_owners_machine(
+    admin, make_user, connect_terminals, terminals
+):
+    owner, manager = make_user(), make_user()
+    connection = connect_terminals(read_grant(owner.id), write_grant(manager.id))
+    with admin.client() as client:
+        per_chat, per_user = (
+            create_template(client, connection, scope=scope)["machine_id"]
+            for scope in ("chat", "user")
+        )
+        for terminal_id in (per_chat, per_user):
+            share_template(client, terminal_id, read_grant(owner.id))
+    tag = uuid.uuid4().hex[:8]
+    in_chat, in_user = f"chat-{tag}.txt", f"user-{tag}.txt"
+
+    with owner.client() as client:
+        chat_on_per_chat = _new_chat(client, machine_id=per_chat)
+        chat_on_per_user = _new_chat(client, machine_id=per_user)
+        output_of(execute(client, per_chat, f"echo owner > ~/{in_chat}", chat_on_per_chat))
+        output_of(execute(client, per_user, f"echo owner > ~/{in_user}", chat_on_per_user))
+    machines_before = terminals.instances()
+    seen = {}
+    for label, account in (("an admin", admin), ("a user with write access", manager)):
+        with account.client() as client:
+            seen[label] = (
+                output_of(execute(client, per_chat, f"cat ~/{in_chat}", chat_on_per_chat)),
+                output_of(execute(client, per_user, f"cat ~/{in_user}", chat_on_per_user)),
+                instance_of(client, per_chat, chat_id=chat_on_per_chat)["context_id"],
+                instance_of(client, per_user, chat_id=chat_on_per_user)["context_id"],
+            )
+
+    assert sorted(machine["context_id"] for machine in machines_before) == sorted(
+        [f"chat:{chat_on_per_chat}", f"user:{owner.id}"]
+    ), f"the owner's chats did not get their machines: {machines_before}"
+    for label, (per_chat_file, per_user_file, per_chat_context, per_user_context) in seen.items():
+        assert (per_chat_file.strip(), per_user_file.strip()) == ("owner", "owner"), (
+            f"{label} does not see the owner's files: {per_chat_file!r} {per_user_file!r}"
+        )
+        assert (per_chat_context, per_user_context) == (
+            f"chat:{chat_on_per_chat}",
+            f"user:{owner.id}",
+        ), f"{label} was shown other machines: {per_chat_context} {per_user_context}"
+    assert terminals.instances() == machines_before, (
+        f"the managers' commands ran outside the owner's machines: {terminals.instances()}"
     )
 
 
