@@ -36,8 +36,8 @@ through the tab that opened it (`utils.shell_tab`).
 
 `test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed` is red for
 a terminal on Terminals 0.4.1: the second window says "Session no longer available"
-(open-webui/terminals#80, fix on the Classic298 branch fix-shell-in-second-window-session-gone).
-It passes on that branch, which passes the terminal's close code on.
+(open-webui/terminals#80). Terminals 0.4.2 fixed it by passing the terminal's close code on, so
+it needs Terminals 0.4.2 or later.
 
 Not here: a new chat started beside a shell of a saved chat cannot send its first message
 (finding "issue: [dev] The first message of a new chat is not sent while a shell tab from the
@@ -760,9 +760,7 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
 def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed(
     harbour, page_for, upstream
 ):
-    """Red on a terminal on Terminals 0.4.1 (open-webui/terminals#80, fix branch
-    fix-shell-in-second-window-session-gone).
-    """
+    """Red on a terminal on Terminals 0.4.1, fixed in 0.4.2 (open-webui/terminals#80)."""
     person, name, terminal_id = harbour
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]
