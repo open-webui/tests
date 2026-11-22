@@ -9,7 +9,10 @@ Properties whose values (Schedule, Model, Destination, Terminal) are the dropdow
 dialog shown as plain values, then the Activity list of its runs. A Save button shows in the
 page's header while a field differs from the saved automation; Delete moved into its More menu.
 Since dev 86aac87f8 a saved prompt opens collapsed, as a button reading it under the name
-Instructions; clicking it opens the Instructions box.
+Instructions; clicking it opens the Instructions box. Since dev f5cabe6ee only a prompt longer
+than the five-line preview collapses; a shorter one shows in the open Instructions box.
+
+The list's header opens the Create dialog with its New automation button (since dev db884d2c3).
 
 The Create dialog's and the page's Terminal dropdown: `terminal_button`, `open_terminal_menu`,
 `toggle_terminal`, `close_terminal_menu` and `working_directory`.
@@ -26,6 +29,10 @@ from utils.workspace_list import item_rows
 
 RUN_ENTRY = re.compile(r"^\s*(Ran|Failed)\b")
 RUN_TIMEOUT_MS = 30_000
+
+
+def new_automation_button(page: Page) -> Locator:
+    return page.get_by_role("button", name="New automation", exact=True)
 
 
 def automation_row(page: Page, name: str) -> Locator:
@@ -47,16 +54,29 @@ def instructions(page: Page) -> Locator:
     return automation_page(page).get_by_role("textbox", name="Instructions", exact=True)
 
 
+def collapsed_instructions(page: Page) -> Locator:
+    return automation_page(page).get_by_role("button", name="Instructions", exact=True)
+
+
+def _collapses(prompt: str) -> bool:
+    """More than five lines run past the preview; test prompts stay short enough not to wrap."""
+    return prompt.count("\n") >= 5
+
+
 def expect_instructions(page: Page, prompt: str) -> None:
-    """The page has loaded the saved prompt, shown collapsed."""
-    expect(
-        automation_page(page).get_by_role("button", name="Instructions", exact=True)
-    ).to_have_text(prompt)
+    """The page has loaded the saved prompt: collapsed when it runs past the preview, else open."""
+    if _collapses(prompt):
+        expect(collapsed_instructions(page)).to_have_text(prompt)
+    else:
+        expect(instructions(page)).to_have_value(prompt)
+        expect(collapsed_instructions(page)).to_have_count(0)
 
 
-def edit_instructions(page: Page) -> Locator:
-    """Open the collapsed prompt and return the Instructions box."""
-    automation_page(page).get_by_role("button", name="Instructions", exact=True).click()
+def edit_instructions(page: Page, prompt: str) -> Locator:
+    """The Instructions box holding the saved `prompt`, opened first if it is collapsed."""
+    expect_instructions(page, prompt)
+    if _collapses(prompt):
+        collapsed_instructions(page).click()
     return instructions(page)
 
 

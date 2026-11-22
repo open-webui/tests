@@ -44,7 +44,7 @@ from utils.automations_page import (
     property_row,
     save_changes,
 )
-from utils.page_tabs import expect_no_permission, page_tab
+from utils.page_tabs import expect_no_permission
 from utils.user_menu import settings_item
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -88,7 +88,7 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     open_automation(page, automation)
 
     name_box(page).fill(new_title)
-    edit_instructions(page).fill(new_prompt)
+    edit_instructions(page, automation["data"]["prompt"]).fill(new_prompt)
     automation_page(page).get_by_role("button", name="Daily", exact=True).click()
     page.get_by_role("combobox").select_option(label="Hourly")
     automation_page(page).get_by_role("button", name="Hourly", exact=True).click()
@@ -98,7 +98,8 @@ def test_an_edit_to_title_prompt_and_schedule_survives_a_reload(
     expect_instructions(page, new_prompt)
     expect(name_box(page)).to_have_value(new_title)
     expect(property_row(page, "Schedule")).to_contain_text("Hourly")
-    expect(page_tab(page, new_title).get_by_text(new_title, exact=True)).to_be_visible()
+    tabs = page.get_by_role("tablist", name="Tabs")
+    expect(tabs.get_by_role("tab", name=new_title, exact=True)).to_be_visible()
 
 
 @pytest.mark.regression

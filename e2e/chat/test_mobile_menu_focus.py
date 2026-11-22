@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
+from utils.automations_page import new_automation_button
 from utils.chat_ui import chat_input, open_integrations_menu
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -96,7 +97,7 @@ def test_opening_a_dropdown_in_the_automation_dialog_on_a_phone_focuses_no_text_
     # plain accounts need the automations permission, an admin has it
     page = on_a_phone(page_for(make_user(role="admin")))
     page.goto("/automations")
-    page.get_by_role("button", name="Create", exact=True).click()
+    new_automation_button(page).click()
     creating = page.get_by_role("dialog")
     expect(creating.get_by_role("textbox", name="Automation title")).to_be_visible()
     dismiss_the_keyboard(page)

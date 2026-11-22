@@ -75,6 +75,7 @@ from utils.automations_page import (
     automation_row,
     expect_instructions,
     name_box,
+    new_automation_button,
     property_row,
     run_entries,
     run_now,
@@ -99,7 +100,7 @@ def unique(label: str) -> str:
 
 def open_create_dialog(page: Page) -> Locator:
     page.goto("/automations")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
+    new_automation_button(page).click()
     dialog = page.get_by_role("dialog")
     expect(dialog.get_by_role("textbox", name="Instructions")).to_be_visible()
     # a model picked before the dialog finished loading is cleared again
@@ -397,8 +398,10 @@ def rename_on_its_page(page: Page, scheduler, rule: str) -> str:
     renamed = f"{title} renamed"
     name.fill(renamed)
     save_changes(page)
-    # the page tab and the page's header both carry the new name
-    expect(page_tab(page, renamed).get_by_text(renamed, exact=True)).to_be_visible()
+    # the page tab and its panel carry the new name
+    tabs = page.get_by_role("tablist", name="Tabs")
+    expect(tabs.get_by_role("tab", name=renamed, exact=True)).to_be_visible()
+    expect(page_tab(page, renamed)).to_be_visible()
     return stored(scheduler, automation_id)["data"]["rrule"]
 
 

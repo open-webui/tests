@@ -39,6 +39,7 @@ from utils.automations_page import (
     expect_instructions,
     expect_no_runs,
     name_box,
+    new_automation_button,
     run_entries,
     run_now,
 )
@@ -57,7 +58,7 @@ def test_run_now_lists_a_run_whose_chat_holds_the_answer(page_for, scheduler, up
     title = f"Morning digest {uuid.uuid4().hex[:6]}"
     prompt = f"Summarize the overnight tickets, batch {uuid.uuid4().hex[:6]}."
     page = page_for(scheduler, path="/automations")
-    page.get_by_role("main").get_by_role("button", name="Create", exact=True).click()
+    new_automation_button(page).click()
     creating = page.get_by_role("dialog")
     creating.get_by_role("button", name="Select model").first.click()
     picker = page.get_by_role("menu")
