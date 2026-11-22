@@ -68,12 +68,14 @@ from utils.user_terminals import (
     confirmation,
     instance_actions,
     instance_row,
+    instance_scope,
     instances_heading,
     listed_terminal,
     open_instance_menu,
     open_terminal_menu,
     open_terminal_settings,
     save_terminal_settings,
+    separate_instances,
     show_advanced,
 )
 
@@ -207,9 +209,8 @@ def test_terminal_settings_shows_what_is_stored_and_a_rename_reaches_everyone_wh
 
     dialog = open_terminal_settings(page, terminal.name)
     expect(dialog.get_by_role("heading", name=terminal.name, exact=True)).to_be_visible()
-    expect(
-        dialog.get_by_label("Separate machine per", exact=True).locator("option:checked")
-    ).to_have_text("User")
+    expect(separate_instances(dialog)).to_be_checked()
+    expect(instance_scope(dialog).locator("option:checked")).to_have_text("User")
     expect(advanced(dialog)).to_contain_text(
         f"/home/user/dock-{tag} · Setup script · 0.5 CPU · 256Mi · 1 variables"
     )
@@ -249,12 +250,12 @@ def test_separate_machine_per_is_locked_until_the_terminals_machines_are_deleted
     terminal.run(writer, f"echo keel-{tag} > keel.txt")
     page = page_for(writer)
     dialog = open_terminal_settings(page, terminal.name)
-    choice = dialog.get_by_label("Separate machine per", exact=True)
+    choice = instance_scope(dialog)
 
     expect(instances_heading(dialog, 1)).to_be_visible()
     expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     expect(choice).to_be_disabled()
-    expect(dialog.get_by_text("Delete all machines to change this.", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("Delete all instances to change this.", exact=True)).to_be_visible()
     expect(dialog.get_by_text(NO_INSTANCES, exact=True)).to_have_count(0)
 
     open_instance_menu(dialog, writer.name).get_by_role("menuitem", name="Delete instance").click()
@@ -266,13 +267,15 @@ def test_separate_machine_per_is_locked_until_the_terminals_machines_are_deleted
     )
     open_instance_menu(dialog, writer.name).get_by_role("menuitem", name="Delete instance").click()
     with _acts_on_machine(page, terminal.terminal_id, "instance") as deleted:
-        _confirm(page, f"Delete {writer.name}?", "Delete", "The machine and its files are deleted.")
+        _confirm(
+            page, f"Delete {writer.name}?", "Delete", "The instance and its files are deleted."
+        )
     assert deleted.value.ok, f"deleting the machine was refused: {deleted.value.text()}"
 
     expect(dialog.get_by_text(NO_INSTANCES, exact=True)).to_be_visible()
     expect(instances_heading(dialog, 0)).to_be_visible()
     expect(choice).to_be_enabled()
-    expect(dialog.get_by_text("Each person gets their own machine.", exact=True)).to_be_visible()
+    expect(dialog.get_by_text("Each person gets their own instance.", exact=True)).to_be_visible()
     assert _machines(terminals, terminal.terminal_id) == {}, (
         f"the orchestrator still has {_machines(terminals, terminal.terminal_id)}"
     )
@@ -372,7 +375,7 @@ def test_deleting_a_terminal_says_how_many_machines_go_and_removes_it_for_everyo
     dialog.get_by_role("button", name="Delete machine", exact=True).click()
     asked = confirmation(page, f"Delete {terminal.name}?")
     expect(
-        asked.get_by_text("This deletes 2 machines and their files.", exact=True)
+        asked.get_by_text("This deletes 2 instances and their files.", exact=True)
     ).to_be_visible()
     asked.get_by_role("button", name="Cancel", exact=True).click()
     expect(asked).to_be_hidden()
@@ -427,7 +430,7 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
         page,
         f"Stop {reader.name}?",
         "Stop",
-        "Running work stops. Files are kept, and the machine starts again when it is next used.",
+        "Running work stops. Files are kept, and the instance starts again when it is next used.",
     )
     expect(instance_row(dialog, reader.name)).to_contain_text("Stopped")
     expect(instance_row(dialog, writer.name)).to_contain_text("Running")
@@ -450,7 +453,7 @@ def test_machines_are_listed_by_owner_and_stopped_started_and_restarted_from_the
             page,
             f"Restart {writer.name}?",
             "Restart",
-            "Running work stops and the machine starts again. Files are kept.",
+            "Running work stops and the instance starts again. Files are kept.",
         )
     assert restarted.value.ok, f"restarting the machine was refused: {restarted.value.text()}"
     wait_until_addresses_settle()
@@ -615,7 +618,11 @@ def test_a_refused_save_or_machine_action_says_why_in_the_dialog_and_changes_not
         ).click()
     assert deleted.value.status == 403, f"the delete was answered {deleted.value.status}"
 
-    expect(dialog.get_by_role("alert")).to_have_text("Machine connection write access required")
+    # since dev abcebd7d0 a refused instance action is told in a notification, not in the dialog
+    notifications = page.get_by_role("region", name=re.compile(r"^Notifications"))
+    expect(notifications).to_contain_text(
+        f"{writer.name}: Machine connection write access required"
+    )
     expect(instance_row(dialog, writer.name)).to_contain_text("Running")
     assert terminals.holding("anchor.txt") == {f"user:{writer.id}": f"anchor-{tag}\n"}, (
         f"the refused delete left {terminals.holding('anchor.txt')}"

@@ -62,6 +62,16 @@ def open_terminal_settings(page: Page, name: str) -> Locator:
     return dialog
 
 
+def separate_instances(dialog: Locator) -> Locator:
+    """The Separate instances switch; off, everyone with access shares one instance."""
+    return dialog.get_by_role("switch", name="Separate instances", exact=True)
+
+
+def instance_scope(dialog: Locator) -> Locator:
+    """What gets an instance of its own (User, Chat, Model), while Separate instances is on."""
+    return dialog.get_by_label("Separate instance per", exact=True)
+
+
 def advanced(dialog: Locator) -> Locator:
     """The Advanced row; it reads what is set there, or Default."""
     return dialog.get_by_role("button", name=re.compile(r"^Advanced\b"))

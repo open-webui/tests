@@ -76,9 +76,9 @@ USES = ["System info", "View files"]
 NOT_RUNNING = ["Start", "Machine settings"]
 RUNNING = ["Restart", "Stop", "System info", "View files", "Machine settings"]
 STOP_MESSAGE = (
-    "Running work stops. Files are kept, and the machine starts again when it is next used."
+    "Running work stops. Files are kept, and the instance starts again when it is next used."
 )
-RESTART_MESSAGE = "Running work stops and the machine starts again. Files are kept."
+RESTART_MESSAGE = "Running work stops and the instance starts again. Files are kept."
 
 
 def _listing(request):

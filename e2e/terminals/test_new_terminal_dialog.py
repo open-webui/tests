@@ -56,9 +56,11 @@ from utils.user_terminals import (
     advanced,
     create_terminal,
     hint_of,
+    instance_scope,
     listed_terminal,
     new_terminal_dialog,
     open_terminal_menu,
+    separate_instances,
     show_advanced,
     start_new_terminal,
     suggestions_of,
@@ -143,21 +145,24 @@ def test_a_new_terminal_needs_a_name_and_is_picked_for_the_chat_once_created(
     assert not unset, f"a terminal created with a name alone has settings of its own: {unset}"
 
 
-def test_separate_machine_per_explains_each_choice_and_the_terminal_keeps_the_one_made(
+def test_separate_instances_explain_each_choice_and_the_terminal_keeps_the_one_made(
     writer_page, terminals
 ):
     page, writer, _ = writer_page
     name = f"Per chat quay {uuid.uuid4().hex[:8]}"
     dialog = start_new_terminal(page)
-    choice = dialog.get_by_label("Separate machine per", exact=True)
+    switch, choice = separate_instances(dialog), instance_scope(dialog)
     hints = {
-        "None": "All chats share one machine.",
-        "User": "Each person gets their own machine.",
-        "Model": "Each model gets its own machine.",
-        "Chat": "Each chat gets its own machine.",
+        "User": "Each person gets their own instance.",
+        "Model": "Each model gets its own instance.",
+        "Chat": "Each chat gets its own instance.",
     }
 
-    expect(choice.locator("option:checked")).to_have_text("None")
+    expect(switch).not_to_be_checked()
+    expect(choice).to_have_count(0)
+    expect(dialog.get_by_text("All chats share one instance.", exact=True)).to_be_visible()
+    switch.click()
+    expect(choice.locator("option:checked")).to_have_text("User")
     for label, hint in hints.items():
         choice.select_option(label=label)
         expect(dialog.get_by_text(hint, exact=True)).to_be_visible()
