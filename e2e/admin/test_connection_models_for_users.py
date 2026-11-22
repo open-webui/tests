@@ -35,8 +35,6 @@ from harness.listener import Listener, json_answer, listening
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
 from harness.second_provider import OPENAI_CONFIG, attach, sse
 from utils.admin_connections import (
-    OLLAMA_URL_PLACEHOLDER,
-    OPENAI_URL_PLACEHOLDER,
     connection_dialog,
     connection_row,
     is_ollama_save,
@@ -201,7 +199,7 @@ def test_without_prefixes_the_first_connection_answers_until_the_admin_switches_
 
         admin_page = page_for(make_user(role="admin"))
         settings = open_admin_connections(admin_page)
-        row = connection_row(settings, OPENAI_URL_PLACEHOLDER, f"{listener.base_url}/v1")
+        row = connection_row(settings, f"{listener.base_url}/v1")
         with admin_page.expect_response(is_openai_save):
             row.get_by_role("switch").click()
 
@@ -226,7 +224,7 @@ def test_a_connection_switched_off_mid_chat_answers_model_not_found_and_leaves_t
 
     admin_page = page_for(make_user(role="admin"))
     settings = open_admin_connections(admin_page)
-    row = connection_row(settings, OPENAI_URL_PLACEHOLDER, f"{listener.base_url}/v1")
+    row = connection_row(settings, f"{listener.base_url}/v1")
     with admin_page.expect_response(is_openai_save):
         row.get_by_role("switch").click()
 
@@ -277,9 +275,7 @@ def test_a_prefix_the_admin_changes_renames_the_model_and_the_provider_gets_the_
     page = page_for(make_user(role="admin"))
     settings = open_admin_connections(page)
 
-    tooltip_button(
-        connection_row(settings, OPENAI_URL_PLACEHOLDER, f"{listener.base_url}/v1"), "Configure"
-    ).click()
+    tooltip_button(connection_row(settings, f"{listener.base_url}/v1"), "Configure").click()
     editing = connection_dialog(page, "Edit Connection")
     editing.get_by_role("button", name="Advanced").click()
     expect(editing.get_by_role("textbox", name="Prefix ID")).to_have_value(prefix)
@@ -309,7 +305,7 @@ def test_an_ollama_allowlist_keeps_one_model_and_deleting_the_connection_removes
     expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(1)
 
     settings = open_admin_connections(page)
-    row = connection_row(settings, OLLAMA_URL_PLACEHOLDER, listener.base_url)
+    row = connection_row(settings, listener.base_url)
     tooltip_button(row, "Configure").click()
     editing = connection_dialog(page, "Edit Connection")
     editing.get_by_role("button", name="Advanced").click()
@@ -324,7 +320,7 @@ def test_an_ollama_allowlist_keeps_one_model_and_deleting_the_connection_removes
     expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(0)
 
     settings = open_admin_connections(page)
-    row = connection_row(settings, OLLAMA_URL_PLACEHOLDER, listener.base_url)
+    row = connection_row(settings, listener.base_url)
     tooltip_button(row, "Configure").click()
     editing = connection_dialog(page, "Edit Connection")
     editing.get_by_role("button", name="Delete").click()
@@ -350,9 +346,7 @@ def test_an_ollama_connection_switched_off_in_its_row_leaves_a_users_selector_an
 
     admin_page = page_for(make_user(role="admin"))
     settings = open_admin_connections(admin_page)
-    switch = connection_row(settings, OLLAMA_URL_PLACEHOLDER, listener.base_url).get_by_role(
-        "switch"
-    )
+    switch = connection_row(settings, listener.base_url).get_by_role("switch")
     with admin_page.expect_response(is_ollama_save):
         switch.click()
     expect(switch).not_to_be_checked()

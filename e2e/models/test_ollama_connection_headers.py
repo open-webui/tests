@@ -14,6 +14,7 @@ Twin of integration/models/test_ollama_connection_headers.py.
 Discriminates: passes on the dev bc2416c5d build and backend; with the verify handler of the
 connection dialog back to sending the URL and key alone, the check is refused and the dialog
 reports the error.
+Retargeted for 6e3e87b11, which shows a saved connection's address as a button.
 """
 
 from __future__ import annotations
@@ -25,13 +26,13 @@ from playwright.sync_api import expect
 
 from harness.listener import ReceivedRequest, json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, connect_ollama, serve_ollama
+from utils.admin_connections import connection_row
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 GATEWAY_HEADER = "CF-Access-Client-Id"
 GATEWAY_VALUE = "gateway-client.access"
-URL_PLACEHOLDER = "Enter URL (e.g. http://localhost:11434)"
 
 
 def gated_version(server):
@@ -59,10 +60,7 @@ def test_verifying_a_gated_ollama_connection_passes_the_gateway(page_for, make_u
     settings = page.get_by_role("dialog")
     expect(settings.get_by_role("heading", name="Connections", exact=True)).to_be_visible()
 
-    ollama_row = settings.get_by_placeholder(URL_PLACEHOLDER).locator("xpath=../..")
-    expect(ollama_row.get_by_placeholder(URL_PLACEHOLDER)).to_have_value(
-        gated_ollama.listener.base_url
-    )
+    ollama_row = connection_row(settings, gated_ollama.listener.base_url)
     tooltip_button(ollama_row, "Configure").click()
     editing = page.get_by_role("dialog").filter(has_text="Edit Connection")
     editing.get_by_role("button", name="Advanced").click()

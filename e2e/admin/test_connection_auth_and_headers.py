@@ -23,7 +23,6 @@ from playwright.sync_api import Page, expect
 from harness.listener import Listener, json_answer
 from harness.second_provider import OPENAI_CONFIG, sse
 from utils.admin_connections import (
-    OPENAI_URL_PLACEHOLDER,
     connection_dialog,
     connection_row,
     is_openai_save,
@@ -125,7 +124,7 @@ def test_session_auth_signs_with_the_users_session_and_cookies_follow_the_switch
     assert "harbor_pref" not in signed.headers.get("Cookie", ""), "cookies went out while off"
 
     settings = open_admin_connections(admin_page)
-    tooltip_button(connection_row(settings, OPENAI_URL_PLACEHOLDER, url), "Configure").click()
+    tooltip_button(connection_row(settings, url), "Configure").click()
     editing = connection_dialog(admin_page, "Edit Connection")
     editing.get_by_role("button", name="Advanced").click()
     editing.get_by_role("switch", name="Forward cookies").click()

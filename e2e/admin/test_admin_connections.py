@@ -39,48 +39,22 @@ from harness import upstream as reply
 from harness.listener import Listener, json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, serve_ollama
 from harness.second_provider import OPENAI_CONFIG, attach, sse
+from utils.admin_connections import (
+    connection_dialog,
+    connection_row,
+    is_ollama_save,
+    is_openai_save,
+    open_admin_connections,
+)
 from utils.chat_ui import chat_input, expect_reply, send
 from utils.model_selector import model_options, select_model
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
-OPENAI_URL_PLACEHOLDER = "API Base URL"
-OLLAMA_URL_PLACEHOLDER = "Enter URL (e.g. http://localhost:11434)"
 SERVED_MODELS = ("alpha", "beta", "gamma")
 # refused at once, so the switched-on Ollama API does not wait on a real server
 UNREACHABLE_OLLAMA = "http://127.0.0.1:9"
-
-
-def is_openai_save(response) -> bool:
-    return "/openai/config/update" in response.url
-
-
-def is_ollama_save(response) -> bool:
-    return "/ollama/config/update" in response.url
-
-
-def open_admin_connections(page: Page) -> Locator:
-    page.goto("/admin/settings/connections")
-    settings = page.get_by_role("dialog")
-    expect(settings.get_by_role("heading", name="Connections", exact=True)).to_be_visible()
-    expect(settings.get_by_role("switch", name="OpenAI API")).to_be_visible()
-    return settings
-
-
-def connection_row(settings: Locator, placeholder: str, url: str) -> Locator:
-    """The row of the connection saved with `url`: its address, settings button and switch."""
-    addresses = settings.get_by_placeholder(placeholder)
-    expect(addresses.first).to_be_visible()
-    index = addresses.evaluate_all("(inputs, url) => inputs.findIndex((i) => i.value === url)", url)
-    assert index >= 0, f"no connection row reads {url}"
-    return addresses.nth(index).locator("xpath=ancestor::div[.//button][1]")
-
-
-def connection_dialog(page: Page, heading: str) -> Locator:
-    dialog = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=heading))
-    expect(dialog).to_be_visible()
-    return dialog
 
 
 def open_chat(page: Page) -> None:
@@ -154,7 +128,7 @@ def test_an_added_connection_lists_only_its_allowed_models_under_the_prefix(
     with page.expect_response(is_openai_save):
         form.get_by_role("button", name="Save").click()
     expect(form).to_be_hidden()
-    expect(connection_row(settings, OPENAI_URL_PLACEHOLDER, url)).to_be_visible()
+    expect(connection_row(settings, url)).to_be_visible()
 
     key, config = saved_openai_connection(admin, url)
     assert key == "sk-admin-added"
@@ -179,7 +153,7 @@ def test_switching_a_connection_off_in_its_row_removes_its_models(
     expect(model_options(page, attached)).to_have_count(1)
 
     settings = open_admin_connections(page)
-    row = connection_row(settings, OPENAI_URL_PLACEHOLDER, f"{listener.base_url}/v1")
+    row = connection_row(settings, f"{listener.base_url}/v1")
     switch = row.get_by_role("switch")
     expect(switch).to_be_checked()
     with page.expect_response(is_openai_save):
@@ -201,7 +175,7 @@ def test_an_edited_key_is_the_one_the_provider_gets_on_the_next_chat(
     page = page_for(make_user(role="admin"))
     settings = open_admin_connections(page)
 
-    tooltip_button(connection_row(settings, OPENAI_URL_PLACEHOLDER, url), "Configure").click()
+    tooltip_button(connection_row(settings, url), "Configure").click()
     editing = connection_dialog(page, "Edit Connection")
     expect(editing.get_by_role("textbox", name="API Key")).to_have_value("sk-second")
     editing.get_by_role("textbox", name="API Key").fill("sk-rotated")
@@ -229,7 +203,7 @@ def test_deleting_a_connection_removes_it_and_its_models(
     page = page_for(make_user(role="admin"))
     settings = open_admin_connections(page)
 
-    tooltip_button(connection_row(settings, OPENAI_URL_PLACEHOLDER, url), "Configure").click()
+    tooltip_button(connection_row(settings, url), "Configure").click()
     editing = connection_dialog(page, "Edit Connection")
     editing.get_by_role("button", name="Delete").click()
     with page.expect_response(is_openai_save):
@@ -274,7 +248,7 @@ def test_an_added_ollama_connection_lists_its_models_under_the_prefix(
     with page.expect_response(is_ollama_save):
         form.get_by_role("button", name="Save").click()
     expect(form).to_be_hidden()
-    expect(connection_row(settings, OLLAMA_URL_PLACEHOLDER, listener.base_url)).to_be_visible()
+    expect(connection_row(settings, listener.base_url)).to_be_visible()
 
     open_chat(page)
     expect(model_options(page, f"{prefix}.llama3:latest")).to_have_count(1)

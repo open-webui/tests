@@ -30,7 +30,6 @@ from harness.listener import ReceivedRequest, json_answer
 from harness.ollama_provider import OLLAMA_CONFIG, chat_stream, connect_ollama, serve_ollama
 from harness.second_provider import OPENAI_CONFIG, sse
 from utils.admin_connections import (
-    OPENAI_URL_PLACEHOLDER,
     connection_dialog,
     connection_row,
     is_openai_save,
@@ -228,7 +227,7 @@ def test_the_api_type_decides_whether_a_users_chat_goes_to_responses_or_chat_com
     assert listener.requests_to("/v1/chat/completions") == []
 
     settings = open_admin_connections(admin_page)
-    tooltip_button(connection_row(settings, OPENAI_URL_PLACEHOLDER, url), "Configure").click()
+    tooltip_button(connection_row(settings, url), "Configure").click()
     editing = connection_dialog(admin_page, "Edit Connection")
     expect(editing.get_by_role("button", name="API Type")).to_have_text("Responses")
     editing.get_by_role("button", name="API Type").click()

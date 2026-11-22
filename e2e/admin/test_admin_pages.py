@@ -10,6 +10,7 @@ Discriminates: passes on dev ac00d40e3; in a backend copy, with `/openai/config/
 only the first base URL the connection test fails (the selector never offers the listener's
 model), with the user update route dropping `role` the users test fails after the reload, and
 with a group's add-users route adding nobody the group test fails (0 members).
+Retargeted for 6e3e87b11, which shows a saved connection's address as a button.
 """
 
 from __future__ import annotations
@@ -55,7 +56,9 @@ def test_an_added_connection_offers_its_models_in_the_selector(admin_page, liste
     adding.get_by_role("combobox", name="URL").fill(f"{listener.base_url}/v1")
     adding.get_by_role("textbox", name="API Key").fill("sk-local")
     adding.get_by_role("button", name="Save").click()
-    expect(settings.get_by_role("textbox", name="API Base URL")).to_have_count(2)
+    expect(
+        settings.get_by_role("button", name=f"{listener.base_url}/v1", exact=True)
+    ).to_be_visible()
 
     admin_page.goto("/")
     admin_page.get_by_role("button", name=re.compile("^Selected model")).click()
