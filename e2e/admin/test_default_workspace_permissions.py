@@ -6,8 +6,8 @@ fresh user has no workspace and nothing to share with. An admin switches them on
 and each shows where a person meets it:
 
 - Models, Knowledge, Prompts, Tools and Skills Access: the section opens and its Create button
-  is there and opens the create form; switched back off, /workspace/<section> sends the user
-  home with no Create button.
+  is there and opens the create form; switched back off, /workspace/<section> tells the user they
+  have no permission and shows no Create button.
 - Import and Export of Models, Prompts, Tools and Skills: the section's create menu offers
   Import JSON (Import for skills) and Export JSON, and none when both are off.
 - Sharing of Models, Prompts, Knowledge, Tools, Skills and Notes: the item's Access dialog offers
@@ -32,7 +32,9 @@ dialog picks the visibility from a menu; they pass on dev 206bf9723, and a build
 offers Public turns the "but not public" and "withdraws" tests red. The "withdraws" test was
 retargeted for ac12b04aa (#32979), which hides the Access button from users without the sharing
 permission; it passes on dev 72d86c6b1 and fails on ac12b04aa^ (the button is there and opens a
-dialog that can change nothing).
+dialog that can change nothing). The "switched back off" test was retargeted for da850248d, whose
+workspace tab tells the user they have no permission in place of sending them home; it passes on
+dev 99e7b89be.
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ SECTION_ACCESS = {
     "skills": "Skills Access",
 }
 
+NO_PERMISSION = "You do not have permission to access this resource."
 # the other sections open their create form in a dialog over the list
 CREATE_OPENS_A_PAGE = ("models", "tools", "skills")
 
@@ -140,7 +143,8 @@ def test_every_section_switched_back_off_is_closed_and_has_no_create_button(
     for section in SECTION_ACCESS:
         open_section(page, section)
 
-        page.wait_for_url(lambda url: "/workspace" not in url)
+        denied = page.get_by_role("tabpanel").get_by_text(NO_PERMISSION, exact=True)
+        expect(denied, section).to_be_visible()
         expect(page.get_by_role("button", name="Create", exact=True), section).to_have_count(0)
 
 
