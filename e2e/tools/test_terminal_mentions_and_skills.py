@@ -7,16 +7,20 @@ picked file is attached to the message, is named to the model with its path in t
 is stored with the message; clicking it in the sent message opens the file in a file tab.
 
 Typing `$` or `/` lists the terminal's skills beside the workspace's, each terminal skill
-labelled Terminal where a workspace skill shows its id. A picked terminal skill is a mention in
+labelled Machine where a workspace skill shows its id. A picked terminal skill is a mention in
 the message, the model reads it from the terminal, and the sent message shows the mention. The
 Skills list of the message box's More menu lists a terminal skill under the terminal's name and
 a workspace skill under Workspace (grouped by source since dev cdbe9788c), and a skill switched
-on there is listed, as Terminal, under Available Skills.
+on there is listed, as Machine, under Available Skills.
 
 The page learns a terminal's skills only when one of these lists opens. Until then it knows
 none: after a reload the sent mention reads as its raw markup, and with no workspace skill the
 More menu has no Skills entry (finding `open-webui-terminal-skills-unknown-until-listed`, both
 tests red on dev c15f28649).
+
+The list tests and both mention tests are red on dev 53d741157: since the machines rename a
+machine skill is listed by its id in the `$` and `/` lists, not as Machine (finding
+`open-webui-machine-skills-listed-by-id`).
 
 `/` also offers Create skill in a chat with a terminal; that command is driven in
 e2e/chat/test_prompt_prefix_caching.py.
@@ -152,7 +156,7 @@ def _sent_message(page: Page) -> Locator:
 
 
 def _terminal_skill_row(cellar: Cellar) -> str:
-    return f"{cellar.terminal_skill} Terminal"
+    return f"{cellar.terminal_skill} Machine"
 
 
 def _send_a_terminal_skill_mention(page: Page, upstream, cellar: Cellar) -> str:

@@ -110,6 +110,7 @@ from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
+from utils.chat_surface import start_on_folder_page
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, send
 from utils.model_editor import choose_model_default_terminal, save
 from utils.model_selector import SELECTOR_BUTTON, select_model
@@ -246,7 +247,7 @@ def open_folder_dialog(page: Page, name: str) -> Locator:
 
 
 def default_terminal(scope: Locator) -> Locator:
-    return scope.get_by_role("button", name=re.compile(r"^Default terminal: "))
+    return scope.get_by_role("button", name=re.compile(r"^Default machine: "))
 
 
 def choose_default_terminal(page: Page, scope: Locator, name: str) -> None:
@@ -603,12 +604,11 @@ def test_a_folders_missing_directory_refuses_the_first_message(
     expect(directory_button(page)).to_contain_text("gone")
     before = len(upstream.chat_requests())
 
-    chat_input(page).click()
-    page.keyboard.type("anything there?")
-    page.keyboard.press("Enter")
+    # since 06b47d455 the folder page sends from a chat tab it opens beside the folder
+    folder_chat = start_on_folder_page(page, "anything there?")
 
     expect(notifications(page).get_by_text(UNAVAILABLE)).to_be_visible()
-    expect(chat_input(page)).to_contain_text("anything there?")
+    expect(folder_chat.input).to_contain_text("anything there?")
     expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
     assert len(upstream.chat_requests()) == before, "the model was asked anyway"
     with person.client() as client:
