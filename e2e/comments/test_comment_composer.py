@@ -9,6 +9,7 @@ person on the LAN does: type into the box, send with Enter, and read back what w
 
 Discriminates: passes on dev 485103cde; fails on a build of it with the comment box's id made by
 `crypto.randomUUID` again (3c400952c undone for the box), where the panel offers no box to type in.
+Retargeted for 2ca21e5f2, which opens the comments in a popover.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness.actors import Actor
 from harness.comments import replies, shared_item, switch_comments, thread
+from utils.comments_panel import open_comments, panel_control
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -33,10 +35,6 @@ def owned_prompt(admin, make_user, preserve) -> tuple[Actor, str]:
     switch_comments(admin, True)
     owner = make_user()
     return owner, shared_item("prompt", owner, admin, [])
-
-
-def _panel(page: Page) -> Locator:
-    return page.get_by_role("complementary", name="Comments")
 
 
 def _write(page: Page, box: Locator, text: str, sent: str) -> None:
@@ -60,8 +58,7 @@ def _stored_thread(owner: Actor, prompt_id: str) -> list[dict]:
 def test_a_comment_its_reply_and_an_edit_are_written_in_the_panel(page_for, owned_prompt):
     owner, prompt_id = owned_prompt
     page = page_for(owner, path=f"/workspace/prompts/{prompt_id}")
-    page.get_by_role("button", name="Comments", exact=True).click()
-    panel = _panel(page)
+    panel = open_comments(page)
     expect(panel.get_by_text("No comments yet")).to_be_visible()
 
     _write(page, panel.locator('[contenteditable="true"]'), FIRST, "POST")
@@ -73,7 +70,7 @@ def test_a_comment_its_reply_and_an_edit_are_written_in_the_panel(page_for, owne
     )
     comment_id = stored[0]["id"]
 
-    panel.get_by_role("button", name="Reply", exact=True).click()
+    panel_control(panel, "Reply").click()
     reply_box = (
         panel.locator(f"#comment-{comment_id}").locator("..").locator('[contenteditable="true"]')
     )
@@ -86,7 +83,7 @@ def test_a_comment_its_reply_and_an_edit_are_written_in_the_panel(page_for, owne
     )
 
     posted.hover()
-    panel.locator(f"#comment-{comment_id}").get_by_role("button", name="More", exact=True).click()
+    panel_control(panel.locator(f"#comment-{comment_id}"), "More").click()
     page.get_by_role("menuitem", name="Edit").click()
     edit_box = panel.locator(f"#comment-{comment_id}").locator('[contenteditable="true"]')
     expect(edit_box).to_contain_text(FIRST)
@@ -98,7 +95,7 @@ def test_a_comment_its_reply_and_an_edit_are_written_in_the_panel(page_for, owne
             f"/api/v1/comments/{comment_id}" in response.url and response.request.method == "PATCH"
         )
     ) as saving:
-        panel.get_by_role("button", name="Save", exact=True).click()
+        panel_control(panel, "Save").click()
     assert saving.value.ok, f"saving the edit answered {saving.value.status}"
     expect(panel.get_by_text(EDITED)).to_be_visible()
     stored = _stored_thread(owner, prompt_id)

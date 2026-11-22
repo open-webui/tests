@@ -10,6 +10,7 @@ does. The second test shows the same entry still copies on a secure page.
 
 Discriminates: the plain-HTTP test fails on 0.13.1 and dev b6534c58f (the clipboard keeps what it
 held before the click) and passes with the fix for #33927; the secure-page test passes on both.
+Retargeted for 2ca21e5f2, which opens the comments in a popover.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from playwright.sync_api import Page, expect
 from harness.actors import Actor
 from harness.comments import comment, shared_item, switch_comments
 from utils.clipboard import NOTHING_COPIED, copied, loopback_clipboard
+from utils.comments_panel import open_comments, panel_control
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -43,11 +45,11 @@ def commented_prompt(admin, make_user, preserve) -> tuple[Actor, str, str]:
 
 def _copy_comment_link(page: Page, prompt_id: str) -> None:
     page.goto(f"/workspace/prompts/{prompt_id}")
-    page.get_by_role("button", name="Comments (1)").click()
-    posted = page.get_by_text(COMMENT)
+    panel = open_comments(page, count=1)
+    posted = panel.get_by_text(COMMENT)
     expect(posted).to_be_visible()
     posted.hover()
-    page.get_by_role("button", name="More", exact=True).click()
+    panel_control(panel, "More").click()
     page.get_by_role("menuitem", name="Copy link").click()
 
 
