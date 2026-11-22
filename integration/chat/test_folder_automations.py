@@ -4,13 +4,15 @@ Since 6378f94a6 an automation lives in any folder its creator may write to, a sh
 included, and a member who may only read it is refused with 404. The folder's automations route,
 `GET /api/v1/folders/{id}/automations`, lists every automation in the folder, oldest first, whoever
 made it, to anyone who may read the folder, with its creator's name and what the caller may do: only
-the creator edits it (`can_edit`), while the creator and everyone who may write to the folder pause,
-run and read the runs of it (`can_manage`). Editing and deleting stay the creator's. A run files its
-chat in the folder while the creator may still write there, and the folder's chat list marks that
-chat with the automation that made it (`automation_id`). Once the creator lost write access, the
+the creator edits it (`can_edit`), while the creator and everyone who may write to the folder pause
+and run it (`can_manage`). Since e72b31f01 anyone who may read the folder reads its runs, and a
+writing member also renames and reschedules it; what it does (its prompt, model and target) and
+deleting it stay the creator's. A run files its chat in the folder while the creator may still
+write there, and the folder's chat list marks that chat with the automation that made it
+(`automation_id`). Once the creator lost write access, the
 next run lands outside the folder and the automation leaves it. Who reaches the list at all is
 pinned by integration/security/test_folder_access_matrix.py; an automation outside any folder stays
-its creator's alone (integration/security/test_automation_access_matrix.py).
+out of a stranger's reach (integration/security/test_automation_access_matrix.py).
 
 Discriminates: journey, no fix. All pass on dev 485103cde. In backend copies of it: the folder check
 for a new automation looking only at the caller's own folders turns the filing test red (the writer
@@ -176,35 +178,44 @@ def test_the_folder_lists_every_automation_with_its_creator_and_what_each_member
     }, "the reading member's view of the folder's automations"
 
 
-def test_a_writing_member_pauses_and_runs_the_owners_automation_but_cannot_edit_it(crew, upstream):
+def test_a_writing_member_renames_pauses_and_runs_the_owners_automation_but_not_what_it_does(
+    crew, upstream
+):
     folder_id, owner, writer, reader = crew
     automation = _created(owner, folder_id)
     path = f"/api/v1/automations/{automation['id']}"
+    other_prompt = {**automation["data"], "prompt": "Mail the harbour log to me."}
 
     with reader.client() as client:
         reader_toggle = client.post(f"{path}/toggle")
         reader_runs = client.get(f"{path}/runs")
     with writer.client() as client:
-        paused = client.post(f"{path}/toggle")
         edited = client.post(
-            f"{path}/update",
-            json={"name": "taken over", "is_active": True, "data": automation["data"]},
+            f"{path}/update", json={"name": "taken over", "is_active": True, "data": other_prompt}
         )
+        paused = client.post(f"{path}/toggle")
         deleted = client.delete(f"{path}/delete")
     run = _run_and_wait(writer, automation, upstream)
     with owner.client() as client:
         stored = client.get(path).json()
 
-    assert (reader_toggle.status_code, reader_runs.status_code) == (404, 404), (
-        f"a reading member managed the owner's automation: {reader_toggle.text}, {reader_runs.text}"
+    assert reader_toggle.status_code == 404, (
+        f"a reading member paused the owner's automation: {reader_toggle.text}"
     )
+    assert reader_runs.status_code == 200, (
+        f"a reading member could not read the runs of the folder's automation: {reader_runs.text}"
+    )
+    assert edited.status_code == 200, f"a writing member could not rename it: {edited.text}"
     assert paused.status_code == 200, f"a writing member could not pause it: {paused.text}"
-    assert (edited.status_code, deleted.status_code) == (404, 404), (
-        f"a writing member edited or deleted the owner's automation: {edited.text} / {deleted.text}"
+    assert deleted.status_code == 403, (
+        f"a writing member deleted the owner's automation: {deleted.text}"
     )
-    assert (stored["name"], stored["is_active"]) == (automation["name"], False), (
-        f"the owner's automation after the member's pause: {stored}"
-    )
+    # runs use the owner's account, so a member changes when it runs and never what it does
+    assert (stored["name"], stored["is_active"], stored["data"]) == (
+        "taken over",
+        False,
+        automation["data"],
+    ), f"the owner's automation after the member's rename and pause: {stored}"
     assert run["chat_id"], run
 
 

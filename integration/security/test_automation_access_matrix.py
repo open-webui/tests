@@ -1,16 +1,16 @@
-"""Journey: an automation is its owner's alone, and it only files into places the owner may write.
+"""Journey: an automation is out of a stranger's reach, and it only files where the owner may write.
 
-Automations have no sharing: every per-item route looks the automation up for its owner and
-answers 404 to anyone else, the admin included. A stranger's or the admin's read, update, toggle,
-run, delete or run history of someone else's automation is refused, and the owner still sees the
-same name, schedule, state and runs afterwards. Saving an automation into another user's folder
-answers 404 and saving it to post into a channel the user may only read, or not even see,
-answers 403; the automation is then neither created nor moved.
+Since e72b31f01 an automation can be shared, and the admin reaches every automation. A stranger
+without a grant gets 404 on every per-item route: their read, update, toggle, run, delete or run
+history of someone else's automation is refused, and the owner still sees the same name,
+schedule, state and runs afterwards. The admin's same requests answer 200. Saving an automation
+into another user's folder answers 404 and saving it to post into a channel the user may only
+read, or not even see, answers 403; the automation is then neither created nor moved.
 
-Discriminates: in a backend copy, reducing `check_automation_access` to a None check turns the
-stranger and admin rows red (200, and the update, toggle and delete change the owner's
-automation), and dropping the write check from `check_automation_channel_access` turns the
-read-only channel rows red (200).
+Discriminates: in a backend copy, reducing `check_automation_access` to a None check turned the
+stranger rows red (200, and the update, toggle and delete changed the owner's automation), and
+dropping the write check from `check_automation_channel_access` turns the read-only channel rows
+red (200).
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ ROUTES = [
     ROUTES,
     ids=[f"{row[0]} {row[1].split('{id}')[1] or '/'}" for row in ROUTES],
 )
-def test_only_the_owner_reaches_an_automation(
+def test_only_the_owner_and_the_admin_reach_an_automation(
     method, path, body, automations_allowed, admin, make_user, upstream
 ):
     owner, stranger = make_user(), make_user()
@@ -109,8 +109,8 @@ def test_only_the_owner_reaches_an_automation(
             ).status_code
         unchanged[role] = _owner_view(owner, automation_id) == before
 
-    assert answered == {"owner": OK, "stranger": NOT_FOUND, "admin": NOT_FOUND}
-    assert unchanged["stranger"] and unchanged["admin"], "a refused request changed the automation"
+    assert answered == {"owner": OK, "stranger": NOT_FOUND, "admin": OK}
+    assert unchanged["stranger"], "a refused request changed the automation"
 
 
 def _folder_of(actor: Actor) -> str:
