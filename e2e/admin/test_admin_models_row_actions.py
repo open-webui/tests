@@ -3,14 +3,16 @@
 A row's More menu clones the model: the clone opens in the model editor under the name with
 "(Clone)" added, and once saved it is a second model that users pick next to the first. The Select
 view filter lists only the matching models: Hidden shows the hidden one, Visible the others, and
-Workspace Models the presets without the base models, and Arena Models (#34137) only the arena
-models of the evaluation settings. The list opens on Available (461cc7aff):
-the models a connection offers and the presets, while settings saved for a model no connection
-offers any more wait under Unavailable. Make Public on a private model brings it back to the
-users' selector. Export in a row's More menu downloads that one model, not the list. Reset in
-the More menu of a model a connection offers deletes the settings saved for it, and the model
-stays listed under Available with its own name back; Delete on a leftover model under Unavailable
-removes its settings and its row there. Each test works as a fresh admin on presets of its own.
+Workspace Models the presets without the base models, and Router Models only the router models
+(#34137, made for the arena models that router models replaced); a router model switched off in its
+row there leaves the users' selector, as the arena models did when the global switch they had was
+turned off. The list opens on Available (461cc7aff): the models a connection offers and the presets,
+while settings saved for a model no connection offers any more wait under Unavailable. Make Public
+on a private model brings it back to the users' selector. Export in a row's More menu downloads that
+one model, not the list. Reset in the More menu of a model a connection offers deletes the settings
+saved for it, and the model stays listed under Available with its own name back; Delete on a
+leftover model under Unavailable removes its settings and its row there. Each test works as a fresh
+admin on presets of its own.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, the clone entry opening the editor
 under the original name turns the clone test red, the Hidden and Workspace Models views listing
@@ -20,8 +22,9 @@ With 461cc7aff reverted in a frontend build (the list opens on All, with no Avai
 Unavailable view) the Available test and the view filter test are red, the other three pass.
 On dev 3b8205505, in a frontend copy, a Reset that keeps the saved settings turns the reset test
 red, and a Delete that leaves the list as it was turns the leftover model test red. The arena
-view test passes on dev 485103cde and fails in a frontend build whose Arena Models view lists
-every model.
+view test passed on dev 485103cde and failed in a frontend build whose Arena Models view listed
+every model; retargeted to the Router Models view on dev 53d741157, where it passes along with
+the router switch test.
 """
 
 from __future__ import annotations
@@ -30,19 +33,23 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
+from harness.router_models import (
+    EVERYONE_READS,
+    ROUTER_MODELS_CONFIG,
+    default_routes,
+    save_router_model,
+)
 from utils.model_selector import SELECTOR_BUTTON, model_options
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 MODELS_CONFIG = ("/api/v1/configs/models", "/api/v1/configs/models")
-EVALUATIONS_CONFIG = ("/api/v1/evaluations/config", "/api/v1/evaluations/config")
-EVERYONE_READS = {"principal_type": "user", "principal_id": "*", "permission": "read"}
 
 
 def _create_preset(
@@ -111,7 +118,8 @@ def _offered_to(page: Page, name: str) -> Locator:
 
 def _choose_view(page: Page, current: str, view: str) -> None:
     page.get_by_role("dialog").get_by_role("button", name=current, exact=True).click()
-    page.get_by_role("button", name=view, exact=True).click()
+    # the Router Models panel's toggle shares a name with its view; the views are the pressable ones
+    page.get_by_role("button", name=view, exact=True).and_(page.locator("[aria-pressed]")).click()
 
 
 def test_a_cloned_model_is_a_second_model_users_can_pick(models_page, page_for, make_user, presets):
@@ -158,36 +166,48 @@ def test_the_view_filter_lists_only_the_matching_models(models_page, presets):
 
 
 @pytest.fixture
-def arena_model(admin, preserve) -> Iterator[str]:
-    """The name of an arena model in the evaluation settings, with arena models switched on."""
-    preserve(EVALUATIONS_CONFIG)
+def router_model(admin, preserve) -> str:
+    """The name of a public router model on the scripted model."""
+    preserve(ROUTER_MODELS_CONFIG)
     suffix = uuid.uuid4().hex[:8]
-    arena = {
-        "id": f"arena-{suffix}",
-        "name": f"Arena {suffix}",
-        "meta": {"model_ids": ["mock-model"], "access_grants": [EVERYONE_READS]},
-    }
+    name = f"Router {suffix}"
     with admin.client() as client:
-        saved = client.post(
-            EVALUATIONS_CONFIG[1],
-            json={"ENABLE_EVALUATION_ARENA_MODELS": True, "EVALUATION_ARENA_MODELS": [arena]},
+        save_router_model(
+            client,
+            f"router-{suffix}",
+            name,
+            routes=default_routes("mock-model"),
+            access_grants=[EVERYONE_READS],
         )
-        assert saved.status_code == 200, saved.text
-        yield arena["name"]
-        client.post("/api/v1/models/model/delete", json={"id": arena["id"]})
+    return name
 
 
-def test_the_arena_models_view_lists_only_the_arena_models(models_page, presets, arena_model):
+def test_the_router_models_view_lists_only_the_router_models(models_page, presets, router_model):
     preset = presets("Atlas")
     admin_page = models_page()
     rows = admin_page.get_by_role("dialog").locator("#model-list > div")
     expect(rows.filter(has_text=preset["name"])).to_have_count(1)
 
-    _choose_view(admin_page, "Available", "Arena Models")
+    _choose_view(admin_page, "Available", "Router Models")
 
-    expect(rows.filter(has_text=arena_model)).to_have_count(1)
+    expect(rows.filter(has_text=router_model)).to_have_count(1)
     expect(rows.filter(has_text=preset["name"])).to_have_count(0)
     expect(rows.filter(has_text="mock-model")).to_have_count(0)
+
+
+def test_a_router_model_switched_off_in_its_row_leaves_the_users_selector(
+    models_page, page_for, make_user, router_model
+):
+    expect(_offered_to(page_for(make_user()), router_model)).to_have_count(1)
+    admin_page = models_page()
+    _choose_view(admin_page, "Available", "Router Models")
+    switch = _model_row(admin_page, router_model).get_by_role("switch")
+
+    with admin_page.expect_response(lambda response: "/models/model/toggle" in response.url):
+        switch.click()
+    expect(switch).to_have_attribute("aria-checked", "false")
+
+    expect(_offered_to(page_for(make_user()), router_model)).to_have_count(0)
 
 
 def test_the_list_opens_on_available_models_and_keeps_unavailable_ones_apart(models_page, presets):
