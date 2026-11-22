@@ -4,15 +4,19 @@ Issue open-webui/open-webui#32819. Loading the page starts a new chat whose setu
 function and skill lists. A first message sent before those arrived was wiped from the screen when
 the setup finished, so its reply never showed, the page stayed on the empty new chat and only the
 sidebar held the finished chat. The fix stops the setup from resetting a chat that got a message
-in the meantime. Since b29f7781a the page also holds the input back until the setup is done.
+in the meantime. From b29f7781a to 14892a184 the page also held the input back until the
+setup was done.
 
-The test holds the function list from a fresh page load and sends the first message as early as
-the page allows: while the list is still held when the input is already offered, else right after
-the list arrives. The send waits for its answer while the rest of the setup finishes.
+Since dev 14892a184 the new chat shows its input before the model list arrives and sets itself up
+once the list is in. A message sent before that stays in the box, and the setup puts it back after
+clearing the input. The test holds the model list from a fresh page load and sends the first
+message: it must still be in the box once the setup has picked the model, and sending it then gets
+its reply in a saved chat. Retargeted for 14892a184 from the earlier flow, where the message was
+sent at once and the setup must not reset it.
 
-Discriminates: fails on the dev ca8f451cc build (the message and its reply vanish and the page
-stays on the new chat), passes with the fix d1511abce and on dev 2b1fb53f4; on 2b1fb53f4 with both
-the held-back input and the fix's reset guard removed it fails the same way.
+Discriminates: passes on dev 9b6241e54; fails on a b393504d9 build with the setup no longer
+putting the typed text back (the box is empty after the setup). Before 14892a184 it failed on the
+dev ca8f451cc build (the message and its reply vanished) and passed with the fix d1511abce.
 
 A side chat creates its chat when its first message is sent. From dev c0b90785e its first message
 showed while that chat was still being created; dev 03d8d3e35 kept it in the box until the chat
@@ -52,10 +56,7 @@ def wait_until_held(page: Page, held: list[Route], what: str, timeout_ms: int = 
     raise AssertionError(f"the page never asked for {what}")
 
 
-def release(page: Page, function_lists: list[Route]) -> None:
-    with page.expect_response("**/api/v1/skills/**"):
-        for route in function_lists:
-            route.continue_()
+MODEL_LIST = re.compile(r"/api/models(\?|$)")
 
 
 def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, make_user, upstream):
@@ -63,25 +64,24 @@ def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, ma
     question = f"early question {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("early answer", match=reply.answering(question)))
 
-    function_lists = hold(page, "**/api/v1/functions/")
-    sends = hold(page, "**/api/chat/completions")
+    model_lists = hold(page, MODEL_LIST)
     page.reload()
-    wait_until_held(page, function_lists, "the function list")
+    wait_until_held(page, model_lists, "the model list")
 
-    # the setup sets the input's state before it asks for the list, so this reads it settled
-    if chat_input(page).is_visible():
-        send(page, question)
-        wait_until_held(page, sends, "the reply")
-        release(page, function_lists)
-    else:
-        release(page, function_lists)
-        send(page, question)
-        wait_until_held(page, sends, "the reply")
-    for route in sends:
-        route.continue_()
+    # the input is offered before the setup, which waits for the model list
+    send(page, question)
+    expect(chat_input(page), "a message sent during setup left the box").to_contain_text(question)
+    with page.expect_response(MODEL_LIST):
+        for route in model_lists:
+            route.continue_()
+    page.unroute(MODEL_LIST)
+    expect(page.get_by_role("button", name="Selected model")).to_be_visible()
+    expect(chat_input(page), "the setup wiped the waiting message").to_contain_text(question)
 
-    expect(conversation(page)).to_contain_text(question)
+    chat_input(page).click()
+    page.keyboard.press("Enter")
     expect_reply(page, "early answer")
+    expect(conversation(page)).to_contain_text(question)
     expect(page).to_have_url(re.compile(r"/c/"))
 
     # a New Chat started afterwards still opens empty
