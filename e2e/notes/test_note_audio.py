@@ -1,7 +1,9 @@
 """Journey: adding audio to a note by uploading it, recording it or capturing it.
 
-The microphone menu in the note header offers Upload Audio, Record and Capture Audio. An uploaded
-audio file and a finished recording both go to the server, which transcribes them with the
+Upload files in the Note Menu takes an audio file, and Capture in the + menu of the note's chat
+offers Record and Capture Audio (since dev 6db63cddb, which took the microphone menu out of the
+note header and sends the chat's recordings into the note). An uploaded audio file and a finished
+recording both go to the server, which transcribes them with the
 admin's speech-to-text engine. The audio then sits in the note as a file chip in its text, the
 note's own text stays as written, and the note stores the file, whose record holds the
 transcript. Opening the chip, also after a reload, shows the transcript. Capture Audio asks the
@@ -32,7 +34,9 @@ from e2e.audio.conftest import SPOKEN_TURN
 from e2e.conftest import _close_context, _dismiss_first_run_modals, _new_context, _signed_in_page
 from harness.actors import Actor
 from harness.audio_engine import TRANSCRIPT
+from utils.note_chat import open_capture_menu
 from utils.note_content import note_files
+from utils.note_menu import open_note_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -101,20 +105,12 @@ def _open_note(page: Page, note_id: str) -> None:
     expect(_note_editor(page)).to_contain_text(NOTE_TEXT)
 
 
-def _open_audio_menu(page: Page) -> Locator:
-    """Opens the microphone menu in the note's header, whose first entry is named Record too."""
-    microphone = page.get_by_role("main").get_by_role("button", name="Record", exact=True)
-    expect(microphone, "the note header shows no microphone button").to_be_visible()
-    microphone.click()
-    return page.get_by_role("menu")
-
-
 def _upload_memo(page: Page, tmp_path: Path) -> None:
     memo = tmp_path / "memo.wav"
     memo.write_bytes(_memo())
-    _open_audio_menu(page)
+    menu = open_note_menu(page)
     with page.expect_file_chooser() as chooser:
-        page.get_by_role("menuitem", name="Upload Audio").click()
+        menu.get_by_role("menuitem", name="Upload files").click()
     chooser.value.set_files(memo)
 
 
@@ -224,7 +220,7 @@ def test_recording_with_the_microphone_attaches_the_recording_with_its_transcrip
     page = voice_page_for(author)
     _open_note(page, note_id)
 
-    _open_audio_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
+    open_capture_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
     page.get_by_role("button", name="Confirm recording").click()
 
@@ -240,7 +236,7 @@ def test_escape_while_recording_attaches_nothing(voice_page_for, make_user, spee
     note_id = _create_note(author)
     page = voice_page_for(author)
     _open_note(page, note_id)
-    _open_audio_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
+    open_capture_menu(page).get_by_role("menuitem", name="Record", exact=True).click()
     expect(page.get_by_text("0:02", exact=True)).to_be_visible()
 
     page.keyboard.press("Escape")
@@ -263,8 +259,7 @@ def test_capturing_audio_attaches_the_capture_with_its_transcript(
     page = capturing_page_for(author)
     _open_note(page, note_id)
 
-    _open_audio_menu(page)
-    page.get_by_role("menuitem", name="Capture Audio").click()
+    open_capture_menu(page).get_by_role("menuitem", name="Capture Audio").click()
     # The timer only counts once the browser has started the capture.
     confirm = page.get_by_role("button", name="Confirm recording")
     expect(confirm, "the screen capture never started").to_be_visible()
