@@ -6,8 +6,8 @@ over the chat, and its close button, a tap on the dimmed chat and a swipe back c
 vertical drag leaves it shut, and picking a chat in it opens the chat and closes the drawer. Enter
 on a touch keyboard starts a new line, so a message goes with the send button, and the reply streams
 in with Stop on the screen until it is done. The model selector fits the screen and the model picked
-there answers the next message. The + menu attaches a file and, with Capture, a photo from the
-camera, and both reach the model. The buttons under the latest reply sit on the screen; its
+there answers the next message. The + menu attaches a file and, with Capture > Camera, a photo
+from the camera, and both reach the model. The buttons under the latest reply sit on the screen; its
 Regenerate menu tries again with a version switcher, Edit saves a corrected reply (that it is stored
 is checked in the desktop edit test), and the header's chat menu and a chat row's menu in the drawer
 fit the screen, their Download choices too. Every control is tapped only after it is shown to lie on
@@ -28,6 +28,7 @@ and in one that leaves the chat's files out of the request the file test.
 
 The dimmed chat test was retargeted for 3cda94d40, which widens the drawer to the screen less 40
 pixels: it taps the middle of that strip.
+The photo test was retargeted for 2ca21e5f2, which turns Capture into a submenu holding Camera.
 
 The two Download choices tests are red on dev ebc6add67: on a screen this narrow the choices open
 beside the menu, past the left edge of the screen, with their names cut off
@@ -321,8 +322,11 @@ def test_a_file_from_the_plus_menu_reaches_the_model(phone, upstream):
 
 def test_capture_opens_the_camera_and_the_photo_reaches_the_model(phone, upstream):
     menu = open_plus_menu(phone)
+    tap_on_screen(menu.get_by_role("menuitem", name="Capture"))
+    camera_item = menu.get_by_role("menuitem", name="Camera")
+    expect_on_screen(camera_item)
     with phone.expect_file_chooser() as chooser:
-        tap_on_screen(menu.get_by_role("menuitem", name="Capture"))
+        tap_on_screen(camera_item)
     camera = chooser.value.element
     assert camera.get_attribute("capture") == "environment", "Capture opened no camera"
     chooser.value.set_files({"name": "photo.png", "mimeType": "image/png", "buffer": RED_PNG})
