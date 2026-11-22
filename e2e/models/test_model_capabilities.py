@@ -40,6 +40,10 @@ Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities secti
 Retargeted for 67863f310, which moves the default features into Features under the caption "Start
 enabled in new chats", with the names of their capabilities, and for the terminals to machines
 rename (c5c42fe3b, df6be8c3a), which calls the Terminal capability and the chat's menu Machine.
+
+`test_unticking_terminal_drops_the_picked_terminal_from_a_new_chat` is red on dev 53d741157: with a
+machine picked, opening the model's link opens the model picker instead of selecting the model
+(open-webui/open-webui#34800).
 """
 
 from __future__ import annotations
