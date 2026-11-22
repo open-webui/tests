@@ -74,9 +74,9 @@ def calling_together(*calls: tuple[str, dict]) -> Reply:
 
 
 def choose_terminal(page: Page, name: str) -> None:
-    """Pick the terminal in the Terminal menu; the composer's terminal button then shows it."""
+    """Pick the terminal in the Machine menu; the composer's machine button then shows it."""
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name).click()
     expect(page.get_by_role("main").get_by_role("button", name=name, exact=True)).to_be_visible()
     # while the menu fades out, keys like the voice note's Esc are left to it
@@ -84,10 +84,10 @@ def choose_terminal(page: Page, name: str) -> None:
 
 
 def open_terminal_options(page: Page, name: str) -> Locator:
-    """Open the Terminal menu and the More options of the terminal `name` in it; returns the
+    """Open the Machine menu and the More options of the terminal `name` in it; returns the
     options menu."""
     expect(chat_input(page)).to_be_visible()
-    tooltip_button(page.get_by_role("main"), "Terminal").click()
+    tooltip_button(page.get_by_role("main"), "Machine").click()
     menu = page.get_by_role("menu")
     # the button shows once the pointer is on the terminal's row
     menu.get_by_role("menuitemradio", name=name).hover()

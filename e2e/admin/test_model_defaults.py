@@ -356,8 +356,9 @@ def set_default_terminal(admin, terminal_id: str | None) -> None:
         current = client.get(MODELS_CONFIG[0]).json()
         metadata = dict(current.get("DEFAULT_MODEL_METADATA") or {})
         metadata.pop("terminalId", None)
+        metadata.pop("machineId", None)
         if terminal_id:
-            metadata["terminalId"] = terminal_id
+            metadata["machineId"] = terminal_id
         saved = client.post(MODELS_CONFIG[1], json={**current, "DEFAULT_MODEL_METADATA": metadata})
     assert saved.status_code == 200, saved.text
 
@@ -375,7 +376,7 @@ def test_a_default_terminal_picked_in_model_defaults_stays_picked_after_a_reload
     expect_model_default_terminal(settings, TERMINAL_NAME)
     with admin.client() as client:
         stored = client.get(MODELS_CONFIG[0]).json().get("DEFAULT_MODEL_METADATA") or {}
-    assert stored.get("terminalId") == terminal["id"], f"stored defaults: {stored}"
+    assert stored.get("machineId") == terminal["id"], f"stored defaults: {stored}"
 
 
 def test_a_new_model_starts_with_the_default_terminal_and_keeps_it_when_saved(
@@ -403,7 +404,7 @@ def test_a_new_model_starts_with_the_default_terminal_and_keeps_it_when_saved(
         saved = client.get("/api/v1/models/model", params={"id": model_id})
     assert saved.status_code == 200, saved.text
     meta = saved.json()["meta"]
-    assert meta.get("terminalId") == terminal["id"], f"the new model was saved with {meta}"
+    assert meta.get("machineId") == terminal["id"], f"the new model was saved with {meta}"
 
 
 def test_a_new_model_starts_with_no_terminal_while_model_defaults_has_none(

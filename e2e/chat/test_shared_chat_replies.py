@@ -54,7 +54,8 @@ viewers onto an edited branch and keeps one's own picture in the presence list f
 one showing Regenerate only on one's own replies fails the edit test; a backend copy whose
 `publish_chat_presence` sends nothing fails both presence tests. The Clone test, run as a
 control, passes on every mutant build. The model test passes on dev 485103cde and fails in a backend
-copy that refuses a member's save of the chat's selections, as v0.13.3 did.
+copy that refuses a member's save of the chat's selections, as v0.13.3 did. The warning was
+retargeted for df6be8c3a, which words it "own machine".
 """
 
 from __future__ import annotations
@@ -92,7 +93,7 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 QUESTION = "when does the ferry leave?"
 ANSWER = "At half past nine."
 OWNER_PROMPT = "You answer as the harbour master and never mention the toll."
-TERMINAL_WARNING = "People who can reply can also use this chat’s own terminal."
+TERMINAL_WARNING = "People who can reply can also use this chat’s own machine."
 
 
 def _accounts(make_user):

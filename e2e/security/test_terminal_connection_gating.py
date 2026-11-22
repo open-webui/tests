@@ -6,8 +6,9 @@ from the chat input's Terminal menu; the admin then switches it off through a co
 saves the connection without rebuilding the terminal list cached in Redis. The user's next message
 in that chat still names the terminal, and the reply shows that the terminal is unavailable
 instead of the model being offered its tools. Since the terminal rework on dev (6f2fc7bc7) a
-switched-off terminal answers as one that does not exist, so the reply reads "Terminal
-unavailable: Terminal server '<id>' not found" where it said "is disabled" before.
+switched-off terminal answers as one that does not exist, so the reply reads "Machine
+unavailable: Machine '<id>' not found" (worded for terminals before df6be8c3a) where it said "is
+disabled" before.
 
 Since 21da7627b the page opens a new chat's working directory on the terminal before the first
 message is sent, and a terminal that refuses ends the send with a toast before the model is
@@ -30,6 +31,10 @@ it under that name to clear it, and once the orchestrator is back the next messa
 terminal's tools with no further reload. Discriminates: fails on a dev build from before the fix
 (dcde707f0, whose terminal picker code is identical to 47cf51eb7: after the reload the pick is
 gone and the button is not shown), passes with the fix on branch fix/terminal-deselect-outage.
+Retargeted for the terminals to machines rename (c5c42fe3b, df6be8c3a): the button reads
+"Unavailable machine", the empty menu "Machine", and the config import that switches the terminal
+off names `machines.connections`. The outage test stays red until the fix for #34643 (#34651)
+merges.
 """
 
 from __future__ import annotations
@@ -110,14 +115,14 @@ def test_a_terminal_switched_off_mid_chat_offers_no_tools(page_for, cached_insta
             switched_off = {**connection, "enabled": False}
             imported = client.post(
                 "/api/v1/configs/import",
-                json={"config": {"terminal_server.connections": [switched_off]}},
+                json={"config": {"machines.connections": [switched_off]}},
             )
         assert imported.status_code == 200, imported.text
         terminal.clear()
 
         cached_instance.upstream.queue(reply.text("ready", match=reply.answering(SECOND_PROMPT)))
         send(page, SECOND_PROMPT)
-        refusal = re.compile(r"Terminal unavailable: Terminal server '.+' not found")
+        refusal = re.compile(r"Machine unavailable: Machine '.+' not found")
         expect(conversation(page).get_by_text(refusal)).to_be_visible()
 
     def offered(prompt: str) -> list[str]:
@@ -174,7 +179,7 @@ def test_a_picked_terminal_stays_through_an_orchestrator_outage_and_a_reload(
         page = page_for(member)
         choose_terminal(page, "Workbench")
         unavailable = page.get_by_role("main").get_by_role(
-            "button", name="Unavailable terminal", exact=True
+            "button", name="Unavailable machine", exact=True
         )
         # first on the new chat page, then in the saved chat its message creates
         for prompt in OUTAGE_PROMPTS:
@@ -191,11 +196,11 @@ def test_a_picked_terminal_stays_through_an_orchestrator_outage_and_a_reload(
         _set_templates_up(orchestrator, False)
         page.reload()
         unavailable.click()
-        page.get_by_role("menu").get_by_role("menuitemradio", name="Unavailable terminal").click()
+        page.get_by_role("menu").get_by_role("menuitemradio", name="Unavailable machine").click()
         expect(unavailable).to_have_count(0)
         _set_templates_up(orchestrator, True)
         page.reload()
-        unpicked = page.get_by_role("main").get_by_role("button", name="Terminal", exact=True)
+        unpicked = page.get_by_role("main").get_by_role("button", name="Machine", exact=True)
         expect(unpicked).to_be_visible()
 
     for prompt in OUTAGE_PROMPTS:

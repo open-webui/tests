@@ -92,7 +92,7 @@ def admin_account(make_user, preserve):
 
 def stored_connection(admin_account, name: str) -> dict:
     with admin_account.client() as client:
-        connections = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["TERMINAL_SERVER_CONNECTIONS"]
+        connections = client.get(TERMINAL_SERVERS_CONFIG[0]).json()["MACHINE_CONNECTIONS"]
     [connection] = [entry for entry in connections if entry.get("name") == name]
     return connection
 
@@ -210,7 +210,7 @@ def terminal_settings(page_for, admin_account, connect_terminals, terminals):
         f"the orchestrator did not store the fields the dialog does not show: {template}"
     )
     page = page_for(admin_account)
-    return page, open_terminal_settings(page, name), created["terminal_id"], template["data"]
+    return page, open_terminal_settings(page, name), created["machine_id"], template["data"]
 
 
 def test_saving_a_terminal_untouched_keeps_everything_stored(terminal_settings, terminals):
