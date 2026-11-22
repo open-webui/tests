@@ -182,13 +182,16 @@ def test_an_expiring_token_is_refreshed_at_a_server_named_by_host(
 
         echoed = _echo_through_chat(person, resolving_instance.upstream, server_id)
 
-        [refresh] = [
+        # since a5058fa56 each MCP request inside the expiry window refreshes; the first counts
+        refreshes = [
             entry
             for entry in auth_server.requests_to("/token")
             if entry.form.get("grant_type") == "refresh_token"
         ]
 
     assert echoed == PHRASE
+    assert refreshes, "the expiring token was never refreshed"
+    refresh = refreshes[0]
     assert refresh.form["refresh_token"] == connected["refresh_token"]
     assert "aiohttp" in refresh.headers["User-Agent"]
     assert connected["access_token"] not in mcp.presented, "the MCP server saw the old token"

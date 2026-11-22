@@ -113,8 +113,13 @@ def test_a_message_sent_while_the_reply_runs_is_answered_after_it(make_user, fat
                 client, first, chat_id=fat.chat_id, parent_id=fat.manifest["last_reply"]
             )
             _wait_until_asked(upstream, first)
+            # the web client asks to queue a message sent while a reply runs (bc754ef4e)
             send_message(
-                client, second, chat_id=fat.chat_id, parent_id=running.assistant_message_id
+                client,
+                second,
+                chat_id=fat.chat_id,
+                parent_id=running.assistant_message_id,
+                queue=True,
             )
             held.set()
             first_reply = wait_for_reply(client, running)
