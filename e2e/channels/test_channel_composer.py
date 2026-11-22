@@ -51,6 +51,7 @@ turns the send now test red alone, and a Delete on a queued message that does no
 edit test red alone.
 The channel link test passes on dev 3bfc168d6 and fails on a build of b48813189, the commit before
 cfe0ca0f6, where the link replaces the channel it was posted in and no tab of its own opens.
+Retargeted for fad6d0e72, whose channel tab reads the name without `#`.
 """
 
 from __future__ import annotations
@@ -523,13 +524,13 @@ def test_a_linked_channel_opens_for_the_member_who_clicks_it(people, page_for):
         assert content.startswith(f"<#C:{linked_id}|{linked_name}>"), stored
     link.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
-    expect(_page_tab(member_page, f"#{linked_name}", selected=True)).to_be_visible()
-    _page_tab(member_page, f"#{channel_name}").click()
+    expect(_page_tab(member_page, linked_name, selected=True)).to_be_visible()
+    _page_tab(member_page, channel_name).click()
     expect(member_page).to_have_url(re.compile(f"/channels/{channel_id}"))
     typed_link.click()
     expect(member_page).to_have_url(re.compile(f"/channels/{linked_id}"))
-    expect(_page_tab(member_page, f"#{linked_name}", selected=True)).to_be_visible()
-    expect(_page_tab(member_page, f"#{linked_name}")).to_have_count(1)
+    expect(_page_tab(member_page, linked_name, selected=True)).to_be_visible()
+    expect(_page_tab(member_page, linked_name)).to_have_count(1)
 
 
 @pytest.mark.regression
