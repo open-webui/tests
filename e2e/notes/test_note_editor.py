@@ -27,9 +27,11 @@ Since 2416b1fc0 scrolling the note hides the toolbar, which otherwise floated wh
 had been, until the selection changes. The scroll test passes on dev e8c0ad85e and fails in a
 frontend copy with 2416b1fc0's editor change reverted.
 
-A title generated from the keyboard leaves the focus in the title field, and closing the note
-chat gives it back to the Chat button (Tim's 75f8ae558). Both pass on dev e8c0ad85e and fail
-on that build without the focus returns.
+A title generated from the keyboard leaves the focus in the title field (Tim's 75f8ae558), which
+passes on dev e8c0ad85e and fails on that build without the focus return. Closing the note chat
+gave the focus back to its Chat button in the same commit; since f80331e08 the chat is a box under
+an Expand button, and expanding or collapsing it with the keyboard drops the focus to the page
+(open-webui/open-webui#34798). That test is red on dev 99e7b89be until it is fixed.
 """
 
 from __future__ import annotations
@@ -300,22 +302,26 @@ def test_a_title_generated_from_the_keyboard_leaves_the_focus_in_the_title_field
     expect(title, "the focus left the title field while the title was generated").to_be_focused()
 
 
-def test_closing_the_note_chat_gives_the_focus_back_to_its_button(page_for, make_user):
+def test_collapsing_the_note_chat_gives_the_focus_back_to_its_expand_button(page_for, make_user):
+    # open-webui/open-webui#34798: the focus falls to the page as the buttons disappear
     page = page_for(make_user())
     _new_note(page)
-    chat_button = page.get_by_role("main").get_by_role("button", name="Chat", exact=True)
-    chat_button.focus()
+    main = page.get_by_role("main")
+    expand = main.get_by_role("button", name="Expand", exact=True)
+    expect(expand).to_have_attribute("aria-expanded", "false")
+    expand.focus()
     page.keyboard.press("Enter")
-    panel_close = page.get_by_role("button", name="Close", exact=True)
-    expect(panel_close).to_be_visible()
-    # the note chat focuses its message box once its chat has loaded
-    expect(note_chat_input(page)).to_be_focused()
+    collapse = main.get_by_role("button", name="Collapse", exact=True)
+    expect(collapse).to_be_visible()
+    expect(
+        note_chat_input(page), "expanding the note chat left the focus on the page"
+    ).to_be_focused()
 
-    panel_close.focus()
+    collapse.focus()
     page.keyboard.press("Enter")
 
-    expect(panel_close).to_have_count(0)
-    expect(chat_button, "closing the note chat left the focus on the page").to_be_focused()
+    expect(collapse).to_have_count(0)
+    expect(expand, "collapsing the note chat left the focus on the page").to_be_focused()
 
 
 def test_the_word_and_character_count_follows_the_typing(page_for, make_user):
