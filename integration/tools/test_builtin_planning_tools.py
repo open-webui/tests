@@ -3,8 +3,9 @@
 * `create_tasks` and `update_task` keep a checklist on the saved chat; an unknown task or status
   is refused and leaves the list alone.
 * `create_automation` stores a schedule on the current model for an account allowed automations,
-  `toggle_automation` pauses and resumes it and `delete_automation` removes it; nobody touches
-  another account's automation, and an account without the feature is not offered the tools.
+  `toggle_automation` pauses and resumes it and `delete_automation` removes it; an account
+  without a grant touches no other account's automation (an admin may pause it), and an
+  account without the feature is not offered the tools.
   Every example schedule in the tool's description is one the tool accepts (`9f25b1b1a`, PR
   #33732, issue #33730: the examples showed a literal backslash-n the schedule parser refused).
 * `create_calendar_event` writes in the account's local time into its default calendar or a
@@ -36,6 +37,7 @@ import uuid
 import pytest
 
 from harness import upstream as reply
+from harness.access import make_group
 from harness.actors import admin_of, create_user
 from harness.calendar_api import HOUR_NS, default_calendar_id, set_timezone, to_ns
 from harness.chat import ask
@@ -52,6 +54,7 @@ AUTOMATION_TOOLS = {
     "toggle_automation",
     "delete_automation",
 }
+AUTOMATIONS_GRANTED = {"features": {"automations": True}}
 # first due in 2099, so the scheduler never runs it into another test's script
 SCHEDULE = "DTSTART:20990101T090000\nRRULE:FREQ=DAILY"
 
@@ -151,8 +154,9 @@ def test_an_automation_is_created_paused_resumed_and_deleted(make_user, upstream
     assert stored_automation(owner, created["id"]).status_code == 404
 
 
-def test_another_accounts_automation_is_left_alone(make_user, upstream):
-    owner, other = make_user(role="admin"), make_user(role="admin")
+def test_another_accounts_automation_is_left_alone(admin, make_user, upstream):
+    owner, other = make_user(role="admin"), make_user()
+    make_group(admin, [other], AUTOMATIONS_GRANTED)
     created = call(owner, upstream, "create_automation", name="Mine", prompt="p", rrule=SCHEDULE)
 
     toggled = call(other, upstream, "toggle_automation", automation_id=created["id"])
@@ -161,6 +165,10 @@ def test_another_accounts_automation_is_left_alone(make_user, upstream):
     assert toggled == deleted == {"error": "Access denied"}
     stored = stored_automation(owner, created["id"])
     assert stored.status_code == 200 and stored.json()["is_active"] is True
+
+    # since automations can be shared (e72b31f01), an admin may pause anyone's
+    paused_by_admin = call(admin, upstream, "toggle_automation", automation_id=created["id"])
+    assert paused_by_admin.get("is_active") is False, paused_by_admin
 
 
 def test_a_bad_schedule_or_folder_is_refused(make_user, upstream):
