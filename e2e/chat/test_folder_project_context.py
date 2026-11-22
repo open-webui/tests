@@ -34,6 +34,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.chat_history import seed_chat
 from harness.knowledge_bases import add_text_file, knowledge_base
+from utils.chat_surface import start_on_folder_page
 from utils.chat_ui import chat_input, conversation, expect_reply, send
 from utils.sidebar_folders import drag, folder_row
 
@@ -216,7 +217,11 @@ def test_toggling_temporary_chat_on_the_folder_page_keeps_the_folder(page_for, m
     toggle.click()
     expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
     expect(folder_page).to_be_visible()
-    ask(page, upstream, "who keeps the harbour log?", "The harbour master.")
+    question = "who keeps the harbour log?"
+    upstream.queue(reply.text("The harbour master.", match=reply.answering(question)))
+    # since 06b47d455 a chat started on the folder page opens in a tab beside it
+    chat = start_on_folder_page(page, question)
+    expect_reply(chat, "The harbour master.")
 
     expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
     chat_id = page.url.rsplit("/", 1)[-1]
@@ -225,7 +230,7 @@ def test_toggling_temporary_chat_on_the_folder_page_keeps_the_folder(page_for, m
         "the chat was not sent the folder's prompt"
     )
 
-    ask(page, upstream, "and who keeps the tide log?", "The pilot.")
+    ask(chat, upstream, "and who keeps the tide log?", "The pilot.")
     page.goto("/")
     ask(page, upstream, "what is for lunch?", "Soup.")
 

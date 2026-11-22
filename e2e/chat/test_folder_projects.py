@@ -58,6 +58,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.image_engines import PNG_BASE64
 from harness.knowledge_bases import knowledge_base
+from utils.chat_surface import open_chat_tab_from
 from utils.chat_ui import expect_reply, send
 from utils.folder_page import folder_chat
 from utils.menus import late_menu_entry
@@ -479,13 +480,14 @@ def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
 
     new_chat = folder_menu(sidebar, "Voyages").get_by_role("menuitem", name="New Chat")
     expect(new_chat, "the folder's menu has no New Chat entry").to_be_visible()
-    new_chat.click()
+    # since 06b47d455 the folder opens as the page's tab and the new chat in a tab beside it
+    chat = open_chat_tab_from(page, new_chat, place="folder chat")
+    expect(page.get_by_role("tab", name="Voyages", exact=True)).to_be_visible()
 
-    expect(page).to_have_url(re.compile(f"/folders/{folder_id}$"))
     question = f"where do we sail next? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Due north", match=reply.answering(question)))
-    send(page, question)
-    expect_reply(page, "Due north")
+    send(chat, question)
+    expect_reply(chat, "Due north")
     expect(page).to_have_url(re.compile("/c/"))
     chat_id = page.url.rsplit("/", 1)[-1]
     assert stored_chat(owner, chat_id)["folder_id"] == folder_id, (

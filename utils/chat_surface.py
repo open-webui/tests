@@ -191,6 +191,14 @@ def ask_aside(
     return _new_panel(page, before, place)
 
 
+def start_on_folder_page(page: Page, question: str, place: str = "folder chat") -> ChatSurface:
+    """Send `question` from a folder page's box; the chat it starts opens in a tab beside the
+    folder (since 06b47d455)."""
+    before = _panel_ids(page)
+    main_chat(page).send(question)
+    return _new_panel(page, before, place)
+
+
 def open_sidebar(page: Page) -> Locator:
     sidebar = page.get_by_role("navigation", name="Chat history")
     opener = page.get_by_role("button", name="Open Sidebar", exact=True)

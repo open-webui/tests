@@ -88,6 +88,7 @@ from utils.cached_chat import (
     turn_on_tool,
 )
 from utils.chat_controls import control_button, open_chat_controls, open_section
+from utils.chat_surface import start_on_folder_page
 from utils.chat_ui import (
     chat_input,
     close_menu,
@@ -386,16 +387,19 @@ def test_a_chat_in_a_folder_with_its_own_prompt_and_knowledge_only_appends(
     assert created.status_code == 200, created.text
     page = page_for(person, path=f"/folders/{created.json()['id']}")
 
-    ask(page, upstream, "good morning", reply.text("Morning."))
+    # since 06b47d455 a chat started on the folder page opens in a tab beside it
+    upstream.queue(reply.text("Morning.", match=reply.answering("good morning")))
+    chat = start_on_folder_page(page, "good morning")
+    expect_reply(chat, "Morning.")
     ask(
-        page,
+        chat,
         upstream,
         "when does the ferry leave?",
         calling("query_knowledge_files", {"query": "ferry"}),
         reply.text("At 06:40 (handbook.txt)."),
     )
-    page.reload()
-    ask(page, upstream, "thanks", reply.text("Safe travels."))
+    chat = chat.reload()
+    ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
     assert "Answer as the harbour master." in requests[0]["messages"][0]["content"]
