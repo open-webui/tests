@@ -8,7 +8,8 @@ reads as having none. Time in a status adds up across stretches, so going back t
 its earlier time. With `workspace=true` the folder's chat list pages in fifties, filtered before
 paging by a search over titles and message text, by tag (`none` for untagged), by status (`none`
 for no status), by person and by activity (unread or read), sorted by title or by last update in
-either direction, and each chat says whether the caller may change its status and tags.
+either direction, and each chat names its owner. Since d79836738 the page takes the right to change
+a chat's status and tags from the chat being the caller's own or the folder's `write_access`.
 `GET /{id}/tags` counts the tags in use and `GET /{id}/users` counts each person's chats, the
 caller first. A member of a shared folder files their own chat there; who may reach which route
 is pinned by integration/security/test_folder_access_matrix.py. Since 31ef2064d a member who
@@ -26,7 +27,9 @@ keeping a deleted status on the chat (the deleted status test), dropping a statu
 when a chat comes back to it (the earlier time test), ignoring the tag filter (the tag test), the
 person filter (the people test), matching titles only in the folder search (the search test), a
 page of ten in the workspace list (the paging test) and answering every chat as editable (the
-reading member test, the owner's chat reads editable).
+reading member test, the owner's chat reads editable). Retargeted for d79836738: in a backend copy
+of dev 53d741157 whose folder answer gives every member `write_access`, the reading member test
+fails.
 """
 
 from __future__ import annotations
@@ -101,6 +104,13 @@ def _listed(client: httpx.Client, folder_id: str, **params) -> dict:
     return response.json()
 
 
+def _write_access(client: httpx.Client, folder_id: str) -> bool:
+    """The folder's own answer the page takes edit rights on other people's chats from."""
+    folder = client.get(f"/api/v1/folders/{folder_id}")
+    assert folder.status_code == 200, folder.text
+    return folder.json()["write_access"]
+
+
 def _by_title(listing: dict) -> dict[str, dict]:
     return {chat["title"]: chat for chat in listing["chats"]}
 
@@ -110,7 +120,8 @@ def _titles(listing: dict) -> list[str]:
 
 
 def test_a_chat_filed_under_a_status_lists_with_it_and_filters_by_it(make_user):
-    with make_user().client() as client:
+    person = make_user()
+    with person.client() as client:
         folder_id = _folder(client, [TODO, DONE])
         filed = _chat(client, folder_id, "Filed")
         _chat(client, folder_id, "Unfiled")
@@ -120,12 +131,13 @@ def test_a_chat_filed_under_a_status_lists_with_it_and_filters_by_it(make_user):
         done_only = _listed(client, folder_id, status=DONE["id"])
         no_status = _listed(client, folder_id, status="none")
         either = _listed(client, folder_id, status=[DONE["id"], "none"])
+        write_access = _write_access(client, folder_id)
 
     assert answered.status_code == 200, answered.text
     assert listing["Filed"]["status"] == DONE["id"], listing["Filed"]
     assert isinstance(listing["Filed"]["status_since"], int), listing["Filed"]
     assert listing["Unfiled"]["status"] is None, listing["Unfiled"]
-    assert listing["Filed"]["can_edit_status"] is True
+    assert (write_access, listing["Filed"]["user_id"]) == (True, person.id), listing["Filed"]
     assert _titles(done_only) == ["Filed"], done_only
     assert _titles(no_status) == ["Unfiled"], no_status
     assert _titles(either) == ["Filed", "Unfiled"], either
@@ -348,6 +360,7 @@ def test_a_writing_member_files_and_tags_any_chat(make_user):
         filed_owners = _file(client, folder_id, owners, TODO["id"])
         tagged_owners = client.post(f"/api/v1/chats/{owners}/tags", json={"name": name})
         listing = _by_title(_listed(client, folder_id))
+        write_access = _write_access(client, folder_id)
     with owner.client() as client:
         owners_tags = client.get(f"/api/v1/chats/{owners}/tags")
 
@@ -360,11 +373,10 @@ def test_a_writing_member_files_and_tags_any_chat(make_user):
     assert [tag["id"] for tag in owners_tags.json()] == [name], (
         f"the member's tag did not land in the owner's tags: {owners_tags.text}"
     )
-    for title in ("Member's", OWNERS):
-        assert (listing[title]["can_edit_status"], listing[title]["can_edit_tags"]) == (
-            True,
-            True,
-        ), f"a writing member was offered the wrong controls on {title} chat: {listing[title]}"
+    assert write_access is True, "a writing member was not offered to change the folder's chats"
+    assert (listing["Member's"]["user_id"], listing[OWNERS]["user_id"]) == (member.id, owner.id), (
+        f"the chats do not name their owners: {listing}"
+    )
 
 
 def test_a_reading_member_files_no_chat_and_reads_the_owners_as_fixed(make_user):
@@ -375,13 +387,13 @@ def test_a_reading_member_files_no_chat_and_reads_the_owners_as_fixed(make_user)
     with reader.client() as client:
         refused = _file(client, folder_id, owners, DONE["id"])
         listing = _by_title(_listed(client, folder_id))
+        write_access = _write_access(client, folder_id)
 
     assert refused.status_code == 403, f"a reading member filed the owner's chat: {refused.text}"
     assert listing[OWNERS]["status"] is None, listing[OWNERS]
-    assert (listing[OWNERS]["can_edit_status"], listing[OWNERS]["can_edit_tags"]) == (
-        False,
-        False,
-    ), f"a reading member was offered to change the owner's chat: {listing[OWNERS]}"
+    assert (write_access, listing[OWNERS]["user_id"]) == (False, owner.id), (
+        f"a reading member was offered to change the owner's chat: {listing[OWNERS]}"
+    )
 
 
 def test_the_people_list_counts_chats_and_filters_by_person(make_user):
