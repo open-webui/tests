@@ -54,7 +54,7 @@ PATH_CONVERTER = re.compile(r"\{([^}:]+):[^}]+\}")
 INVALID_BODY = b'"not the body this route wants"'
 REFUSED = {401, 403}
 
-BROWSER_VIEW = "/api/v1/terminals/{server_id}/browser/view/{sid}/{browser_token}/{path}"
+BROWSER_VIEW = "/api/v1/machines/{server_id}/browser/view/{sid}/{browser_token}/{path}"
 
 # Routes that need no account, by (method, path): why.
 PUBLIC_ROUTES = {
@@ -86,6 +86,8 @@ PUBLIC_ROUTES = {
     ("GET", "/oauth/clients/{client_id}/callback"): "a tool server's provider redirects here",
     ("POST", "/oauth/backchannel-logout"): "the provider calls it with a signed token",
     ("POST", "/api/v1/channels/webhooks/{webhook_id}/{token}"): "the path carries the secret",
+    ("GET", "/api/v1/automations/hooks/{id}/{token}"): "the path carries the secret",
+    ("POST", "/api/v1/automations/hooks/{id}/{token}"): "the path carries the secret",
     **{
         (method, BROWSER_VIEW): "a terminal browser frame; the path carries a signed ticket"
         for method in ("GET", "POST", "PUT", "PATCH", "DELETE")
