@@ -21,7 +21,7 @@ from harness import upstream as reply
 from harness.actors import create_user
 from harness.duckduckgo import Result, duckduckgo_env, duckduckgo_settings, serving_duckduckgo
 from harness.web_retrieval import save_web_settings, web_settings_restored
-from utils.chat_ui import conversation, expect_reply, send, turn_on_integration
+from utils.chat_ui import conversation, expect_reply, send, tool_step, turn_on_integration
 
 pytestmark = [
     pytest.mark.journey,
@@ -79,5 +79,5 @@ def test_the_model_searches_duckduckgo_and_the_chat_shows_what_it_found(
         for result in (HERONS, EGRETS)
     ]
     assert duckduckgo.queries()[-1:] == ["herons"]
-    conversation(page).get_by_text("View Result from search_web").click()
+    tool_step(conversation(page), "Searched the web", "search_web").click()
     expect(conversation(page).get_by_text(HERONS.snippet)).to_be_visible()

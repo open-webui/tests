@@ -47,6 +47,8 @@ from utils.chat_ui import (
     expect_reply,
     last_reply,
     send,
+    steps_summary,
+    tool_step,
     turn_on_integration,
 )
 
@@ -157,8 +159,10 @@ def test_the_engine_set_up_by_the_admin_answers_a_chat_search(
         assert carries(sent, API_KEY), f"{engine.name} was not sent the admin's key"
 
     chat = conversation(page)
-    last_reply(page).get_by_role("button", name="Toggle details").click()
-    chat.get_by_text("View Result from search_web").click()
+    steps = steps_summary(last_reply(page))
+    expect(steps).to_have_text("Searched the web, Read web page")
+    steps.click()
+    tool_step(chat, "Searched the web", "search_web").click()
     expect(chat.get_by_text(engine.found(hits)[0]["snippet"]).first).to_be_visible()
     expect(chat.get_by_role("button", name="Toggle 1 source")).to_be_visible()
     site = hits[0].link.split("/")[2]

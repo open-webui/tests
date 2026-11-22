@@ -19,7 +19,7 @@ from playwright.sync_api import expect
 from harness import upstream as reply
 from harness.channel_chat import enable_channels
 from harness.channel_quotes import group_channel, post_message
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply, last_reply, send, tool_step
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -48,9 +48,8 @@ def _ask_about(page_for, account, upstream, tag: str) -> list:
     page = page_for(account)
     send(page, question)
     expect_reply(page, f"Here is what I found about {tag}")
-    expect(
-        page.get_by_text("search_channel_messages").locator("visible=true").first
-    ).to_be_visible()
+    search = tool_step(last_reply(page), "Searched channel messages", "search_channel_messages")
+    expect(search).to_be_visible()
     [follow_up] = [
         request
         for request in upstream.chat_requests()

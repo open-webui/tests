@@ -28,15 +28,20 @@ the default sandbox and pass on the persistent worker.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from playwright.sync_api import expect
 
 from harness import slow_machine
 from harness import upstream as reply
 from harness.actors import create_user
-from utils.chat_ui import REPLY_TIMEOUT_MS, expect_reply, last_reply, send, show_input_selections
+from utils.chat_ui import (
+    REPLY_TIMEOUT_MS,
+    expect_reply,
+    last_reply,
+    send,
+    show_input_selections,
+    tool_step,
+)
 
 pytestmark = [
     pytest.mark.regression,
@@ -109,7 +114,8 @@ def page_on(page_for):
 def _tool_result(page):
     """The expanded result of the reply's execute_code call."""
     reply_box = last_reply(page)
-    reply_box.get_by_role("button", name=re.compile("execute_code")).click()
+    # the call shows the fixed label of Open WebUI's own code tool since dev 6e5f3fda3
+    tool_step(reply_box, "Ran code", "execute_code").click()
     return reply_box
 
 
