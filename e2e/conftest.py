@@ -186,10 +186,14 @@ def context(
 
 
 # The splash stays until the app has its config and account; the signed-in layout then shows a
-# spinner beside the sidebar until its data is in and #main-content replaces it.
+# spinner beside the sidebar until its data is in and #main-content replaces it. A chat shows its
+# input before the model list is in and takes no message until it has the list and its model
+# picker shows (since dev 14892a184).
 APP_LOADED = """() => !document.getElementById('splash-screen')
     && (!document.getElementById('sidebar-new-chat-button')
-        || !!document.getElementById('main-content'))"""
+        || !!document.getElementById('main-content'))
+    && (!document.getElementById('chat-input')
+        || !!document.querySelector('[id^="model-selector-"][id$="-button"]'))"""
 
 
 def _loaded(page: Page, path: str, load_timeout_ms: float) -> bool:
