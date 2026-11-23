@@ -531,6 +531,8 @@ def test_a_knowledge_tool_result_keeps_its_source(tooled, streaming):
             "metadata": [
                 {"file_id": arguments["file_id"], "name": "notes.txt", "source": "notes.txt"}
             ],
+            # the number the model was shown in the tool result below
+            "citation_ids": [1],
         }
     ]
     tool_round(listener, "view_knowledge_file", arguments, result_text)
