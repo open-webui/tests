@@ -4,7 +4,9 @@ Fix PR open-webui/open-webui#31307 (merged as `1c813902e`, issue open-webui/open
 in `utils/middleware.py`. With native function calling the citations built from
 `query_knowledge_files` dropped the distance each chunk came back with, so opening one showed
 the cited text without the relevance badge that classic retrieval shows for the same knowledge
-base. A person reads the badge in the citation dialog.
+base. A person read the badge in the citation dialog. Since 072d0b51d a cited file opens in a tab
+beside the chat with the cited passage marked, and nothing there shows its relevance any more:
+red on dev 306f9be78 (issue draft issue-cited-file-relevance-gone).
 
 Twin of integration/tools/test_knowledge_tool_citation_scores.py.
 
@@ -28,6 +30,7 @@ from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from utils.chat_surface import EVERYWHERE
 from utils.chat_ui import conversation, expect_reply, listed_source, send
+from utils.citations_files import expect_marked, file_panel
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -66,6 +69,7 @@ def test_a_knowledge_tool_citation_shows_its_relevance(chat_for, shared_notes, u
     expect(sources, f"the reply in the {chat.place} lists no source").to_be_visible()
     sources.click()
     listed_source(chat, filename).click()
-    citation = chat.page.get_by_role("dialog")
-    expect(citation).to_contain_text(NOTES)
-    expect(citation.get_by_text(PERCENTAGE)).to_be_visible()
+    expect_marked(file_panel(chat.page, filename).get_by_text(NOTES, exact=True))
+    expect(
+        chat.page.get_by_text(PERCENTAGE), "the opened source shows no relevance for its passage"
+    ).to_be_visible()

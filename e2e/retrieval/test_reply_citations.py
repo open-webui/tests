@@ -3,8 +3,13 @@
 A person attaches text files in the chat input and asks a question; the question is answered
 from the files' text, and the reply lists the files as its sources. Each inline marker such as
 `[2]` names the file the model was told was source 2, and opening it shows that file's text and
-its relevance. The sources are still there after a reload and in the read-only view of a shared
-link. A model whose Citations capability is off shows neither the source list nor the markers.
+its relevance. Since 072d0b51d a cited file opens in a tab beside the chat with the cited text
+marked; the read-only view of a shared link still shows it in the source dialog. The sources are
+still there after a reload and in the shared link. A model whose Citations capability is off
+shows neither the source list nor the markers.
+
+Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
+(issue draft issue-cited-file-relevance-gone), so the marker test fails at the relevance.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the source dialog taking marker `[n]`
 as the n+1th source turned the marker test red, the source list shown whatever the model's
@@ -41,6 +46,7 @@ from utils.chat_ui import (
     send,
     start_from_link,
 )
+from utils.citations_files import expect_marked, file_panel
 
 pytestmark = [
     pytest.mark.journey,
@@ -99,12 +105,10 @@ def _source_ids_sent(upstream, question: str) -> dict[str, str]:
     return dict(SOURCE_TAG.findall(context))
 
 
-def _open_listed_source(chat: Page | ChatSurface, name: str, count: int = 1):
-    page = chat.page if isinstance(chat, ChatSurface) else chat
+def _open_listed_source(chat: Page | ChatSurface, name: str, count: int = 1) -> None:
     label = "Toggle 1 source" if count == 1 else f"Toggle {count} sources"
     conversation(chat).get_by_role("button", name=label).click()
     listed_source(chat, name).click()
-    return page.get_by_role("dialog")
 
 
 def test_each_inline_marker_opens_the_source_it_names(chat_for, make_user, upstream):
@@ -124,12 +128,12 @@ def test_each_inline_marker_opens_the_source_it_names(chat_for, make_user, upstr
         marker = markers.nth(position - 1)
         expect(marker).to_have_accessible_name(f"View source: {name}")
         marker.click()
-        citation = chat.page.get_by_role("dialog")
-        expect(citation.get_by_role("link", name=name)).to_be_visible()
-        expect(citation).to_contain_text(texts[name])
-        expect(citation.get_by_text(PERCENTAGE)).to_be_visible()
-        citation.get_by_role("button", name="Close citation modal").click()
-        expect(citation).to_be_hidden()
+        expect_marked(file_panel(chat.page, name).get_by_text(texts[name], exact=True))
+    for name in texts:
+        expect(
+            file_panel(chat.page, name).get_by_text(PERCENTAGE),
+            f"the opened {name} shows no relevance for its passage",
+        ).to_be_visible()
 
 
 def test_the_sources_are_still_listed_after_a_reload(chat_for, make_user, upstream):
@@ -139,8 +143,8 @@ def test_the_sources_are_still_listed_after_a_reload(chat_for, make_user, upstre
 
     chat = chat.reload()
     expect_reply(chat, "They wait in the reeds.")
-    citation = _open_listed_source(chat, HERONS[0])
-    expect(citation).to_contain_text(HERONS[1])
+    _open_listed_source(chat, HERONS[0])
+    expect_marked(file_panel(chat.page, HERONS[0]).get_by_text(HERONS[1], exact=True))
 
 
 def test_a_shared_link_shows_the_sources(page_for, make_user, upstream):
@@ -160,8 +164,8 @@ def test_a_shared_link_shows_the_sources(page_for, make_user, upstream):
 
     viewer_page = page_for(viewer, path=f"/s/{shared.json()['share_id']}")
     expect(conversation(viewer_page).get_by_text("They wait in the reeds.")).to_be_visible()
-    citation = _open_listed_source(viewer_page, HERONS[0])
-    expect(citation).to_contain_text(HERONS[1])
+    _open_listed_source(viewer_page, HERONS[0])
+    expect(viewer_page.get_by_role("dialog")).to_contain_text(HERONS[1])
 
 
 @pytest.fixture

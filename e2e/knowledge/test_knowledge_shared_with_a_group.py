@@ -29,6 +29,7 @@ from harness.actors import Actor
 from harness.backends import wait_until
 from harness.knowledge_bases import add_text_file
 from utils.chat_ui import chat_input, conversation, expect_reply, listed_source, send
+from utils.citations_files import expect_marked, file_panel
 
 pytestmark = [
     pytest.mark.journey,
@@ -119,9 +120,8 @@ def test_a_reader_cites_the_shared_base_in_chat_but_cannot_change_its_files(
     _ask_and_open_citation(page, upstream, name, question, "It is 4242.")
     assert "harbour gate code is 4242" in _sent_for(upstream, question)
     listed_source(page, "gate.txt").click()
-    citation = page.get_by_role("dialog")
-    expect(citation.get_by_role("link", name="gate.txt")).to_be_visible()
-    expect(citation).to_contain_text("The harbour gate code is 4242.")
+    # since 072d0b51d the cited file opens beside the chat with the cited text marked
+    expect_marked(file_panel(page, "gate.txt").get_by_text("The harbour gate code is 4242."))
 
     page.goto(f"/workspace/knowledge/{knowledge_id}")
     base = page.get_by_role("main")
@@ -171,4 +171,4 @@ def test_a_writer_adds_a_file_that_the_owners_next_chat_cites(
     _ask_and_open_citation(owner_page, upstream, name, question, "At seven.")
     assert "fuel dock opens at 7" in _sent_for(upstream, question)
     listed_source(owner_page, "fuel.txt").click()
-    expect(owner_page.get_by_role("dialog")).to_contain_text("The fuel dock opens at 7.")
+    expect_marked(file_panel(owner_page, "fuel.txt").get_by_text("The fuel dock opens at 7."))

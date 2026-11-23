@@ -9,9 +9,10 @@ The highlight covers the cited text at any width of the tab. Closing the tab giv
 its room back, and the chip opens the PDF again at the same page, also after a reload. A passage
 cited from several pages is marked on each, and the chip takes the reader back to the most relevant
 one wherever they scrolled since. Two cited PDFs each open on their own page, by a single chip or
-from a group marker's list. The source list opens a dialog with each passage, its page and a link
-to the PDF at that page. The same works by keyboard, on a phone in the Tabs drawer, in a side chat,
-and in the read-only view of a shared link, which shows the dialog. A PDF read by MinerU opens at
+from a group marker's list. The source list opens the PDF as its chip does (since 072d0b51d, for
+open-webui/open-webui#34831; before, it opened a dialog listing each passage with its page). The
+same works by keyboard, on a phone in the Tabs drawer, in a side chat, and in the read-only view
+of a shared link, which shows the dialog. A PDF read by MinerU opens at
 the page MinerU placed the passage on.
 
 Dev commits 9b6241e54 (MinerU keeps the page of each passage) and cc2e033b0 (a cited PDF opens in
@@ -63,7 +64,6 @@ from utils.citations_pdf import (
     cited_pdf_tab,
     expect_marked,
     expect_page_shown,
-    fetch_as_account,
     page_strip,
     passage_card,
     pdf_source,
@@ -282,7 +282,9 @@ def test_a_pdf_cited_from_several_pages_marks_each_and_returns_to_the_most_relev
     expect_page_shown(viewer, TIDES[2], [TIDES[0], TIDES[1]])
 
 
-def test_the_source_list_shows_each_cited_page_and_links_the_pdf_at_it(page_for, make_user):
+def test_the_source_list_opens_the_pdf_at_the_most_relevant_page_with_each_cited_page_marked(
+    page_for, make_user
+):
     account = make_user()
     chat_id, name = tides_chat(account)
     page = page_for(account, path=f"/c/{chat_id}")
@@ -290,20 +292,12 @@ def test_the_source_list_shows_each_cited_page_and_links_the_pdf_at_it(page_for,
 
     conversation(page).get_by_role("button", name="Toggle 1 source").click()
     listed_source(page, name).click()
-    dialog = page.get_by_role("dialog")
-    # the most relevant passage first, each with the page it is on
-    expect(dialog).to_contain_text(
-        re.compile(
-            rf"\(page\s+3\)\s*{re.escape(TIDES[2])}.*\(page\s+1\)\s*{re.escape(TIDES[0])}", re.S
-        )
-    )
-    href = dialog.get_by_role("link", name=name).get_attribute("href") or ""
-    assert href.endswith("#page=3"), f"the PDF link does not open the cited page 3: {href}"
-    status, body = fetch_as_account(page, href.split("#")[0])
-    assert status == 200, f"the PDF link answers {status}"
-    assert body == samples.pdf(TIDES), "the PDF link serves another file"
-    dialog.get_by_role("button", name="Close citation modal").click()
-    expect(dialog).to_be_hidden()
+    expect(cited_pdf_tab(page, name)).to_have_attribute("aria-selected", "true")
+    panel = cited_pdf_panel(page, name)
+    viewer = pdf_viewer(panel)
+    expect_page_shown(viewer, TIDES[2], [TIDES[0], TIDES[1]])
+    expect(page_strip(panel, 3)).to_have_attribute("aria-current", "true")
+    expect_marked(viewer, TIDES[0], TIDES[2])
 
 
 def test_each_of_two_cited_pdfs_opens_on_its_own_page(page_for, make_user):

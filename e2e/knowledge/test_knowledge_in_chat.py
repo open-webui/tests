@@ -3,7 +3,8 @@
 A fresh admin creates a knowledge base on the workspace's Knowledge page and uploads a text file
 into it, then starts a chat, picks the base from the `#` picker and asks a question. The model
 is sent the file's text as context, and the reply cites the file: its source list names the
-file and opening the citation shows the text.
+file and opening the citation shows the text, since 072d0b51d in a tab beside the chat with the
+cited text marked.
 
 Discriminates: passes on dev ac00d40e3; in a backend copy, with the retrieval of attached
 collections switched off the model is sent the question alone, without the file's text.
@@ -24,6 +25,7 @@ from playwright.sync_api import expect
 
 from harness import upstream as reply
 from utils.chat_ui import chat_input, conversation, expect_reply, listed_source, send
+from utils.citations_files import expect_marked, file_panel
 
 pytestmark = [
     pytest.mark.journey,
@@ -82,6 +84,5 @@ def test_an_uploaded_file_is_retrieved_and_cited_in_a_chat(page_for, chat_for, c
     messages = conversation(chat)
     messages.get_by_role("button", name="Toggle 1 source").click()
     listed_source(chat, FILE_NAME).click()
-    citation = chat.page.get_by_role("dialog")
-    expect(citation.get_by_role("link", name=FILE_NAME)).to_be_visible()
-    expect(citation).to_contain_text("The lake house gate code is 4242.")
+    cited = file_panel(chat.page, FILE_NAME).get_by_text("The lake house gate code is 4242.")
+    expect_marked(cited)

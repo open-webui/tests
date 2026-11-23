@@ -340,13 +340,14 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         phone.get_by_role("button", name="Close ledger.docx").tap()
         expect(last_reply(phone)).to_be_visible()
 
-        # once the file is gone the tab says so, it does not load forever
+        # once the file is gone the tab shows what was retrieved from it (since 072d0b51d; it
+        # said "Preview failed" before), it does not load forever
         deleted = client.delete(f"/api/v1/files/{file_id}")
         assert deleted.status_code == 200, deleted.text
         page.reload()
         expect_reply(page, "End.")
         last_reply(page).get_by_role("button", name="View source: ledger.docx").first.click()
-        expect(file_panel(page, "ledger.docx")).to_contain_text("Preview failed")
+        expect(file_panel(page, "ledger.docx")).to_contain_text(LEDGER[cited[0]])
 
 
 REPORT = ["The heron colony nests near the old mill.", "Otters were seen by the weir in May."]

@@ -1,15 +1,19 @@
 """Journey: the retrieval settings an admin saves in Admin Settings > Documents, seen in a chat.
 
 An admin changes one setting on the Documents tab and saves; a person then attaches a file of
-field notes in a chat, asks about it and opens the reply's source, which lists the passages the
-model was given. Top K decides how many passages are cited. Hybrid Search with a Relevance
-Threshold cites only the passages that match the question, and switched off again cites the
-rest as well. An External reranker picked in the panel decides the cited passage, which shows the
-relevance the reranker gave it. Chunk Size decides how much of the file each passage holds, and
-Chunk Overlap repeats a sentence in the two neighbouring passages that share it. Always Use Full
-Text (Full Context Mode before c5f24f588) gives the model the whole file however low Top K is. A
-RAG Template frames the context the model is sent, and one that places the context twice is
-flagged in the panel and sends it twice.
+field notes in a chat, asks about it and opens the reply's source. Since 072d0b51d the cited file
+opens in a tab beside the chat with the passages the model was given marked in it. Top K decides
+how many passages are cited. Hybrid Search with a Relevance Threshold cites only the passages
+that match the question, and switched off again cites the rest as well. An External reranker
+picked in the panel decides the cited passage, which shows the relevance the reranker gave it.
+Chunk Size decides how much of the file each passage holds, and Chunk Overlap repeats a sentence
+in the two neighbouring passages that share it, so a second passage takes the paragraph after
+it. Always Use Full Text (Full Context Mode before c5f24f588) gives the model the whole file
+however low Top K is. A RAG Template frames the context the model is sent, and one that places
+the context twice is flagged in the panel and sends it twice.
+
+Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
+(issue draft issue-cited-file-relevance-gone), so the reranker test fails at its relevance.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the passages about herons; a local service also plays the reranker.
@@ -52,6 +56,7 @@ from utils.chat_ui import (
     open_input_menu,
     send,
 )
+from utils.citations_files import expect_marked, file_panel, is_marked
 
 pytestmark = [
     pytest.mark.journey,
@@ -72,7 +77,6 @@ PARAGRAPHS = [
 HERONS = [PARAGRAPHS[0], PARAGRAPHS[2]]
 OTTERS = PARAGRAPHS[1]
 GREBES = PARAGRAPHS[3]
-RELEVANCE = re.compile(r"^\d+\.\d\d%$")
 NOTES = ("field-notes.txt", "\n\n".join(PARAGRAPHS))
 # one paragraph per chunk: two paragraphs together run past it
 BASELINE = {
@@ -199,18 +203,23 @@ def sent_to_the_model(ranked, question: str) -> str:
     return "\n".join(str(message.get("content")) for message in request["messages"])
 
 
-def cited_passages(chat: ChatSurface) -> Locator:
-    """Open the reply's one source; returns the dialog listing its passages."""
+def cited_file(chat: ChatSurface) -> Locator:
+    """Open the reply's one source; returns the tab showing the cited file."""
     conversation(chat).get_by_role("button", name="Toggle 1 source").click()
     listed_source(chat, NOTES[0]).click()
-    citation = chat.page.get_by_role("dialog")
-    expect(citation.get_by_role("link", name=NOTES[0])).to_be_visible()
-    return citation
+    panel = file_panel(chat.page, NOTES[0])
+    expect(panel.get_by_text(PARAGRAPHS[-1], exact=True)).to_be_visible()
+    return panel
 
 
-def passage_count(citation: Locator) -> Locator:
-    # each passage shows its relevance
-    return citation.get_by_text(RELEVANCE)
+def expect_cited(panel: Locator, cited: list[str]) -> None:
+    """Exactly the paragraphs in `cited` are marked as cited in the opened file."""
+    for paragraph in cited:
+        expect_marked(panel.get_by_text(paragraph, exact=True))
+    marked = [
+        paragraph for paragraph in PARAGRAPHS if is_marked(panel.get_by_text(paragraph, exact=True))
+    ]
+    assert marked == cited, f"the file marks {marked} as cited, expected {cited}"
 
 
 def unique_question(text: str) -> str:
@@ -229,11 +238,7 @@ def test_top_k_decides_how_many_passages_are_cited(documents, ranked_chat_for, r
         ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
     )
 
-    citation = cited_passages(chat)
-    expect(passage_count(citation)).to_have_count(2)
-    for heron in HERONS:
-        expect(citation.get_by_text(heron, exact=True)).to_be_visible()
-    expect(citation.get_by_text(OTTERS, exact=True)).to_have_count(0)
+    expect_cited(cited_file(chat), HERONS)
 
 
 def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
@@ -248,10 +253,7 @@ def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
     question = unique_question("Where do herons hunt?")
     chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
-    citation = cited_passages(chat)
-    expect(passage_count(citation)).to_have_count(2)
-    for heron in HERONS:
-        expect(citation.get_by_text(heron, exact=True)).to_be_visible()
+    expect_cited(cited_file(chat), HERONS)
     sent = sent_to_the_model(ranked, question)
     assert [paragraph for paragraph in PARAGRAPHS if paragraph in sent] == HERONS, sent
 
@@ -261,7 +263,7 @@ def test_hybrid_search_with_a_threshold_cites_only_matching_passages(
     chat = ask_about_the_notes(
         ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
     )
-    expect(passage_count(cited_passages(chat))).to_have_count(6)
+    expect_cited(cited_file(chat), PARAGRAPHS)
 
 
 @pytest.fixture
@@ -295,14 +297,13 @@ def test_an_external_reranker_picks_the_cited_passage(
     question = unique_question("Where do herons hunt?")
     chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
-    citation = cited_passages(chat)
-    expect(passage_count(citation)).to_have_count(1)
-    expect(citation.get_by_text(GREBES, exact=True)).to_be_visible()
-    expect(citation.get_by_text("90.00%")).to_be_visible()
+    expect_cited(cited_file(chat), [GREBES])
     asked = reranker.requests_to("/rerank")
     assert asked, "the external reranker was never asked"
     assert asked[-1].headers.get("Authorization") == "Bearer rerank-key"
     assert asked[-1].json()["model"] == "grebe-ranker"
+    # the relevance the reranker gave the cited passage
+    expect(chat.page.get_by_text("90.00%")).to_be_visible()
 
 
 def test_chunk_size_decides_how_much_each_cited_passage_holds(
@@ -315,10 +316,8 @@ def test_chunk_size_decides_how_much_each_cited_passage_holds(
         ranked_chat_for, ranked, reader, unique_question("Where do herons hunt?")
     )
 
-    citation = cited_passages(chat)
-    expect(passage_count(citation)).to_have_count(1)
-    for paragraph in PARAGRAPHS:
-        expect(citation.get_by_text(paragraph, exact=True)).to_be_visible()
+    # Top K stays at one passage, which now holds the whole file
+    expect_cited(cited_file(chat), PARAGRAPHS)
 
 
 def test_chunk_overlap_repeats_a_sentence_in_neighbouring_passages(
@@ -333,10 +332,9 @@ def test_chunk_overlap_repeats_a_sentence_in_neighbouring_passages(
         ranked_chat_for, ranked, reader, unique_question("Where do otters play?")
     )
 
-    citation = cited_passages(chat)
-    expect(passage_count(citation)).to_have_count(2)
-    # with two paragraphs to a chunk, only the overlap puts the otters in a second one
-    expect(citation.get_by_text(OTTERS, exact=True)).to_have_count(2)
+    # two paragraphs to a passage: only the overlap puts the otters in a second one, which
+    # takes the heron paragraph after them rather than the next pair
+    expect_cited(cited_file(chat), PARAGRAPHS[:3])
 
 
 def test_full_context_mode_gives_the_model_the_whole_file(
@@ -351,9 +349,7 @@ def test_full_context_mode_gives_the_model_the_whole_file(
 
     sent = sent_to_the_model(ranked, question)
     assert [paragraph for paragraph in PARAGRAPHS if paragraph in sent] == PARAGRAPHS, sent
-    citation = cited_passages(chat)
-    for paragraph in PARAGRAPHS:
-        expect(citation.get_by_text(re.compile(re.escape(paragraph))).first).to_be_visible()
+    expect_cited(cited_file(chat), PARAGRAPHS)
 
 
 def test_a_rag_template_frames_what_the_model_is_sent(documents, ranked_chat_for, ranked, reader):
