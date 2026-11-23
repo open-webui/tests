@@ -4,7 +4,9 @@ A reply's inline markers show where in the text each statement was grounded. Eve
 writes them in (`[1]`, `[1][2]`, `[2, 1]`, a marker right after a word or before a comma, in a
 list item or a table cell) becomes a button at that spot, named after the source it cites; a
 number no source has shows no button. A marker opens its own source's cited text, by click and by
-keyboard, and hovering a marker previews what it cites until the pointer leaves. The sources row
+keyboard, and hovering a marker previews what it cites until the pointer leaves. A marker citing
+several sources shows them one at a time in its card, paged with Previous and Next or the arrow
+keys, and opens the one it shows. The sources row
 under the reply counts the sources, folds out their numbered list in the order the markers number
 them and folds it away again. A web page the model read shows its site icon and opens the page
 itself; a source with an embedded view opens it in a tab beside the chat, or in a new window from
@@ -20,11 +22,12 @@ Every test that opens its chat with `chat_for` runs in the main chat and in a si
 (`utils/chat_surface.py`): a stored chat dragged into a tab beside a new chat, and for the tool a
 new chat opened in a tab.
 
-Three tests are red on dev c1f3b6fd1, each for a gap in what a person can expect: hovering a
-single marker previews nothing (the hover test, open-webui/open-webui#34829), the list of a marker
-citing several sources cannot be reached with Tab (the keyboard test at its last step,
-open-webui/open-webui#34827), and an embedded source opens as a tab named "Preview" that hides the
-chat, and opens nothing from a side tab (the embedded source test, open-webui/open-webui#34828).
+Dev 1612ec981 previews what a single marker cites on hover (open-webui/open-webui#34829) and shows
+the sources of a marker citing several in a card that pages through them, from the pointer and the
+keyboard (open-webui/open-webui#34827); its sources are no longer listed side by side. Dev
+072d0b51d opens an embedded source from a side tab, in that tab's group. Red on dev 306f9be78: an
+embedded source opens as a tab named "Preview" and in place of the chat that cites it (the
+embedded source test, fix PR open-webui/open-webui#34859 for open-webui/open-webui#34828).
 
 Discriminates: the rest passes on dev c1f3b6fd1. In a frontend copy where `[2, 1]` no longer
 parses as one marker, the sources row lists its sources in reverse, the row shows no site icons,
@@ -50,10 +53,12 @@ from harness.upstream import MOCK_MODEL_ID
 from utils.chat_surface import MAIN_CHAT, ChatSurface, main_chat
 from utils.chat_ui import conversation, expect_reply, last_reply, send, start_from_link
 from utils.citations_ui import (
+    card_entry,
     close_source_dialog,
     expect_source_dialog,
-    group_list,
+    group_card,
     group_marker,
+    leave_marker,
     listed_sources,
     seed_cited_chat,
     source_dialog,
@@ -127,26 +132,34 @@ def test_each_marker_form_shows_at_its_spot_and_opens_the_source_it_names(chat_f
     close_source_dialog(page)
 
 
-def test_a_marker_citing_several_sources_lists_them_on_hover_and_opens_each(chat_for, make_user):
+def test_a_marker_citing_several_sources_pages_through_them_on_hover_and_opens_each(
+    chat_for, make_user
+):
     chat = _open_cited_chat(chat_for, make_user(), MARKER_FORMS, [HERONS, OTTERS])
     page = chat.page
     reply_shown = last_reply(chat)
     texts = {"herons.txt": HERON_DAWN, "otters.txt": OTTER_RAIN}
 
     for first, second in (("herons.txt", "otters.txt"), ("otters.txt", "herons.txt")):
-        for cited in (first, second):
+        for position, cited in enumerate((first, second), start=1):
             group_marker(reply_shown, first, 1).hover()
-            listed = group_list(page).get_by_role("button", name=re.compile(r"^View source: "))
-            expect(listed, f"hovering the {first} +1 marker lists no sources").to_have_count(2)
-            expect(listed.nth(0)).to_have_accessible_name(f"View source: {first}")
-            expect(listed.nth(1)).to_have_accessible_name(f"View source: {second}")
-            listed.filter(has_text=cited).click()
+            card = group_card(page)
+            expect(card, f"hovering the {first} +1 marker shows no card").to_be_visible()
+            expect(card).to_contain_text("1/2")
+            expect(card_entry(page)).to_have_accessible_name(f"View source: {first}")
+            expect(card).to_contain_text(texts[first])
+            card.get_by_role("button", name="Next").click()
+            expect(card).to_contain_text("2/2")
+            expect(card_entry(page)).to_have_accessible_name(f"View source: {second}")
+            expect(card).to_contain_text(texts[second])
+            if position == 1:
+                card.get_by_role("button", name="Previous").click()
+                expect(card).to_contain_text("1/2")
+            card_entry(page).click()
             other = second if cited == first else first
             expect_source_dialog(page, cited, [texts[cited]], [texts[other]])
+            expect(group_card(page), "the card stays open over the opened source").to_have_count(0)
             close_source_dialog(page)
-            # the list stays open behind the dialog until dismissed
-            page.keyboard.press("Escape")
-            expect(group_list(page)).to_have_count(0)
 
 
 def test_hovering_a_marker_previews_what_it_cites_until_the_pointer_leaves(chat_for, make_user):
@@ -157,13 +170,13 @@ def test_hovering_a_marker_previews_what_it_cites_until_the_pointer_leaves(chat_
     expect(preview).to_have_count(0)
 
     group_marker(reply_shown, "herons.txt", 1).hover()
-    expect(group_list(page), "hovering a group marker lists nothing").to_be_visible()
-    page.mouse.move(0, 0)
-    expect(group_list(page), "the list stays after the pointer left").to_have_count(0)
+    expect(group_card(page), "hovering a group marker shows nothing").to_be_visible()
+    leave_marker(page)
+    expect(group_card(page), "the card stays after the pointer left").to_have_count(0)
 
     source_marker(reply_shown, "otters.txt").hover()
     expect(preview, "hovering a marker shows nothing of the passage it cites").to_be_visible()
-    page.mouse.move(0, 0)
+    leave_marker(page)
     expect(preview).to_have_count(0)
 
 
@@ -193,16 +206,16 @@ def test_markers_and_the_sources_row_work_from_the_keyboard(chat_for, make_user)
     expect(source_dialog(page)).to_be_hidden()
     expect(first_listed).to_be_focused()
 
-    # a marker citing several sources opens its list, whose entries come next in Tab order
+    # a marker citing several sources opens its card, the arrow keys page it, and Enter opens
+    # the source it shows
     group = group_marker(reply_shown, "herons.txt", 1)
     group.focus()
     page.keyboard.press("Enter")
-    listed = group_list(page).get_by_role("button", name=re.compile(r"^View source: "))
-    expect(listed).to_have_count(2)
-    page.keyboard.press("Tab")
-    expect(listed.nth(0), "Tab from a marker's open list does not reach it").to_be_focused()
-    page.keyboard.press("Tab")
-    expect(listed.nth(1)).to_be_focused()
+    expect(group_card(page)).to_contain_text("1/2")
+    expect(card_entry(page)).to_have_accessible_name("View source: herons.txt")
+    page.keyboard.press("ArrowRight")
+    expect(group_card(page), "the arrow key does not page the card").to_contain_text("2/2")
+    expect(card_entry(page)).to_have_accessible_name("View source: otters.txt")
     page.keyboard.press("Enter")
     expect_source_dialog(page, "otters.txt", [OTTER_RAIN], [HERON_DAWN])
     page.keyboard.press("Escape")
@@ -314,8 +327,11 @@ def test_an_embedded_source_opens_in_a_tab_beside_the_chat(chat_for, make_user, 
 
     marker = source_marker(last_reply(chat), "Heron cam")
     marker.click()
-    tab = page.get_by_role("tab", selected=True).filter(has_not_text="Seeded chat")
-    expect(tab, "the embedded source opened no tab").to_be_visible()
+    shown_in = page.get_by_role("tabpanel").filter(has=page.locator(f"iframe[src^='{cam_url}']"))
+    expect(shown_in, "the embedded source opened no tab").to_be_visible()
+    # the tab that names the panel showing the source
+    tab = page.locator(f"[id='{shown_in.get_attribute('aria-labelledby')}']")
+    expect(tab).to_have_attribute("aria-selected", "true")
     view = page.frame_locator(f"iframe[src^='{cam_url}']")
     expect(view.get_by_text("Heron cam live"), "the tab does not show the page").to_be_visible()
 
@@ -445,8 +461,10 @@ def test_on_a_phone_markers_and_the_sources_row_open_their_source_on_screen(page
 
     group = group_marker(reply_shown, "herons.txt", 1)
     tap_on_screen(group)
-    listed = group_list(page).get_by_role("button", name="View source: otters.txt")
-    tap_on_screen(listed)
+    expect(card_entry(page)).to_have_accessible_name("View source: herons.txt")
+    tap_on_screen(group_card(page).get_by_role("button", name="Next"))
+    expect(card_entry(page)).to_have_accessible_name("View source: otters.txt")
+    tap_on_screen(card_entry(page))
     expect_source_dialog(page, "otters.txt", [OTTER_RAIN], [HERON_DAWN])
     close_source_dialog(page)
 

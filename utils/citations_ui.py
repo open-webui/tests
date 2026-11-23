@@ -2,7 +2,8 @@
 
 A reply's inline marker such as `[2]` shows as a small button named after the source it cites
 (`View source: <name>`); markers written together (`[1][2]`, `[1, 2]`) show as one button named
-after the first source with `+N more sources`, which lists each of them when hovered or clicked.
+after the first source with `+N more sources`, whose card shows them one at a time when hovered or
+clicked, paged with Previous and Next.
 Under the reply a `Toggle N sources` button folds out the numbered list of every source, and any
 of them opens the source dialog on its cited text.
 
@@ -66,9 +67,20 @@ def group_marker(scope: Locator, first: str, others: int) -> Locator:
     return scope.get_by_role("button", name=f"{first} +{others} more sources", exact=True).last
 
 
-def group_list(page: Page) -> Locator:
-    """The list a group marker opens, one button per source it cites."""
+def group_card(page: Page) -> Locator:
+    """The card a hovered or clicked marker opens."""
     return page.locator("[data-link-preview-content]")
+
+
+def card_entry(page: Page) -> Locator:
+    """The source the open card shows, one at a time, as a button that opens it."""
+    return group_card(page).get_by_role("button", name=re.compile(r"^View source: "))
+
+
+def leave_marker(page: Page) -> None:
+    """Move the pointer from a marker to the page's corner, over the page between as a hand does."""
+    # the card stays open after a single jump that passes over nothing on its way
+    page.mouse.move(0, 0, steps=10)
 
 
 def sources_toggle(chat: Chat, count: int) -> Locator:
