@@ -222,7 +222,11 @@ def drag_beside_the_chat(page: Page, row: Locator) -> Locator:
     """Drag a sidebar chat over the right side of the main chat; returns the drop hint.
 
     The mouse is still down when this returns, so the caller sees the hint and then drops."""
-    target = main_chat(page).panel.bounding_box()
+    # a saved chat holds its reply a moment before its panel shows, and a box needs it shown
+    chat_panel = main_chat(page).panel
+    expect(chat_panel).to_be_visible()
+    expect(row).to_be_visible()
+    target = chat_panel.bounding_box()
     start = row.bounding_box()
     assert target and start, "the chat or the sidebar row is not on screen"
     page.mouse.move(start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
