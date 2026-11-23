@@ -24,7 +24,12 @@ call ends it: the overlay stays open with its message and Retry, which calls aga
 closes it. Realtime calls open on the browser's speech-to-text engine too, which the standard
 call refuses, and without the call permission there is no Voice mode at all. Since a9227421d
 (open-webui/open-webui#32251) a realtime call keeps the screen on with a wake lock and lets it go
-when the call ends; a fake `navigator.wakeLock` counts both.
+when the call ends; a fake `navigator.wakeLock` counts both. A call with a router model gets the
+new chat's title and tags from the model the router picks for the spoken words, as a typed
+message with those words would be routed, so the router's rules and the Decisions API judge the
+conversation and never the built-in title and tags instructions; that holds when only the voice
+model answers too. With an External Task Model set, that model writes the call's title and tags,
+as in any chat, and the router never judges the title and tags instructions.
 
 Discriminates: passes on the dev 4f1f38541 build. In one frontend copy of it a mute that keeps
 sending audio, End call leaving the call connected, a failure the overlay does not show, the
@@ -50,6 +55,11 @@ call button when the first message saves the chat, and a standard call's reply s
 `test_hiding_the_call_keeps_it_running_and_return_to_call_brings_it_back` is red on dev f659c0d12
 (open-webui/open-webui#33884): since 617618c9e the call's tab shares the chat's tab group on a wide
 screen, and Return to call no longer brings it to the front.
+The two router model tests without a task model are red on dev bd150cdf6
+(open-webui/open-webui#34887): the call titles and tags the new chat by asking the router model,
+which matches the `def ` pattern (saved without its trailing space) against the word "default" in
+the built-in title and tags instructions, so the code model titles and tags a legal chat, and the
+answer's own title and tags are routed the same way. The task model test passes there.
 """
 
 from __future__ import annotations
@@ -65,7 +75,19 @@ from harness import upstream as reply
 from harness.audio_engine import AUDIO_CONFIG
 from harness.chat_history import seed_chat
 from harness.realtime_provider import SAMPLE_RATE, serving_realtime_provider, using_realtime
+from harness.router_journeys import (
+    Decider,
+    Target,
+    condition,
+    default,
+    make_targets,
+    pattern,
+    remove_targets,
+    save_router,
+)
+from harness.router_models import ROUTER_MODELS_CONFIG
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.model_selector import select_model
 from utils.voice_call import (
     TURN_TIMEOUT_MS,
     call_status,
@@ -80,6 +102,8 @@ from utils.voice_call import (
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 LONG_ANSWER_SECONDS = 6
+LEGAL = "the user asks about contracts or legal questions"
+TASKS = {"title": "Generate a concise", "tags": "Generate 1-3 broad tags"}
 
 
 @pytest.fixture
@@ -482,3 +506,211 @@ def test_a_question_typed_after_the_call_tells_the_chat_model_what_the_voice_sai
     assert assistant_turns == [
         f"[Historical voice assistant transcript; not current task status]\n{answer}"
     ]
+
+
+@pytest.fixture
+def targets(admin, upstream):
+    made = make_targets(admin, upstream, "code", "legal", "general")
+    yield made
+    remove_targets(admin, upstream, made)
+
+
+@pytest.fixture
+def decider(listener) -> Decider:
+    return Decider(listener)
+
+
+@pytest.fixture
+def smart_router(admin, preserve, targets, decider) -> Target:
+    """Code by pattern, legal questions by condition, the rest to the general model."""
+    preserve(ROUTER_MODELS_CONFIG)
+    preserve("tasks")
+    with admin.client() as client:
+        current = client.get("/api/v1/tasks/config").json()
+        updated = client.post(
+            "/api/v1/tasks/config/update",
+            json={
+                **current,
+                "TASK_MODEL": "",
+                "TASK_MODEL_EXTERNAL": "",
+                "ENABLE_TITLE_GENERATION": True,
+                "ENABLE_TAGS_GENERATION": True,
+            },
+        )
+        assert updated.status_code == 200, updated.text
+    return save_router(
+        admin,
+        [
+            pattern(targets["code"], "```|def "),
+            condition(targets["legal"], LEGAL),
+            default(targets["general"]),
+        ],
+        decider=decider,
+    )
+
+
+def written_by(target: Target, task: str, answer: dict) -> reply.Reply:
+    """`answer` to `task` from `target`; any other model asked gets the provider's default."""
+    return reply.text(
+        json.dumps(answer),
+        match=lambda body: body["model"] == target.id and reply.answering(TASKS[task])(body),
+    )
+
+
+def task_requests(upstream) -> list[tuple[str, str]]:
+    """Each title and tags request with the model it asked."""
+    return [
+        (task, body["model"])
+        for body in upstream.chat_requests()
+        for task, marker in TASKS.items()
+        if reply.answering(marker)(body)
+    ]
+
+
+def judged_instructions(decider: Decider) -> list[str]:
+    """What the Decisions API was asked to judge, where that was a task's instructions."""
+    return [
+        call["input"]
+        for call in decider.calls()
+        if any(marker in call["input"] for marker in TASKS.values())
+    ]
+
+
+def stored_chat(actor, chat_id: str) -> tuple[str, list[str]]:
+    with actor.client() as client:
+        title = client.get(f"/api/v1/chats/{chat_id}").json()["title"]
+        tags = [tag["name"] for tag in client.get(f"/api/v1/chats/{chat_id}/tags").json()]
+    return title, tags
+
+
+def test_a_router_model_call_is_titled_and_tagged_by_the_model_that_answered(
+    voice_page_for, make_user, realtime, upstream, targets, smart_router, decider
+):
+    question, answer = f"can I break my rental contract early {words()}", f"Legal {words()}."
+    title = f"Ending a lease early {words()}"
+    legal = targets["legal"]
+    decider.scores = {LEGAL: 0.9}
+    upstream.queue(
+        # the title and tags requests quote the question too
+        reply.text(
+            answer, match=lambda body: body.get("stream") and reply.answering(question)(body)
+        ),
+        # the call asks at its first words and the answer asks again
+        *[written_by(legal, "title", {"title": title})] * 2,
+        *[written_by(legal, "tags", {"tags": ["Housing"]})] * 2,
+    )
+    realtime.hears(question)
+    caller = make_user()
+    page = voice_page_for(caller)
+    select_model(page, smart_router.name)
+
+    start_call(page)
+    show_chat(page)
+
+    expect_reply(page, answer)
+    chat_id = chat_id_of(page)
+    deadline = time.monotonic() + TURN_TIMEOUT_MS / 1000
+    while stored_chat(caller, chat_id) != (title, ["Housing"]) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    asked = task_requests(upstream)
+    assert (stored_chat(caller, chat_id), sorted(set(asked)), judged_instructions(decider)) == (
+        (title, ["Housing"]),
+        [("tags", legal.id), ("title", legal.id)],
+        [],
+    ), (
+        "the call's chat was not titled and tagged by the model the router picks for the question, "
+        f"routed on the conversation: title and tags {stored_chat(caller, chat_id)}, asked "
+        f"{asked}, Decisions API asked to judge {judged_instructions(decider)}"
+    )
+    expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab").first).to_have_text(title)
+
+
+def test_a_router_model_call_is_titled_and_tagged_by_the_task_model(
+    voice_page_for, make_user, admin, realtime, upstream, targets, smart_router, decider
+):
+    question, answer = f"can I break my rental contract early {words()}", f"Legal {words()}."
+    title = f"Ending a lease early {words()}"
+    task_model = make_targets(admin, upstream, "tasks")
+    tasks = task_model["tasks"]
+    try:
+        with admin.client() as client:
+            current = client.get("/api/v1/tasks/config").json()
+            updated = client.post(
+                "/api/v1/tasks/config/update", json={**current, "TASK_MODEL_EXTERNAL": tasks.id}
+            )
+            assert updated.status_code == 200, updated.text
+        decider.scores = {LEGAL: 0.9}
+        upstream.queue(
+            reply.text(
+                answer, match=lambda body: body.get("stream") and reply.answering(question)(body)
+            ),
+            # the call asks at its first words and the answer asks again
+            *[written_by(tasks, "title", {"title": title})] * 2,
+            *[written_by(tasks, "tags", {"tags": ["Housing"]})] * 2,
+        )
+        realtime.hears(question)
+        caller = make_user()
+        page = voice_page_for(caller)
+        select_model(page, smart_router.name)
+
+        start_call(page)
+        show_chat(page)
+
+        expect_reply(page, answer)
+        chat_id = chat_id_of(page)
+        deadline = time.monotonic() + TURN_TIMEOUT_MS / 1000
+        while stored_chat(caller, chat_id) != (title, ["Housing"]) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        asked = task_requests(upstream)
+        assert (stored_chat(caller, chat_id), sorted(set(asked)), judged_instructions(decider)) == (
+            (title, ["Housing"]),
+            [("tags", tasks.id), ("title", tasks.id)],
+            [],
+        ), (
+            "the call's chat was not titled and tagged by the task model: title and tags "
+            f"{stored_chat(caller, chat_id)}, asked {asked}, Decisions API asked to judge "
+            f"{judged_instructions(decider)}"
+        )
+        expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab").first).to_have_text(
+            title
+        )
+    finally:
+        remove_targets(admin, upstream, task_model)
+
+
+def test_a_router_model_call_only_the_voice_answered_is_titled_and_tagged_by_the_routed_model(
+    voice_page_for, make_user, realtime, upstream, targets, smart_router, decider
+):
+    question, answer = f"can I break my rental contract early {words()}", f"Legal {words()}."
+    title = f"Ending a lease early {words()}"
+    legal = targets["legal"]
+    decider.scores = {LEGAL: 0.9}
+    upstream.queue(
+        written_by(legal, "title", {"title": title}),
+        written_by(legal, "tags", {"tags": ["Housing"]}),
+    )
+    realtime.hears(question, answers=answer)
+    caller = make_user()
+    page = voice_page_for(caller)
+    select_model(page, smart_router.name)
+
+    start_call(page)
+    show_chat(page)
+
+    expect_reply(page, answer)
+    chat_id = chat_id_of(page)
+    deadline = time.monotonic() + TURN_TIMEOUT_MS / 1000
+    while stored_chat(caller, chat_id) != (title, ["Housing"]) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    asked = [body["model"] for body in upstream.chat_requests()]
+    assert (stored_chat(caller, chat_id), sorted(task_requests(upstream)), asked) == (
+        (title, ["Housing"]),
+        [("tags", legal.id), ("title", legal.id)],
+        [legal.id, legal.id],
+    ) and judged_instructions(decider) == [], (
+        "the voice-only call's chat was not titled and tagged by the model the router picks for "
+        f"the spoken question: title and tags {stored_chat(caller, chat_id)}, asked "
+        f"{task_requests(upstream)} of {asked}, Decisions API asked to judge "
+        f"{judged_instructions(decider)}"
+    )
+    expect(page.get_by_role("tablist", name="Tabs").get_by_role("tab").first).to_have_text(title)
