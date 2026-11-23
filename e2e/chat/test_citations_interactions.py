@@ -20,11 +20,11 @@ Every test that opens its chat with `chat_for` runs in the main chat and in a si
 (`utils/chat_surface.py`): a stored chat dragged into a tab beside a new chat, and for the tool a
 new chat opened in a tab.
 
-Three tests are red on dev c1f3b6fd1, each for a gap in what a person can expect, with an issue
-to be filed: hovering a single marker previews nothing (the hover test), the list of a marker
-citing several sources cannot be reached with Tab (the keyboard test, at its last step), and an
-embedded source opens as a tab named "Preview" that hides the chat, and opens nothing from a side
-tab (the embedded source test).
+Three tests are red on dev c1f3b6fd1, each for a gap in what a person can expect: hovering a
+single marker previews nothing (the hover test, open-webui/open-webui#34829), the list of a marker
+citing several sources cannot be reached with Tab (the keyboard test at its last step,
+open-webui/open-webui#34827), and an embedded source opens as a tab named "Preview" that hides the
+chat, and opens nothing from a side tab (the embedded source test, open-webui/open-webui#34828).
 
 Discriminates: the rest passes on dev c1f3b6fd1. In a frontend copy where `[2, 1]` no longer
 parses as one marker, the sources row lists its sources in reverse, the row shows no site icons,

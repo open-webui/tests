@@ -12,13 +12,13 @@ is no source, and a marker pointing past the sources shows nothing.
 Dev cc2e033b0 opens a cited Word, PowerPoint or Excel file beside the chat and marks its cited
 passages (9b6241e54 started the rework in the citation dialog). Shown here on dev c1f3b6fd1.
 
-Red on dev c1f3b6fd1, each with an issue draft:
+Red on dev c1f3b6fd1, each with its issue:
 - the source list under a reply opens a cited Word document in the plain dialog, not beside the
-  chat as its marker does (`issue-citation-list-opens-docx-in-dialog`);
+  chat as its marker does (open-webui/open-webui#34831);
 - an opened cited document offers no way to download the original file
-  (`issue-cited-document-no-download`);
+  (open-webui/open-webui#34832);
 - a passage cited from a long text file shows alone, never where it sits in the file
-  (`issue-cited-text-passage-without-file`).
+  (open-webui/open-webui#34833).
 
 Discriminates: the text file and knowledge base tests pass on dev c1f3b6fd1. In copies of that
 build: a Word file left out of the marker's open-beside-the-chat check turned the knowledge base
@@ -343,7 +343,7 @@ def _attached_report(page_for, make_user, upstream) -> Page:
 def test_the_source_list_opens_a_cited_word_document_as_its_marker_does(
     page_for, make_user, upstream
 ):
-    """Red on dev c1f3b6fd1: issue draft issue-citation-list-opens-docx-in-dialog."""
+    """Red on dev c1f3b6fd1: open-webui/open-webui#34831."""
     page = _attached_report(page_for, make_user, upstream)
     last_reply(page).get_by_role("button", name="View source: report.docx").click()
     line = file_panel(page, "report.docx").get_by_text(REPORT[0], exact=True)
@@ -358,7 +358,7 @@ def test_the_source_list_opens_a_cited_word_document_as_its_marker_does(
 
 
 def test_an_opened_cited_document_downloads_the_original_file(page_for, make_user, upstream):
-    """Red on dev c1f3b6fd1: issue draft issue-cited-document-no-download."""
+    """Red on dev c1f3b6fd1: open-webui/open-webui#34832."""
     page = _attached_report(page_for, make_user, upstream)
     last_reply(page).get_by_role("button", name="View source: report.docx").click()
     panel = file_panel(page, "report.docx")
@@ -381,7 +381,7 @@ TRAIL = [
 def test_a_passage_cited_from_a_long_text_file_shows_where_it_sits_in_the_file(
     page_for, make_user, upstream, one_passage_retrieval
 ):
-    """Red on dev c1f3b6fd1: issue draft issue-cited-text-passage-without-file."""
+    """Red on dev c1f3b6fd1: open-webui/open-webui#34833."""
     account = make_user()
     page = page_for(account)
     attach(page, page, [("trail.md", "text/markdown", "\n\n".join(TRAIL).encode())])
