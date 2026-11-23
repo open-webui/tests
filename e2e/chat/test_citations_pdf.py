@@ -28,10 +28,11 @@ loader returns the text as one piece again (9b6241e54 undone), the MinerU test f
 opens at page 1. In a copy of the dev d599f7a08 build that draws the highlights 150 pixels left of
 the text, the two PDFs test fails at its first tab width.
 
-Red on dev c1f3b6fd1, both in the several pages test: clicking the chip again after moving to
-another page leaves the PDF where it is, and in a side chat (a saved chat dragged in beside
-another) the chip opens nothing (open-webui/open-webui#34834 and open-webui/open-webui#34828, which
-also covers an embedded source opening nothing in a side tab).
+The several pages test was red on dev c1f3b6fd1: clicking the chip again after moving to another
+page left the PDF where it was (open-webui/open-webui#34834, fixed by 83e1d38d8), and in a side
+chat (a saved chat dragged in beside another) the chip opened nothing
+(open-webui/open-webui#34828). Since 072d0b51d a PDF cited in a side chat opens in that chat's
+tab group, over the chat, so the reader goes back to the chat's tab to use the chip again.
 """
 
 from __future__ import annotations
@@ -278,7 +279,10 @@ def test_a_pdf_cited_from_several_pages_marks_each_and_returns_to_the_most_relev
     chat.page.mouse.move(0, 0)
 
     # the citation leads back to its page wherever the reader scrolled since
+    if chat.is_side:
+        chat.show()
     source_chip(chat, name).click()
+    expect(cited_pdf_tab(chat.page, name)).to_have_attribute("aria-selected", "true")
     expect_page_shown(viewer, TIDES[2], [TIDES[0], TIDES[1]])
 
 
