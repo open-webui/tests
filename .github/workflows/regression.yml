@@ -64,9 +64,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  run:
+  # Every job's timeout is twice its slowest finished run, which the refresh-durations workflow
+  # records in .github/job-times.json: an hour until a job has one, never under 15 minutes.
+  timeouts:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
+    outputs:
+      minutes: ${{ steps.minutes.outputs.minutes }}
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+
+      - name: Work out the timeouts
+        id: minutes
+        run: echo "minutes=$(jq -c '(.regression // {}) | map_values([15, (. * 2 / 60 | ceil)] | max)' .github/job-times.json)" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: timeouts
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).run || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -151,8 +170,9 @@ jobs:
   # The suite boots its own instances from the checkout. Split into shards balanced on
   # the timings in durations/; a release is gated on all of them.
   integration:
+    needs: timeouts
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -300,8 +320,9 @@ jobs:
   # The integration suite again with every instance on Postgres and Redis. Reports without
   # gating a release until that mode has settled.
   integration-postgres-redis:
+    needs: timeouts
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration-postgres-redis || 60 }}
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -452,10 +473,10 @@ jobs:
   # Each mode's shards split on its own timings in durations/. This folds the run's timings into
   # them; the refresh-durations workflow commits the result after a completed run on main.
   durations:
-    needs: [integration, integration-postgres-redis, e2e]
+    needs: [timeouts, integration, integration-postgres-redis, e2e]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).durations || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -488,8 +509,9 @@ jobs:
 
   # Built once for the browser shards, which restore it from the cache.
   e2e-build:
+    needs: timeouts
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e-build || 60 }}
     continue-on-error: true
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
@@ -542,9 +564,9 @@ jobs:
 
   # Reports without gating a release until the browser suite has settled.
   e2e:
-    needs: e2e-build
+    needs: [timeouts, e2e-build]
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e || 60 }}
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -692,8 +714,9 @@ jobs:
 
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
   frontend:
+    needs: timeouts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).frontend || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5

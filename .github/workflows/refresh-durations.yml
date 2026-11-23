@@ -1,12 +1,13 @@
 # Commits the shard timings a completed regression run of main measured, red runs included (a failed
 # test keeps its old entry), so each mode's shards stay balanced as tests are added and the runners
-# change. A run that open-webui/open-webui calls belongs to that repository, so it never triggers
-# this.
+# change. After a regression or terminal run it also records each job's slowest finished time, from
+# which those workflows set their timeouts. A run that open-webui/open-webui calls belongs to that
+# repository, so it never triggers this.
 name: Refresh shard timings
 
 on:
   workflow_run:
-    workflows: [Regression suite]
+    workflows: [Regression suite, Terminal suite]
     types: [completed]
 
 permissions:
@@ -33,6 +34,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download the refreshed durations
+        if: github.event.workflow_run.name == 'Regression suite'
         uses: actions/download-artifact@v4
         with:
           pattern: test-durations-*
@@ -42,8 +44,8 @@ jobs:
           github-token: ${{ github.token }}
 
       # Timings from a tests ref off main, or from timing files main has changed since, are dropped.
-      # The push from this token starts no workflow; [skip ci] keeps it that way.
-      - name: Commit the durations
+      - name: Refresh the durations
+        if: github.event.workflow_run.name == 'Regression suite'
         run: |
           tested=$(cat refreshed/tested-commit)
           if ! git merge-base --is-ancestor "$tested" HEAD || ! git diff --quiet "$tested" HEAD -- durations; then
@@ -51,10 +53,23 @@ jobs:
             exit 0
           fi
           cp refreshed/*.json durations/
-          if git diff --quiet -- durations; then
+
+      # The workflows take each job's timeout from these.
+      - name: Record the job times
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+        run: python3 scripts/refresh_job_times.py .github/job-times.json "$(basename "$WORKFLOW_PATH" .yml)" ${{ github.event.workflow_run.id }}
+
+      # The push from this token starts no workflow; [skip ci] keeps it that way.
+      - name: Commit the timings
+        env:
+          WORKFLOW_PATH: ${{ github.event.workflow_run.path }}
+        run: |
+          if git diff --quiet -- durations .github/job-times.json; then
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit --quiet -m "Shard timings from regression run ${{ github.event.workflow_run.id }} [skip ci]" -- durations
+          git commit --quiet -m "Timings from $(basename "$WORKFLOW_PATH" .yml) run ${{ github.event.workflow_run.id }} [skip ci]" -- durations .github/job-times.json
           git push origin HEAD:main

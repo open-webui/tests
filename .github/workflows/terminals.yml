@@ -76,11 +76,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Every job's timeout is twice its slowest finished run, which the refresh-durations workflow
+  # records in .github/job-times.json: an hour until a job has one, never under 15 minutes.
+  timeouts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      minutes: ${{ steps.minutes.outputs.minutes }}
+    steps:
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+
+      - name: Work out the timeouts
+        id: minutes
+        run: echo "minutes=$(jq -c '(.terminals // {}) | map_values([15, (. * 2 / 60 | ceil)] | max)' .github/job-times.json)" >> "$GITHUB_OUTPUT"
+
   # The orchestrator and the Open Terminal image it starts, built once from the two refs and
   # handed to the test jobs through the cache, so no test waits on a pull.
   stack:
+    needs: timeouts
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).stack || 60 }}
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
       open-terminal-commit: ${{ steps.open-terminal.outputs.commit }}
@@ -154,9 +173,9 @@ jobs:
 
   # The suite boots its own instances from the checkout, as the regression workflow does.
   integration:
-    needs: stack
+    needs: [timeouts, stack]
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -293,9 +312,9 @@ jobs:
 
   # The same tests again with every instance on Postgres and Redis.
   integration-postgres-redis:
-    needs: stack
+    needs: [timeouts, stack]
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration-postgres-redis || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -434,8 +453,9 @@ jobs:
   # Built once for the browser shards, which restore it from the cache the regression workflow
   # shares.
   e2e-build:
+    needs: timeouts
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e-build || 60 }}
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
     steps:
@@ -487,9 +507,9 @@ jobs:
 
   # Split in two on the browser timings in durations/e2e.json, to stay near 20 minutes.
   e2e:
-    needs: [stack, e2e-build]
+    needs: [timeouts, stack, e2e-build]
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -629,9 +649,9 @@ jobs:
   # notebook kernels to the slim one, and only the tests that ask for it run here.
   full-terminal:
     if: ${{ inputs.full-open-terminal }}
-    needs: [stack, e2e-build]
+    needs: [timeouts, stack, e2e-build]
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).full-terminal || 60 }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
