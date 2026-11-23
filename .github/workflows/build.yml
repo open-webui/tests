@@ -1,0 +1,59 @@
+name: Frontend build
+
+# Builds the Open WebUI frontend of any branch, a fork's included, and keeps it as a
+# downloadable artifact, so a local test run can serve it without building it locally.
+
+on:
+  workflow_dispatch:
+    inputs:
+      open-webui-ref:
+        description: Ref of open-webui/open-webui to build (tag, branch or SHA)
+        required: true
+        type: string
+        default: dev
+      open-webui-repository:
+        description: Repository the Open WebUI ref is checked out from, such as a fork
+        required: false
+        type: string
+        default: open-webui/open-webui
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out Open WebUI
+        id: open-webui
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.open-webui-repository }}
+          ref: ${{ inputs.open-webui-ref }}
+          path: open-webui
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: open-webui/package-lock.json
+
+      # The build needs neither onnxruntime's CUDA binaries, fetched from GitHub releases, nor Cypress.
+      - name: Build the frontend
+        working-directory: open-webui
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+          CYPRESS_INSTALL_BINARY: '0'
+        run: |
+          npm ci --force
+          npm run build
+          git rev-parse HEAD > build/COMMIT
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: open-webui/build
+          retention-days: 3
