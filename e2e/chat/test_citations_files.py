@@ -2,16 +2,18 @@
 
 A person attaches files or a knowledge base, the model answers with `[n]` markers, and each
 marker shows as a chip named after the source it points to, at the place it was written. Clicking
-it, or pressing Enter on it, opens that source with the cited passage on screen and marked. Text
-files (Markdown, CSV, HTML) open in the source dialog, which shows the cited text rendered and
-gives the original file by its name. A Word document opens in a tab beside the chat, scrolled to
-the cited passage, with only that passage highlighted; resting the pointer on the highlight shows
+it, or pressing Enter on it, opens that source with the cited passage on screen and marked. Every
+cited file opens in a tab beside the chat, so the answer stays readable: a text file (Markdown,
+CSV, HTML) shows its whole text rendered, and a Word document opens scrolled to the cited
+passage, with only that passage highlighted; resting the pointer on the highlight shows
 the retrieved passage, in a card at the cited text. The highlights stay on the cited text when the
 window is widened or narrowed. The same holds after a reload and on a phone. A picture sent to the
 model is no source, and a marker pointing past the sources shows nothing.
 
 Dev cc2e033b0 opens a cited Word, PowerPoint or Excel file beside the chat and marks its cited
-passages (9b6241e54 started the rework in the citation dialog). Shown here on dev c1f3b6fd1.
+passages (9b6241e54 started the rework in the citation dialog). Dev 072d0b51d opens text files
+there too, where the source dialog showed them before; the dialog gave the original file by its
+name, and the tab offers no download (the download test, open-webui/open-webui#34832).
 
 Red on dev c1f3b6fd1, each with its issue:
 - the source list under a reply opens a cited Word document in the plain dialog, not beside the
@@ -39,7 +41,7 @@ import uuid
 from urllib.parse import urlsplit
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from harness import sample_documents
 from harness import upstream as reply
@@ -50,7 +52,6 @@ from utils.citation_marks import expect_card_at, expect_marks_on_cited_text
 from utils.citations_files import (
     DOCX_TYPE,
     attach,
-    close_by_escape,
     expect_in_view,
     expect_marked,
     file_panel,
@@ -137,14 +138,18 @@ def _upload(client, name: str, kind: str, content: bytes) -> str:
     return uploaded.json()["id"]
 
 
-def _expect_text_dialog(page: Page, name: str, shows: list[str]):
-    dialog = page.get_by_role("dialog")
-    expect(dialog.get_by_role("link", name=name)).to_be_visible()
+def _expect_file_tab(page: Page, name: str, shows: list[str]) -> Locator:
+    """`name` is open in a tab beside the chat with each text of `shows`; returns what it shows."""
+    tab = file_tab(page, name)
+    expect(tab, f"{name} did not open in a tab").to_have_attribute("aria-selected", "true")
+    panel = page.locator(f"[id='{tab.get_attribute('aria-controls')}']")
+    # a web page is shown in a frame of its own
+    shown = panel.frame_locator("iframe").locator("body") if name.endswith(".html") else panel
     for text in shows:
-        expect(dialog).to_contain_text(text)
-    # a text file reads the same in the dialog, it does not open a tab of its own
-    expect(file_tab(page, name)).to_have_count(0)
-    return dialog
+        expect(shown, f"the tab of {name} lacks its text").to_contain_text(text)
+    expect(chat_input(page), "the opened file hides the chat").to_be_visible()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    return shown
 
 
 def test_cited_text_files_open_their_cited_text(page_for, make_user, upstream):
@@ -182,44 +187,35 @@ def test_cited_text_files_open_their_cited_text(page_for, make_user, upstream):
     }
     for name, texts in shows.items():
         shown.get_by_role("button", name=f"View source: {name}", exact=True).first.click()
-        dialog = _expect_text_dialog(page, name, texts)
+        opened = _expect_file_tab(page, name, texts)
         if name == "notes.md":
-            expect(dialog.get_by_role("heading", name="Herons")).to_be_visible()
-            expect(dialog.locator("strong", has_text="herons")).to_be_visible()
+            expect(opened.get_by_role("heading", name="Herons")).to_be_visible()
+            expect(opened.locator("strong", has_text="herons")).to_be_visible()
         if name == "page.html":
-            expect(dialog).not_to_contain_text("<h1>")
-        dialog.get_by_role("button", name="Close citation modal").click()
-        expect(dialog).to_be_hidden()
+            expect(opened.get_by_role("heading", name="Otters")).to_be_visible()
+            expect(opened).not_to_contain_text("<h1>")
+        page.get_by_role("button", name=f"Close {name}", exact=True).click()
+        expect(file_tab(page, name)).to_have_count(0)
 
     # the second marker of the same file opens that file too
     shown.get_by_role("button", name="View source: notes.md", exact=True).last.click()
-    _expect_text_dialog(page, "notes.md", shows["notes.md"])
-    close_by_escape(page)
+    _expect_file_tab(page, "notes.md", shows["notes.md"])
 
-    # hovering the marker of two sources lists both, and each opens its own text
+    # the marker of two sources shows each in its card, and each opens its own text
     group = shown.get_by_role("button", name="table.csv +1 more sources").last
     group.hover()
-    listed = page.locator("[data-link-preview-content]")
-    expect(listed.get_by_role("button", name="View source: table.csv")).to_be_visible()
-    listed.get_by_role("button", name="View source: page.html").click()
-    _expect_text_dialog(page, "page.html", shows["page.html"])
-    close_by_escape(page)
-    # the list stays under the dialog, and the next Escape closes it
-    page.keyboard.press("Escape")
-    expect(listed).to_have_count(0)
+    card = page.locator("[data-link-preview-content]")
+    expect(card.get_by_role("button", name="View source: table.csv")).to_be_visible()
+    card.get_by_role("button", name="Next").click()
+    card.get_by_role("button", name="View source: page.html").click()
+    _expect_file_tab(page, "page.html", shows["page.html"])
+    expect(card, "the card stays open over the opened file").to_have_count(0)
 
-    # by keyboard: Enter on a marker opens it, Escape closes it and returns to the marker
+    # by keyboard: Enter on a marker opens it
     marker = shown.get_by_role("button", name="View source: table.csv", exact=True)
     marker.focus()
     page.keyboard.press("Enter")
-    _expect_text_dialog(page, "table.csv", shows["table.csv"])
-    # the focus lands on the file's name, whose hint the first Escape dismisses
-    hint = page.get_by_role("tooltip").filter(has_text="Open file")
-    expect(hint).to_be_visible()
-    page.keyboard.press("Escape")
-    expect(hint).to_be_hidden()
-    close_by_escape(page)
-    expect(marker).to_be_focused()
+    _expect_file_tab(page, "table.csv", shows["table.csv"])
 
     # the source list numbers the three files and opens the same text
     conversation(page).get_by_role("button", name="Toggle 3 sources").click()
@@ -227,20 +223,12 @@ def test_cited_text_files_open_their_cited_text(page_for, make_user, upstream):
         entry = listed_source(page, name)
         expect(entry).to_have_accessible_name(f"View source: {number} {name}")
         entry.click()
-        dialog = _expect_text_dialog(page, name, shows[name])
-        if name == "notes.md":
-            # the file's name gives the original file
-            with page.expect_event("download") as caught:
-                dialog.get_by_role("link", name=name).click()
-            download = caught.value
-            assert download.suggested_filename == name, download.suggested_filename
-            assert open(download.path(), "rb").read() == MARKDOWN[2]
-        close_by_escape(page)
+        _expect_file_tab(page, name, shows[name])
 
     page.reload()
     expect_reply(page, "End of files.")
     last_reply(page).get_by_role("button", name="View source: page.html", exact=True).click()
-    _expect_text_dialog(page, "page.html", shows["page.html"])
+    _expect_file_tab(page, "page.html", shows["page.html"])
 
 
 def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
