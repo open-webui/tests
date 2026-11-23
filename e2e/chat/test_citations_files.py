@@ -6,8 +6,9 @@ it, or pressing Enter on it, opens that source with the cited passage on screen 
 files (Markdown, CSV, HTML) open in the source dialog, which shows the cited text rendered and
 gives the original file by its name. A Word document opens in a tab beside the chat, scrolled to
 the cited passage, with only that passage highlighted; resting the pointer on the highlight shows
-the retrieved passage. The same holds after a reload and on a phone. A picture sent to the model
-is no source, and a marker pointing past the sources shows nothing.
+the retrieved passage, in a card at the cited text. The highlights stay on the cited text when the
+window is widened or narrowed. The same holds after a reload and on a phone. A picture sent to the
+model is no source, and a marker pointing past the sources shows nothing.
 
 Dev cc2e033b0 opens a cited Word, PowerPoint or Excel file beside the chat and marks its cited
 passages (9b6241e54 started the rework in the citation dialog). Shown here on dev c1f3b6fd1.
@@ -18,7 +19,10 @@ Red on dev c1f3b6fd1, each with its issue:
 - an opened cited document offers no way to download the original file
   (open-webui/open-webui#34832);
 - a passage cited from a long text file shows alone, never where it sits in the file
-  (open-webui/open-webui#34833).
+  (open-webui/open-webui#34833);
+- once the window is widened, the Word document's page moves to the middle of the wider tab but
+  its highlights stay where the page was, off the page to the left of the cited text, and resting
+  the pointer on the cited text shows no card (fixed on dev by c3747e844).
 
 Discriminates: the text file and knowledge base tests pass on dev c1f3b6fd1. In copies of that
 build: a Word file left out of the marker's open-beside-the-chat check turned the knowledge base
@@ -42,6 +46,7 @@ from harness import upstream as reply
 from harness.knowledge_bases import knowledge_base
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, listed_source, send
+from utils.citation_marks import expect_card_at, expect_marks_on_cited_text
 from utils.citations_files import (
     DOCX_TYPE,
     attach,
@@ -295,6 +300,21 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         card = page.get_by_role("tooltip").filter(has_text=LEDGER[cited[0]])
         expect(card).to_be_visible()
         expect(card).to_contain_text(LEDGER[cited[-1]])
+        expect_card_at(card, section(cited[-1]))
+        page.mouse.move(0, 0)
+
+        # the highlights stay on the cited text as the window is widened and narrowed
+        panel = file_panel(page, "ledger.docx")
+        cited_lines = [section(number) for number in cited]
+        expect_marks_on_cited_text(panel, *cited_lines)
+        page.set_viewport_size({"width": 2600, "height": 1080})
+        expect_marks_on_cited_text(panel, *cited_lines)
+        hover_mark_over(page, section(cited[-1]))
+        expect_card_at(card, section(cited[-1]))
+        page.mouse.move(0, 0)
+        page.set_viewport_size({"width": 1280, "height": 1080})
+        expect_marks_on_cited_text(panel, *cited_lines)
+        page.set_viewport_size({"width": 1920, "height": 1080})
 
         page.get_by_role("button", name="Close ledger.docx").click()
         expect(file_tab(page, "ledger.docx")).to_have_count(0)

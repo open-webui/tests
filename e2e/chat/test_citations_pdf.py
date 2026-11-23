@@ -4,7 +4,8 @@ A person attaches a PDF in the chat, or asks a knowledge base that holds one, an
 it inline as `[1]`. The marker shows as a chip with the file's name, right where the model put it.
 Clicking it opens the PDF in a tab named after the file beside the reply, scrolled to the page the
 cited passage was read from, with that passage highlighted and the page current in the page strip.
-Resting the pointer on the highlight shows the passage and its page. Closing the tab gives the chat
+Resting the pointer on the highlight shows the passage and its page in a card at the cited text.
+The highlight covers the cited text at any width of the tab. Closing the tab gives the chat
 its room back, and the chip opens the PDF again at the same page, also after a reload. A passage
 cited from several pages is marked on each, and the chip takes the reader back to the most relevant
 one wherever they scrolled since. Two cited PDFs each open on their own page, by a single chip or
@@ -23,7 +24,8 @@ with the cited page dropped (the PDF opens at page 1), with no passage marked, o
 branch of the citation click removed (the dialog opens instead), every test that opens the PDF
 fails; the source list and shared link tests pass there. In a backend copy whose MinerU local
 loader returns the text as one piece again (9b6241e54 undone), the MinerU test fails: the PDF
-opens at page 1.
+opens at page 1. In a copy of the dev d599f7a08 build that draws the highlights 150 pixels left of
+the text, the two PDFs test fails at its first tab width.
 
 Red on dev c1f3b6fd1, both in the several pages test: clicking the chip again after moving to
 another page leaves the PDF where it is, and in a side chat (a saved chat dragged in beside
@@ -55,6 +57,7 @@ from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.cached_chat import attach, attach_from_menu
 from utils.chat_surface import ChatSurface
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, listed_source, send
+from utils.citation_marks import expect_card_at, expect_marks_on_cited_text
 from utils.citations_pdf import (
     cited_pdf_panel,
     cited_pdf_tab,
@@ -322,6 +325,15 @@ def test_each_of_two_cited_pdfs_opens_on_its_own_page(page_for, make_user):
     viewer = open_cited_pdf(page, tides)
     expect_page_shown(viewer, TIDES[1], [TIDES[0], TIDES[2]])
     expect_marked(viewer, TIDES[1])
+    # the highlight covers the cited line at any width of the tab, and its card sits at the line
+    line = viewer.get_by_text(TIDES[1], exact=True)
+    for width in (2600, 1280, 1920):
+        page.set_viewport_size({"width": width, "height": 1080})
+        expect_marks_on_cited_text(viewer, line)
+    card = passage_card(viewer, TIDES[1])
+    expect(card).to_contain_text("Page 2")
+    expect_card_at(card, line)
+    page.mouse.move(0, 0)
 
     viewer = open_cited_pdf(page, birds)
     expect_page_shown(viewer, BIRDS[2], [BIRDS[0], BIRDS[1]])
