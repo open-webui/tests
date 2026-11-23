@@ -39,11 +39,24 @@ PostgreSQL. Discriminates: all pass on PostgreSQL on dev 10be890bc except the qu
 tests, which stay red there as the workaround is still in place. On dev b6e71d4d7 the three save
 tests fail (the row keeps the byte); on a backend copy of 10be890bc without the cleanup on search
 the four cleanup tests fail (the search, the chat list search and a message update answer 500).
+
+#34903: with View set to All the search read data the searcher cannot open. Every shared copy on
+the instance was read and searched before the check on who may open it, and on PostgreSQL the
+folders and shares the searcher can reach made the database expect far more of their chats than
+there were, so it matched the words against every account's message rows. The search slowed
+down with every other account's chats and took minutes on a large instance. The test stores long
+chats and shares of another account, then checks that All still finds the snapshot, the live
+share and the folder chat with the same links, and that the search got at most a quarter second
+slower. Discriminates: passes on fix 49f72bbd5, fails on dev c3fcd04e9 (PostgreSQL 3.7 s slower,
+SQLite 0.8 s), and on PostgreSQL with either half of the fix undone in a backend copy (2.2 s
+slower with the shared copies filtered by the grant join again, 0.6 s with the reachable folders
+read by the folder subquery again).
 """
 
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -583,3 +596,114 @@ def _chat_list_search(actor: Actor, text: str) -> list[str]:
         listed = client.get("/api/v1/chats/search", params={"text": text})
     assert listed.status_code == 200, listed.text
     return [chat["id"] for chat in listed.json()]
+
+
+# --- #34903: other accounts' chats and shares at volume --------------------------------------
+
+BULK_CHATS = 120
+BULK_MESSAGES = 30
+BULK_MESSAGE_TEXT = " ".join(f"filler{index % 997:03d}" for index in range(3000))
+ALLOWED_SLOWDOWN = 0.25
+
+
+def _fastest_search(actor: Actor, word: str) -> tuple[float, set[str]]:
+    timings, answers = [], []
+    for _ in range(2):
+        started = time.perf_counter()
+        answers.append(found(actor, word))
+        timings.append(time.perf_counter() - started)
+    assert answers[0] == answers[1], f"the same search answered differently: {answers}"
+    return min(timings), answers[0]
+
+
+def _store_bulk_chats(instance, owner: Actor) -> list[str]:
+    """Other accounts' long chats, each shared with nobody the searcher knows."""
+    cast = (
+        (lambda key: f"CAST(:{key} AS JSON)") if on_postgres(instance) else (lambda key: f":{key}")
+    )
+    now = int(time.time())
+    messages = {
+        f"m{index}": {"id": f"m{index}", "role": "user", "content": BULK_MESSAGE_TEXT}
+        for index in range(BULK_MESSAGES)
+    }
+    record = json.dumps({"title": "Bulk", "history": {"messages": messages}})
+    chat_ids = [str(uuid.uuid4()) for _ in range(BULK_CHATS)]
+    chats = [
+        {"id": chat_id, "user_id": owner.id, "chat": record, "now": now} for chat_id in chat_ids
+    ]
+    write_rows(
+        instance,
+        "INSERT INTO chat (id, user_id, title, chat, meta, archived, pinned, created_at, "
+        "updated_at) "
+        f"VALUES (:id, :user_id, 'Bulk', {cast('chat')}, {cast('meta')}, false, false, :now, :now)",
+        [{**chat, "meta": "{}"} for chat in chats],
+    )
+    rows = [
+        {"id": f"{chat_id}-m{index}", "chat_id": chat_id, "user_id": owner.id, "now": now}
+        for chat_id in chat_ids
+        for index in range(BULK_MESSAGES)
+    ]
+    write_rows(
+        instance,
+        "INSERT INTO chat_message (id, chat_id, user_id, role, content, done, created_at, "
+        "updated_at) "
+        f"VALUES (:id, :chat_id, :user_id, 'user', {cast('content')}, true, :now, :now)",
+        [{**row, "content": json.dumps(BULK_MESSAGE_TEXT)} for row in rows],
+    )
+    write_rows(
+        instance,
+        "INSERT INTO shared_chat (id, chat_id, user_id, title, chat, created_at, updated_at) "
+        f"VALUES (:share_id, :id, :user_id, 'Bulk', {cast('chat')}, :now, :now)",
+        [{**chat, "share_id": str(uuid.uuid4())} for chat in chats],
+    )
+    return chat_ids
+
+
+def _remove_bulk_chats(instance, chat_ids: list[str]) -> None:
+    keys = [{"id": chat_id} for chat_id in chat_ids]
+    write_rows(instance, "DELETE FROM shared_chat WHERE chat_id = :id", keys)
+    write_rows(instance, "DELETE FROM chat_message WHERE chat_id = :id", keys)
+    write_rows(instance, "DELETE FROM chat WHERE id = :id", keys)
+
+
+@pytest.mark.regression
+def test_shared_chats_are_found_without_reading_everyone_elses_chats(instance, make_user):
+    reader, owner, stranger = make_user(), make_user(), make_user()
+    word = unique_word()
+    with owner.client() as client:
+        snapshot = import_chat(client, "Harbour", answer=f"the {word} was moored")
+        snapshot_share = _share(client, snapshot, reader, None)
+        live = import_chat(client, "Lighthouse", answer=f"a {word} on the rocks")
+        _share(client, live, reader, "continue")
+        folder_id = create_folder(client, f"Docks {word}")
+        post(
+            client,
+            f"/api/v1/folders/{folder_id}/access/update",
+            access_grants=[grant("user", reader.id, "read")],
+        )
+        filed = import_chat(client, "Quay", answer=f"the {word} came in", folder_id=folder_id)
+        _share(client, filed, reader, None)
+        hidden = import_chat(client, "Pier", answer=f"no {word} for you")
+        _share(client, hidden, stranger, None)
+    expected = {f"shared:{snapshot_share}", f"chat:{live}", f"chat:{filed}"}
+
+    before, answer = _fastest_search(reader, word)
+    assert answer == expected, (
+        f"All should find the snapshot, the live share and the folder chat: {answer}"
+    )
+    detail = search(reader, word)
+    assert item(detail, f"shared:{snapshot_share}")["url"] == f"/s/{snapshot_share}?message=a"
+    assert item(detail, f"chat:{live}")["url"] == f"/c/{live}?message=a"
+    assert word in item(detail, f"shared:{snapshot_share}")["snippet"]
+
+    bulk = _store_bulk_chats(instance, stranger)
+    try:
+        after, answer = _fastest_search(reader, word)
+    finally:
+        _remove_bulk_chats(instance, bulk)
+
+    assert answer == expected, f"other accounts' chats changed what All finds: {answer}"
+    assert after - before < ALLOWED_SLOWDOWN, (
+        f"{BULK_CHATS} long chats and shares the reader cannot open made the search "
+        f"{after - before:.2f}s slower ({before:.2f}s before, {after:.2f}s after)"
+    )
