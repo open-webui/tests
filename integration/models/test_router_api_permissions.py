@@ -15,7 +15,7 @@ through `ROUTER_MODELS` with "Model not found" (open-webui/open-webui#34786, fix
 With no task model set, each background task of a reply is routed again on the task's own
 instructions: the word "default" in the title and tags instructions matches a `def ` pattern
 (saved without its trailing space), so a legal question gets its title and tags from the code
-model, and the follow-ups cost a second Decisions API call (issue being filed).
+model, and the follow-ups cost a second Decisions API call (open-webui/open-webui#34887).
 
 Discriminates, in backend copies of dev d599f7a08: patterns that never match turn the API test
 and the cost test red; skipping the access check for router models turns the stranger and the
