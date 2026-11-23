@@ -1,0 +1,27 @@
+# Reruns the failed jobs of a run once when one of them failed or timed out before its tests ran,
+# where a runner or an outside service broke it; a failed test is never retried. Manually cancelled
+# runs and runs that open-webui/open-webui calls are left alone. See scripts/rerun_setup_failures.py.
+name: Rerun setup failures
+
+on:
+  workflow_run:
+    workflows: [Regression suite, Terminal suite, Frontend build]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  rerun:
+    if: github.event.workflow_run.run_attempt == 1 && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v5
+
+      - name: Rerun the failed jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/rerun_setup_failures.py ${{ github.event.workflow_run.id }}

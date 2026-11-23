@@ -77,7 +77,10 @@ concurrency:
 
 jobs:
   # Every job's timeout is twice its slowest finished run, which the refresh-durations workflow
-  # records in .github/job-times.json: an hour until a job has one, never under 15 minutes.
+  # records in .github/job-times.json: an hour until a job has one, never under 15 minutes. Setup
+  # steps that fetch from outside services bound, retry and switch sources through
+  # scripts/fallback.sh, and a job that still fails before its tests run gets one rerun from the
+  # rerun-setup-failures workflow.
   timeouts:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -120,6 +123,15 @@ jobs:
           echo "terminals=$terminals" >> "$GITHUB_OUTPUT"
           echo "open-terminal=$open_terminal" >> "$GITHUB_OUTPUT"
 
+      # For the fallbacks in scripts/fallback.sh.
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+          sparse-checkout: scripts
+
       - name: Check out Terminals
         id: terminals
         uses: actions/checkout@v5
@@ -156,11 +168,12 @@ jobs:
       # Open Terminal's slim image, the smallest. It starts in /app, which its user cannot write;
       # the full image starts in the home the orchestrator mounts, so the last build moves it there.
       - name: Build the images
-        timeout-minutes: 15
+        timeout-minutes: 30
         if: steps.images-cache.outputs.cache-hit != 'true'
         run: |
-          docker build -t owui-tests/terminals:ci terminals
-          docker build -f open-terminal/Dockerfile.slim -t owui-tests/open-terminal:slim open-terminal
+          . tests/scripts/fallback.sh
+          docker_build -t owui-tests/terminals:ci terminals
+          docker_build -f open-terminal/Dockerfile.slim -t owui-tests/open-terminal:slim open-terminal
           printf 'FROM owui-tests/open-terminal:slim\nWORKDIR /home/user\n' | docker build -t owui-tests/open-terminal:ci -
           docker save -o terminals-stack.tar owui-tests/terminals:ci owui-tests/open-terminal:ci
 
@@ -184,6 +197,13 @@ jobs:
           ref: ${{ inputs.tests-ref }}
           path: tests
 
+      # A rerun never retries a failed test: see scripts/rerun_setup_failures.py.
+      - name: Keep a failed test result
+        if: github.run_attempt > 1 && github.triggering_actor == 'github-actions[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tests/scripts/rerun_setup_failures.py --guard
+
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
@@ -197,7 +217,7 @@ jobs:
 
       # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
       - name: Install uv
-        run: pip install uv
+        run: bash tests/scripts/fallback.sh retry 5 pip install uv
 
       # The instances run offline, so the default embedding model is fetched up front.
       - name: Cache the embedding model
@@ -209,18 +229,19 @@ jobs:
 
       # The runner's mirror list can hang apt-get for over an hour; see the script.
       - name: Pick an apt mirror
-        run: bash tests/scripts/pick_apt_mirror.sh
+        run: bash tests/scripts/fallback.sh apt_mirror
 
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --system -r open-webui/backend/requirements.txt
-          uv pip install --system -e "./tests[postgres]"
+          . tests/scripts/fallback.sh
+          retry 10 uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          retry 10 uv pip install --system -r open-webui/backend/requirements.txt
+          retry 10 uv pip install --system -e "./tests[postgres]"
           uv venv "$RUNNER_TEMP/open-terminal"
-          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          retry 10 uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
 
       # The Playwright web loader's spaCy model is installed up front; an instance behind the
@@ -246,14 +267,14 @@ jobs:
         if: steps.spacy-model-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+        run: bash tests/scripts/fallback.sh retry 5 gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model --clobber
 
       - name: Install the spaCy model
         run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Download the embedding model
         if: steps.embedding-model.outputs.cache-hit != 'true'
-        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+        run: bash tests/scripts/fallback.sh retry 10 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
 
       - name: Name the Playwright build
         id: playwright
@@ -267,8 +288,8 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
-        timeout-minutes: 15
-        run: python -m playwright install --with-deps chromium
+        timeout-minutes: 30
+        run: bash tests/scripts/fallback.sh install_browser
 
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4
@@ -323,6 +344,13 @@ jobs:
           ref: ${{ inputs.tests-ref }}
           path: tests
 
+      # A rerun never retries a failed test: see scripts/rerun_setup_failures.py.
+      - name: Keep a failed test result
+        if: github.run_attempt > 1 && github.triggering_actor == 'github-actions[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tests/scripts/rerun_setup_failures.py --guard
+
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
@@ -336,7 +364,7 @@ jobs:
 
       # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
       - name: Install uv
-        run: pip install uv
+        run: bash tests/scripts/fallback.sh retry 5 pip install uv
 
       # The instances run offline, so the default embedding model is fetched up front.
       - name: Cache the embedding model
@@ -348,19 +376,20 @@ jobs:
 
       # The runner's mirror list can hang apt-get for over an hour; see the script.
       - name: Pick an apt mirror
-        run: bash tests/scripts/pick_apt_mirror.sh
+        run: bash tests/scripts/fallback.sh apt_mirror
 
       # The suite starts a redis-server of its own per instance and Postgres through pgserver.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get install -y redis-server
-          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --system -r open-webui/backend/requirements.txt
-          uv pip install --system -e "./tests[postgres]"
+          . tests/scripts/fallback.sh
+          apt_install redis-server
+          retry 10 uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          retry 10 uv pip install --system -r open-webui/backend/requirements.txt
+          retry 10 uv pip install --system -e "./tests[postgres]"
           uv venv "$RUNNER_TEMP/open-terminal"
-          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          retry 10 uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
 
       # The Playwright web loader's spaCy model is installed up front; an instance behind the
@@ -386,14 +415,14 @@ jobs:
         if: steps.spacy-model-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+        run: bash tests/scripts/fallback.sh retry 5 gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model --clobber
 
       - name: Install the spaCy model
         run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Download the embedding model
         if: steps.embedding-model.outputs.cache-hit != 'true'
-        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+        run: bash tests/scripts/fallback.sh retry 10 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
 
       - name: Name the Playwright build
         id: playwright
@@ -407,8 +436,8 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
-        timeout-minutes: 15
-        run: python -m playwright install --with-deps chromium
+        timeout-minutes: 30
+        run: bash tests/scripts/fallback.sh install_browser
 
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4
@@ -459,6 +488,15 @@ jobs:
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
     steps:
+      # For the fallbacks in scripts/fallback.sh.
+      - name: Check out the test suite
+        uses: actions/checkout@v5
+        with:
+          repository: open-webui/tests
+          ref: ${{ inputs.tests-ref }}
+          path: tests
+          sparse-checkout: scripts
+
       - name: Check out Open WebUI
         id: open-webui
         uses: actions/checkout@v5
@@ -495,7 +533,7 @@ jobs:
           ONNXRUNTIME_NODE_INSTALL_CUDA: skip
           CYPRESS_INSTALL_BINARY: '0'
         run: |
-          npm ci --force
+          bash ../tests/scripts/fallback.sh retry 15 npm ci --force
           npm run build
 
       - name: Save the frontend build
@@ -522,6 +560,13 @@ jobs:
           ref: ${{ inputs.tests-ref }}
           path: tests
 
+      # A rerun never retries a failed test: see scripts/rerun_setup_failures.py.
+      - name: Keep a failed test result
+        if: github.run_attempt > 1 && github.triggering_actor == 'github-actions[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tests/scripts/rerun_setup_failures.py --guard
+
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
@@ -542,23 +587,24 @@ jobs:
 
       # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
       - name: Install uv
-        run: pip install uv
+        run: bash tests/scripts/fallback.sh retry 5 pip install uv
 
       # The runner's mirror list can hang apt-get for over an hour; see the script.
       - name: Pick an apt mirror
-        run: bash tests/scripts/pick_apt_mirror.sh
+        run: bash tests/scripts/fallback.sh apt_mirror
 
       # The instances that share a Redis start a redis-server of their own.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get install -y redis-server
-          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --system -r open-webui/backend/requirements.txt
-          uv pip install --system -e ./tests
+          . tests/scripts/fallback.sh
+          apt_install redis-server
+          retry 10 uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          retry 10 uv pip install --system -r open-webui/backend/requirements.txt
+          retry 10 uv pip install --system -e ./tests
           uv venv "$RUNNER_TEMP/open-terminal"
-          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          retry 10 uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
 
       # The Playwright web loader's spaCy model is installed up front; an instance behind the
@@ -584,7 +630,7 @@ jobs:
         if: steps.spacy-model-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+        run: bash tests/scripts/fallback.sh retry 5 gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model --clobber
 
       - name: Install the spaCy model
         run: uv pip install --system ~/.cache/spacy-model/*.whl
@@ -601,8 +647,8 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
-        timeout-minutes: 15
-        run: python -m playwright install --with-deps chromium
+        timeout-minutes: 30
+        run: bash tests/scripts/fallback.sh install_browser
 
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4
@@ -660,6 +706,13 @@ jobs:
           ref: ${{ inputs.tests-ref }}
           path: tests
 
+      # A rerun never retries a failed test: see scripts/rerun_setup_failures.py.
+      - name: Keep a failed test result
+        if: github.run_attempt > 1 && github.triggering_actor == 'github-actions[bot]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tests/scripts/rerun_setup_failures.py --guard
+
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
@@ -680,7 +733,7 @@ jobs:
 
       # From PyPI: setup-uv fetches its binary from GitHub releases without the job's token.
       - name: Install uv
-        run: pip install uv
+        run: bash tests/scripts/fallback.sh retry 5 pip install uv
 
       # The instances run offline, so the default embedding model is fetched up front.
       - name: Cache the embedding model
@@ -692,19 +745,20 @@ jobs:
 
       # The runner's mirror list can hang apt-get for over an hour; see the script.
       - name: Pick an apt mirror
-        run: bash tests/scripts/pick_apt_mirror.sh
+        run: bash tests/scripts/fallback.sh apt_mirror
 
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get install -y redis-server
-          uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
-          uv pip install --system -r open-webui/backend/requirements.txt
-          uv pip install --system -e "./tests[postgres]"
+          . tests/scripts/fallback.sh
+          apt_install redis-server
+          retry 10 uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
+          retry 10 uv pip install --system -r open-webui/backend/requirements.txt
+          retry 10 uv pip install --system -e "./tests[postgres]"
           uv venv "$RUNNER_TEMP/open-terminal"
-          uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
+          retry 10 uv pip install --python "$RUNNER_TEMP/open-terminal" "open-terminal @ git+https://github.com/open-webui/open-terminal@$OPEN_TERMINAL_COMMIT"
           echo "OPEN_TERMINAL_BIN=$RUNNER_TEMP/open-terminal/bin/open-terminal" >> "$GITHUB_ENV"
 
       # The Playwright web loader's spaCy model is installed up front; an instance behind the
@@ -730,14 +784,14 @@ jobs:
         if: steps.spacy-model-cache.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model
+        run: bash tests/scripts/fallback.sh retry 5 gh release download "${{ steps.spacy-model.outputs.release }}" -R explosion/spacy-models -p '*.whl' -D ~/.cache/spacy-model --clobber
 
       - name: Install the spaCy model
         run: uv pip install --system ~/.cache/spacy-model/*.whl
 
       - name: Download the embedding model
         if: steps.embedding-model.outputs.cache-hit != 'true'
-        run: python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
+        run: bash tests/scripts/fallback.sh retry 10 python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')"
 
       - name: Name the Playwright build
         id: playwright
@@ -751,8 +805,8 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
-        timeout-minutes: 15
-        run: python -m playwright install --with-deps chromium
+        timeout-minutes: 30
+        run: bash tests/scripts/fallback.sh install_browser
 
       - name: Restore the Terminals images
         uses: actions/cache/restore@v4
@@ -781,7 +835,7 @@ jobs:
       - name: Build the full Open Terminal image
         if: steps.full-image-cache.outputs.cache-hit != 'true'
         run: |
-          docker build --build-arg BASE=owui-tests/open-terminal:ci -t owui-tests/open-terminal-full:ci - < tests/harness/open_terminal_full.Dockerfile
+          bash tests/scripts/fallback.sh docker_build --build-arg BASE=owui-tests/open-terminal:ci -t owui-tests/open-terminal-full:ci -f tests/harness/open_terminal_full.Dockerfile tests/harness
           docker save -o open-terminal-full.tar owui-tests/open-terminal-full:ci
 
       - name: Save the full Open Terminal image
