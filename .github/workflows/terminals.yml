@@ -10,6 +10,11 @@ on:
         required: false
         type: string
         default: dev
+      open-webui-repository:
+        description: Repository the Open WebUI ref is checked out from, such as a fork
+        required: false
+        type: string
+        default: open-webui/open-webui
       tests-ref:
         description: Ref of open-webui/tests to run
         required: false
@@ -37,6 +42,11 @@ on:
         required: false
         type: string
         default: dev
+      open-webui-repository:
+        description: Repository the Open WebUI ref is checked out from, such as a fork
+        required: false
+        type: string
+        default: open-webui/open-webui
       tests-ref:
         description: Ref of open-webui/tests to run
         required: false
@@ -157,7 +167,7 @@ jobs:
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -291,7 +301,7 @@ jobs:
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -423,7 +433,7 @@ jobs:
         id: open-webui
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -485,7 +495,7 @@ jobs:
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
@@ -619,7 +629,7 @@ jobs:
       - name: Check out Open WebUI
         uses: actions/checkout@v5
         with:
-          repository: open-webui/open-webui
+          repository: ${{ inputs.open-webui-repository }}
           ref: ${{ inputs.open-webui-ref }}
           path: open-webui
 
