@@ -35,7 +35,8 @@ def tests_ran(job: dict) -> bool:
 
 
 def rerun(run_id: str) -> None:
-    failed = [job for job in jobs(run_id, 1) if job["conclusion"] in ("failure", "timed_out")]
+    # a job that timed out ends cancelled
+    failed = [job for job in jobs(run_id, 1) if job["conclusion"] in ("failure", "cancelled")]
     setup_failures = [job["name"] for job in failed if not tests_ran(job)]
     if not setup_failures:
         print(f"No job failed before its tests ran; {len(failed)} failed in them.")
