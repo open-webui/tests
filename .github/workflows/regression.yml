@@ -25,10 +25,18 @@ on:
         type: string
         default: main
       suite:
-        description: Test paths to run
+        description: Test paths the unit job runs
         required: false
         type: string
         default: unit
+      select:
+        description: >-
+          Integration and browser test paths to run instead of the whole suite, space separated
+          (integration/x/test_y.py e2e/z/test_w.py::test_v); they run unsharded, on SQLite, on
+          Postgres and Redis and in the browser as their suite does, and the other jobs are skipped
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       oix-ref:
@@ -52,10 +60,18 @@ on:
         type: string
         default: main
       suite:
-        description: Test paths to run
+        description: Test paths the unit job runs
         required: false
         type: string
         default: unit
+      select:
+        description: >-
+          Integration and browser test paths to run instead of the whole suite, space separated
+          (integration/x/test_y.py e2e/z/test_w.py::test_v); they run unsharded, on SQLite, on
+          Postgres and Redis and in the browser as their suite does, and the other jobs are skipped
+        required: false
+        type: string
+        default: ''
 
 # Queued rather than cancelled: a caller gating a release on this workflow would
 # otherwise see its required check go red because another run took the slot.
@@ -87,6 +103,7 @@ jobs:
 
   run:
     needs: timeouts
+    if: ${{ !inputs.select }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).run || 60 }}
     steps:
@@ -182,12 +199,13 @@ jobs:
   # the timings in durations/; a release is gated on all of them.
   integration:
     needs: timeouts
+    if: ${{ !inputs.select || contains(inputs.select, 'integration/') }}
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration || 60 }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shard: ${{ fromJSON(inputs.select && '[1]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]') }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -321,8 +339,11 @@ jobs:
         env:
           OPEN_WEBUI_SOURCE_DIR: ${{ github.workspace }}/open-webui/backend
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
+          SELECT: ${{ inputs.select }}
         shell: bash
-        run: pytest integration -q --splits 10 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
+        run: |
+          tests=$(bash scripts/select_tests.sh integration "--splits 10 --group ${{ matrix.shard }} --durations-path durations/integration.json")
+          pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -341,13 +362,14 @@ jobs:
   # gating a release until that mode has settled.
   integration-postgres-redis:
     needs: timeouts
+    if: ${{ !inputs.select || contains(inputs.select, 'integration/') }}
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).integration-postgres-redis || 60 }}
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+        shard: ${{ fromJSON(inputs.select && '[1]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]') }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -483,8 +505,11 @@ jobs:
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
           OWUI_TEST_DATABASE: postgres
           OWUI_TEST_REDIS: '1'
+          SELECT: ${{ inputs.select }}
         shell: bash
-        run: pytest integration -q --splits 11 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/integration-postgres-redis.json --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
+        run: |
+          tests=$(bash scripts/select_tests.sh integration "--splits 11 --group ${{ matrix.shard }} --durations-path durations/integration-postgres-redis.json")
+          pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -523,8 +548,10 @@ jobs:
           pattern: '*-report-*'
           path: reports
 
+      # A run of selected tests has reports of some modes only.
       - name: Refresh the durations
         run: |
+          shopt -s nullglob
           python scripts/refresh_durations.py durations/integration.json reports/integration-report-*/junit.xml
           python scripts/refresh_durations.py durations/integration-postgres-redis.json reports/integration-postgres-redis-report-*/junit.xml
           python scripts/refresh_durations.py durations/e2e.json reports/e2e-report-*/junit.xml
@@ -539,6 +566,7 @@ jobs:
   # Built once for the browser shards, which restore it from the cache.
   e2e-build:
     needs: timeouts
+    if: ${{ !inputs.select || contains(inputs.select, 'e2e/') }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e-build || 60 }}
     continue-on-error: true
@@ -603,13 +631,14 @@ jobs:
   # Reports without gating a release until the browser suite has settled.
   e2e:
     needs: [timeouts, e2e-build]
+    if: ${{ !inputs.select || contains(inputs.select, 'e2e/') }}
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).e2e || 60 }}
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+        shard: ${{ fromJSON(inputs.select && '[1]' || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]') }}
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -743,8 +772,11 @@ jobs:
           OPEN_WEBUI_LOG_DIR: test-results/server-logs
           # Runners are slow already; twofold keeps the race checks at a third less time than fourfold.
           OWUI_TEST_SLOW: "2"
+          SELECT: ${{ inputs.select }}
         shell: bash
-        run: pytest e2e -q --splits 36 --group ${{ matrix.shard }} --splitting-algorithm duration_based_chunks --durations-path durations/e2e.json --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
+        run: |
+          tests=$(bash scripts/select_tests.sh e2e "--splits 36 --group ${{ matrix.shard }} --durations-path durations/e2e.json")
+          pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
         if: always()
@@ -762,6 +794,7 @@ jobs:
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
   frontend:
     needs: timeouts
+    if: ${{ !inputs.select }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ fromJSON(needs.timeouts.outputs.minutes).frontend || 60 }}
     steps:
