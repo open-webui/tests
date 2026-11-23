@@ -357,10 +357,12 @@ def _pinned_note_entry(page: Page, title: str) -> Locator:
     return sidebar.locator("#pinned-notes-list > div").filter(has_text=title)
 
 
-def _only_notes_menu(page: Page) -> Locator:
+def _only_notes_menu(page: Page, title: str) -> Locator:
     """Open the menu of the one note the account has, in either layout."""
     button = page.get_by_role("main").get_by_label("Note Menu")
     expect(button).to_have_count(1)
+    # the list shows the button only while the pointer is on the note
+    page.get_by_role("main").get_by_role("link", name=title).hover()
     button.click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitem", name="Delete")).to_be_visible()
@@ -381,7 +383,7 @@ def test_a_note_unpinned_from_the_sidebar_offers_pin_again_in_the_list(page_for,
     _open_notes_page(page, title)
     if layout == "Grid":
         choose(page, "Display options", "Grid")
-    menu = _only_notes_menu(page)
+    menu = _only_notes_menu(page, title)
     expect(menu.get_by_role("menuitem", name="Unpin")).to_be_visible()
     page.keyboard.press("Escape")
     expect(menu).to_have_count(0)
@@ -393,7 +395,7 @@ def test_a_note_unpinned_from_the_sidebar_offers_pin_again_in_the_list(page_for,
     with author.client() as client:
         assert client.get("/api/v1/notes/pinned").json() == []
 
-    menu = _only_notes_menu(page)
+    menu = _only_notes_menu(page, title)
     expect(
         menu.get_by_role("menuitem", name="Pin to Sidebar"),
         "the list's menu still offers Unpin for a note unpinned from the sidebar (#32706)",

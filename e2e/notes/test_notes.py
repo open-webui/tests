@@ -22,7 +22,7 @@ import time
 import pytest
 from playwright.sync_api import Page, expect
 
-from utils.notes_page import create_note, note_row
+from utils.notes_page import create_note, note_row, open_row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -64,8 +64,7 @@ def test_a_written_note_survives_a_reload_and_a_deleted_one_is_gone(page_for, ma
 
     page.goto("/notes")
     card = _note_card(page, TITLE)
-    card.get_by_role("button", name="Note Menu").first.click()
-    page.get_by_role("menu").get_by_role("menuitem", name="Delete").click()
+    open_row_menu(page, card).get_by_role("menuitem", name="Delete").click()
     page.get_by_role("dialog", name="Delete note?").get_by_role("button", name="Confirm").click()
     expect(card).to_have_count(0)
 

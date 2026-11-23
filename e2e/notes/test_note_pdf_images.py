@@ -30,7 +30,7 @@ from pypdf import PdfReader
 
 from harness.actors import Actor
 from utils.note_content import note_images
-from utils.notes_page import create_note, note_row
+from utils.notes_page import create_note, note_row, open_row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -96,9 +96,7 @@ def _write_note(page: Page, author: Actor, title: str, with_image: bool) -> str:
 
 def _download_pdf(page: Page, title: str) -> tuple[str, Image.Image]:
     page.goto("/notes")
-    card = note_row(page, title)
-    card.get_by_role("button", name="Note Menu").first.click()
-    menu = page.get_by_role("menu")
+    menu = open_row_menu(page, note_row(page, title))
     menu.get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
         page.get_by_role("menuitem", name="PDF document (.pdf)").click()

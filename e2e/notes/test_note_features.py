@@ -54,7 +54,7 @@ from utils.cached_chat import this_turns_tool_results
 from utils.chat_ui import chat_input, expect_reply, open_add_context, send
 from utils.menus import late_menu_entry
 from utils.note_chat import expand_note_chat
-from utils.notes_page import note_row
+from utils.notes_page import note_row, open_row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -229,8 +229,7 @@ def test_a_note_downloads_as_its_markdown(page_for, make_user, format_name, exte
     _create_note(author, title, markdown)
     page = page_for(author, path="/notes")
 
-    _note_card(page, title).get_by_role("button", name="Note Menu").first.click()
-    page.get_by_role("menu").get_by_role("menuitem", name="Download").hover()
+    open_row_menu(page, _note_card(page, title)).get_by_role("menuitem", name="Download").hover()
     with page.expect_download() as download_info:
         page.get_by_role("menuitem", name=format_name).click()
 

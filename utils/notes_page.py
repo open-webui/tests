@@ -8,10 +8,12 @@ buttons no longer name it. `create_note` makes a note from New Note and returns 
 `new_note_menu` opens that menu, `choose(page, menu, option)` picks a choice in Filter or Display
 options, `expect_chosen` checks the current one and `open_header_menu` opens either menu.
 
-A row holds the note's title link, its relative time and, on hover, the Note Menu and Delete
-buttons. `note_row(page, title)` is one note's row, for clicking it open or reaching its menu;
-`note_rows(page)` is every row in the list's order. The former row carried the label `Open note`,
-now gone from the markup.
+Since dev c3747e844 the List layout groups the notes in one list per time range (Today and so
+on), each note a list item holding its title link, folder, tags, owner and date. The Note Menu
+button takes the date's place only while the pointer is on the row, so `open_row_menu` points at
+the row before clicking it. `note_row(page, title)` is one note's row, for clicking it open or
+reaching its menu; `note_rows(page)` is every row in the list's order. The Grid layout's cards are
+no list items and are reached by their title link.
 """
 
 from __future__ import annotations
@@ -21,17 +23,25 @@ from collections.abc import Callable
 
 from playwright.sync_api import Locator, Page, expect
 
-from utils.workspace_list import item_rows
-
 NOTE_URL = re.compile(r"/notes/[0-9a-f-]+$")
 
 
 def note_rows(page: Page) -> Locator:
-    return item_rows(page)
+    return page.get_by_role("main").get_by_role("list").get_by_role("listitem")
 
 
 def note_row(page: Page, title: str) -> Locator:
     return note_rows(page).filter(has_text=title)
+
+
+def open_row_menu(page: Page, row: Locator) -> Locator:
+    """Open the Note Menu of a note's row in the List layout."""
+    # the button only takes the date's place while the pointer is on the row
+    row.hover()
+    row.get_by_role("button", name="Note Menu", exact=True).click()
+    menu = page.get_by_role("menu")
+    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
+    return menu
 
 
 def new_note_menu(

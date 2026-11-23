@@ -54,7 +54,7 @@ from utils.clipboard import on_clipboard, read_text
 from utils.member_picker import pick_member
 from utils.note_content import note_files
 from utils.note_menu import open_note_menu
-from utils.notes_page import note_row, note_rows
+from utils.notes_page import note_row, note_rows, open_row_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -140,10 +140,9 @@ def test_copy_link_on_the_notes_page_copies_the_notes_address(page_for, make_use
     title = _unique("Listed")
     note_id = _create_note(author, title, "in the list")
     page = page_for(author, path="/notes", permissions=CLIPBOARD)
-    row = note_row(page, title)
+    menu = open_row_menu(page, note_row(page, title))
 
-    row.get_by_label("Note Menu").click()
-    _share_submenu(page, page.get_by_role("menu"))
+    _share_submenu(page, menu)
     expect(page.get_by_role("menuitem", name="Copy to clipboard")).to_have_count(0)
     page.get_by_role("menuitem", name="Copy link").click()
 
@@ -461,8 +460,5 @@ def test_without_the_sharing_permission_the_note_offers_no_access(
     expect(access).to_have_count(0)
 
     page.goto("/notes")
-    row = note_row(page, title)
-    row.get_by_label("Note Menu").click()
-    menu = page.get_by_role("menu")
-    expect(menu.get_by_role("menuitem", name="Download")).to_be_visible()
+    menu = open_row_menu(page, note_row(page, title))
     expect(menu.get_by_role("menuitem", name="Access", exact=True)).to_have_count(0)

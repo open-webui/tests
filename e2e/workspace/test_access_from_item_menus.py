@@ -37,7 +37,7 @@ from harness.actors import Actor
 from harness.upstream import MOCK_MODEL_ID
 from utils.access_control import access_row, remove_access
 from utils.member_picker import pick_member
-from utils.notes_page import note_row
+from utils.notes_page import note_row, open_row_menu
 from utils.workspace_list import item_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -402,9 +402,9 @@ def test_a_note_shared_from_the_notes_list_opens_for_the_person_until_removed(
     page = page_for(sharer)
     assert _read_note(person, note_id) != 200
 
-    row = _note_row(page, title)
-    row.get_by_label("Note Menu").click()
-    page.get_by_role("menuitem", name="Access", exact=True).click()
+    open_row_menu(page, _note_row(page, title)).get_by_role(
+        "menuitem", name="Access", exact=True
+    ).click()
     dialog = page.get_by_role("dialog").filter(has_text="Access Control")
     expect(dialog).to_be_visible()
     _add_access(page, dialog, person.name)
@@ -433,11 +433,10 @@ def test_a_person_with_write_access_to_a_note_is_not_offered_access_in_its_menu(
     assert shared.status_code == 200, shared.text
     page = page_for(writer)
 
-    row = _note_row(page, title)
-    row.get_by_label("Note Menu").click()
+    menu = open_row_menu(page, _note_row(page, title))
 
-    expect(page.get_by_role("menuitem", name="Delete", exact=True)).to_be_visible()
-    expect(page.get_by_role("menuitem", name="Access", exact=True)).to_have_count(0)
+    expect(menu.get_by_role("menuitem", name="Delete", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Access", exact=True)).to_have_count(0)
 
 
 def test_without_the_public_sharing_permission_visibility_has_no_public_choice(
