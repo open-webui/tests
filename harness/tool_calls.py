@@ -11,10 +11,11 @@ Open WebUI stores the context it hands the model (attached knowledge, the skill 
 memories, preloaded skills) as hidden tool calls of its own at the start of a reply (since dev
 003c9e085). `without_hidden_calls(output)` drops them from a reply's stored output, the way
 `upstream.conversation` does for a provider payload. A citing tool's result (knowledge, file and
-web tools) carries its source list in the citations template after it (since dev 8e2ba2937);
-`without_citation_context(result)` gives the tool's own result. With the Skills tool on, the
-skill list comes as a `list_available_skills` result and a selected or mentioned skill as a
-preloaded `view_skill` result (since dev 6e8a6c446); `skill_list` and `viewed_skills` read them.
+web tools) carries its source list in the citations template after it (since dev 8e2ba2937,
+template reworded in cc2e033b0); `without_citation_context(result)` gives the tool's own result.
+With the Skills tool on, the skill list comes as a `list_available_skills` result and a selected
+or mentioned skill as a preloaded `view_skill` result (since dev 6e8a6c446); `skill_list` and
+`viewed_skills` read them.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from harness.chat import ask
 from harness.upstream import MockUpstream
 
 # Where the default RAG template starts in the source list after a citing tool's result
-CITATION_CONTEXT = "\n\n### Task:\n"
+CITATION_CONTEXT = "\n\nAnswer the user's message using the sources inside <context> below."
 
 
 def run_tool(
