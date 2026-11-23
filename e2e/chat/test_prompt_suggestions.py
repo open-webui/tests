@@ -7,10 +7,15 @@ prompt with the word Prompt beneath and sends that prompt when pressed. A model 
 of its own shows those in place of the defaults, and the defaults return once the plain model is
 picked again. A browser in a language the admin gave suggestions of their own sees those.
 
+Bug, open-webui/open-webui#34830: since pinned models open their new chat in a tab (v0.13.4),
+that tab showed only a bare New Chat heading without the model's own suggestions. The pinned
+model test opens the tab from the sidebar and sends the model's suggestion from there.
+
 Discriminates: passes on dev ebc6add67. On a build whose suggestions ignore the typed text both
 narrowing tests fail, one that ignores the model's own suggestions fails the model test, one that
 ignores the localized suggestions fails the language test and one that drops the Prompt label
-fails the untitled test.
+fails the untitled test. The pinned model test fails on dev 8e548c0f7 (the tab shows no
+suggestion) and passes with the fix branch fix/pinned-model-suggestions.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
+from utils.chat_surface import open_chat_tab_from
 from utils.chat_ui import chat_input, expect_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -148,6 +154,37 @@ def test_a_models_own_suggestions_replace_the_defaults(
     ).to_be_visible()
     expect(suggestion(page, "Tide table")).to_be_visible()
     expect(suggestion(page, "Knots")).to_have_count(0)
+
+
+@pytest.mark.regression
+def test_a_pinned_model_opens_its_tab_with_its_own_suggestions(
+    page_for, model_with_suggestions, default_suggestions, upstream
+):
+    default_suggestions([TIDES])
+    account, model_id = model_with_suggestions
+    with account.client() as client:
+        pinned = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"pinnedModels": [model_id]}}
+        )
+    assert pinned.status_code == 200, pinned.text
+    page = page_for(account)
+    expect(suggestion(page, "Tide table")).to_be_visible()
+    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    sidebar = page.get_by_role("navigation", name="Chat history")
+
+    chat = open_chat_tab_from(page, sidebar.get_by_role("link", name=model_id))
+
+    expect(chat.button(f"Selected model: {model_id}")).to_be_visible()
+    own = chat.panel.get_by_role("listitem").filter(has_text="Knots")
+    expect(own, "the pinned model's tab shows none of its own suggestions (#34830)").to_be_visible()
+    expect(chat.panel.get_by_role("listitem").filter(has_text="Tide table")).to_have_count(0)
+
+    upstream.queue(reply.text("Over, under, around.", match=reply.answering(KNOTS["content"])))
+    own.click()
+
+    chat.expect_reply("Over, under, around.")
+    sent = next(filter(reply.answering(KNOTS["content"]), upstream.chat_requests()))
+    assert reply.conversation(sent)[-1] == {"role": "user", "content": KNOTS["content"]}
 
 
 def test_a_browser_in_another_language_sees_the_suggestions_for_it(
