@@ -560,7 +560,7 @@ jobs:
       - name: Upload the refreshed durations
         uses: actions/upload-artifact@v4
         with:
-          name: test-durations-${{ inputs.open-webui-ref }}
+          name: test-durations-${{ github.run_id }}
           path: durations
 
   # Built once for the browser shards, which restore it from the cache.
