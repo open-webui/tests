@@ -15,8 +15,8 @@ announces nothing.
 
 The page sends the user's timezone on every load. One subscribed to `user.updated` receives the
 event once when the timezone changes and nothing when a load sends the timezone already stored;
-on dev every load announces a user update, so that test stays red until the fix in the
-fix/timezone-update-unchanged branch merges (issue to be filed).
+on dev every load announces a user update, so that test stays red until
+open-webui/open-webui#34837 is fixed (PR #34838).
 
 A target subscribed to `chat.finished` is called when a reply finishes: an `away` one only once
 the user has not been active for three minutes (every request with the user's token counts as
@@ -44,7 +44,7 @@ called); publishing `chat.failed` where a chat ends in an error turns the failed
 On dev b704d0613, `send_notification` ignoring the mute turns the muted channel test red (the
 ordinary message is delivered) and ignoring the mention turns it red as well (nothing is
 delivered). The unchanged timezone test fails on dev 8e548c0f7 (four user updates for two
-changes) and passes on the fix/timezone-update-unchanged branch. The group and direct message
+changes) and passes with PR #34838. The group and direct message
 test fails on dev ad5c2f87e and passes in a backend copy whose `send_notification` also takes
 the members of those channels as recipients.
 """
