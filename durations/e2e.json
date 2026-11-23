@@ -3039,7 +3039,7 @@
     "e2e/models/test_model_builtin_tool_families.py::test_an_unticked_category_leaves_only_its_tools_out[chromium-users]": 11.966,
     "e2e/models/test_model_builtin_tool_families.py::test_an_unticked_category_leaves_only_its_tools_out[chromium-web search]": 12.886,
     "e2e/models/test_model_builtin_tool_families.py::test_ticking_visualizations_offers_the_drawing_tool_alone[chromium]": 12.191,
-    "e2e/models/test_model_capabilities.py::test_an_unticked_capability_is_not_offered_as_a_default_feature[chromium]": 5.353,
+    "e2e/models/test_model_capabilities.py::test_an_unticked_capability_is_not_offered_as_a_default_feature[chromium]": 18.279,
     "e2e/models/test_model_capabilities.py::test_preload_files_shows_off_in_native_mode_and_saving_keeps_it_unset[chromium]": 4.476,
     "e2e/models/test_model_capabilities.py::test_ticking_usage_asks_the_provider_for_token_counts[chromium]": 8.705,
     "e2e/models/test_model_capabilities.py::test_unticking_citations_shows_no_sources_with_the_reply[chromium]": 13.0,
