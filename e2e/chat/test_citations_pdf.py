@@ -27,9 +27,8 @@ opens at page 1.
 
 Red on dev c1f3b6fd1, both in the several pages test: clicking the chip again after moving to
 another page leaves the PDF where it is, and in a side chat (a saved chat dragged in beside
-another) the chip opens nothing. Issue drafts issue-pdf-citation-reclick and
-issue-pdf-citation-side-chat; the side chat case shares its cause with an embedded source opening
-nothing in a side tab.
+another) the chip opens nothing (open-webui/open-webui#34834 and open-webui/open-webui#34828, which
+also covers an embedded source opening nothing in a side tab).
 """
 
 from __future__ import annotations
