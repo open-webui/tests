@@ -66,7 +66,7 @@ from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings
 from utils.cached_chat import attach
 from utils.chat_ui import conversation, expect_reply, last_reply, open_integrations_menu, send
 from utils.model_editor import (
-    default_features,
+    default_feature,
     offered_tool_names,
     open_chat_on,
     open_editor,
@@ -367,11 +367,10 @@ def test_an_unticked_capability_is_not_offered_as_a_default_feature(
 ):
     page = page_for(builder)
     editor = open_editor(page, preset)
-    defaults = default_features(editor)
-    expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_be_visible()
-    expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()
+    expect(default_feature(editor, "Web Search")).to_be_visible()
+    expect(default_feature(editor, "Image Generation")).to_be_visible()
 
     set_checkbox(editor, "Features", "Web Search", False)
 
-    expect(defaults.get_by_role("switch", name="Web Search", exact=True)).to_have_count(0)
-    expect(defaults.get_by_role("switch", name="Image Generation", exact=True)).to_be_visible()
+    expect(default_feature(editor, "Web Search")).to_have_count(0)
+    expect(default_feature(editor, "Image Generation")).to_be_visible()

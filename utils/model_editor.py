@@ -83,7 +83,7 @@ def section(editor: Locator, title: str) -> Locator:
 
 def switches(editor: Locator, title: str) -> Locator:
     """Where the switches of the section `title` sit; in Features only the capability switches,
-    as its default features below them carry the same names."""
+    not its default features below them."""
     part = section(editor, title)
     if title != "Features":
         return part
@@ -106,8 +106,15 @@ def set_checkbox(editor: Locator, title: str, label: str, checked: bool) -> None
     _set_switch(switches(editor, title).get_by_role("switch", name=label, exact=True), checked)
 
 
+def default_feature(editor: Locator, label: str) -> Locator:
+    """The switch that starts the feature `label` enabled in new chats."""
+    # named after the caption as well since 7d1f81562 (#34797), so it differs from the capability
+    name = f"Start enabled in new chats: {label}"
+    return default_features(editor).get_by_role("switch", name=name, exact=True)
+
+
 def set_default_feature(editor: Locator, label: str, checked: bool) -> None:
-    _set_switch(default_features(editor).get_by_role("switch", name=label, exact=True), checked)
+    _set_switch(default_feature(editor, label), checked)
 
 
 def selector_row(editor: Locator, label: str) -> Locator:
