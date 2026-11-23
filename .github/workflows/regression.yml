@@ -188,6 +188,10 @@ jobs:
           path: ~/.cache/huggingface/hub
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
       - name: Install dependencies
         run: |
@@ -242,6 +246,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Check out oix
@@ -333,10 +338,13 @@ jobs:
           path: ~/.cache/huggingface/hub
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # The suite starts a redis-server of its own per instance and Postgres through pgserver.
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y redis-server
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
@@ -389,6 +397,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Check out oix
@@ -571,10 +580,13 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # The instances that share a Redis start a redis-server of their own.
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y redis-server
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
@@ -623,6 +635,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Check out oix

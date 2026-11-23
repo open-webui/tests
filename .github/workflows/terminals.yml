@@ -137,6 +137,7 @@ jobs:
       # Open Terminal's slim image, the smallest. It starts in /app, which its user cannot write;
       # the full image starts in the home the orchestrator mounts, so the last build moves it there.
       - name: Build the images
+        timeout-minutes: 15
         if: steps.images-cache.outputs.cache-hit != 'true'
         run: |
           docker build -t owui-tests/terminals:ci terminals
@@ -186,6 +187,10 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
+
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
 
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
       - name: Install dependencies
@@ -243,6 +248,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Restore the Terminals images
@@ -321,12 +327,15 @@ jobs:
           path: ~/.cache/huggingface/hub
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # The suite starts a redis-server of its own per instance and Postgres through pgserver.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get update
           sudo apt-get install -y redis-server
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
@@ -379,6 +388,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Restore the Terminals images
@@ -514,12 +524,15 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # The instances that share a Redis start a redis-server of their own.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get update
           sudo apt-get install -y redis-server
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
@@ -568,6 +581,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Restore the Terminals images
@@ -656,12 +670,15 @@ jobs:
           path: ~/.cache/huggingface/hub
           key: embedding-model-hub-sentence-transformers-all-MiniLM-L6-v2
 
+      # The runner's mirror list can hang apt-get for over an hour; see the script.
+      - name: Pick an apt mirror
+        run: bash tests/scripts/pick_apt_mirror.sh
+
       # Open Terminal gets an environment of its own; the suite starts it from OPEN_TERMINAL_BIN.
       - name: Install dependencies
         env:
           OPEN_TERMINAL_COMMIT: ${{ needs.stack.outputs.open-terminal-commit }}
         run: |
-          sudo apt-get update
           sudo apt-get install -y redis-server
           uv pip install --system 'torch<=2.9.1' --index-url https://download.pytorch.org/whl/cpu
           uv pip install --system -r open-webui/backend/requirements.txt
@@ -714,6 +731,7 @@ jobs:
 
       # With the browser restored from the cache, this only installs its system libraries.
       - name: Install the browser
+        timeout-minutes: 15
         run: python -m playwright install --with-deps chromium
 
       - name: Restore the Terminals images
