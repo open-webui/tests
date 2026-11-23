@@ -9,7 +9,10 @@ the moved tabs are what a reload brings back: the shell tab connects again, noth
 a model and at once another, while the shell of the first is still starting, leaves the shell in
 the last model's machine and none running in the others. A shell on a terminal with one machine
 per chat or per user keeps running through a model switch, in the same machine, and a shell left
-open in a chat keeps running while the person visits a chat on another model and comes back.
+open in a chat keeps running while the person visits a chat on another model and comes back. A
+file with an unsaved edit stays on the old model's machine through a switch, with no question
+about dropping the edit, and its Save writes into the file there, while an open file without
+edits follows the switch and opens the same path on the new model's machine.
 
 Since 6f2fc7bc7 (dev after 0.13.3, titled `refac`) every machine tab kept the model it was opened
 with: after a switch the open shell and Files stayed in the old model's machine, and after a
@@ -17,9 +20,12 @@ reload the shell read "Session no longer available" while Files listed the new m
 
 Discriminates: the three per model switch tests are red on the dev b393504d9 build, where Files
 still lists the old model's machine after the switch and the shell still writes into it; all
-six pass with the fix. In a frontend copy of the fix that moves a shell without waiting for one
-still starting, the twice in a row test fails with "Session no longer available". The per chat,
-per user and visit tests pass on both.
+eight pass with the fix. In a frontend copy of the fix where an edited file follows the switch,
+the unsaved edit test fails on "Discard unsaved changes and continue?", and in one where an open
+file keeps its view through the switch, the open file test fails on the new machine's folder
+listing. In a frontend copy of the fix that moves a shell without waiting for one still
+starting, the twice in a row test fails with "Session no longer available". The per chat, per
+user, visit and unsaved edit tests pass on both; the open file test is red on dev too.
 """
 
 from __future__ import annotations
@@ -36,8 +42,9 @@ from harness.python_tools import EVERYONE_READS
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal, open_files_tab
 from utils.chat_surface import main_chat, open_sidebar
-from utils.chat_ui import expect_reply, send
+from utils.chat_ui import expect_reply, send, split_screen
 from utils.file_browser import expect_listed, file_browser, refresh
+from utils.file_views import file_text, open_file
 from utils.model_selector import model_search, select_model
 from utils.shell_tab import (
     READABLE_SHELL,
@@ -300,3 +307,78 @@ def test_a_shell_keeps_running_when_the_person_goes_to_a_chat_on_another_model_a
     shell.get_by_role("textbox", name="Terminal input").press("Enter")
     expect_on_screen(shell, f"written-north-{tag}")
     assert terminals.holding(note) == {f"model:{MOCK_MODEL_ID}": f"north-{tag}\n"}
+
+
+def test_an_unsaved_file_edit_stays_on_the_old_models_machine_and_saves_there(
+    make_user, shared_terminal, terminals, page_for, upstream, second_model
+):
+    person = make_user()
+    name = f"Harbour {uuid.uuid4().hex[:6]}"
+    shared_terminal(person, name=name, scope="model")
+    page = page_for(person, init_script=READABLE_SHELL)
+    choose_terminal(page, name)
+    question = f"plan the crossing {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Board at noon.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "Board at noon.")
+    expect(page).to_have_url(re.compile(r"/c/"))
+    log = f"log-{uuid.uuid4().hex[:6]}.txt"
+    _write(open_shell(page), log)
+    files = open_files_tab(page)
+    refresh(files)
+    open_file(files, log)
+    split_screen(page)
+    editor = file_text(file_browser(page))
+    expect(editor).to_contain_text("moored")
+    editor.click()
+    page.keyboard.press("Control+End")
+    page.keyboard.insert_text("bottled on Friday")
+    unsaved = page.get_by_role("tablist").get_by_label("Unsaved changes")
+    expect(unsaved).to_have_count(1)
+
+    select_model(main_chat(page), second_model["name"])
+    expect(
+        main_chat(page).panel.get_by_role("button", name=f"Selected model: {second_model['name']}")
+    ).to_be_visible()
+    # the editor would ask to drop the edit if it followed the switch
+    page.wait_for_timeout(4000)
+    expect(page.get_by_text("Discard unsaved changes and continue?")).to_have_count(0)
+    expect(editor).to_contain_text("bottled on Friday")
+    expect(unsaved).to_have_count(1)
+
+    editor.click()
+    page.keyboard.press("Control+s")
+    expect(unsaved).to_have_count(0)
+    assert terminals.holding(log) == {f"model:{MOCK_MODEL_ID}": "moored\nbottled on Friday"}, (
+        f"the saved edit landed in {terminals.holding(log)}"
+    )
+
+
+def test_an_open_file_without_edits_follows_the_switch_to_the_new_models_machine(
+    make_user, shared_terminal, terminals, page_for, upstream, second_model
+):
+    person = make_user()
+    name = f"Harbour {uuid.uuid4().hex[:6]}"
+    shared_terminal(person, name=name, scope="model")
+    page = page_for(person, init_script=READABLE_SHELL)
+    choose_terminal(page, name)
+    question = f"plan the crossing {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Board at noon.", match=reply.answering(question)))
+    send(page, question)
+    expect_reply(page, "Board at noon.")
+    log = f"log-{uuid.uuid4().hex[:6]}.txt"
+    _write(open_shell(page), log)
+    files = open_files_tab(page)
+    refresh(files)
+    open_file(files, log)
+    split_screen(page)
+    expect(file_text(file_browser(page))).to_contain_text("moored")
+
+    select_model(main_chat(page), second_model["name"])
+    expect(
+        main_chat(page).panel.get_by_role("button", name=f"Selected model: {second_model['name']}")
+    ).to_be_visible()
+    # the new model's machine has no such file, and the tab still names it
+    expect(file_browser(page)).to_contain_text("Could not read file.")
+    expect(file_browser(page)).to_contain_text(log)
+    expect(file_text(file_browser(page))).to_have_count(0)
