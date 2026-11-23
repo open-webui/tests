@@ -6,7 +6,7 @@ in `utils/middleware.py`. With native function calling the citations built from
 the cited text without the relevance badge that classic retrieval shows for the same knowledge
 base. A person read the badge in the citation dialog. Since 072d0b51d a cited file opens in a tab
 beside the chat with the cited passage marked, and nothing there shows its relevance any more:
-red on dev 306f9be78 (issue draft issue-cited-file-relevance-gone).
+red on dev 306f9be78 (open-webui/open-webui#34913).
 
 Twin of integration/tools/test_knowledge_tool_citation_scores.py.
 

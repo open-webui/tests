@@ -13,7 +13,7 @@ however low Top K is. A RAG Template frames the context the model is sent, and o
 the context twice is flagged in the panel and sends it twice.
 
 Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
-(issue draft issue-cited-file-relevance-gone), so the reranker test fails at its relevance.
+(open-webui/open-webui#34913), so the reranker test fails at its relevance.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the passages about herons; a local service also plays the reranker.

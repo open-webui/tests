@@ -9,7 +9,7 @@ still there after a reload and in the shared link. A model whose Citations capab
 shows neither the source list nor the markers.
 
 Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
-(issue draft issue-cited-file-relevance-gone), so the marker test fails at the relevance.
+(open-webui/open-webui#34913), so the marker test fails at the relevance.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the source dialog taking marker `[n]`
 as the n+1th source turned the marker test red, the source list shown whatever the model's
