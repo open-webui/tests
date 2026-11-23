@@ -8,7 +8,21 @@ model, set up in the panel or through `ROUTER_MODELS`, with `BYPASS_ADMIN_ACCESS
 off. The Decisions API key stays with the admins. A pattern route costs no Decisions API call,
 a condition route one per message, however many conditions and streamed pieces; the decider's
 tokens stay out of the reply's usage. Titles, tags and follow-ups are written by the model that
-answered, with no further Decisions API call.
+answered, with no further Decisions API call. Autocomplete, the call emoji (Display Emoji in Call)
+and Merge Responses in a router chat are routed on the user's text they carry, as a message with
+that text would be: autocomplete on the chat and the text being typed, the emoji on the spoken
+sentence, a merge on the question and the answers it merges. The Decisions API never judges their
+built-in instructions. In a chat a rule routed to a model, the call emoji and a merge go to that
+model too, as the same text sent as a message in that chat would.
+
+The autocomplete, emoji and merge tests are red on dev 639e25ae3, where the router judges each
+task's instructions: the emoji instructions match the code pattern by their own backticks. They
+stay red with the first follow-up for open-webui/open-webui#34887 (b01b7d916), which routed only
+the tasks' chat history, so text typed after a chat with history no longer reached the code
+model. They pass with 828b30373, which routes each task on the text it carries. The chat route
+test stays red there (open-webui/open-webui#34887): the emoji request carries one sentence of the
+reply and a merge the latest question and the answers, so a chat routed to the code model by an
+earlier message gets its emoji and merge from the default model (issue not filed yet).
 
 Two tests stay red on dev d599f7a08. An admin with the bypass off is refused a router model set
 through `ROUTER_MODELS` with "Model not found" (open-webui/open-webui#34786, fix PR #34791).
@@ -391,3 +405,218 @@ def wait_for_tasks(upstream, count: int) -> list[tuple[str, str]]:
             return found
         time.sleep(0.2)
     raise AssertionError(f"the background tasks never all reached a model: {found}")
+
+
+AUTOCOMPLETE = "You are an autocompletion system"
+EMOJI = "reflect the speaker's likely facial expression"
+MERGE = "synthesize these responses into a single"
+CAT_CHAT = [
+    {"role": "user", "content": "what is a good name for a cat"},
+    {"role": "assistant", "content": "Whiskers is a classic."},
+]
+
+
+def task_answer(target, marker: str, content: str) -> reply.Reply:
+    """`content` from `target` when it is asked for the task whose instructions hold `marker`."""
+    return reply.text(
+        content,
+        match=lambda body: (
+            body["model"] == target.id and marker in json.dumps(body.get("messages", []))
+        ),
+    )
+
+
+def task_models(upstream, marker: str) -> list[str]:
+    """The models the provider was asked to run the task whose instructions hold `marker` on."""
+    return [
+        body["model"]
+        for body in upstream.chat_requests()
+        if marker in json.dumps(body.get("messages", []))
+    ]
+
+
+def judged_instructions(decider: Decider, marker: str) -> list[str]:
+    return [call["input"] for call in decider.calls() if marker in call["input"]]
+
+
+def test_autocomplete_in_a_router_chat_is_routed_on_the_typed_text_like_a_message(
+    admin, preserve, make_user, upstream, targets, smart_router, decider
+):
+    preserve("tasks")
+    with admin.client() as client:
+        current = client.get("/api/v1/tasks/config").json()
+        enabled = {
+            **current,
+            "TASK_MODEL": "",
+            "TASK_MODEL_EXTERNAL": "",
+            "ENABLE_AUTOCOMPLETE_GENERATION": True,
+        }
+        client.post("/api/v1/tasks/config/update", json=enabled).raise_for_status()
+
+    tag = uuid.uuid4().hex[:4]
+    code_text, plain_text = f"and how do I write def load_lease( {tag}", f"and for a dog {tag}"
+    upstream.queue(
+        reply.text(
+            "code answer",
+            match=lambda body: (
+                reply.answering(code_text)(body) and AUTOCOMPLETE not in json.dumps(body)
+            ),
+        ),
+        task_answer(targets["code"], AUTOCOMPLETE, json.dumps({"text": "path):"})),
+        task_answer(targets["general"], AUTOCOMPLETE, json.dumps({"text": "like Rex"})),
+    )
+    with make_user().client() as client:
+        sent = client.post(
+            "/api/chat/completions",
+            json={
+                "model": smart_router.id,
+                "messages": [*CAT_CHAT, {"role": "user", "content": code_text}],
+                "stream": False,
+            },
+        )
+        assert sent.status_code == 200, sent.text
+        suggestions = []
+        for text in (code_text, plain_text):
+            # what the chat input sends while the user types in a chat with history
+            suggested = client.post(
+                "/api/v1/tasks/auto/completions",
+                json={
+                    "model": smart_router.id,
+                    "prompt": text,
+                    "messages": CAT_CHAT,
+                    "type": "general",
+                    "stream": False,
+                },
+            )
+            assert suggested.status_code == 200, suggested.text
+            suggestions.append(suggested.json()["choices"][0]["message"]["content"])
+
+    assert sent.json()["choices"][0]["message"]["content"] == "code answer"
+    assert task_models(upstream, AUTOCOMPLETE) == [targets["code"].id, targets["general"].id], (
+        "autocomplete was not routed on the typed text the way sending it as a message is"
+    )
+    assert suggestions == [json.dumps({"text": "path):"}), json.dumps({"text": "like Rex"})]
+    assert judged_instructions(decider, AUTOCOMPLETE) == [], (
+        "the Decisions API judged the autocomplete instructions"
+    )
+
+
+def test_a_call_emoji_in_a_router_chat_is_routed_on_the_spoken_sentence(
+    make_user, upstream, targets, smart_router, decider
+):
+    tag = uuid.uuid4().hex[:4]
+    plain_sentence, code_sentence = f"Glad that helped {tag}.", f"Start with def main( {tag}."
+    upstream.queue(
+        task_answer(targets["general"], EMOJI, "😊"),
+        task_answer(targets["code"], EMOJI, "🤓"),
+    )
+    emojis = []
+    with make_user().client() as client:
+        for sentence in (plain_sentence, code_sentence):
+            # what a call sends for each sentence it speaks with Show emoji in call on
+            answered = client.post(
+                "/api/v1/tasks/emoji/completions",
+                json={"model": smart_router.id, "prompt": sentence},
+            )
+            assert answered.status_code == 200, answered.text
+            emojis.append(answered.json()["choices"][0]["message"]["content"])
+
+    assert task_models(upstream, EMOJI) == [targets["general"].id, targets["code"].id], (
+        "the call emoji was not routed on the spoken sentence"
+    )
+    assert emojis == ["😊", "🤓"]
+    assert judged_instructions(decider, EMOJI) == [], (
+        "the Decisions API judged the emoji instructions"
+    )
+
+
+def test_merged_responses_in_a_router_chat_are_routed_on_the_question_and_the_responses(
+    make_user, upstream, targets, smart_router, decider
+):
+    tag = uuid.uuid4().hex[:4]
+    question = f"can I break my rental contract early {tag}"
+    plain_responses = ["Usually not without a clause.", "Check the notice period."]
+    code_responses = ["Usually not.", "Here is a checker:\n```python\nprint(1)\n```"]
+    decider.scores = {LEGAL: 0.9}
+    upstream.queue(
+        task_answer(targets["legal"], MERGE, "legal merge"),
+        task_answer(targets["code"], MERGE, "code merge"),
+    )
+    merged = []
+    with make_user().client() as client:
+        for responses in (plain_responses, code_responses):
+            # what Merge Responses sends under a router model's answers
+            merged.append(
+                streamed_text(
+                    client,
+                    "/api/v1/tasks/moa/completions",
+                    {
+                        "model": smart_router.id,
+                        "prompt": question,
+                        "responses": responses,
+                        "stream": True,
+                    },
+                )
+            )
+
+    assert task_models(upstream, MERGE) == [targets["legal"].id, targets["code"].id], (
+        "the merge was not routed on the question and the responses it merges"
+    )
+    assert merged == ["legal merge", "code merge"]
+    assert judged_instructions(decider, MERGE) == [], (
+        "the Decisions API judged the merge instructions"
+    )
+
+
+def test_the_call_emoji_and_a_merge_follow_the_route_of_their_chat(
+    make_user, upstream, targets, smart_router, decider
+):
+    tag = uuid.uuid4().hex[:4]
+    code_question, question = f"what does def load_lease( do {tag}", f"and in short {tag}"
+    sentence, responses = f"It reads the file {tag}.", ["It loads it.", "It parses it."]
+    upstream.queue(
+        reply.text(
+            "code answer",
+            match=lambda body: body.get("stream") and reply.answering(code_question)(body),
+        ),
+        reply.text(
+            "short answer",
+            match=lambda body: body.get("stream") and reply.answering(question)(body),
+        ),
+        task_answer(targets["code"], EMOJI, "🤓"),
+        task_answer(targets["code"], MERGE, "code merge"),
+    )
+    with make_user().client() as client:
+        first, _ = ask(client, code_question, model=smart_router.id)
+        chat = client.get(f"/api/v1/chats/{first.chat_id}").json()["chat"]
+        # the same question sent as a message in this chat goes where the chat goes
+        _, answered = ask(
+            client,
+            question,
+            model=smart_router.id,
+            chat_id=first.chat_id,
+            parent_id=chat["history"]["currentId"],
+        )
+        assert answered["content"] == "short answer"
+        emoji = client.post(
+            "/api/v1/tasks/emoji/completions",
+            json={"model": smart_router.id, "prompt": sentence, "chat_id": first.chat_id},
+        )
+        assert emoji.status_code == 200, emoji.text
+        merged = streamed_text(
+            client,
+            "/api/v1/tasks/moa/completions",
+            {"model": smart_router.id, "prompt": question, "responses": responses, "stream": True},
+        )
+
+    chat_models = [
+        body["model"]
+        for body in upstream.chat_requests()
+        if body.get("stream") and reply.answering(question)(body) and MERGE not in json.dumps(body)
+    ]
+    assert chat_models == [targets["code"].id], f"the question as a message went to {chat_models}"
+    assert (task_models(upstream, EMOJI), task_models(upstream, MERGE)) == (
+        [targets["code"].id],
+        [targets["code"].id],
+    ), "the call emoji and the merge did not follow the route of the chat they belong to"
+    assert (emoji.json()["choices"][0]["message"]["content"], merged) == ("🤓", "code merge")
