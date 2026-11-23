@@ -177,9 +177,12 @@ def test_closing_a_thread_gives_the_focus_back_to_the_button_that_opened_it(peop
     page.keyboard.press("Enter")
     # the thread moves the focus into its input once that is up, which could take it off Close
     expect(_thread_input(page)).to_be_focused()
+    page.wait_for_timeout(500)  # the input focuses itself again a beat after it opens
+    expect(_thread_input(page)).to_be_focused()
 
     close = page.get_by_role("button", name="Close", exact=True)
     close.focus()
+    expect(close).to_be_focused()
     page.keyboard.press("Enter")
 
     expect(_thread_input(page)).to_have_count(0)
