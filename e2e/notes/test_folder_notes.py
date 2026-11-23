@@ -14,8 +14,7 @@ and the keyboard reaches a note with Tab and opens it with Enter. Without the No
 switch offers no Notes. The values behind these steps are pinned by the integration twin,
 integration/notes/test_folder_notes.py.
 
-The note page test stays red on dev d599f7a08: the note's page does not name its folder (issue
-"a note filed in a folder does not show its folder on its own page").
+The note page test stays red on dev d599f7a08: the note's page does not name its folder (open-webui/open-webui#34894).
 
 Discriminates: journey, no fix. On dev d599f7a08 all but the note page test pass, five runs in a
 row. In backend copies of it: the folder's note list always empty turns the create, menu, move,
@@ -267,7 +266,7 @@ def test_the_note_page_names_its_folder_and_leads_back_to_it(page_for, make_user
         f"Moorings {tag}"
     )
 
-    # issue: a note filed in a folder does not show its folder on its own page (dev d599f7a08)
+    # open-webui/open-webui#34894: the note page does not name its folder (dev d599f7a08)
     folder_label = note_panel.get_by_text(folder_name, exact=True)
     expect(folder_label, "the note's page does not say which folder it is in").to_be_visible()
     folder_label.click()
