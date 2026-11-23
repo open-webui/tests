@@ -7,16 +7,24 @@ is open finds it in the sidebar without a reload, with the unread count of what 
 Someone removed while the channel is open stops getting its messages, while a message in another
 channel they share still arrives.
 
+The app asks for the channel list only where channels are offered: with Channels off for the
+instance, or for someone without the Channels permission, a page load asks for none, while
+someone allowed still gets the list again once the live connection is up. Every page load asked
+for it as the connection came up, which the server refused, until open-webui/open-webui#34820.
+
 Discriminates: passes on dev ebc6add67; in a frontend copy, enabling the input whatever the write
 access turns the read-only test red; in a backend copy, giving new members no `channel:created`
 event and no room turns the added member test red and keeping a removed member in the channel's room
-turns the removed member test red.
+turns the removed member test red. The channel list test fails on dev c1f3b6fd1 (one refused
+request per load) and passes with the fix for #34820.
 """
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Request, expect
 
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.channel_messages import message_action, message_tooltips
@@ -27,6 +35,9 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 READ_ONLY = "You do not have permission to send messages in this channel."
 READ_ONLY_THREAD = "You do not have permission to send messages in this thread."
+ADMIN_CONFIG = "/api/v1/auths/admin/config"
+DEFAULT_PERMISSIONS = "/api/v1/users/default/permissions"
+CHANNEL_LIST = "/api/v1/channels/"
 
 
 @pytest.fixture
@@ -171,3 +182,59 @@ def test_a_member_removed_while_watching_stops_getting_its_messages(
     # messages reach a tab in order, so the later one arriving means the earlier was not sent
     expect(other_entry.get_by_title("Unread")).to_have_text("1")
     expect(page.get_by_text("the plans for after you left")).to_have_count(0)
+
+
+def _channel_lists_on_reload(page: Page) -> list[bool]:
+    """Reload the page; for each channel list it asks for, whether its live connection was up."""
+    connected: list[str] = []
+    asked: list[bool] = []
+
+    def on_frame(payload: str | bytes) -> None:
+        # socket.io's "40" packet is the server accepting the connection
+        if isinstance(payload, str) and payload.startswith("40"):
+            connected.append(payload)
+
+    def on_request(request: Request) -> None:
+        if urlparse(request.url).path == CHANNEL_LIST:
+            asked.append(bool(connected))
+
+    page.on("websocket", lambda socket: socket.on("framereceived", on_frame))
+    page.on("request", on_request)
+    page.reload()
+    expect(chat_input(page)).to_be_visible()
+    for _ in range(100):
+        if connected:
+            break
+        page.wait_for_timeout(100)
+    assert connected, "the page never connected its socket"
+    # bounded: the list follows the connection at once where it is asked for at all
+    page.wait_for_timeout(2000)
+    return asked
+
+
+def _set_channels(admin, enabled: bool, permitted: bool) -> None:
+    with admin.client() as client:
+        current = client.get(ADMIN_CONFIG).json()
+        saved = client.post(ADMIN_CONFIG, json={**current, "ENABLE_CHANNELS": enabled})
+        assert saved.status_code == 200, saved.text
+        permissions = client.get(DEFAULT_PERMISSIONS).json()
+        permissions["features"]["channels"] = permitted
+        saved = client.post(DEFAULT_PERMISSIONS, json=permissions)
+    assert saved.status_code == 200, saved.text
+
+
+@pytest.mark.regression
+def test_the_channel_list_is_asked_for_only_where_channels_are_offered(
+    admin, make_user, preserve, page_for
+):
+    # open-webui/open-webui#34820
+    preserve("admin_config", "permissions")
+    _set_channels(admin, enabled=False, permitted=True)
+    assert _channel_lists_on_reload(page_for(make_user())) == [], "channels off for the instance"
+
+    _set_channels(admin, enabled=True, permitted=False)
+    assert _channel_lists_on_reload(page_for(make_user())) == [], "no Channels permission"
+
+    _set_channels(admin, enabled=True, permitted=True)
+    asked = _channel_lists_on_reload(page_for(make_user()))
+    assert True in asked, f"no channel list once the connection was up: {asked}"
