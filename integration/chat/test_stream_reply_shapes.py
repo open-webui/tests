@@ -28,6 +28,10 @@ The final answer request sent `"tools": []`, which vLLM 0.33 refuses with a 400,
 ended in that error instead of the answer (open-webui/open-webui#34169). It now keeps the
 request's tools and turns calls off with `tool_choice` "none". Discriminates: the failed-twice
 test fails on dev 782f4b705 (the final request carries the empty list) and passes with the fix.
+
+Some models kept calling tools when that request carried the instruction in the system prompt at
+the top and came back empty, so since 947510656 (open-webui/open-webui#34759) it is the last
+message, after the tool results, where the model reads it right before answering.
 """
 
 from __future__ import annotations
@@ -185,7 +189,6 @@ class Tools:
         raise RuntimeError("the berth gate is jammed")
 '''
 
-FINAL_ANSWER_PROMPT = "Tool use has stopped for this response."
 REPEATED_FAILURE = "Error: the same tool call failed twice. Finish using the available results."
 INCOMPLETE_CALL = "Error: the model response was incomplete; its tool calls were not executed."
 
@@ -210,11 +213,11 @@ def _tool_loop(make_user, upstream, *replies, tool_ids=()) -> tuple[dict, list[s
 
 
 def _asks_for_a_final_answer(request: dict) -> bool:
-    instructions = [
-        str(entry["content"]) for entry in request["messages"] if entry["role"] == "system"
-    ]
-    return request.get("tool_choice") == "none" and any(
-        FINAL_ANSWER_PROMPT in text for text in instructions
+    last = request["messages"][-1]
+    return (
+        request.get("tool_choice") == "none"
+        and last["role"] == "user"
+        and str(last["content"]).startswith(reply.FINAL_ANSWER_PROMPT)
     )
 
 

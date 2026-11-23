@@ -29,6 +29,8 @@ MOCK_MODEL_ID = "mock-model"
 REPLY_START_DELAY = 0.09
 # a held reply never released still ends, so it cannot keep a request open after its test
 HOLD_LIMIT = 60.0
+# how Open WebUI's request for a final answer without tools begins
+FINAL_ANSWER_PROMPT = "Tool use has stopped for this response."
 
 
 @dataclass
@@ -68,10 +70,19 @@ def error(status: int = 500, message: str = "upstream failed", **options) -> Rep
 
 
 def answering(prompt: str) -> Callable[[dict], bool]:
-    """A `match` for the requests whose latest user message contains `prompt`."""
+    """A `match` for the requests whose latest user message contains `prompt`.
+
+    The request for a final answer after tool use stopped still answers the user's message:
+    since 947510656 (#34759) Open WebUI adds its instruction there as a user message of its own.
+    """
 
     def matches(body: dict) -> bool:
-        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
+        users = [
+            entry
+            for entry in body.get("messages", [])
+            if entry.get("role") == "user"
+            and not str(entry.get("content")).startswith(FINAL_ANSWER_PROMPT)
+        ]
         return bool(users) and prompt in str(users[-1].get("content"))
 
     return matches
