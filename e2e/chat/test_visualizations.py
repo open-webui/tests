@@ -15,6 +15,11 @@ Every test runs in the main chat and in a side chat. The question test is red in
 dev 485103cde and 91f16464b: the click shows no confirmation and sends nothing, since the drawing
 only asks the chat that has the page's address (open-webui/open-webui#34382). It passes on the
 build of the fix 99439d150 (branch fix/visualization-question-in-side-chat).
+
+A chart drawn with Chart.js but without `libraries=["chartjs"]` is refused, so the model retries
+with the library and the reply ends with a working chart. Red on the dev 306f9be78 backend, where
+the first chart is accepted and shows "Chart is not defined" (open-webui/open-webui#34909); passes
+on fix/visualizer-chart-needs-library (3619665e0) with the same frontend build.
 """
 
 from __future__ import annotations
@@ -128,3 +133,45 @@ def test_a_question_from_a_drawing_is_sent_only_once_confirmed(
 
     expect_reply(chat, "Just after noon.")
     expect(conversation(chat).locator(".chat-user").last).to_contain_text(question)
+
+
+TIDE_BARS = (
+    '<div class="chart-container"><canvas id="tides"></canvas></div>'
+    "<script>new Chart(document.getElementById('tides'), {type: 'bar', data: {labels: ['Mon',"
+    " 'Tue'], datasets: [{label: 'High water (m)', data: [4.1, 4.6]}]}});</script>"
+)
+
+
+@pytest.mark.regression
+def test_a_chart_drawn_without_requesting_chart_js_ends_as_a_working_chart(
+    chat_for, make_user, upstream, model_id
+):
+    """The model forgets libraries=["chartjs"] and retries once told (open-webui/open-webui#34909).
+
+    Red on dev 306f9be78: the first call is accepted and its frame shows the error instead.
+    """
+    chat = chat_for(make_user())
+    start_from_link(chat, f"/?model={model_id}")
+    expect(chat.button(f"Selected model: {model_id}")).to_be_visible()
+    question = f"chart the tide ({uuid.uuid4().hex[:8]})"
+    answering = reply.answering(question)
+    forgot = {"title": "Tide bars", "html": TIDE_BARS}
+    upstream.queue(
+        reply.tool_call(TOOL, forgot, call_id="call_1", match=answering),
+        reply.tool_call(
+            TOOL, {**forgot, "libraries": ["chartjs"]}, call_id="call_2", match=answering
+        ),
+        reply.text("There it is.", match=answering),
+    )
+    send(chat, question)
+    expect_reply(chat, "There it is.")
+
+    answer = last_reply(chat)
+    chart = answer.get_by_role("region", name="Tide bars").last
+    canvas = chart.frame_locator("iframe[title='Tide bars']").locator("#tides")
+    expect(canvas, "the retried chart is not shown").to_be_visible()
+    drawn = canvas.evaluate("canvas => Boolean(window.Chart && window.Chart.getChart(canvas))")
+    assert drawn, "Chart.js never drew the retried chart"
+    expect(answer, "the reply shows a chart that failed").not_to_contain_text(
+        "Chart is not defined"
+    )
