@@ -25,7 +25,7 @@ apt_mirror() {
   local failed=${1:-} mirror
   if [ ! -f "$RUNNER_TEMP/ubuntu.sources" ]; then
     sudo cp "$apt_sources" "$RUNNER_TEMP/ubuntu.sources"
-    printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99-timeouts > /dev/null
+    printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nDPkg::Lock::Timeout "60";\n' | sudo tee /etc/apt/apt.conf.d/99-timeouts > /dev/null
   fi
   for mirror in $(awk '{print $1}' /etc/apt/apt-mirrors.txt) http://archive.ubuntu.com/ubuntu/; do
     if [ -n "$failed" ]; then
@@ -54,15 +54,13 @@ apt_install() {
 }
 
 # install_browser: Playwright's Chromium with its system libraries, which it installs from the mirror
-# apt_mirror picked. Its own apt-get cannot change mirrors, so the last attempt installs the libraries
+# apt_mirror picked. Its own apt-get cannot change mirrors, so the retry installs the libraries
 # through apt_install and then the browser alone.
 install_browser() {
-  local attempt
-  for attempt in 1 2; do
-    timeout --kill-after=30s 5m python -m playwright install --with-deps chromium && return 0
-    echo "::warning::Attempt $attempt of installing the browser with its libraries failed"
-    sleep 15
-  done
+  timeout --kill-after=30s 5m python -m playwright install --with-deps chromium && return 0
+  echo "::warning::Installing the browser with its libraries failed"
+  # Playwright's apt-get runs under sudo, which outlives the timeout and holds the dpkg lock.
+  sudo pkill -x apt-get || true
   apt_install --no-install-recommends $(python -m playwright install-deps --dry-run chromium | awk '/^  /{print $1}') &&
     retry 5 python -m playwright install chromium
 }
