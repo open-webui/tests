@@ -66,6 +66,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -151,6 +152,7 @@ jobs:
   # the timings in durations/; a release is gated on all of them.
   integration:
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -294,6 +296,7 @@ jobs:
   # gating a release until that mode has settled.
   integration-postgres-redis:
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
+    timeout-minutes: 45
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -443,6 +446,7 @@ jobs:
     needs: [integration, integration-postgres-redis, e2e]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
@@ -476,6 +480,7 @@ jobs:
   # Built once for the browser shards, which restore it from the cache.
   e2e-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     continue-on-error: true
     outputs:
       cache-key: ${{ steps.key.outputs.cache-key }}
@@ -530,6 +535,7 @@ jobs:
   e2e:
     needs: e2e-build
     runs-on: ubuntu-24.04 # Playwright 1.60 has no browser build for Ubuntu 26.04
+    timeout-minutes: 45
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -674,6 +680,7 @@ jobs:
   # The vitest suite drives the frontend source, so it needs the checkout's node_modules.
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out the test suite
         uses: actions/checkout@v5
