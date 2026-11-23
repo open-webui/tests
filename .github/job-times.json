@@ -2,12 +2,12 @@
     "regression": {
         "durations": 25,
         "e2e": 1667,
-        "e2e-build": 257,
+        "e2e-build": 282,
         "frontend": 80,
         "integration": 1523,
         "integration-postgres-redis": 1421,
         "run": 333,
-        "timeouts": 5
+        "timeouts": 7
     },
     "terminals": {
         "e2e": 1912,
