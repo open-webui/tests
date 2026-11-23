@@ -9,8 +9,9 @@ another terminal unpicks the first.
 In a saved chat the pick is stored on the chat and is back when the chat is opened again. Since
 d42988f0c a pick shows at once and is saved in the background, so one the server refuses stays
 picked on the page, says why and is not stored: the chat opens again without it (before, a
-refused pick was not made). A picked terminal that is deleted is unpicked at once for a
-person it was shared with, and reads Unavailable machine on an admin's page after a reload.
+refused pick was not made). A picked terminal that is deleted stays picked and reads Unavailable
+machine, at once for a person it was shared with and on an admin's page after a reload, until
+another is picked (#34651; before, it was unpicked).
 When the input is too narrow for the menu's button to show the terminal's name, the button keeps
 only its icon and the chat input's More menu offers the menu as well (e4b969f60; before, the
 button left the input).
@@ -29,14 +30,14 @@ Discriminates: passes on the dev c15f28649 build with Terminals 0.4.1 and Open T
 builds of a frontend copy with one change each: the Settings cog shown to everyone (the cog test);
 no terminal carrying the check, the picked terminal kept when it is picked again (the picked test);
 the pick not stored on a saved chat, a saved chat opened without its terminal, and a refused pick
-that says nothing (the saved chat test); a lost terminal reading Machine, and one that stays picked
-for everyone (the deleted test); the controls never moved into the More menu (the narrow test). The
+that says nothing (the saved chat test); a lost terminal reading Machine (the deleted test); the controls never moved into the More menu (the narrow test). The
 reply-written test is red on dev 485103cde and on 0.13.3: both buttons stay usable while the reply
 is written (#34383); the lock it expects is in the 0.13.3 release notes, and only the MoA merge
 sets the flag the input reads. It passes with the fix on branch
-fix/terminal-folder-unlocked-during-reply (bde3943d3). The deleted test is red since 3bfc168d6
-(0.13.4): a load drops a stored pick the machine list lacks, so the admin's page reads Machine
-after the reload, the cause of open-webui/open-webui#34643 (fix PR #34651). The cog's target has no mutation of its
+fix/terminal-folder-unlocked-during-reply (bde3943d3). The deleted test is red on dev: a pick the
+machine list lacks is dropped, live for the person it was shared with and on load (since
+3bfc168d6, 0.13.4) for the admin, the cause of open-webui/open-webui#34643. It passes with the
+fix PR #34651 (branch fix/terminal-deselect-outage). The cog's target has no mutation of its
 own. A person's own terminals, listed under Direct, were removed from Open WebUI in 44d55bd0f
 and 4720ff19e and their test with them.
 """
@@ -357,17 +358,17 @@ def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_anot
         gone = client.delete(f"{TEMPLATES}/{ids[deleted]}")
     assert gone.status_code in (200, 204), gone.text
 
-    # for the person it was shared with the pick is dropped with the terminal
-    expect(_terminal_button(person_page, "Machine")).to_be_visible()
-    expect(_terminal_button(person_page, deleted)).to_have_count(0)
     # only the people the terminal is shared with are told at once; an admin's page keeps
-    # listing it until it loads again
+    # listing it until it loads again. Either way the pick stays until another is picked.
     page.reload()
-    expect(_terminal_button(page, "Unavailable machine")).to_be_visible()
-    open_terminal_menu(page, picked="Unavailable machine")
-    assert _checked(page) == {left: "false"}, f"the menu lists {_checked(page)}"
-    _pick(page, left, shown=left)
-    expect(_terminal_button(page, "Unavailable machine")).to_have_count(0)
+    for picking in (person_page, page):
+        expect(_terminal_button(picking, "Unavailable machine")).to_be_visible()
+        expect(_terminal_button(picking, deleted)).to_have_count(0)
+        open_terminal_menu(picking, picked="Unavailable machine")
+        listed = _checked(picking)
+        assert listed == {"Unavailable machine": "true", left: "false"}, f"the menu lists {listed}"
+        _pick(picking, left, shown=left)
+        expect(_terminal_button(picking, "Unavailable machine")).to_have_count(0)
 
 
 def test_a_chat_input_too_narrow_for_the_terminal_offers_it_in_its_more_menu(
