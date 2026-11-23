@@ -159,6 +159,12 @@ def _panel_ids(page: Page) -> set[str]:
     return set(_panels(page).evaluate_all("panels => panels.map((panel) => panel.id)"))
 
 
+def _panel_ids_once_ready(page: Page) -> set[str]:
+    # the page's own chat mounts its panel a moment after the load
+    expect(main_chat(page).input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    return _panel_ids(page)
+
+
 def _new_panel(page: Page, before: set[str], place: str) -> ChatSurface:
     """The tab panel that was not on the page `before`, once it shows a message box."""
     expect(_panels(page)).to_have_count(len(before) + 1, timeout=REPLY_TIMEOUT_MS)
@@ -168,15 +174,14 @@ def _new_panel(page: Page, before: set[str], place: str) -> ChatSurface:
 
 def open_new_chat_tab(page: Page, place: str = SIDE_CHAT) -> ChatSurface:
     """Open an empty side chat with the New Chat tab shortcut."""
-    expect(main_chat(page).input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-    before = _panel_ids(page)
+    before = _panel_ids_once_ready(page)
     page.keyboard.press("Control+Alt+O")
     return _new_panel(page, before, place)
 
 
 def open_side_chat(page: Page, command: str = "side", place: str = SIDE_CHAT) -> ChatSurface:
     """Open an empty side chat by sending `/side` (or `/btw`) alone in the main chat."""
-    before = _panel_ids(page)
+    before = _panel_ids_once_ready(page)
     main_chat(page).send(f"/{command}")
     return _new_panel(page, before, place)
 
@@ -186,7 +191,7 @@ def ask_aside(
 ) -> ChatSurface:
     """Send `/side <question>` in the main chat; the side chat it opens takes the question as its
     title once it is saved."""
-    before = _panel_ids(page)
+    before = _panel_ids_once_ready(page)
     main_chat(page).send(f"/{command} {question}")
     return _new_panel(page, before, place)
 
@@ -194,7 +199,7 @@ def ask_aside(
 def start_on_folder_page(page: Page, question: str, place: str = "folder chat") -> ChatSurface:
     """Send `question` from a folder page's box; the chat it starts opens in a tab beside the
     folder (since 06b47d455)."""
-    before = _panel_ids(page)
+    before = _panel_ids_once_ready(page)
     main_chat(page).send(question)
     return _new_panel(page, before, place)
 
