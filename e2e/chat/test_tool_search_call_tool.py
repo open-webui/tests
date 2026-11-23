@@ -105,6 +105,7 @@ from utils.chat_ui import (
     turn_on_integration,
     turn_temporary,
 )
+from utils.citations_files import expect_marked, file_panel
 from utils.model_selector import select_model
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -386,10 +387,11 @@ def expect_markers_open_their_sources(
         name = source_ids[str(position)]
         expect(markers.nth(position - 1)).to_have_accessible_name(f"View source: {name}")
         markers.nth(position - 1).click()
-        citation = chat.page.get_by_role("dialog")
-        expect(citation).to_contain_text(texts[name])
-        citation.get_by_role("button", name="Close citation modal").click()
-        expect(citation).to_be_hidden()
+        # since 072d0b51d a cited file opens beside the chat with the cited text marked; cited
+        # in a side chat it opens over it, in its group
+        expect_marked(file_panel(chat.page, name).get_by_text(texts[name], exact=True))
+        if chat.is_side:
+            chat.show()
 
 
 def test_knowledge_sources_from_a_dispatched_search_are_listed_and_cited(

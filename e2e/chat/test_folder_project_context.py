@@ -36,6 +36,7 @@ from harness.chat_history import seed_chat
 from harness.knowledge_bases import add_text_file, knowledge_base
 from utils.chat_surface import start_on_folder_page
 from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.citations_files import expect_marked, file_panel
 from utils.sidebar_folders import drag, folder_row
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -292,19 +293,17 @@ def search_results(upstream, prompt: str) -> str:
     )
 
 
-def open_citation(page: Page, name: str) -> Locator:
+def expect_cited_file(page: Page, name: str, text: str) -> None:
+    """Open the listed source `name`: since 072d0b51d the file opens with the cited `text` marked,
+    over the folder page's chat tab in its group; then back to the chat."""
+    chat_panel = page.get_by_role("tabpanel").filter(has=page.get_by_label("Chat Conversation"))
+    chat_tab = page.locator(f"[id='{chat_panel.get_attribute('aria-labelledby')}']")
     # the sources list reads each source out with its number
     numbered = re.compile(rf"^View source: \d+ {re.escape(name)}$")
     conversation(page).get_by_role("button", name=numbered).click()
-    citation = page.get_by_role("dialog")
-    expect(citation).to_be_visible()
-    return citation
-
-
-def close_citation(citation: Locator) -> None:
-    # Escape would first only hide the tooltip of the focused Open file link
-    citation.get_by_role("button", name="Close citation modal").click()
-    expect(citation).to_be_hidden()
+    expect_marked(file_panel(page, name).get_by_text(text, exact=True))
+    chat_tab.click()
+    expect(conversation(page)).to_be_visible()
 
 
 def test_the_folders_knowledge_and_file_are_cited_in_its_chats_only(
@@ -316,12 +315,8 @@ def test_the_folders_knowledge_and_file_are_cited_in_its_chats_only(
     search_and_answer(page, upstream, "where may I moor?", "Not at berth 4.")
     sources = conversation(page).get_by_role("button", name=re.compile(r"^Toggle \d+ sources?$"))
     sources.click()
-    citation = open_citation(page, moorings_name)
-    expect(citation).to_contain_text(MOORINGS)
-    close_citation(citation)
-    citation = open_citation(page, tides_name)
-    expect(citation).to_contain_text(TIDES)
-    close_citation(citation)
+    expect_cited_file(page, moorings_name, MOORINGS)
+    expect_cited_file(page, tides_name, TIDES)
 
     page.goto("/")
     search_and_answer(page, upstream, "where may I moor, outside?", "No idea.")

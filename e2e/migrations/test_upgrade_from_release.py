@@ -41,6 +41,7 @@ from harness.instance import resolve_backend, resolve_frontend_build
 from harness.upgraded_release import Upgraded, data_set_params, upgraded_release
 from utils.cached_chat import attach_from_menu, calling, turn_on_tool
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
+from utils.citations_files import expect_marked, file_panel
 from utils.notes_page import note_rows
 from utils.sidebar_chats import chat_menu, chat_row
 from utils.sidebar_folders import folder_row
@@ -183,8 +184,9 @@ def test_the_cited_reply_opens_the_passage_it_was_answered_from(open_as, upgrade
     marker = f"View source: {knowledge['filename']}"
     last_reply(page).get_by_role("button", name=marker).click()
 
-    citation = page.get_by_role("dialog")
-    expect(citation).to_contain_text(knowledge["text"])
+    # since 072d0b51d the cited file opens beside the chat with the cited text marked
+    cited = file_panel(page, knowledge["filename"]).get_by_text(knowledge["text"], exact=True)
+    expect_marked(cited)
 
 
 def test_the_pinned_chat_sits_in_its_nested_folder_once_unpinned(open_as, upgraded):
