@@ -10,6 +10,11 @@ errors as notifications.
 
 Discriminates: passes on dev ebc6add67; the error test fails on a build whose reply hides its
 error and the regenerate test on a build whose Regenerate ignores a failed reply.
+
+open-webui/open-webui#34814: Continue Response on the dropped reply streamed a whole answer but kept
+the drop error under it. The continue test fails on dev c1f3b6fd1 (the error box stays under the
+continued answer) and passes with the fix; integration/chat/test_stream_error_close.py pins the
+stored error.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from playwright.sync_api import expect
 from harness import upstream as reply
 from harness.inflight import SLOW_PIECES
 from utils.chat_ui import (
+    conversation,
     expect_reply,
     last_reply,
     regenerate_buttons,
@@ -70,3 +76,11 @@ def test_regenerate_replaces_the_dropped_reply_with_a_whole_one(dropped_reply):
     expect_reply(dropped_reply, "The lighthouse keeper slept well.")
     expect(last_reply(dropped_reply)).not_to_contain_text(DROP_ERROR)
     expect(replies(dropped_reply)).to_have_count(1)
+
+
+def test_continue_clears_the_error_of_the_dropped_reply(dropped_reply):
+    last_reply(dropped_reply).hover()
+    conversation(dropped_reply).get_by_role("button", name="Continue Response").click()
+
+    expect(last_reply(dropped_reply)).to_contain_text("The lighthouse keeper slept well.")
+    expect(last_reply(dropped_reply)).not_to_contain_text(DROP_ERROR)
