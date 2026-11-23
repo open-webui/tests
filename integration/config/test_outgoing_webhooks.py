@@ -13,6 +13,11 @@ subscribed to `model.available` and `model.unavailable` receives each once when 
 in or drops out of the fetched model list, naming the model; a fetch that finds the same list
 announces nothing.
 
+The page sends the user's timezone on every load. One subscribed to `user.updated` receives the
+event once when the timezone changes and nothing when a load sends the timezone already stored;
+on dev every load announces a user update, so that test stays red until the fix in the
+fix/timezone-update-unchanged branch merges (issue to be filed).
+
 A target subscribed to `chat.finished` is called when a reply finishes: an `away` one only once
 the user has not been active for three minutes (every request with the user's token counts as
 activity, so the test sets the stored time back while a slow reply streams), an `always` one at
@@ -38,8 +43,10 @@ is called) and ignoring a target's events turns the unsubscribed test red (the o
 called); publishing `chat.failed` where a chat ends in an error turns the failed-reply test green.
 On dev b704d0613, `send_notification` ignoring the mute turns the muted channel test red (the
 ordinary message is delivered) and ignoring the mention turns it red as well (nothing is
-delivered). The group and direct message test fails on dev ad5c2f87e and passes in a backend copy
-whose `send_notification` also takes the members of those channels as recipients.
+delivered). The unchanged timezone test fails on dev 8e548c0f7 (four user updates for two
+changes) and passes on the fix/timezone-update-unchanged branch. The group and direct message
+test fails on dev ad5c2f87e and passes in a backend copy whose `send_notification` also takes
+the members of those channels as recipients.
 """
 
 from __future__ import annotations
@@ -52,6 +59,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of, create_user
 from harness.backends import write_rows
+from harness.calendar_api import set_timezone
 from harness.channel_quotes import enable_channels, post_message
 from harness.chat import send_message, wait_for_reply
 from harness.inflight import start_slow_reply
@@ -230,6 +238,45 @@ def test_a_new_account_is_delivered_to_an_event_webhook(fetching_instance, liste
     assert event["actor"]["id"] == admin.id and event["actor"]["role"] == "admin"
     assert event["source"] == "admin"
     assert event["data"] == {"role": "user"}
+
+
+def _user_updates(listener, account_id: str) -> list[dict]:
+    events = [request.json() for request in listener.requests_to("/events")]
+    return [event for event in events if event["subject"].get("id") == account_id]
+
+
+def test_a_page_load_in_the_same_timezone_is_not_delivered_as_a_user_update(
+    fetching_instance, listener
+):
+    listener.route("POST", "/events", json_answer({}))
+    account = create_user(fetching_instance)
+    with admin_of(fetching_instance).client() as client:
+        created = client.post(
+            EVENT_WEBHOOKS,
+            json={"url": f"{listener.base_url}/events", "events": ["user.updated"]},
+        )
+        assert created.status_code == 200, created.text
+        try:
+            with account.client() as account_client:
+                # what three page loads in Berlin and then one in Tokyo send
+                for timezone in ("Europe/Berlin", "Europe/Berlin", "Europe/Berlin", "Asia/Tokyo"):
+                    set_timezone(account_client, timezone)
+            assert _wait_for(lambda: len(_user_updates(listener, account.id)) >= 2), (
+                f"the two timezone changes were not both delivered: "
+                f"{_user_updates(listener, account.id)}"
+            )
+            # a bounded wait for any update the unchanged loads would add
+            time.sleep(1)
+        finally:
+            client.delete(f"{EVENT_WEBHOOKS}/{created.json()['id']}")
+
+    updates = _user_updates(listener, account.id)
+    assert len(updates) == 2, (
+        f"expected one user update per timezone change (2), got {len(updates)} for 4 page loads"
+    )
+    for event in updates:
+        assert event["event"] == "user.updated", event
+        assert event["data"] == {"updated_fields": ["timezone"]}, event
 
 
 def _model_events(listener, model_id: str) -> list[dict]:
