@@ -88,6 +88,8 @@ def expect_in_view(line: Locator) -> None:
 
 def hover_mark_over(page: Page, line: Locator) -> None:
     """Point at the mark over `line`, as a person rests the pointer on the highlighted text."""
+    # a person scrolls to the text first; a line at the pane's edge can sit past the window
+    line.scroll_into_view_if_needed()
     box = line.bounding_box()
     assert box, f"{line} has no box to point at"
     page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)

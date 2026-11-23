@@ -126,10 +126,12 @@ def test_each_inline_marker_opens_the_source_it_names(chat_for, make_user, upstr
     for position in (1, 2):
         name = source_ids[str(position)]
         marker = markers.nth(position - 1)
+        # a file cited in a side chat opens in the side chat's place, in front of it
+        chat.show()
         expect(marker).to_have_accessible_name(f"View source: {name}")
         marker.click()
         expect_marked(file_panel(chat.page, name).get_by_text(texts[name], exact=True))
-    for name in texts:
+        # only the file opened last is in front, so each is read as it opens
         expect(
             file_panel(chat.page, name).get_by_text(PERCENTAGE),
             f"the opened {name} shows no relevance for its passage",
