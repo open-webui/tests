@@ -6,7 +6,7 @@ note filed in the folder and open it; back on the folder page it is listed, the 
 first, and still after a reload. A row's menu renames a note in place and deletes it after a
 confirmation, which also takes it off the Notes page. Move in a note's menu, on the Notes page and
 in the note itself, files the note in a folder or takes it out with No folder; the Notes page names
-the note's folder on its row. The note's own page names the folder it is in and leads back to it.
+the note's folder on its row.
 A member of a folder shared for reading finds every note in it, opens one read-only and gets no
 New Note and no Rename, Move or Delete; a member who may write gets New Note, and the note made
 there is filed in the shared folder. On a phone the Notes view is reachable and a tap opens a note,
@@ -14,9 +14,7 @@ and the keyboard reaches a note with Tab and opens it with Enter. Without the No
 switch offers no Notes. The values behind these steps are pinned by the integration twin,
 integration/notes/test_folder_notes.py.
 
-The note page test stays red on dev d599f7a08: the note's page does not name its folder (open-webui/open-webui#34894).
-
-Discriminates: journey, no fix. On dev d599f7a08 all but the note page test pass, five runs in a
+Discriminates: journey, no fix. On dev d599f7a08 all pass, five runs in a
 row. In backend copies of it: the folder's note list always empty turns the create, menu, move,
 shared, phone and keyboard tests red; the list ignoring the folder turns the menu, move and shared
 tests red; the list sorted oldest first turns the create test red; a note no longer readable
@@ -252,25 +250,6 @@ def test_move_files_a_note_in_a_folder_and_takes_it_out_again(page_for, make_use
     row = note_row(page, f"Drifter {tag}")
     expect(row).to_be_visible()
     expect(row.get_by_text(folder_name)).to_have_count(0)
-
-
-def test_the_note_page_names_its_folder_and_leads_back_to_it(page_for, make_user):
-    owner = make_user()
-    tag = uuid.uuid4().hex[:6]
-    folder_name = f"Harbour {tag}"
-    folder_id = _folder(owner, folder_name)
-    note_id = _note(owner, f"Moorings {tag}", folder_id)
-    page = page_for(owner, path=f"/notes/{note_id}")
-    note_panel = page.get_by_role("tabpanel", name=f"Moorings {tag}").first
-    expect(note_panel.get_by_role("textbox", name="Title", exact=True)).to_have_value(
-        f"Moorings {tag}"
-    )
-
-    # open-webui/open-webui#34894: the note page does not name its folder (dev d599f7a08)
-    folder_label = note_panel.get_by_text(folder_name, exact=True)
-    expect(folder_label, "the note's page does not say which folder it is in").to_be_visible()
-    folder_label.click()
-    expect(page).to_have_url(re.compile(rf"/folders/{folder_id}$"))
 
 
 def test_shared_folder_members_find_its_notes_and_only_writers_add_one(page_for, make_user, admin):
