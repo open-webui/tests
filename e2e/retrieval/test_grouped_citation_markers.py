@@ -1,15 +1,15 @@
-"""Journey: a reply citing several sources at one spot shows one marker that lists each of them.
+"""Journey: a reply citing several sources at one spot shows one marker that leads to each of them.
 
 A reply that cites two sources together, written `[1, 2]` or as adjacent `[1][2]`, shows one
-marker named after the first source with "+1" for the other. Opening it lists a button per
-source, and each opens the source dialog on that source's own text, while a single `[2]` beside
-it opens the second source directly. The chat is stored with its sources, as a reply grounded
-on two files leaves it, so the test reads what a reopened chat shows. Single markers, the source
-list, a reload and shared links are covered in test_reply_citations.py.
+marker named after the first source with "+1" for the other. Opening it shows a card that pages
+through the sources (1/2, Next, 2/2; since 1612ec981, a plain list before), and each source
+opens the source dialog on its own text, while a single `[2]` beside it opens the second source
+directly. The chat is stored with its sources, as a reply grounded on two files leaves it, so
+the test reads what a reopened chat shows. Single markers, the source list, a reload and shared
+links are covered in test_reply_citations.py.
 
-Discriminates: passes on the dev ebc6add67 build. In its mutation build (the `rendering-front`
-copy: a group marker opening the source after the one it lists) both grouped marker tests go
-red; the single marker check in the first test passes there.
+Discriminates: passes on the dev 3b6e0855d build. In its mutation build (every source in a
+group marker's card opening the first source) all four cases go red on the second source.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a stored chat
 dragged into a tab beside a new chat.
@@ -68,7 +68,7 @@ def expect_source_dialog(chat: ChatSurface, name: str) -> None:
 
 
 @pytest.mark.parametrize("written", ["[1, 2]", "[1][2]"])
-def test_a_group_marker_lists_each_source_and_opens_each_on_its_own_text(
+def test_a_group_marker_shows_each_source_and_opens_each_on_its_own_text(
     chat_for, make_user, written
 ):
     chat = open_cited_chat(
@@ -81,15 +81,19 @@ def test_a_group_marker_lists_each_source_and_opens_each_on_its_own_text(
     expect(group).to_contain_text("+1")
     expect(reply_shown).not_to_contain_text(written)
 
-    # the list has no role, and its entry shares a name with the single [2]
-    listed = chat.page.locator("[data-link-preview-content]")
-    for name in SOURCES:
+    # the card has no role, and its entry shares a name with the single [2]
+    card = chat.page.locator("[data-link-preview-content]")
+    for position, name in enumerate(SOURCES, start=1):
         group.click()
-        listed.get_by_role("button", name=f"View source: {name}").click()
+        expect(card).to_contain_text(f"1/{len(SOURCES)}")
+        for _ in range(position - 1):
+            card.get_by_role("button", name="Next").click()
+        expect(card).to_contain_text(f"{position}/{len(SOURCES)}")
+        card.get_by_role("button", name=f"View source: {name}").click()
         expect_source_dialog(chat, name)
-        # the list stays open behind the dialog, and a click on the marker would toggle it shut
+        # a click on the marker while its card is open would toggle it shut
         chat.page.keyboard.press("Escape")
-        expect(listed).to_have_count(0)
+        expect(card).to_have_count(0)
 
     single = reply_shown.get_by_role("button", name="View source: otters.txt")
     expect(single).to_have_count(1)
