@@ -27,10 +27,19 @@ and the upload test fails. With the terminal list no longer telling the browser 
 scope, in a backend copy, both tests fail: the file is uploaded at once, before the chat exists,
 is refused and drops out of the message box, and the terminal stays picked in a temporary chat.
 On 0.13.x the temporary chat test failed in a frontend copy with 0df605850 undone.
+
+With a terminal scoped to the chat and one of its agents as the model, the agent answers the
+first message of a new chat: one started from a folder with that terminal and default model, and
+a plain one with the agent as the person's default model (#34824, branch
+fix/per-chat-agent-first-message, 6500bb347). The agent is `harness/fake_acp_agent.py`, installed as
+`opencode` by the terminal's setup script, so every new chat's machine has it.
+Discriminates: red on the dev c1f3b6fd1 build, where the folder chat is answered by the default
+model in place of the agent and the plain chat's message is never sent; green on the fix build.
 """
 
 from __future__ import annotations
 
+import base64
 import re
 import uuid
 
@@ -38,9 +47,12 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.coding_agent import AGENT_SCRIPT, FAST, model_id
 from harness.terminal_server import read_grant
 from harness.terminals import create_template, share_template
 from utils.cached_chat import ask, attach, choose_terminal
+from utils.chat_surface import start_on_folder_page
+from utils.chat_ui import chat_input, last_reply, send
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -128,3 +140,61 @@ def test_a_temporary_chat_offers_no_per_chat_terminal_and_drops_one_picked_befor
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitemradio", name=shared)).to_be_visible()
     expect(menu.get_by_role("menuitemradio", name=per_chat)).to_have_count(0)
+
+
+@pytest.mark.regression
+def test_an_agent_model_answers_the_first_message_of_a_new_chat(
+    page_for, make_user, admin, connect_terminals
+):
+    """#34824: with a terminal scoped to the chat and one of its agents as the model, the first
+    message of a new chat was never sent or went to the default model: from a folder whose
+    terminal and default model they are, and from a plain new chat with the agent as the
+    person's default model."""
+    person = make_user()
+    agent = base64.b64encode(f"#!/usr/bin/env python3\n{AGENT_SCRIPT.read_text()}".encode())
+    setup = (
+        f"mkdir -p ~/.local/bin && echo {agent.decode()} | base64 -d > ~/.local/bin/opencode"
+        " && chmod +x ~/.local/bin/opencode"
+    )
+    name = f"Per chat agents {uuid.uuid4().hex[:6]}"
+    connection = connect_terminals(read_grant(person.id))
+    with admin.client() as client:
+        terminal_id = create_template(
+            client, connection, name=name, scope="chat", env={"OPEN_TERMINAL_SETUP_SCRIPT": setup}
+        )["machine_id"]
+        share_template(client, terminal_id, read_grant(person.id))
+    agent_model = model_id(terminal_id, FAST)
+    with person.client() as client:
+        created = client.post(
+            "/api/v1/folders/",
+            json={
+                "name": f"Atlas {uuid.uuid4().hex[:6]}",
+                "data": {
+                    "machine_id": terminal_id,
+                    "working_directory": "/home/user",
+                    "model_ids": [agent_model],
+                },
+            },
+        )
+        saved = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"models": [agent_model]}}
+        )
+    assert created.status_code == 200, f"creating the folder failed: {created.text}"
+    assert saved.status_code == 200, f"saving the default model failed: {saved.text}"
+    in_folder, plain = (f"{place} {uuid.uuid4().hex[:6]}" for place in ("map the coast", "chart"))
+
+    page = page_for(person, path=f"/folders/{created.json()['id']}")
+    expect(chat_input(page)).to_be_visible()
+    folder_chat = start_on_folder_page(page, in_folder)
+    expect(last_reply(folder_chat), "the folder chat's first message got no reply").to_contain_text(
+        f"Agent heard: {in_folder} [model {FAST}", timeout=120_000
+    )
+
+    page = page_for(person)
+    choose_terminal(page, name)
+    page.get_by_role("link", name="New Chat").first.click()
+    expect(chat_input(page)).to_be_visible()
+    send(page, plain)
+    expect(last_reply(page), "the new chat's first message got no reply").to_contain_text(
+        f"Agent heard: {plain} [model {FAST}", timeout=120_000
+    )
