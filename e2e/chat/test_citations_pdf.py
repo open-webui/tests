@@ -72,6 +72,7 @@ from utils.citations_pdf import (
     unique_name,
     upload_pdf,
 )
+from utils.citations_ui import group_card, leave_marker
 from utils.phone import PHONE, drawer_page, tap_on_screen
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -337,6 +338,9 @@ def test_each_of_two_cited_pdfs_opens_on_its_own_page(page_for, make_user):
     expect_page_shown(viewer, BIRDS[2], [BIRDS[0], BIRDS[1]])
     expect_marked(viewer, BIRDS[2])
     expect(page.get_by_text(TIDES[1], exact=True)).to_have_count(0)
+    # the chip's card quotes the passage too, and the group card opens over it
+    leave_marker(page)
+    expect(group_card(page)).to_have_count(0)
 
     # the group marker lists both files, and each entry opens its own
     group = last_reply(page).get_by_role("button", name=re.compile(r"\+1 more sources$")).last
