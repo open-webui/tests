@@ -3021,6 +3021,7 @@
     "integration/models/test_chat_search_filters.py::test_archived_chats_are_left_out_unless_asked_for": 0.314,
     "integration/models/test_chat_search_filters.py::test_pinned_false_leaves_the_pinned_chats_out": 0.306,
     "integration/models/test_chat_search_filters.py::test_tag_none_lists_only_the_untagged_chats": 0.309,
+    "integration/models/test_chat_store.py::test_a_130_mb_chat_with_no_machine_opens_as_fast_as_one_with_a_machine": 76.848,
     "integration/models/test_chat_store.py::test_a_compacted_chat_reopens_on_its_newest_turn": 0.292,
     "integration/models/test_chat_store.py::test_a_history_whose_parents_loop_is_walked_once": 6.294,
     "integration/models/test_chat_store.py::test_a_message_without_null_bytes_is_saved_as_sent": 0.315,
