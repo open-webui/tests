@@ -1,24 +1,22 @@
 """Regression: a large model profile image was carried by every read of the model.
 
-Issue open-webui/open-webui#34656.
+Issue open-webui/open-webui#34656, fixed on dev in a17581475 (PR #34657 was closed for it).
 
 A profile image picked in the model editor was stored as base64 text inside the model's settings,
-so an animated GIF of a few MB was read, parsed and sent back on every read of the model. The fix
-(branch perf/model-profile-image-files) has the editor upload the picture as a file and the model
-keep only its `/api/v1/files/<id>/content` link. Every save checks that the saver can read the file
-and that its type is one PROFILE_IMAGE_ALLOWED_MIME_TYPES allows, with no fixed size limit. Before
-it, the server dropped such a link on save, so the model fell back to the default logo.
+so an animated GIF of a few MB was read, parsed and sent back on every read of the model. Now the
+model keeps only a `/api/v1/files/<id>/content` link, every save checks that the saver can read the
+file, and the picture is served only when its type is one PROFILE_IMAGE_ALLOWED_MIME_TYPES allows.
+Before it, the server dropped such a link on save, so the model fell back to the default logo.
 
 Over HTTP the fix shows as: a model saved with a file link to a picture over 5 MiB keeps it, its
 reads stay a few hundred bytes, its profile image route serves the file to whoever may read the
-model and the default logo to anyone else, a file the saver cannot read or of a type outside
-PROFILE_IMAGE_ALLOWED_MIME_TYPES is refused, and the export still carries the picture inline. A
-profile image saved as a data URI keeps loading as before.
+model and the default logo to anyone else, a file the saver cannot read is refused, a text file is
+never served as the picture, and the export still carries the picture inline. A profile image saved
+as a data URI keeps loading as before.
 
-Discriminates: passes on perf/model-profile-image-files, fails on dev 7686e6329 (the file link is
+Discriminates: passes on dev 9d19883f1, fails on 708e6642a, just before a17581475 (the file link is
 dropped on save, so the model reads back without it, the reader gets the default logo, the foreign
-file is accepted with 200 and the export carries no picture), and fails on the first fix commit
-be0e57134, which held profile image files to a fixed 5 MiB and refused the picture with 400.
+file is accepted with 200 and the export carries no picture).
 """
 
 from __future__ import annotations
@@ -155,17 +153,25 @@ def test_a_foreign_file_or_a_disallowed_type_is_refused_as_a_profile_image(admin
                 params={"id": model_id},
                 json=_model_form(model_id, foreign_url, []),
             ),
-            "notes": client.post(
-                "/api/v1/models/create",
-                json=_model_form(f"mascot-{uuid.uuid4().hex[:8]}", notes_url, []),
-            ),
         }
+        notes_model_id = f"mascot-{uuid.uuid4().hex[:8]}"
+        notes = client.post(
+            "/api/v1/models/create", json=_model_form(notes_model_id, notes_url, [])
+        )
         kept = client.get("/api/v1/models/model", params={"id": model_id}).json()
     refused = {route: response.status_code for route, response in attempts.items()}
-    assert refused == {"create": 403, "update": 403, "notes": 400}, (
-        f"saving someone else's file or a text file as a profile image was answered {refused}"
+    assert refused == {"create": 403, "update": 403}, (
+        f"saving someone else's file as a profile image was answered {refused}"
     )
     assert kept["meta"]["profile_image_url"] == own_url
+    # A text file is either refused on save or never served as the picture.
+    assert notes.status_code in (200, 400), notes.text
+    if notes.status_code == 200:
+        served = _profile_image(builder, notes_model_id)
+        assert served.status_code == 302 and served.headers["location"] == DEFAULT_LOGO, (
+            f"a text file saved as a profile image was served: {served.status_code} "
+            f"{served.headers.get('content-type')}"
+        )
 
 
 def test_an_export_carries_the_picture_inline_and_a_data_uri_still_loads(admin):
