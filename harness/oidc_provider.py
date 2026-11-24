@@ -151,8 +151,9 @@ class OidcProvider:
 
         The claims go into the ID token and the userinfo answer alike, unless `id_token_claims`
         or `userinfo` replaces one of them. `signature` signs the ID token with the provider's
-        key (`provider`), a key it never published (`foreign-key`) or, HS256 with no `kid`, the
-        client secret (`client-secret`) or a secret other than the client's (`wrong-secret`).
+        key (`provider`), a key it never published (`foreign-key`) or, HS256, the client secret
+        (`client-secret`) or a secret other than the client's (`wrong-secret`). A secret-signed
+        token carries only the `jose_header` entries, so no `kid` unless that names one.
         """
         suffix = secrets.token_hex(4)
         person = {
@@ -288,8 +289,7 @@ class OidcProvider:
         header = {"kid": self.kid, **grant["jose_header"]}
         if grant["signature"] in ("client-secret", "wrong-secret"):
             secret = self.client_secret if grant["signature"] == "client-secret" else "x" * 40
-            # a secret-signed token names no key: the client secret is the only one
-            header.pop("kid")
+            header = dict(grant["jose_header"])
             id_token = jwt.encode(id_payload, secret, algorithm="HS256", headers=header)
         else:
             signing_key = _new_key() if grant["signature"] == "foreign-key" else self.key

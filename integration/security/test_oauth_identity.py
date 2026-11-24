@@ -125,12 +125,16 @@ def test_an_id_token_the_relaxation_must_not_accept_is_refused(sso, idp, tamperi
 
 
 def test_an_id_token_signed_with_the_client_secret_signs_in(instance_with, secret_signing_idp):
-    """Narrow (#34922): HS256 checks against the client secret; another secret is still refused."""
+    """Narrow (#34922): HS256 checks against the client secret, with or without a `kid`; another
+    secret is still refused."""
     idp = secret_signing_idp
     sso = instance_with(sso_env(idp))
 
     person = idp.sign_in_as(signature="client-secret")
     assert signed_in_user(sso)["email"] == person["email"]
+
+    person = idp.sign_in_as(signature="client-secret", jose_header={"kid": "client-secret-key"})
+    assert signed_in_user(sso)["email"] == person["email"], "an HS256 token with a kid was refused"
 
     idp.sign_in_as(signature="wrong-secret")
     forged = sign_in(sso)
