@@ -1,23 +1,29 @@
 """Journey: an admin sets up sub-agents, and the model is offered delegation only while allowed.
 
-Each setting of the tab (enable, background, max concurrent, max background, max iterations, max
-output and the system prompt) is typed in, saved and read back after a reload of the tab and from
-the settings API. A further instance shows the tab starting from the environment variables of the
-same names, and another one from the built-in defaults. The switches decide what the tab shows:
-the limits appear only while sub-agents are on and the background limit only while background
-sub-agents are. Turning sub-agents off withdraws the delegation tool (and the timer that comes
-with it) from what the model is offered, and turning background on adds the `background` argument
-to it. Unticking Sub-agents in a model's editor withdraws the tool from that model alone.
+Each setting of the tab (enable, max concurrent, max background, max iterations, max output and
+the system prompt) is typed in, saved and read back after a reload of the tab and from the
+settings API. A further instance shows the tab starting from the environment variables of the
+same names, and another one from the built-in defaults. The switch decides what the tab shows: the
+limits appear only while sub-agents are on, and a switch turned off stays off after a reload.
+Turning sub-agents off withdraws the delegation tool (and the timer that comes with it) from what
+the model is offered. Unticking Sub-agents in a model's editor withdraws the tool from that model
+alone.
+
+Since dev 8522af2d6 every sub-agent of a chat works on after the reply ends, so the tab has no
+switch for background sub-agents any more and the Max background limit shows with the others. The
+test of that switch went with it, and the test that a switched off setting stays off now turns
+Enable sub-agents off. These tests cover what e2e/admin/test_subagents_settings_page.py checked
+(the background limit showing once sub-agents are on, saving and reading back), so that module was
+folded in here.
 
 Discriminates: passes on dev 176d31d1d. In a frontend copy the save and reload test fails when
 the save sends the max output for the max iterations or the max iterations for the max
 background, or when the tab reads the system prompt back as empty; the off-and-on tests fail when
-the save always sends sub-agents or background as on, or resets the limits while off; the
-visibility test fails when the limits show while off or the background limit while background is
-off; the env test fails when the tab ignores what it loads; the model test fails when the
+the save always sends sub-agents as on, or resets the limits while off; the
+visibility test fails when the limits show while off; the env test fails when the tab ignores what it loads; the model test fails when the
 Sub-agents tick cannot be unticked. In a backend copy the offered-tools tests fail when the tool
-is offered whatever the setting says (or never), when the model's tick is ignored, or when the
-`background` argument is never stripped; the tab tests fail when the max output is not stored,
+is offered whatever the setting says (or never) or when the model's tick is ignored; the tab
+tests fail when the max output is not stored,
 when a default differs or when its environment variable is ignored. The model test was
 retargeted for 8d0ff76f2, whose Sub-agents switch sits in the editor's Builtin Tools section:
 it passes on dev 76ad6f97c (3 of 3) and fails in a build of it whose save leaves the builtin
@@ -45,7 +51,6 @@ SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 # the limits default to none (an empty field) since f0cc1bb86
 BUILT_IN_DEFAULTS = {
     "ENABLE_SUBAGENTS": False,
-    "SUBAGENTS_BACKGROUND_ENABLED": False,
     "SUBAGENTS_MAX_CONCURRENT": None,
     "SUBAGENTS_MAX_ASYNC": None,
     "SUBAGENTS_MAX_ITERATIONS": None,
@@ -54,7 +59,6 @@ BUILT_IN_DEFAULTS = {
 }
 FROM_THE_ENVIRONMENT = {
     "ENABLE_SUBAGENTS": True,
-    "SUBAGENTS_BACKGROUND_ENABLED": True,
     "SUBAGENTS_MAX_CONCURRENT": 7,
     "SUBAGENTS_MAX_ASYNC": 5,
     "SUBAGENTS_MAX_ITERATIONS": 12,
@@ -80,9 +84,6 @@ def _open_tab(page: Page) -> Locator:
 def _fields(settings: Locator) -> dict[str, Locator]:
     return {
         "ENABLE_SUBAGENTS": settings.get_by_role("switch", name="Enable sub-agents"),
-        "SUBAGENTS_BACKGROUND_ENABLED": settings.get_by_role(
-            "switch", name="Enable background sub-agents"
-        ),
         "SUBAGENTS_MAX_CONCURRENT": settings.get_by_label("Max concurrent"),
         "SUBAGENTS_MAX_ASYNC": settings.get_by_label("Max background"),
         "SUBAGENTS_MAX_ITERATIONS": settings.get_by_label("Max iterations"),
@@ -127,12 +128,11 @@ def _ask_in_new_chat(page: Page, question: str, upstream, *, model: str = MOCK_M
 
 def test_every_subagent_setting_saves_and_survives_a_reload(admin_page, admin, preserve):
     preserve(SUBAGENTS)
-    _start_with(admin, ENABLE_SUBAGENTS=False, SUBAGENTS_BACKGROUND_ENABLED=False)
+    _start_with(admin, ENABLE_SUBAGENTS=False)
     prompt = f"Report in two lines only, batch {uuid.uuid4().hex[:6]}."
     settings = _open_tab(admin_page)
     fields = _fields(settings)
     fields["ENABLE_SUBAGENTS"].click()
-    fields["SUBAGENTS_BACKGROUND_ENABLED"].click()
     fields["SUBAGENTS_MAX_CONCURRENT"].fill("3")
     fields["SUBAGENTS_MAX_ASYNC"].fill("2")
     fields["SUBAGENTS_MAX_ITERATIONS"].fill("11")
@@ -142,7 +142,6 @@ def test_every_subagent_setting_saves_and_survives_a_reload(admin_page, admin, p
 
     expected = {
         "ENABLE_SUBAGENTS": True,
-        "SUBAGENTS_BACKGROUND_ENABLED": True,
         "SUBAGENTS_MAX_CONCURRENT": 3,
         "SUBAGENTS_MAX_ASYNC": 2,
         "SUBAGENTS_MAX_ITERATIONS": 11,
@@ -151,26 +150,6 @@ def test_every_subagent_setting_saves_and_survives_a_reload(admin_page, admin, p
     }
     assert _stored(admin) == expected
     _expect_shown(_open_tab(admin_page), expected)
-
-
-def test_a_switched_off_setting_stays_off_after_a_reload(admin_page, admin, preserve):
-    preserve(SUBAGENTS)
-    _start_with(admin, ENABLE_SUBAGENTS=False, SUBAGENTS_BACKGROUND_ENABLED=False)
-    settings = _open_tab(admin_page)
-    fields = _fields(settings)
-    fields["ENABLE_SUBAGENTS"].click()
-    fields["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    save(settings)
-    assert _stored(admin)["SUBAGENTS_BACKGROUND_ENABLED"] is True
-
-    settings = _open_tab(admin_page)
-    _fields(settings)["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    save(settings)
-
-    stored = _stored(admin)
-    assert stored["ENABLE_SUBAGENTS"] is True
-    assert stored["SUBAGENTS_BACKGROUND_ENABLED"] is False
-    expect(_fields(_open_tab(admin_page))["SUBAGENTS_BACKGROUND_ENABLED"]).not_to_be_checked()
 
 
 def test_switching_sub_agents_off_keeps_the_limits_for_when_they_come_back(
@@ -193,17 +172,19 @@ def test_switching_sub_agents_off_keeps_the_limits_for_when_they_come_back(
     assert _stored(admin)["ENABLE_SUBAGENTS"] is False
 
     settings = _open_tab(admin_page)
-    _fields(settings)["ENABLE_SUBAGENTS"].click()
     fields = _fields(settings)
+    expect(fields["ENABLE_SUBAGENTS"], "the switched off setting is on again").not_to_be_checked()
+    expect(fields["SUBAGENTS_MAX_CONCURRENT"]).to_have_count(0)
+    fields["ENABLE_SUBAGENTS"].click()
     expect(fields["SUBAGENTS_MAX_CONCURRENT"]).to_have_value("4")
     expect(fields["SUBAGENTS_MAX_ITERATIONS"]).to_have_value("9")
     expect(fields["SUBAGENTS_MAX_OUTPUT"]).to_have_value("8000")
     expect(fields["SUBAGENTS_SYSTEM_PROMPT"]).to_have_value("Keep it short.")
 
 
-def test_the_limits_show_only_while_their_switches_are_on(admin_page, admin, preserve):
+def test_the_limits_show_only_while_sub_agents_are_on(admin_page, admin, preserve):
     preserve(SUBAGENTS)
-    _start_with(admin, ENABLE_SUBAGENTS=False, SUBAGENTS_BACKGROUND_ENABLED=False)
+    _start_with(admin, ENABLE_SUBAGENTS=False)
     settings = _open_tab(admin_page)
     fields = _fields(settings)
 
@@ -211,14 +192,13 @@ def test_the_limits_show_only_while_their_switches_are_on(admin_page, admin, pre
         expect(fields[name]).to_have_count(0)
 
     fields["ENABLE_SUBAGENTS"].click()
-    for name in ("SUBAGENTS_MAX_CONCURRENT", "SUBAGENTS_MAX_ITERATIONS", "SUBAGENTS_MAX_OUTPUT"):
-        expect(fields[name]).to_be_visible()
-    expect(fields["SUBAGENTS_SYSTEM_PROMPT"]).to_be_visible()
-    expect(fields["SUBAGENTS_BACKGROUND_ENABLED"]).not_to_be_checked()
-    expect(fields["SUBAGENTS_MAX_ASYNC"]).to_have_count(0)
+    for name in list(fields)[1:]:
+        expect(fields[name], f"{name} did not show once sub-agents were on").to_be_visible()
+    expect(settings.get_by_role("switch", name="Enable background sub-agents")).to_have_count(0)
 
-    fields["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    expect(fields["SUBAGENTS_MAX_ASYNC"]).to_be_visible()
+    fields["ENABLE_SUBAGENTS"].click()
+    for name in list(fields)[1:]:
+        expect(fields[name]).to_have_count(0)
 
 
 @pytest.mark.slow
@@ -226,7 +206,6 @@ def test_the_tab_starts_from_the_environment_variables(instance_with, page_for):
     booted = instance_with(
         {
             "ENABLE_SUBAGENTS": "true",
-            "SUBAGENTS_BACKGROUND_ENABLED": "true",
             "SUBAGENTS_MAX_CONCURRENT": "7",
             "SUBAGENTS_MAX_ASYNC": "5",
             "SUBAGENTS_MAX_ITERATIONS": "12",
@@ -249,13 +228,7 @@ def test_the_tab_starts_from_the_built_in_defaults(instance_with, page_for):
     fields = _fields(settings)
     expect(fields["ENABLE_SUBAGENTS"]).not_to_be_checked()
     fields["ENABLE_SUBAGENTS"].click()
-    fields["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    switched_on = {
-        **BUILT_IN_DEFAULTS,
-        "ENABLE_SUBAGENTS": True,
-        "SUBAGENTS_BACKGROUND_ENABLED": True,
-    }
-    _expect_shown(settings, switched_on)
+    _expect_shown(settings, {**BUILT_IN_DEFAULTS, "ENABLE_SUBAGENTS": True})
     with booted.client() as client:
         assert client.get(SUBAGENTS[0]).json() == BUILT_IN_DEFAULTS
 
@@ -275,26 +248,6 @@ def test_the_model_is_offered_delegation_only_while_sub_agents_are_on(
     assert {"delegate_task", "timer"} <= set(_offered(on))
     assert not {"delegate_task", "timer"} & set(_offered(off))
     assert _offered(off), "the model was offered no tools at all, so this shows nothing"
-
-
-def test_the_background_switch_decides_whether_the_model_may_delegate_in_the_background(
-    admin_page, admin, preserve, upstream
-):
-    preserve(SUBAGENTS)
-    _start_with(admin, ENABLE_SUBAGENTS=True, SUBAGENTS_BACKGROUND_ENABLED=False)
-    foreground_only = _ask_in_new_chat(admin_page, "may you delegate in the foreground?", upstream)
-
-    settings = _open_tab(admin_page)
-    _fields(settings)["SUBAGENTS_BACKGROUND_ENABLED"].click()
-    save(settings)
-    with_background = _ask_in_new_chat(admin_page, "may you delegate in the background?", upstream)
-
-    def arguments(request: dict) -> set[str]:
-        return set(_offered(request)["delegate_task"]["parameters"]["properties"])
-
-    assert "background" not in arguments(foreground_only)
-    assert "background" in arguments(with_background)
-    assert {"task", "context"} <= arguments(foreground_only)
 
 
 @pytest.fixture
