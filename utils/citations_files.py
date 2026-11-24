@@ -95,6 +95,15 @@ def hover_mark_over(page: Page, line: Locator) -> None:
     page.mouse.move(box["x"] + 20, box["y"] + box["height"] / 2)
 
 
+def expect_relevance_on_hover(line: Locator, relevance: str | re.Pattern, failure: str) -> None:
+    """Resting the pointer on the cited `line` shows the relevance its passage was given."""
+    page = line.page
+    hover_mark_over(page, line)
+    card = page.get_by_role("tooltip").filter(has_text="Relevance")
+    expect(card, failure).to_be_visible()
+    expect(card, failure).to_contain_text(relevance)
+
+
 def close_by_escape(page: Page) -> None:
     """Close the open dialog with Escape, once it has taken the focus and listens for keys."""
     dialog = page.get_by_role("dialog")

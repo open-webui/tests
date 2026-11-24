@@ -12,8 +12,8 @@ it. Always Use Full Text (Full Context Mode before c5f24f588) gives the model th
 however low Top K is. A RAG Template frames the context the model is sent, and one that places
 the context twice is flagged in the panel and sends it twice.
 
-Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
-(open-webui/open-webui#34913), so the reranker test fails at its relevance.
+Since 09bfdcfb1 resting the pointer on a marked passage shows the relevance it was given
+(open-webui/open-webui#34913).
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the passages about herons; a local service also plays the reranker.
@@ -56,7 +56,7 @@ from utils.chat_ui import (
     open_input_menu,
     send,
 )
-from utils.citations_files import expect_marked, file_panel, is_marked
+from utils.citations_files import expect_marked, expect_relevance_on_hover, file_panel, is_marked
 
 pytestmark = [
     pytest.mark.journey,
@@ -297,13 +297,17 @@ def test_an_external_reranker_picks_the_cited_passage(
     question = unique_question("Where do herons hunt?")
     chat = ask_about_the_notes(ranked_chat_for, ranked, reader, question)
 
-    expect_cited(cited_file(chat), [GREBES])
+    panel = cited_file(chat)
+    expect_cited(panel, [GREBES])
     asked = reranker.requests_to("/rerank")
     assert asked, "the external reranker was never asked"
     assert asked[-1].headers.get("Authorization") == "Bearer rerank-key"
     assert asked[-1].json()["model"] == "grebe-ranker"
-    # the relevance the reranker gave the cited passage
-    expect(chat.page.get_by_text("90.00%")).to_be_visible()
+    expect_relevance_on_hover(
+        panel.get_by_text(GREBES, exact=True),
+        "90.00%",
+        "the cited passage does not show the relevance the reranker gave it",
+    )
 
 
 def test_chunk_size_decides_how_much_each_cited_passage_holds(

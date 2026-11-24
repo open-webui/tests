@@ -5,8 +5,8 @@ in `utils/middleware.py`. With native function calling the citations built from
 `query_knowledge_files` dropped the distance each chunk came back with, so opening one showed
 the cited text without the relevance badge that classic retrieval shows for the same knowledge
 base. A person read the badge in the citation dialog. Since 072d0b51d a cited file opens in a tab
-beside the chat with the cited passage marked, and nothing there shows its relevance any more:
-red on dev 306f9be78 (open-webui/open-webui#34913).
+beside the chat with the cited passage marked; it showed no relevance there (#34913) until dev
+09bfdcfb1, where resting the pointer on the marked passage shows its relevance.
 
 Twin of integration/tools/test_knowledge_tool_citation_scores.py.
 
@@ -38,7 +38,7 @@ from harness import upstream as reply
 from harness.knowledge_bases import add_text_file, knowledge_base
 from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, main_chat
 from utils.chat_ui import conversation, expect_reply, listed_source, send
-from utils.citations_files import expect_marked, file_panel, file_tab
+from utils.citations_files import expect_marked, expect_relevance_on_hover, file_panel, file_tab
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -77,10 +77,11 @@ def test_a_knowledge_tool_citation_shows_its_relevance(chat_for, shared_notes, u
     expect(sources, f"the reply in the {chat.place} lists no source").to_be_visible()
     sources.click()
     listed_source(chat, filename).click()
-    expect_marked(file_panel(chat.page, filename).get_by_text(NOTES, exact=True))
-    expect(
-        chat.page.get_by_text(PERCENTAGE), "the opened source shows no relevance for its passage"
-    ).to_be_visible()
+    cited = file_panel(chat.page, filename).get_by_text(NOTES, exact=True)
+    expect_marked(cited)
+    expect_relevance_on_hover(
+        cited, PERCENTAGE, "the opened source shows no relevance for its passage"
+    )
 
 
 def _expect_open_beside_the_chat(chat, filename: str, clicked: str) -> None:

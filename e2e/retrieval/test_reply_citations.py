@@ -4,12 +4,10 @@ A person attaches text files in the chat input and asks a question; the question
 from the files' text, and the reply lists the files as its sources. Each inline marker such as
 `[2]` names the file the model was told was source 2, and opening it shows that file's text and
 its relevance. Since 072d0b51d a cited file opens in a tab beside the chat with the cited text
-marked; the read-only view of a shared link still shows it in the source dialog. The sources are
-still there after a reload and in the shared link. A model whose Citations capability is off
+marked, and since 09bfdcfb1 resting the pointer on the marked text shows its relevance; the
+read-only view of a shared link still shows it in the source dialog. The sources are still there
+after a reload and in the shared link. A model whose Citations capability is off
 shows neither the source list nor the markers.
-
-Red on dev 306f9be78: since 072d0b51d an opened cited file shows no relevance for its passages
-(open-webui/open-webui#34913), so the marker test fails at the relevance.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, the source dialog taking marker `[n]`
 as the n+1th source turned the marker test red, the source list shown whatever the model's
@@ -46,7 +44,7 @@ from utils.chat_ui import (
     send,
     start_from_link,
 )
-from utils.citations_files import expect_marked, file_panel
+from utils.citations_files import expect_marked, expect_relevance_on_hover, file_panel
 
 pytestmark = [
     pytest.mark.journey,
@@ -130,12 +128,12 @@ def test_each_inline_marker_opens_the_source_it_names(chat_for, make_user, upstr
         chat.show()
         expect(marker).to_have_accessible_name(f"View source: {name}")
         marker.click()
-        expect_marked(file_panel(chat.page, name).get_by_text(texts[name], exact=True))
+        cited = file_panel(chat.page, name).get_by_text(texts[name], exact=True)
+        expect_marked(cited)
         # only the file opened last is in front, so each is read as it opens
-        expect(
-            file_panel(chat.page, name).get_by_text(PERCENTAGE),
-            f"the opened {name} shows no relevance for its passage",
-        ).to_be_visible()
+        expect_relevance_on_hover(
+            cited, PERCENTAGE, f"the opened {name} shows no relevance for its passage"
+        )
 
 
 def test_the_sources_are_still_listed_after_a_reload(chat_for, make_user, upstream):
