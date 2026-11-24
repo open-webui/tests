@@ -59,8 +59,9 @@ The history search and the older-message edit also run on a stored 130 MB chat (
 the word in one early message is found, and the edit keeps the open position and every message.
 Both pass on dev f8a518648 on SQLite and Postgres.
 
-The #34962 open test fails on dev 4a065a5c9 (no machine opens about 1.4 times slower than a
-machine, bound 1.2) and passes with the fix 36b8acbff of PR #34963 (0.9 to 1.0).
+The #34962 open test fails on dev c56ba4e75 just before the fix (no machine opens about 1.4
+times slower than a machine on SQLite and 1.65 on Postgres, bound 1.2) and passes on dev
+90116cd36 with the fix of PR #34963 merged (0.9 to 1.0).
 """
 
 from __future__ import annotations
