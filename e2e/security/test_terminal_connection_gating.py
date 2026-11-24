@@ -28,13 +28,11 @@ for a moment, the page left them out of the terminal menu and dropped the person
 on the new chat page and in a saved chat, also across a reload. A pick now stays until the person
 changes it: its button reads "Unavailable terminal" during the outage, the Terminal menu offers
 it under that name to clear it, and once the orchestrator is back the next message is offered the
-terminal's tools with no further reload. Discriminates: fails on a dev build from before the fix
-(dcde707f0, whose terminal picker code is identical to 47cf51eb7: after the reload the pick is
-gone and the button is not shown), passes with the fix on branch fix/terminal-deselect-outage.
-Retargeted for the terminals to machines rename (c5c42fe3b, df6be8c3a): the button reads
-"Unavailable machine", the empty menu "Machine", and the config import that switches the terminal
-off names `machines.connections`. The outage test stays red until the fix for #34643 (#34651)
-merges.
+terminal's tools with no further reload. Retargeted for the terminals to machines rename
+(c5c42fe3b, df6be8c3a): the button reads "Unavailable machine", the empty menu "Machine", and the
+config import that switches the terminal off names `machines.connections`. Discriminates: fails on
+dev a43c15c7b (after the reload the pick is gone and the button is not shown), passes on dev
+c6ef4a523 (fixed by 0f71ee15a).
 """
 
 from __future__ import annotations
