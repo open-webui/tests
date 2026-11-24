@@ -9,8 +9,9 @@ channel they share still arrives.
 
 The app asks for the channel list only where channels are offered: with Channels off for the
 instance, or for someone without the Channels permission, a page load asks for none, while
-someone allowed still gets the list again once the live connection is up. Every page load asked
-for it as the connection came up, which the server refused, until open-webui/open-webui#34820.
+someone allowed gets the list. Every page load asked for it as the connection came up, which the
+server refused, until open-webui/open-webui#34820. Since dev 1eb5274f8 the list is asked for once
+per load and again only when a lost connection comes back.
 
 Discriminates: passes on dev ebc6add67; in a frontend copy, enabling the input whatever the write
 access turns the read-only test red; in a backend copy, giving new members no `channel:created`
@@ -237,4 +238,4 @@ def test_the_channel_list_is_asked_for_only_where_channels_are_offered(
 
     _set_channels(admin, enabled=True, permitted=True)
     asked = _channel_lists_on_reload(page_for(make_user()))
-    assert True in asked, f"no channel list once the connection was up: {asked}"
+    assert asked, "someone allowed to use channels got no channel list"
