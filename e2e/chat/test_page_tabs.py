@@ -173,4 +173,12 @@ def test_a_new_chat_keeps_the_page_tabs_open_beside_the_chat(page_for, make_user
     folder_link(sidebar, folder_name).click()
     expect(page).to_have_url(re.compile(rf"/folders/{folder_id}$"))
     expect(_tab(page, folder_name)).to_have_attribute("aria-selected", "true")
-    expect(_tab(page, "Notes"), "a new chat in a folder closed the Notes tab").to_be_visible()
+    # since 1fbb42be9 a folder keeps tabs of its own: the chat's are not carried in, its own stay
+    expect(_tab(page, "Notes"), "the chat's Notes tab was carried into the folder").to_have_count(0)
+    page.get_by_role("link", name="Notes", exact=True).click()
+    _expect_selected(page, "Notes", "/notes")
+    page.get_by_role("link", name="New Chat").first.click()
+    expect(page).to_have_url(re.compile(r"/$"))
+    folder_link(sidebar, folder_name).click()
+    expect(page).to_have_url(re.compile(rf"/folders/{folder_id}$"))
+    expect(_tab(page, "Notes"), "the folder lost the Notes tab opened in it").to_be_visible()
