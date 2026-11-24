@@ -143,6 +143,8 @@ def wait_stored_title(actor: Actor, note_id: str, title: str) -> None:
 
 
 def test_new_notes_from_the_folder_page_are_filed_and_listed_newest_first(page_for, make_user):
+    """Reopening the folder saved every note open in its tabs again, so the order followed the
+    order they loaded in (open-webui/open-webui#35003). Red on dev b9e9857b1, green with the fix (branch fix-notes-reopen-save)."""
     owner = make_user()
     tag = uuid.uuid4().hex[:6]
     folder_name = f"Harbour {tag}"
