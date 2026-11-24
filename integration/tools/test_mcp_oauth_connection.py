@@ -59,17 +59,28 @@ refresh token. A provider that rotates refresh tokens refused the second with `i
 and Open WebUI deleted the user's MCP sign-in, so they had to connect again. Red on dev e1d272252
 until the fix (fix branch fix/mcp-token-refresh-lock) merges: there two refreshes are sent, one
 listing shows the server as not connected and the session is gone. Passes on the fix branch.
+
+The startup test pins issue open-webui/open-webui#34937: an OAuth 2.1 MCP server in
+`TOOL_SERVER_CONNECTIONS` that was never registered logged "Stored OAuth client data is invalid;
+reconnect this tool server" on every startup, with persistent config on or off, though nothing was
+stored. Client data encrypted with another key is still reported, and the server registered after
+the boot connects and its tool call goes through. Red on dev 57c955a03 until the fix (fix branch
+fix/mcp-oauth-startup-log-unregistered) merges: there the error names the unregistered server.
+Passes on the fix branch.
 """
 
 from __future__ import annotations
 
+import json
 import secrets
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from cryptography.fernet import Fernet
 
 from harness import upstream as reply
+from harness.actors import admin_of, create_user
 from harness.chat import ask
 from harness.mcp_oauth import SCOPE, serving_protected_mcp
 from harness.oidc_provider import browser_for
@@ -394,3 +405,56 @@ def test_an_authorization_server_with_large_headers_registers_connects_and_refre
     assert mcp.presented[-1] == auth_server.issued[-1]["access_token"], (
         "the refresh failed on a large response header (#34078)"
     )
+
+
+def startup_connection(url: str, server_id: str, oauth_client_info: str | None = None) -> dict:
+    """An OAuth 2.1 MCP connection as an admin writes it into `TOOL_SERVER_CONNECTIONS`."""
+    info = {"id": server_id, "name": server_id}
+    if oauth_client_info:
+        info["oauth_client_info"] = oauth_client_info
+    return {
+        "url": url,
+        "path": "",
+        "type": "mcp",
+        "auth_type": "oauth_2.1",
+        "key": "",
+        "config": {"enable": True},
+        "info": info,
+    }
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+@pytest.mark.parametrize("persistent_config", ["true", "false"])
+def test_a_server_not_registered_yet_logs_no_invalid_client_error_at_startup(
+    instance_with, mcp, persistent_config
+):
+    unregistered = f"oauth_mcp_{secrets.token_hex(4)}"
+    other_key = f"oauth_mcp_{secrets.token_hex(4)}"
+    from_another_key = Fernet(Fernet.generate_key()).encrypt(b"{}").decode()
+    connections = [
+        startup_connection(mcp.url, unregistered),
+        startup_connection(mcp.url, other_key, oauth_client_info=from_another_key),
+    ]
+    launched = instance_with(
+        {
+            "TOOL_SERVER_CONNECTIONS": json.dumps(connections),
+            "ENABLE_PERSISTENT_CONFIG": persistent_config,
+        }
+    )
+
+    startup_log = launched.log_since(0).splitlines()
+    invalid = [line for line in startup_log if "Stored OAuth client data is invalid" in line]
+    assert [line for line in invalid if other_key in line], (
+        "client data encrypted with another key was not reported at startup"
+    )
+    unregistered_errors = [line for line in startup_log if unregistered in line and "ERROR" in line]
+    assert not unregistered_errors, (
+        f"a server that was never registered was reported as broken at startup (#34937): "
+        f"{unregistered_errors}"
+    )
+
+    person = create_user(launched)
+    register(admin_of(launched), mcp, person, unregistered)
+    connect(launched, person, unregistered)
+    assert echo_through_chat(person, launched.upstream, unregistered) == PHRASE
