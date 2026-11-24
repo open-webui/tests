@@ -30,13 +30,17 @@ def chat_scope(chat: Chat) -> Page | Locator:
 
 # since da850248d a channel opens as a page tab with a box of its own, the chat's hidden behind
 PAGE_MESSAGE_BOX = "#chat-input, [id^='channel-input-'][id$='-main']"
+# since 1fbb42be9 a chat in a folder opens in a tab beside the folder
+TAB_MESSAGE_BOX = "[role='textbox'][id^='note-chat-input-']"
 
 
 def chat_input(chat: Chat) -> Locator:
-    """The message box of the chat, or the one the page shows: its chat's or its channel's."""
+    """The message box of the chat, or the one the page shows: its chat's or its channel's, else
+    the box of the chat tab in view."""
     if isinstance(chat, ChatSurface):
         return chat.input
-    return chat.locator(PAGE_MESSAGE_BOX).filter(visible=True)
+    shown = chat.locator(PAGE_MESSAGE_BOX).filter(visible=True)
+    return shown.or_(chat.locator(TAB_MESSAGE_BOX).filter(visible=True)).first
 
 
 def send(chat: Chat, text: str) -> None:
