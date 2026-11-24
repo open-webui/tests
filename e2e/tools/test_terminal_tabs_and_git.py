@@ -56,6 +56,8 @@ tab. Since 0b7e7b3f7 the Files tab is named after the folder it shows, and since
 it reads Home in the terminal's home, where these tests open it. Since bf0aa05a7 a shell tab is
 named after the program the terminal reports running in it, which Open Terminal does since
 0.17.8: the shell (bash here, `SHELL_TAB`). The saved layout keeps the tab's numbered label.
+Since Open Terminal 0.17.23 a second window of the chat joins the same shell, so its tab reads
+bash as well (it read the numbered label while the shell stayed with the first window).
 
 `test_layout_changes_after_a_network_reconnect_are_still_saved` is red on dev f659c0d12: a save
 started with nothing pending wedges the chat's layout saving until the next reload
@@ -527,9 +529,9 @@ def test_the_split_layout_is_kept_after_a_reload_and_on_another_device(
     expect(_divider(page)).to_have_attribute("aria-valuenow", ratio)
 
     elsewhere = page_for(person, path=f"/c/{chat_id}")
-    # the shell stays with the first window, so this one shows the tab's numbered label
-    _expect_panes(elsewhere, [[title], [FILES, "Terminal 1"]])
-    _selected(elsewhere, "Terminal 1")
+    # since Open Terminal 0.17.23 another window joins the same shell, so its tab reads bash too
+    _expect_panes(elsewhere, layout)
+    _selected(elsewhere, SHELL_TAB)
     expect(_divider(elsewhere)).to_have_attribute("aria-valuenow", ratio)
 
     # the layout is the person's own: an admin opening the chat gets the conversation alone
