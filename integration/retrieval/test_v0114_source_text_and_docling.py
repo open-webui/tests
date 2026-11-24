@@ -4,6 +4,12 @@
   `application/octet-stream` and the extension was missing from `known_source_ext`, so an
   Arduino sketch went to the Tika or Docling server instead of the plain text reader and the
   upload failed. It reads as text now, like the `.cpp` and `.h` files beside it.
+- `.mdx` pages (issue open-webui/open-webui#34896): browsers send `.mdx` (Markdown with components,
+  the format of many docs sites) as `application/octet-stream` and the extension was missing from
+  `known_source_ext`, so a page that reads as text when saved as `.md` went to the Tika or Docling
+  server. Docling refuses the format, so the upload failed and a knowledge base never found the
+  page. It reads as text like `.md` now, with the built-in reader, Tika, Docling, Document
+  Intelligence and Mistral OCR set (fix branch `fix/mdx-read-as-text`, commit `29f763a20`).
 - Docling failures inside an HTTP 200 (fix `0837f310b`, PR #30107, issue #29808): a file Docling
   refused came back as a 200 with `status: failure`, so the upload stored and indexed the
   `<No text content found>` placeholder in place of the file. A failed or skipped conversion now
@@ -29,7 +35,9 @@ cases (the extraction server is called), dropping the conversion status check fa
 and skipped cases, reading `md_content` with a `''` default fails the null case and decoding
 entities again fails the entity case. The page number case passes on dev fe2219d6f and fails on
 fe2219d6f^ (the model is given pages 0 and 2). The mojibake case passes on dev 015dbc861 and
-fails on dev a5bc78300, before PR #31655 (the repaired quote comes back straightened).
+fails on dev a5bc78300, before PR #31655 (the repaired quote comes back straightened). The
+`.mdx` cases fail on dev 9d19883f1 for Tika and Docling (the page goes to the extraction server
+and Docling's refusal fails the upload) and pass on the fix `29f763a20`.
 """
 
 from __future__ import annotations
@@ -43,7 +51,8 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of
 from harness.chat import ask
-from harness.docling_server import serve_docling
+from harness.docling_server import CONVERT, TASK, serve_docling
+from harness.knowledge_bases import knowledge_base
 from harness.listener import json_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -56,7 +65,7 @@ ENTITY_TEXT = "cost &gt; 5\nA&nbsp;B\nC &amp; D\n<xml>markup &gt; stays after a 
 
 @pytest.fixture
 def extraction(admin, preserve, listener):
-    """(admin client, `select(engine)`) for Tika, Docling or the built-in reader."""
+    """(admin client, `select(engine)`) for any extraction engine, each pointed at the listener."""
     preserve(RETRIEVAL_CONFIG)
     listener.route("PUT", "/tika/text", json_answer({"X-TIKA:content": "extracted by tika"}))
     with admin.client() as client:
@@ -68,6 +77,9 @@ def extraction(admin, preserve, listener):
                     "CONTENT_EXTRACTION_ENGINE": engine,
                     "TIKA_SERVER_URL": listener.base_url,
                     "DOCLING_SERVER_URL": listener.base_url,
+                    "DOCUMENT_INTELLIGENCE_ENDPOINT": listener.base_url,
+                    "MISTRAL_OCR_API_BASE_URL": listener.base_url,
+                    "MISTRAL_OCR_API_KEY": "mistral-key",
                 },
             )
             assert saved.status_code == 200, saved.text
@@ -86,8 +98,8 @@ def upload(client, filename: str, content: bytes, content_type: str) -> dict:
     return stored.json()["data"]
 
 
-@pytest.mark.parametrize("engine", ["tika", "docling"])
-@pytest.mark.parametrize("filename", ["blink.ino", "helper.cpp", "helper.h"])
+@pytest.mark.parametrize("engine", ["", "tika", "docling", "document_intelligence", "mistral_ocr"])
+@pytest.mark.parametrize("filename", ["blink.ino", "helper.cpp", "helper.h", "page.mdx"])
 def test_a_source_file_is_read_as_text_not_sent_for_extraction(
     extraction, listener, engine, filename
 ):
@@ -96,7 +108,7 @@ def test_a_source_file_is_read_as_text_not_sent_for_extraction(
 
     data = upload(client, filename, SKETCH.encode(), OCTET_STREAM)
 
-    assert data["content"] == SKETCH, f"{filename} was not stored as written: {data}"
+    assert data.get("content") == SKETCH, f"{filename} was not stored as written: {data}"
     assert listener.received == [], f"{filename} went to the {engine} server"
 
 
@@ -108,6 +120,83 @@ def test_a_binary_file_still_goes_to_the_extraction_server(extraction, listener)
 
     assert data["content"] == "extracted by tika"
     assert listener.requests_to("/tika/text")
+
+
+def serve_docling_refusing_other_formats(listener) -> None:
+    """Docling as docling-serve answers: it converts the formats it knows and skips the rest."""
+    submitted = []
+
+    def submit(request) -> tuple:
+        submitted.append(re.search(rb'filename="([^"]+)"', request.body).group(1).decode())
+        return json_answer({"task_id": TASK, "task_status": "pending"})
+
+    def result(request) -> tuple:
+        filename = submitted[-1]
+        if filename.rsplit(".", 1)[-1] in {"pdf", "docx", "pptx", "html", "md", "markdown", "txt"}:
+            return json_answer({"status": "success", "document": {"md_content": "converted"}})
+        refusal = {"error_message": f"File format not allowed: {filename}"}
+        return json_answer({"status": "skipped", "errors": [refusal], "document": {}})
+
+    serve_docling(listener, {})
+    listener.route("POST", CONVERT, submit)
+    listener.route("GET", f"/v1/result/{TASK}", result)
+
+
+def test_an_mdx_page_is_read_and_found_like_a_markdown_page_with_docling(extraction, listener):
+    client, select = extraction
+    select("docling")
+    serve_docling_refusing_other_formats(listener)
+    tag = uuid.uuid4().hex[:8]
+    sentences = {
+        "install.md": f"The harbour master {tag} opens the gate at noon.",
+        "getting-started.mdx": f"The lighthouse keeper {tag} rings the bell at dawn.",
+    }
+    pages = {
+        # what a browser sends for each
+        "install.md": (f"# Install\n\n{sentences['install.md']}\n", "text/markdown"),
+        "getting-started.mdx": (
+            "---\ntitle: Getting started\n---\n\nimport Tabs from '@theme/Tabs';\n\n"
+            f"# Getting started\n\n{sentences['getting-started.mdx']}\n\n"
+            '<Tabs>\n  <TabItem value="docker">Run the container.</TabItem>\n</Tabs>\n',
+            OCTET_STREAM,
+        ),
+    }
+
+    with knowledge_base(client, f"Docs {tag}") as knowledge_id:
+        for filename, (page, content_type) in pages.items():
+            uploaded = client.post(
+                "/api/v1/files/?process_in_background=false",
+                files={"file": (filename, page.encode(), content_type)},
+            )
+            assert uploaded.status_code == 200, uploaded.text
+            file_id = uploaded.json()["id"]
+            data = client.get(f"/api/v1/files/{file_id}").json()["data"]
+            assert (data.get("status"), data.get("content")) == ("completed", page), (
+                f"{filename} was not read as text like a .md page (#34896): {data}"
+            )
+            added = client.post(
+                f"/api/v1/knowledge/{knowledge_id}/file/add", json={"file_id": file_id}
+            )
+            assert added.status_code == 200, added.text
+        assert listener.requests_to(CONVERT) == [], (
+            "a Markdown page was sent to Docling, which refuses .mdx (#34896)"
+        )
+
+        found = client.post(
+            "/api/v1/retrieval/query/collection",
+            json={"collection_names": [knowledge_id], "query": "harbour lighthouse", "k": 10},
+        )
+        assert found.status_code == 200, found.text
+        searched = " ".join(found.json()["documents"][0])
+        for filename, sentence in sentences.items():
+            assert sentence in searched, (
+                f"a knowledge base search does not find the text of {filename}: {searched!r}"
+            )
+
+    # the same setup does send a document to Docling
+    data = upload(client, "manual.pdf", b"%PDF-1.4", "application/pdf")
+    assert data["content"] == "converted", data
+    assert listener.requests_to(CONVERT)
 
 
 @pytest.mark.parametrize(
