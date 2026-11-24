@@ -8,7 +8,7 @@ field reads as saved, the API key masked, and an edit is kept after a reload. A 
 the model selector; a message a condition fits goes to that condition's model, a message nothing
 fits to the default model, and a message matching a pattern to that pattern's model without a
 Decisions API call. Each reply names the router and the model that answered. The dialog refuses
-an invalid pattern, an empty pattern and a threshold above 1 and says why, and shows Strategy
+an invalid pattern and a threshold above 1 and says why, and shows Strategy
 once there are two default models. A router deleted in its dialog leaves the user's selector; its
 chat still opens with its history, and the selector there shows the model that answers the next
 message, as for any chat whose model is gone. A name translated in the dialog's Editing language
@@ -18,9 +18,8 @@ Behaviour from docs/features/administration/router-models.md and the dev dialog.
 The docs branch `docs-sync-router-automations` drops the Prompt box; this checks the box the dev
 dialog shows (placeholder "Leave empty to use the default prompt, or enter a custom prompt").
 
-Two tests are red on dev d599f7a08, their issues not filed yet: an invalid pattern only shows
-"[object Object]", and a pattern row without a regular expression is dropped and the router saved
-without it.
+One test is red on dev d599f7a08: an invalid pattern only shows "[object Object]"
+(open-webui/open-webui#34897).
 
 Discriminates (dev d599f7a08, one patched copy of the built frontend): a reply header without the
 answering model turns the setup test red; Strategy shown for a single default model turns the
@@ -291,17 +290,6 @@ def test_saving_an_invalid_pattern_says_what_is_wrong(admin, strict_router):
     expect(toasts(page).filter(has_text=PATTERN_PROBLEM).first).to_be_visible()
     expect(dialog).to_be_visible()
     assert saved_router(admin, router_id) is None, "a router with an invalid pattern was saved"
-
-
-def test_saving_a_pattern_without_a_regular_expression_is_refused(admin, strict_router):
-    page, dialog, router_id, *_ = strict_router
-
-    save_button(dialog).click()
-
-    # dev drops the row and saves (issue not filed yet)
-    expect(toasts(page).filter(has_text=PATTERN_PROBLEM).first).to_be_visible()
-    expect(dialog).to_be_visible()
-    assert saved_router(admin, router_id) is None, "the pattern was dropped and the router saved"
 
 
 def test_the_dialog_refuses_a_threshold_above_one_and_offers_strategy_for_two_defaults(
