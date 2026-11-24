@@ -1,14 +1,19 @@
-"""Journey: a background sub-agent keeps working after the reply ends and reports back in the chat.
+"""Journey: a sub-agent keeps working after the reply ends and reports back in the chat.
 
-The model delegates with `background` set: its reply ends with a row named for the task while the
-sub-agent works on and the page shows no running reply. When the sub-agent finishes, its report
-is stored as a "Background sub-agent finished" row that opens to the result, and the model
-continues from it without the person typing. A reload while it works keeps the chat and the
-report still arrives. Two accounts working at once each get only their own report, the admin's
-background limit refuses a delegation over the cap and reports the other, a failing sub-agent
-is reported with its error, and sub-agents that finish while the reply is written come back as
-one report of two tasks. Stopping the reply leaves the background sub-agent running; stopping
-the chat during a foreground sub-agent ends the reply and leaves the chat usable.
+The model delegates: its reply ends with a row named for the task while the sub-agent works on
+and the page shows no running reply. When the sub-agent finishes, its report is stored as a
+"Sub-agent finished · <task>" row that opens to the result, and the model continues from it
+without the person typing. A reload while it works keeps the chat and the report still arrives.
+Two accounts working at once each get only their own report, the admin's background limit
+refuses a delegation over the cap and reports the other, a failing sub-agent is reported with
+its error, and sub-agents that finish while the reply is written come back together, a row and
+a result each. Stopping the reply leaves the sub-agent running.
+
+Since dev 8522af2d6 every delegation of a chat works this way: the switch for background
+sub-agents and the delegation's `background` argument are gone, the report rows read how the
+sub-agent ended (e85500e77), and no sub-agent of a chat holds its reply any more, so the test of
+stopping the chat during a foreground sub-agent went with it. Stopping a sub-agent itself is
+e2e/chat/test_subagent_edges.py.
 
 Before PR #31576 (open-webui/open-webui#31566) the open page did not follow a report on its own:
 the server told it to reload the chat while the chat's stored current message still pointed at the
@@ -19,18 +24,13 @@ until the person reloaded. Every test that reads the report waits for it in the 
 `test_a_failing_background_subagent_is_reported_and_the_chat_carries_on`,
 `test_a_reload_while_the_subagent_works_keeps_the_chat_and_the_report_still_comes`,
 `test_stopping_the_reply_leaves_the_background_subagent_running_and_its_report_comes`,
-`test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report`,
+`test_subagents_finishing_while_the_reply_is_written_come_back_together`,
 `test_the_reply_ends_while_the_subagent_keeps_working_and_its_report_then_continues_the_chat`,
 `test_the_report_and_the_follow_up_show_in_the_open_chat_without_a_reload` and
 `test_two_accounts_at_once_each_get_only_their_own_report` are red on dev 62f70a844: since de73bb830
 a chat request whose reply message is already stored in the chat, the way automations, sub-agents
 and timers prepare their reply, is refused with 409 and the reply is never written
 (open-webui/open-webui#32066, fixed by 641c82df1).
-
-`test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_still_works` is red on
-dev 62f70a844 for two reasons: the sub-agent's reply is refused with 409
-(open-webui/open-webui#32066, fixed by 641c82df1), and a reply stopped with Stop never ends on the
-page (open-webui/open-webui#32081, fixed by d12bf062b).
 
 `test_a_reload_while_the_subagent_works_keeps_the_chat_and_the_report_still_comes` is red on dev
 131ddc32e: since d5038fec4 a chat that reloads as the report arrives keeps the copy of the report
@@ -41,35 +41,33 @@ plain message until the next reload (open-webui/open-webui#32801).
 Discriminates: passes on dev a5bc78300; on dev 176d31d1d the tests that wait for the report fail on
 that bug. In backend copies the tests turn red when the dispatch waits for the sub-agent, the cap
 is ignored, a failure is reported as completed, the reports of two chats are mixed up, two finished
-sub-agents are reported one by one, the stop of the reply reaches the background sub-agent, or the
-stop of the chat leaves the foreground one running. In a frontend copy with the dispatch row named
-as a foreground one, the report row's result left out and its count of tasks dropped, the row tests
-turn red while an unrelated journey stays green.
+sub-agents are reported one by one, or the stop of the reply reaches the sub-agent. In a frontend
+copy with the report row's result left out, the row tests turn red while an unrelated journey stays
+green. Retargeted on dev 9d19883f1 to the rows of e85500e77.
 
 Every test runs in the main chat and in a side chat. On dev c15f28649 seven side chat variants
 are red and green on head e791cbdde (fix PR open-webui/open-webui#34064): a side chat did not
 follow a report the server sent while the chat was open, so the report and the follow-up showed
 only after a reload. No filed issue (open-webui/open-webui#34014 to #34036) covers it. The reload
-test and the foreground stop test are green on dev: a reload makes the side chat the page's own.
+test is green on dev: a reload makes the side chat the page's own.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import time
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from harness.subagents import report_of
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     Chat,
     conversation,
     expect_reply,
-    last_reply,
     replies,
     send,
     stop_button,
@@ -79,23 +77,17 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 SLOW_SECONDS = 8.0
-STOP_SECONDS = 20.0
 
 
 @pytest.fixture
 def background_on(admin, preserve):
-    """`background_on(SUBAGENTS_MAX_ASYNC=1)` turns background sub-agents on with a limit."""
+    """`background_on(SUBAGENTS_MAX_ASYNC=1)` turns sub-agents on with a background limit."""
     preserve(SUBAGENTS)
 
     def switch_on(**limits) -> None:
         with admin.client() as client:
             current = client.get(SUBAGENTS[0]).json()
-            settings = {
-                **current,
-                "ENABLE_SUBAGENTS": True,
-                "SUBAGENTS_BACKGROUND_ENABLED": True,
-                **limits,
-            }
+            settings = {**current, "ENABLE_SUBAGENTS": True, **limits}
             client.post(SUBAGENTS[1], json=settings).raise_for_status()
 
     return switch_on
@@ -106,36 +98,23 @@ def unique(label: str) -> str:
 
 
 def dispatch(task: str, prompt: str, call_id: str = "call_1") -> reply.Reply:
-    return reply.tool_call(
-        "delegate_task", {"task": task, "background": True}, call_id, match=reply.answering(prompt)
-    )
-
-
-def report_of(task: str):
-    """A `match` for the request that carries the finished sub-agent's report back to the model."""
-
-    def matches(body: dict) -> bool:
-        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
-        content = str(users[-1].get("content")) if users else ""
-        return "[ASYNC SUBAGENT COMPLETE" in content and task in content
-
-    return matches
+    return reply.tool_call("delegate_task", {"task": task}, call_id, match=reply.answering(prompt))
 
 
 def dispatched_row(chat: Chat, task: str) -> Locator:
-    name = re.escape(f'View Result from Background sub-agent: "{task}"')
-    return conversation(chat).get_by_role("button", name=re.compile(name))
+    """The delegation call in the reply, alone or as the group of steps it folds into."""
+    name = re.compile(rf"^(View Result from|Explored) {re.escape(task)}")
+    return conversation(chat).get_by_role("button", name=name)
 
 
-def report_row(chat: Chat) -> Locator:
-    return conversation(chat).get_by_role(
-        "button", name=re.compile("Background sub-agent finished")
-    )
+def report_row(chat: Chat, ending: str = "finished") -> Locator:
+    """The rows of the sub-agents' reports that read they `ending` ("finished", "failed")."""
+    return conversation(chat).get_by_role("button", name=re.compile(f"^Sub-agent {ending} · "))
 
 
-def expect_report_row(chat: Chat) -> None:
+def expect_report_row(chat: Chat, ending: str = "finished") -> None:
     expect(
-        report_row(chat),
+        report_row(chat, ending),
         "the report never showed in the open chat (it shows only after a reload)",
     ).to_be_visible(timeout=REPLY_TIMEOUT_MS)
 
@@ -150,13 +129,6 @@ def running_task_ids(admin) -> set[str]:
         return set(client.get("/api/tasks").json()["tasks"])
 
 
-def wait_until(condition, timeout_seconds: float) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    while not condition():
-        assert time.monotonic() < deadline, "the condition never held"
-        time.sleep(0.1)
-
-
 def two_dispatches(tasks: list[str], prompt: str) -> reply.Reply:
     calls = [
         {
@@ -164,7 +136,7 @@ def two_dispatches(tasks: list[str], prompt: str) -> reply.Reply:
             "type": "function",
             "function": {
                 "name": "delegate_task",
-                "arguments": json.dumps({"task": task, "background": True}),
+                "arguments": json.dumps({"task": task}),
             },
         }
         for number, task in enumerate(tasks)
@@ -344,9 +316,9 @@ def test_a_failing_background_subagent_is_reported_and_the_chat_carries_on(
     send(chat, prompt)
 
     expect_in_chat(chat, "Sent it off.")
-    expect_report_row(chat)
+    expect_report_row(chat, "failed")
     expect_reply(chat, "The helper failed.")
-    report_row(chat).click()
+    report_row(chat, "failed").click()
     expect(conversation(chat)).to_contain_text("The subagent did not complete successfully.")
     expect(conversation(chat)).to_contain_text("the helper model is down")
 
@@ -379,44 +351,7 @@ def test_stopping_the_reply_leaves_the_background_subagent_running_and_its_repor
     expect(conversation(chat)).not_to_contain_text("Sent it off, and more.")
 
 
-def test_stopping_the_chat_during_a_foreground_subagent_stops_it_and_the_chat_still_works(
-    background_on, chat_for, make_user, upstream, admin
-):
-    background_on()
-    prompt, task, second = unique("stop this"), unique("slow foreground job"), unique("again")
-    upstream.queue(
-        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
-        reply.text("late answer", delay=STOP_SECONDS, match=reply.answering(task)),
-        reply.text("Second reply.", match=reply.answering(second)),
-    )
-    chat = chat_for(make_user())
-    idle_tasks = running_task_ids(admin)
-    send(chat, prompt)
-    working = re.escape(f'Executing Sub-agent: "{task}"...')
-    expect(last_reply(chat).get_by_role("button", name=re.compile(working))).to_be_visible(
-        timeout=REPLY_TIMEOUT_MS
-    )
-
-    started_tasks = running_task_ids(admin) - idle_tasks
-    assert len(started_tasks) >= 2, "the reply and its sub-agent should both be running tasks"
-    # stop while the sub-agent waits on its answer, not before it has asked for it
-    wait_until(
-        lambda: any(task in str(r["messages"]) for r in upstream.chat_requests()),
-        timeout_seconds=10.0,
-    )
-
-    stop_button(chat).click()
-
-    expect(stop_button(chat)).to_have_count(0)
-    expect(last_reply(chat).get_by_role("button", name=re.compile(working))).to_have_count(0)
-    wait_until(lambda: not started_tasks & running_task_ids(admin), timeout_seconds=5.0)
-    send(chat, second)
-    expect_reply(chat, "Second reply.")
-    assert all("late answer" not in str(r["messages"]) for r in upstream.chat_requests())
-    assert len(upstream.chat_requests()) == 3
-
-
-def test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report(
+def test_subagents_finishing_while_the_reply_is_written_come_back_together(
     background_on, chat_for, make_user, upstream
 ):
     """In a side chat on dev: the report shows only after a reload (no issue filed)."""
@@ -434,10 +369,16 @@ def test_subagents_finishing_while_the_reply_is_written_come_back_as_one_report(
     send(chat, prompt)
 
     expect_in_chat(chat, "Sent both off.")
-    expect_report_row(chat)
-    expect(report_row(chat)).to_have_count(1)
-    expect(report_row(chat)).to_contain_text("2 tasks")
+    expect(
+        report_row(chat),
+        "the reports never showed in the open chat (they show only after a reload)",
+    ).to_have_count(2, timeout=REPLY_TIMEOUT_MS)
     expect_reply(chat, "Both reports read.")
+    for task in tasks:
+        row = report_row(chat).filter(has_text=task)
+        expect(row, f"no result row for {task}").to_have_count(1)
+        row.click()
+        expect(conversation(chat)).to_contain_text(f"answer for {task}")
     [report] = [r for r in upstream.chat_requests() if report_of(tasks[0])(r)]
     content = str(reply.conversation(report)[-1]["content"])
     assert all(task in content and f"answer for {task}" in content for task in tasks)
