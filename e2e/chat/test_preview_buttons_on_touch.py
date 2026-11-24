@@ -7,9 +7,13 @@ seen against the image and still work: the person who reported open-webui/open-w
 iPhone lost them over a light image. Taps are Chromium touch points sent through CDP
 (`utils/image_preview.py`); WebKit's iPhone emulation gave the same results by hand.
 
-Discriminates: all three tests are red on dev 34888d690. Download in the preview and Download as
-SVG start no download, and after zooming into a light image the Close icon shows at 1.09:1
-against it. All three pass on fix/preview-buttons-work-on-touch.
+A pinch whose second finger lands on a button still zooms the image.
+
+Discriminates: the three button tests are red on dev 34888d690. Download in the preview and
+Download as SVG start no download, and after zooming into a light image the Close icon shows at
+1.09:1 against it. The pinch test passes on dev and guards the fix: a first version of it
+(7a1d5e981) left that pinch dead, with "zoom requires valid numbers" on every move. All four pass
+on fix/preview-buttons-work-on-touch.
 """
 
 from __future__ import annotations
@@ -106,6 +110,20 @@ def test_download_in_the_image_preview_saves_the_image_on_a_tap(page_for, make_u
     with page.expect_download():
         fingers.double_tap(centre(screen_box(download)))
     assert zoom_of(page, fitted) == 1, "a double tap on Download zoomed the image"
+
+
+def test_a_pinch_with_one_finger_on_a_button_still_zooms(page_for, make_user):
+    page = open_image_reply(page_for, make_user)
+    fingers = Fingers(page)
+    fitted = open_preview(page, fingers)
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    download = centre(screen_box(preview(page).get_by_role("button", name="Download")))
+
+    # first finger on the image, second lands on Download, then the first slides away
+    fingers.spread_off((195, 500), download, by=(-60, 180))
+    assert zoom_of(page, fitted) > 1.5, "a pinch with a finger on Download did not zoom"
+    assert errors == [], f"the pinch raised page errors: {errors[:2]}"
 
 
 def test_a_diagrams_download_and_copy_buttons_take_a_tap(page_for, make_user):

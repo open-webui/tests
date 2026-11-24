@@ -94,6 +94,19 @@ class Fingers:
         self._send("touchEnd", [])
         self.page.wait_for_timeout(500)
 
+    def spread_off(
+        self, moving: tuple[float, float], resting: tuple[float, float], by: tuple[float, float]
+    ):
+        """One finger rests on `resting` while the one on `moving` slides away by `by`."""
+        (x, y), (dx, dy) = moving, by
+        self._send("touchStart", [(1, x, y)])
+        self._send("touchStart", [(1, x, y), (2, *resting)])
+        for move in range(1, 16):
+            self._send("touchMove", [(1, x + dx * move / 15, y + dy * move / 15), (2, *resting)])
+            self.page.wait_for_timeout(16)
+        self._send("touchEnd", [])
+        self.page.wait_for_timeout(500)
+
     def tap(self, point: tuple[float, float]) -> None:
         self._send("touchStart", [(1, *point)])
         self.page.wait_for_timeout(40)
