@@ -57,11 +57,14 @@ def terminal(admin, preserve):
 def _model_is_sent_agents_md(terminal, make_user, upstream, home: str) -> bool:
     server, terminal_id = terminal
     server.route("GET", "/files/cwd", json_answer({"cwd": home, "home": home}))
-    upstream.queue(reply.text("ready"))
+    prompt = f"tidy up the docs {uuid.uuid4().hex[:8]}"
+    answering = reply.answering(prompt)
+    upstream.queue(reply.text("ready", match=answering))
     with make_user(role="admin").client() as client:
-        _, message = ask(client, "tidy up the docs", machine_id=terminal_id)
+        _, message = ask(client, prompt, machine_id=terminal_id)
     assert message["content"] == "ready", message
-    sent = [entry["content"] for entry in upstream.chat_requests()[-1]["messages"]]
+    [request] = [request for request in upstream.chat_requests() if answering(request)]
+    sent = [entry["content"] for entry in request["messages"]]
     return f"# AGENTS.md\n\n{AGENTS_MD}" in sent
 
 

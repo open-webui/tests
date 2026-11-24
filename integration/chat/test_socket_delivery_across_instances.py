@@ -355,6 +355,9 @@ def test_a_tool_asks_the_users_tab_and_gets_its_answer(fleet, provider, mode, ta
         connected(signed_in_on(account, listening_on)) as tab,
         account.client() as client,
     ):
+        # the tab signs in as the web client does on load, so its instance knows it before the ask
+        joined = tab.call("user-join", {"auth": {"token": account.token}})
+        assert (joined or {}).get("id") == account.id, f"the tab was not signed in: {joined}"
         asked = _answer_inputs(tab, "Ada")
         options = {"tool_ids": [tool_id], "session_id": tab.client.get_sid()}
         _, message = ask(client, prompt, **options)
