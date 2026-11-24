@@ -347,7 +347,7 @@ def fastest_opens(
 def test_with_compaction_off_opening_a_130_mb_chat_skips_the_usage_estimate(
     make_user, fat_chat, compaction
 ):
-    """open-webui/open-webui#34670 and #34962 (a chat with no machine selected was read twice)."""
+    """open-webui/open-webui#34670."""
     owner = make_user()
     large = fat_chat(owner, "fat-130mb")
     with owner.client() as client:

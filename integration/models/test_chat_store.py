@@ -31,6 +31,11 @@
 * #34126 a full save from a window that missed a turn stored that window's older position as the
   chat's open position, while reading the chat back already moved the history to the newest
   turn. The chat page opens on the stored position, so it reopened on the older turn.
+* #34962 since dev df6be8c3a every open of a chat with no machine selected read the whole
+  conversation again, looking for a coding agent's machine to restore, so a 130 MB chat opened
+  about 1.4 times slower than the same chat with a machine saved. With no machine there is
+  nothing to look up, so it now opens as fast, also when it was saved before Terminals were
+  renamed to Machines.
 
 Twin of unit/models/test_chat_store.py.
 
@@ -53,10 +58,14 @@ saves pass on both.
 The history search and the older-message edit also run on a stored 130 MB chat (`fat_chat`):
 the word in one early message is found, and the edit keeps the open position and every message.
 Both pass on dev f8a518648 on SQLite and Postgres.
+
+The #34962 open test fails on dev 4a065a5c9 (no machine opens about 1.4 times slower than a
+machine, bound 1.2) and passes with the fix 36b8acbff of PR #34963 (0.9 to 1.0).
 """
 
 from __future__ import annotations
 
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -732,3 +741,58 @@ def test_a_plain_history_without_ids_is_walked_from_its_root(capped_instance):
     chain = id_less_history("c", {"a": None, "b": "a", "c": "b"})
     with capped_instance.client() as admin_client:
         assert exported_message_count(admin_client, chain) == 3
+
+
+# --- #34962: a long chat with no machine opens as fast as one with a machine ---------------
+
+MACHINE_ID = "workshop-terminal"
+OPENS_TIMED = 7
+# about 1.4 on dev before the fix of #34962 and 0.9 to 1.0 with it
+NO_MACHINE_TO_MACHINE_BOUND = 1.2
+
+
+def save_selection(client: httpx.Client, chat_id: str, machine_id: str | None) -> None:
+    """Save the chat's model and machine the way the chat page does."""
+    selection = {"models": ["mock-model"], "machine_id": machine_id, "working_directory": ""}
+    saved = client.post(f"/api/v1/chats/{chat_id}", json={"chat": selection})
+    assert saved.status_code == 200, saved.text[:500]
+
+
+def timed_open(client: httpx.Client, chat_id: str) -> tuple[float, dict]:
+    started = time.perf_counter()
+    opened = client.get(f"/api/v1/chats/{chat_id}", headers={"Accept-Encoding": "identity"})
+    seconds = time.perf_counter() - started
+    assert opened.status_code == 200, opened.text[:500]
+    return seconds, opened.json()["chat"]
+
+
+def test_a_130_mb_chat_with_no_machine_opens_as_fast_as_one_with_a_machine(owner, client, fat_chat):
+    """open-webui/open-webui#34962, fixed by open-webui/open-webui#34963."""
+    # the stored chat keeps its empty machine under the name it had before the rename
+    saved_before_the_rename = fat_chat(owner, "fat-130mb")
+    saved_today = fat_chat(owner, "fat-130mb")
+    with_machine = fat_chat(owner, "fat-130mb")
+    save_selection(client, saved_today.chat_id, None)
+    save_selection(client, with_machine.chat_id, MACHINE_ID)
+    chats = {
+        "no machine, saved before the rename": (saved_before_the_rename.chat_id, None),
+        "no machine": (saved_today.chat_id, None),
+        "a machine": (with_machine.chat_id, MACHINE_ID),
+    }
+
+    fastest = dict.fromkeys(chats, float("inf"))
+    for _ in range(OPENS_TIMED):
+        for name, (chat_id, machine_id) in chats.items():
+            seconds, chat = timed_open(client, chat_id)
+            assert chat.get("machine_id") == machine_id and chat["models"] == ["mock-model"], (
+                f"the chat with {name} opened with machine {chat.get('machine_id')!r} and models "
+                f"{chat['models']}"
+            )
+            fastest[name] = min(fastest[name], seconds)
+
+    baseline = fastest["a machine"]
+    for name in ("no machine, saved before the rename", "no machine"):
+        assert fastest[name] / baseline < NO_MACHINE_TO_MACHINE_BOUND, (
+            f"the 130 MB chat with {name} opened in {fastest[name]:.3f} s and the same chat with "
+            f"a machine in {baseline:.3f} s; with no machine there is nothing to look up"
+        )
