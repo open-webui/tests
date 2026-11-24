@@ -35,6 +35,9 @@ model's default, so nothing is left to save (gone default); a default picked wit
 having the terminal (may use it); no terminal list read on reconnect or on an access change
 (group, granted while open); a chat opening on a terminal the person lost (taken away, the admin
 case; for a user the page's own check still unpicks it).
+Since 0f71ee15a a chat opening on a terminal the person lost keeps it, shown as Unavailable
+machine, since a machine missing from the list may only be unreachable for now (the taken away
+test expected none picked before).
 Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
 The opened-chat test is red on dev dc9886799 (#34928): opening a saved chat without a terminal
 dropped the pick for the next new chat and a reload. Fix: Classic298/open-webui branch
@@ -287,7 +290,7 @@ def test_a_chat_started_without_a_terminal_opens_without_one_whatever_is_picked_
 @pytest.mark.parametrize(
     "role", ["user", "admin"], ids=["user-loses-the-grant", "admin-loses-the-connection"]
 )
-def test_a_chat_whose_terminal_was_taken_away_opens_with_none_picked(
+def test_a_chat_whose_terminal_was_taken_away_opens_with_it_shown_unavailable(
     page_for, make_user, admin, servers, upstream, role
 ):
     person = make_user(role=role)
@@ -306,8 +309,9 @@ def test_a_chat_whose_terminal_was_taken_away_opens_with_none_picked(
         connect(admin, servers, quay=[], slip=mine)
     load_chat(page, chat_id)
 
-    expect_terminal(page, None)
-    open_terminal_menu(page)
+    # since 0f71ee15a the chat keeps a machine missing from the list, as it may come back
+    expect_terminal(page, "Unavailable machine")
+    open_terminal_menu(page, "Unavailable machine")
     expect(listed_terminal(page, SLIP)).to_be_visible()
     expect(listed_terminal(page, QUAY), "the terminal taken away is still listed").to_have_count(0)
 
