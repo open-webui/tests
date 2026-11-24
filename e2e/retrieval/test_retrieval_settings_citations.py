@@ -96,7 +96,7 @@ BASELINE = {
     "RAG_RERANKING_MODEL": "",
     "RAG_TEMPLATE": "",
     # a file under the threshold goes whole, and the notes are under the default one
-    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
+    "RAG_FULL_TEXT_THRESHOLD": 0,
 }
 
 

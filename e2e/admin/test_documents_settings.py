@@ -205,7 +205,7 @@ def test_the_full_text_threshold_and_always_use_full_text_are_kept_after_a_reloa
     expect(field(settings, "Full Text Threshold (Characters)")).to_have_value("4321")
     with admin.client() as client:
         stored = client.get(RETRIEVAL_CONFIG[0]).json()
-    assert (stored["RAG_FULL_TEXT_CHAR_THRESHOLD"], stored["RAG_FULL_CONTEXT"]) == (4321, True)
+    assert (stored["RAG_FULL_TEXT_THRESHOLD"], stored["RAG_FULL_CONTEXT"]) == (4321, True)
 
 
 @pytest.mark.usefixtures("file_context_on")

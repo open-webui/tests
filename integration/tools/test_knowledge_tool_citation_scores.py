@@ -117,7 +117,7 @@ def test_chat_file_citations_carry_their_relevance_scores(
     preserve(RETRIEVAL_CONFIG)
     # since 98f7a6146 a small chat file goes whole, unsearched and so unscored
     with admin.client() as client:
-        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 0})
         assert saved.status_code == 200, saved.text
     files = [{"type": "file", "id": file_id, "name": file_id} for file_id in sorted(file_ids)]
 

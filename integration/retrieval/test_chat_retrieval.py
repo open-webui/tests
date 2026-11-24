@@ -12,7 +12,7 @@ The instance embeds through a local service whose vectors follow a few keywords,
 about herons is nearest the chunks about herons and nothing else; a local service also plays the
 reranker. File Context is ticked in the Model Defaults: without it a model in native function
 calling gets the file as a reference to read through its tools, and nothing is retrieved up front.
-Files under `RAG_FULL_TEXT_CHAR_THRESHOLD` go whole, so the threshold is off here except in the
+Files under `RAG_FULL_TEXT_THRESHOLD` go whole, so the threshold is off here except in the
 threshold tests: since 98f7a6146 a file of up to that many characters is sent whole and one
 character more is searched by its chunks, while a knowledge base is searched whatever its files
 measure (d43759c2c).
@@ -80,7 +80,7 @@ ONE_PARAGRAPH_CHUNKS = {
     "CHUNK_OVERLAP": 0,
     "CHUNK_MIN_SIZE_TARGET": 0,
     # a file under the threshold goes whole, and every file here is under the default one
-    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
+    "RAG_FULL_TEXT_THRESHOLD": 0,
 }
 
 
@@ -213,7 +213,7 @@ def test_a_knowledge_base_attached_to_the_chat_is_searched(ranked, settings, rea
         TOP_K=2,
         RAG_FULL_CONTEXT=False,
         ENABLE_RAG_HYBRID_SEARCH=False,
-        RAG_FULL_TEXT_CHAR_THRESHOLD=10 * len(FIELD_NOTES),
+        RAG_FULL_TEXT_THRESHOLD=10 * len(FIELD_NOTES),
     )
     grant = {"principal_type": "user", "principal_id": reader.id, "permission": "read"}
     with (
@@ -244,7 +244,7 @@ def test_a_file_up_to_the_full_text_threshold_is_sent_whole(ranked, settings, re
         TOP_K=2,
         RAG_FULL_CONTEXT=False,
         ENABLE_RAG_HYBRID_SEARCH=False,
-        RAG_FULL_TEXT_CHAR_THRESHOLD=len(NOTES_WITH_CAFE) - over,
+        RAG_FULL_TEXT_THRESHOLD=len(NOTES_WITH_CAFE) - over,
     )
     notes = attached_file(reader, NOTES_WITH_CAFE, "cafe-notes.txt")
 

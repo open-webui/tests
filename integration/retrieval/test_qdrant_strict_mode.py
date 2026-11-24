@@ -51,7 +51,7 @@ LINE_CHUNKS = {
     "RAG_FULL_CONTEXT": False,
     "BYPASS_EMBEDDING_AND_RETRIEVAL": False,
     # a chat would get a small file whole instead of searching it
-    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
+    "RAG_FULL_TEXT_THRESHOLD": 0,
     "TOP_K": 5,
 }
 

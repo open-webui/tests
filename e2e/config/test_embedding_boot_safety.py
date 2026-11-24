@@ -56,7 +56,7 @@ def retrieving(local_instance, preserve):
     admin = admin_of(local_instance)
     with admin.client() as client:
         # a file under the whole-file threshold would reach the chat without its embedding
-        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 0})
     assert saved.status_code == 200, saved.text
     with file_context_ticked(admin):
         yield local_instance

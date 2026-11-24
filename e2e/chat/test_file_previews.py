@@ -314,9 +314,7 @@ def retrieved_in_pieces(admin, preserve):
     """
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
-        saved = client.post(
-            RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0, "TOP_K": 3}
-        )
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 0, "TOP_K": 3})
     assert saved.status_code == 200, saved.text
 
 
@@ -373,12 +371,12 @@ def test_using_the_entire_document_sends_the_model_all_of_it(chat_for, make_user
     ("retrieval", "explanation"),
     [
         (
-            {"RAG_FULL_TEXT_CHAR_THRESHOLD": 50000, "RAG_FULL_CONTEXT": False},
+            {"RAG_FULL_TEXT_THRESHOLD": 50000, "RAG_FULL_CONTEXT": False},
             "This attachment fits within the full text threshold, so its entire text is included "
             "automatically.",
         ),
         (
-            {"RAG_FULL_TEXT_CHAR_THRESHOLD": 0, "RAG_FULL_CONTEXT": True},
+            {"RAG_FULL_TEXT_THRESHOLD": 0, "RAG_FULL_CONTEXT": True},
             "Full text is always enabled by your administrator.",
         ),
     ],

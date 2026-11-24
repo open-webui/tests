@@ -98,7 +98,7 @@ RANKED_SETTINGS = {
     "ENABLE_RAG_HYBRID_SEARCH": False,
     "RAG_FULL_CONTEXT": False,
     "RAG_TEMPLATE": "",
-    "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
+    "RAG_FULL_TEXT_THRESHOLD": 0,
 }
 TIDES = [
     "High tide reaches the slipway before noon.",

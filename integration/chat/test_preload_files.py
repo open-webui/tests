@@ -14,8 +14,10 @@ to 10, the chunk size to 1024 and the new Full Text Threshold to 50000 character
 admin saves in Admin Settings > Documents, the env var seeds on a fresh instance and every
 signed-in account reads from `/api/config` (the file dialog decides with it whether to show its
 whole-document switch); Always Use Full Text shows there as full context. A negative threshold is
-refused. The threshold boundary itself is in integration/retrieval/test_chat_retrieval.py, the
-API path without a session in integration/chat/test_api_client.py.
+refused. Dev 57c955a03 renamed the setting `RAG_FULL_TEXT_THRESHOLD` (`full_text_threshold` in
+`/api/config`); the documented `RAG_FULL_TEXT_CHAR_THRESHOLD` env var still seeds it. The
+threshold boundary itself is in integration/retrieval/test_chat_retrieval.py, the API path without
+a session in integration/chat/test_api_client.py.
 
 Discriminates: on dev f659c0d12, in backend copies: `is_file_context_enabled` answering True fails
 the four native default cases; answering False or the mode default whatever the capability fails the
@@ -196,14 +198,14 @@ def test_the_retrieval_defaults_send_ten_pieces_of_1024_characters_or_files_up_t
         "TOP_K": config["TOP_K"],
         "TOP_K_RERANKER": config["TOP_K_RERANKER"],
         "CHUNK_SIZE": config["CHUNK_SIZE"],
-        "RAG_FULL_TEXT_CHAR_THRESHOLD": config["RAG_FULL_TEXT_CHAR_THRESHOLD"],
+        "RAG_FULL_TEXT_THRESHOLD": config["RAG_FULL_TEXT_THRESHOLD"],
         "RAG_FULL_CONTEXT": config["RAG_FULL_CONTEXT"],
     }
     assert defaults == {
         "TOP_K": 10,
         "TOP_K_RERANKER": 10,
         "CHUNK_SIZE": 1024,
-        "RAG_FULL_TEXT_CHAR_THRESHOLD": 50000,
+        "RAG_FULL_TEXT_THRESHOLD": 50000,
         "RAG_FULL_CONTEXT": False,
     }, f"the retrieval defaults changed: {defaults}"
 
@@ -211,14 +213,14 @@ def test_the_retrieval_defaults_send_ten_pieces_of_1024_characters_or_files_up_t
 def test_the_full_text_threshold_is_saved_and_every_account_reads_it(admin, make_user, preserve):
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
-        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 1234})
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 1234})
         assert saved.status_code == 200, saved.text
-        assert saved.json()["RAG_FULL_TEXT_CHAR_THRESHOLD"] == 1234, saved.json()
-        assert client.get(RETRIEVAL_CONFIG[0]).json()["RAG_FULL_TEXT_CHAR_THRESHOLD"] == 1234
+        assert saved.json()["RAG_FULL_TEXT_THRESHOLD"] == 1234, saved.json()
+        assert client.get(RETRIEVAL_CONFIG[0]).json()["RAG_FULL_TEXT_THRESHOLD"] == 1234
 
     with make_user().client() as client:
         seen = client.get("/api/config").json()["file"]
-    assert seen["full_text_char_threshold"] == 1234, f"a user read the file settings as {seen}"
+    assert seen["full_text_threshold"] == 1234, f"a user read the file settings as {seen}"
     assert seen["full_context"] is False, seen
 
 
@@ -237,10 +239,10 @@ def test_always_use_full_text_shows_as_full_context_to_every_account(admin, make
 def test_a_negative_full_text_threshold_is_refused(admin, preserve):
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
-        set_first = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 777})
+        set_first = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 777})
         assert set_first.status_code == 200, set_first.text
-        refused = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": -1})
-        kept = client.get(RETRIEVAL_CONFIG[0]).json()["RAG_FULL_TEXT_CHAR_THRESHOLD"]
+        refused = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": -1})
+        kept = client.get(RETRIEVAL_CONFIG[0]).json()["RAG_FULL_TEXT_THRESHOLD"]
 
     assert refused.status_code == 422, f"-1 was answered {refused.status_code}: {refused.text}"
     assert kept == 777, f"the refused threshold changed the saved one to {kept}"
@@ -251,4 +253,4 @@ def test_the_threshold_env_var_seeds_a_fresh_instance(instance_with):
     launched = instance_with({"RAG_FULL_TEXT_CHAR_THRESHOLD": "321"})
     with admin_of(launched).client() as client:
         config = client.get(RETRIEVAL_CONFIG[0]).json()
-    assert config["RAG_FULL_TEXT_CHAR_THRESHOLD"] == 321, config["RAG_FULL_TEXT_CHAR_THRESHOLD"]
+    assert config["RAG_FULL_TEXT_THRESHOLD"] == 321, config["RAG_FULL_TEXT_THRESHOLD"]

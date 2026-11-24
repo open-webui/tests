@@ -90,9 +90,7 @@ def one_passage_retrieval(admin, preserve):
     """Files searched by their chunks and only the best chunk cited, so a reply cites one part."""
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
-        saved = client.post(
-            RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0, "TOP_K": 1}
-        )
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 0, "TOP_K": 1})
     assert saved.status_code == 200, f"setting retrieval to one chunk failed: {saved.text}"
 
 

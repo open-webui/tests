@@ -178,7 +178,7 @@ def chunked_retrieval(admin: Actor, preserve: Callable[..., None]) -> None:
     """Small files searched by their chunks on the shared instance, not sent whole."""
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client:
-        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_CHAR_THRESHOLD": 0})
+        saved = client.post(RETRIEVAL_CONFIG[1], json={"RAG_FULL_TEXT_THRESHOLD": 0})
     assert saved.status_code == 200, f"turning the whole-file threshold off failed: {saved.text}"
 
 
