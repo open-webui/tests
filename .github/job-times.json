@@ -7,7 +7,7 @@
         "integration": 2214,
         "integration-postgres-redis": 1469,
         "run": 345,
-        "timeouts": 8
+        "timeouts": 9
     },
     "terminals": {
         "e2e": 1912,

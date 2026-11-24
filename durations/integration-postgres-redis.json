@@ -911,7 +911,7 @@
     "integration/chat/test_context_compaction.py::test_the_system_prompt_stays_first_with_the_summary": 0.542,
     "integration/chat/test_context_compaction.py::test_usage_an_upgrade_stored_in_the_provider_dialect_counts": 0.0,
     "integration/chat/test_context_compaction.py::test_usage_under_the_threshold_does_not_compact": 0.423,
-    "integration/chat/test_context_compaction.py::test_with_compaction_off_opening_a_130_mb_chat_skips_the_usage_estimate": 51.157,
+    "integration/chat/test_context_compaction.py::test_with_compaction_off_opening_a_130_mb_chat_skips_the_usage_estimate": 59.576,
     "integration/chat/test_convert_output.py::test_only_paired_tool_calls_reach_the_provider[call-without-result]": 0.32,
     "integration/chat/test_convert_output.py::test_only_paired_tool_calls_reach_the_provider[orphans-both-ways]": 0.325,
     "integration/chat/test_convert_output.py::test_only_paired_tool_calls_reach_the_provider[partial-batch]": 0.315,
