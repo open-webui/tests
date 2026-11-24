@@ -35,6 +35,8 @@ test red at its first dialog.
 
 from __future__ import annotations
 
+import base64
+import io
 import re
 import time
 import uuid
@@ -364,19 +366,35 @@ def test_the_source_list_opens_a_cited_word_document_as_its_marker_does(
     expect_marked(file_panel(page, "report.docx").get_by_text(REPORT[0], exact=True))
 
 
+FETCH_BYTES = """async (url) => {
+    const response = await fetch(url);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let text = '';
+    for (const byte of bytes) text += String.fromCharCode(byte);
+    return [response.status, btoa(text)];
+}"""
+
+
 def test_an_opened_cited_document_downloads_the_original_file(page_for, make_user, upstream):
-    """Red on dev c1f3b6fd1: open-webui/open-webui#34832."""
+    """Red on dev c1f3b6fd1: open-webui/open-webui#34832, fixed by e1855444a with an Open file
+    link on the document view that leads to the original file."""
     page = _attached_report(page_for, make_user, upstream)
     last_reply(page).get_by_role("button", name="View source: report.docx").click()
     panel = file_panel(page, "report.docx")
     expect(panel.get_by_text(REPORT[0], exact=True)).to_be_visible()
-    download_control = page.get_by_role("button", name="Download").or_(
-        page.get_by_role("link", name="Download")
-    )
-    expect(download_control.first, "the opened document offers no download").to_be_visible()
-    with page.expect_event("download") as caught:
-        download_control.first.click()
-    assert caught.value.suggested_filename == "report.docx", caught.value.suggested_filename
+    open_file = panel.get_by_role("link", name="Open file")
+    expect(open_file, "the opened document offers no way to the original file").to_be_visible()
+    href = open_file.get_attribute("href")
+    assert href, "the Open file link leads nowhere"
+    # what the browser gets when the link is followed, with the account's own session
+    status, body = page.evaluate(FETCH_BYTES, href)
+    assert status == 200, f"opening the original file got {status}"
+    from docx import Document
+
+    served = [
+        paragraph.text for paragraph in Document(io.BytesIO(base64.b64decode(body))).paragraphs
+    ]
+    assert served == REPORT, f"the link serves another document: {served}"
 
 
 TRAIL = [
