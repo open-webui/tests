@@ -36,6 +36,11 @@
   about 1.4 times slower than the same chat with a machine saved. With no machine there is
   nothing to look up, so it now opens as fast, also when it was saved before Terminals were
   renamed to Machines.
+* #35007 since chats are stored message by message (#34689), a save that left out a reply's
+  usage, output or error wiped them from the stored reply, so the admin's analytics lost the
+  reply's tokens and its failed status. Before, the analytics kept them.
+* #35008 since the same change, the admin's message analytics and session view read every
+  question and every reply saved without `done` as `done: null`, where they read `true` before.
 
 Twin of unit/models/test_chat_store.py.
 
@@ -62,6 +67,12 @@ Both pass on dev f8a518648 on SQLite and Postgres.
 The #34962 open test fails on dev c56ba4e75 just before the fix (no machine opens about 1.4
 times slower than a machine on SQLite and 1.65 on Postgres, bound 1.2) and passes on dev
 90116cd36 with the fix of PR #34963 merged (0.9 to 1.0).
+
+On dev 36ccecd88 the #35007 save test and the #35008 analytics test fail on SQLite and
+Postgres and pass with the fixes on branches fix-rows-save-keeps-output and
+fix-rows-analytics-done. On dev b6aac5dee, before #34689, the analytics test passes and the save
+test fails only on the reopened reply (the chat then reopened from a copy that the save replaced
+whole), while the analytics kept the usage and the error. The cleared-error save passes on all.
 """
 
 from __future__ import annotations
@@ -474,6 +485,66 @@ def test_a_stale_writer_keeps_a_message_saved_since_its_read(client):
     )
 
 
+REPLY_USAGE = {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+REPLY_OUTPUT = [
+    {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Calm seas today."}],
+    }
+]
+
+
+def test_a_save_leaving_out_a_replys_output_usage_and_error_keeps_them(client, admin):
+    question = message("q1", None, ["a1", "a2"], "user")
+    answered = message(
+        "a1", "q1", [], "assistant", output=REPLY_OUTPUT, usage=REPLY_USAGE, done=True
+    )
+    failed = message(
+        "a2", "q1", [], "assistant", error={"content": "the provider is down"}, done=True
+    )
+    chat_id = create_chat(client, {"history": history("a2", question, answered, failed)})
+
+    without = [
+        {key: value for key, value in entry.items() if key not in ("output", "usage", "error")}
+        for entry in (question, answered, failed)
+    ]
+    save_history(client, chat_id, history("a2", *without))
+
+    stored = read_chat(client, chat_id)["history"]["messages"]
+    assert stored["a1"].get("output") == REPLY_OUTPUT, (
+        f"a save that left out the reply's output wiped it: {stored['a1'].get('output')}"
+    )
+    assert stored["a1"].get("usage", {}).get("total_tokens") == 18, (
+        f"a save that left out the reply's usage wiped it: {stored['a1'].get('usage')}"
+    )
+    assert stored["a2"].get("error") == {"content": "the provider is down"}, (
+        f"a save that left out the failed reply's error wiped it: {stored['a2'].get('error')}"
+    )
+    records = message_records(admin, chat_id)
+    assert (records["a1"].get("usage") or {}).get("total_tokens") == 18, (
+        f"the admin's analytics lost the reply's tokens: {records['a1'].get('usage')}"
+    )
+    assert records["a2"].get("error") == {"content": "the provider is down"}, (
+        f"the admin's analytics lost the failed reply's error: {records['a2'].get('error')}"
+    )
+
+
+def test_a_save_naming_a_replys_error_and_output_replaces_them(client):
+    question = message("q1", None, ["a1"], "user")
+    failed = message("a1", "q1", [], "assistant", error={"content": "the provider is down"})
+    chat_id = create_chat(client, {"history": history("a1", question, failed)})
+
+    retried = {**failed, "error": None, "output": REPLY_OUTPUT, "done": True}
+    save_history(client, chat_id, history("a1", question, retried))
+
+    stored = read_chat(client, chat_id)["history"]["messages"]["a1"]
+    assert not stored.get("error"), f"a save that cleared the error kept it: {stored.get('error')}"
+    assert stored.get("output") == REPLY_OUTPUT, (
+        f"the saved output was not stored: {stored.get('output')}"
+    )
+
+
 # --- #34126: a stale save keeps the chat open on its newest turn ---------------------------
 
 
@@ -685,6 +756,37 @@ def test_a_message_without_null_bytes_is_saved_as_sent(client, admin):
     stored = read_chat(client, chat_id)["history"]["messages"]["m1"]
     assert stored["sources"][0]["source"] == {"name": "report"}
     assert message_records(admin, chat_id)["m1"]["sources"][0]["source"] == {"name": "report"}
+
+
+def session_message_states(admin, chat_id: str) -> dict:
+    """Whether each message of the chat reads as done in the admin's session view."""
+    with admin.client() as admin_client:
+        listed = admin_client.get(f"/api/v1/analytics/sessions/{chat_id}")
+    assert listed.status_code == 200, listed.text
+    return {item["id"].removeprefix(f"{chat_id}-"): item["done"] for item in listed.json()["items"]}
+
+
+def test_the_admins_analytics_read_questions_and_saved_replies_as_done(client, admin):
+    chat_id = create_chat(
+        client,
+        {
+            "history": history(
+                "a2",
+                message("q1", None, ["a1"], "user"),
+                message("a1", "q1", ["q2"], "assistant"),
+                message("q2", "a1", ["a2"], "user"),
+                message("a2", "q2", [], "assistant", done=False),
+            )
+        },
+    )
+
+    expected = {"q1": True, "a1": True, "q2": True, "a2": False}
+    records = {
+        message_id: record["done"] for message_id, record in message_records(admin, chat_id).items()
+    }
+    assert records == expected, f"the admin's message analytics read the messages as {records}"
+    states = session_message_states(admin, chat_id)
+    assert states == expected, f"the admin's session view read the messages as {states}"
 
 
 # --- 5c79ccc9e: walking a history whose parents loop and whose messages carry no id -------
