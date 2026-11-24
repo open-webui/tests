@@ -5,6 +5,10 @@ off stays out of its reach. The sub-agent's own chat never shows in the sidebar 
 not for the account that delegated and not for another. A chat shared by link shows the reader
 the "Sub-agent finished" row the owner sees, which opens to the answer.
 
+Since dev 8522af2d6 the reply that delegates ends while the sub-agent works and its report comes
+back as that row, which the model then answers, so the tests wait for that answer. The search for
+the task finds the person's own chat, which holds the task, and nothing else.
+
 `test_a_chat_shared_by_link_shows_the_reader_the_delegation_and_its_answer` is red on dev b9e9857b1:
 the reader gets the sub-agent's report as raw text from the owner (open-webui/open-webui#34998).
 
@@ -35,10 +39,11 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.python_tools import python_tool
+from harness.subagents import delegated
 from utils.cached_chat import turn_on_tool
-from utils.chat_ui import Chat, conversation, expect_reply, last_reply, send
+from utils.chat_ui import conversation, expect_reply, send
 from utils.member_picker import pick_member
-from utils.search_dialog import no_matches, open_search_from_sidebar, result, search
+from utils.search_dialog import no_matches, open_search_from_sidebar, result, results, search
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -68,7 +73,7 @@ def offered(request: dict) -> set[str]:
 
 
 def sub_requests(upstream, task: str) -> list[dict]:
-    return [r for r in upstream.chat_requests() if reply.answering(task)(r)]
+    return [r for r in upstream.chat_requests() if delegated(task)(r)]
 
 
 def delegation(prompt: str, task: str, *sub_steps: reply.Reply) -> list[reply.Reply]:
@@ -77,12 +82,6 @@ def delegation(prompt: str, task: str, *sub_steps: reply.Reply) -> list[reply.Re
         *sub_steps,
         reply.text("The helper is done.", match=reply.answering(prompt)),
     ]
-
-
-def delegated_row(chat: Chat, task: str) -> Locator:
-    # a narrow chat column shows the short label, without "View Result from"
-    name = re.escape(f'Sub-agent: "{task}"')
-    return last_reply(chat).get_by_role("button", name=re.compile(name))
 
 
 def test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_does_not(
@@ -95,9 +94,10 @@ def test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_do
         *delegation(
             prompt,
             task,
-            reply.tool_call(used, {"text": "ahoy"}, "sub_call", match=reply.answering(task)),
-            reply.text("Shouted.", match=reply.answering(task)),
-        )
+            reply.tool_call(used, {"text": "ahoy"}, "sub_call", match=delegated(task)),
+            reply.text("Shouted.", match=delegated(task)),
+        ),
+        reply.text("It was shouted.", match=report_of(task)),
     )
     with (
         python_tool(admin, TOOL_SOURCE.format(name=used), used_name),
@@ -106,13 +106,13 @@ def test_a_tool_switched_on_in_the_chat_reaches_the_subagent_and_one_left_off_do
         chat = chat_for(make_user())
         turn_on_tool(chat, used_name)
         send(chat, prompt)
-        expect_reply(chat, "The helper is done.")
+        expect_reply(chat, "It was shouted.")
 
     first, *_, last = sub_requests(upstream, task)
     assert used in offered(first)
     assert unused not in offered(first)
     assert last["messages"][-1] == {"role": "tool", "tool_call_id": "sub_call", "content": "AHOY"}
-    expect(delegated_row(chat, task)).to_be_visible()
+    expect(finished_row(chat, task)).to_be_visible()
 
 
 def sidebar_chats(page: Page) -> Locator:
@@ -124,14 +124,15 @@ def test_the_subagents_chat_shows_in_no_ones_sidebar_or_search(
 ):
     prompt, task = unique("hand this over"), unique("count the boats")
     upstream.queue(
-        *delegation(prompt, task, reply.text("Three boats.", match=reply.answering(task)))
+        *delegation(prompt, task, reply.text("Three boats.", match=delegated(task))),
+        reply.text("Three boats it is.", match=report_of(task)),
     )
     other_prompt = unique("a chat of my own")
     upstream.queue(reply.text("Noted.", match=reply.answering(other_prompt)))
     owner_page, other_page = page_for(make_user()), page_for(make_user())
 
     send(owner_page, prompt)
-    expect_reply(owner_page, "The helper is done.")
+    expect_reply(owner_page, "Three boats it is.")
     send(other_page, other_prompt)
     expect_reply(other_page, "Noted.")
 
@@ -141,8 +142,10 @@ def test_the_subagents_chat_shows_in_no_ones_sidebar_or_search(
     owner_search = open_search_from_sidebar(owner_page)
     search(owner_search, prompt)
     expect(result(owner_search, prompt)).to_be_visible()
+    # the lead chat holds the task in its delegation and the report, the sub-agent's chat is no hit
     search(owner_search, task)
-    expect(no_matches(owner_search)).to_be_visible()
+    expect(results(owner_search)).to_have_count(1)
+    expect(result(owner_search, prompt)).to_be_visible()
     expect(sidebar_chats(other_page)).to_have_count(1)
     other_search = open_search_from_sidebar(other_page)
     search(other_search, task)

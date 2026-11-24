@@ -1,72 +1,52 @@
-"""Journey: the model hands work to a sub-agent in a chat and the answer comes back to the reply.
+"""Journey: the model hands work to a sub-agent in a chat and its result comes back to the chat.
 
-The scripted model calls the delegation tool; the sub-agent then runs its own loop against the
-same provider (tool calls of its own, then an answer) and the parent carries on with what it
-returned. The chat shows one row per sub-agent, named after its task, that opens to the task and
-the answer; the sub-agent's own tool calls stay out of the parent's reply. The limits an admin
-sets (iterations, output length) hold, a failing sub-agent shows its error, several sub-agents
-in one reply each get their row and result, and a reload keeps all of it. A call keeps to one
-row from the moment it is made until its result is in, also after thinking (one group naming the
-task once until it is opened) and across a reload while the sub-agent still works; a failing
-sub-agent next to a slow one ends with both results; under a limit of one, two sub-agents run
-one after the other and a stopped one frees its place.
+The scripted model calls the delegation tool; its reply ends with one row for the call while the
+sub-agent runs its own loop against the same provider (tool calls of its own, then an answer).
+The sub-agent's report then shows as a "Sub-agent <ending> · <task>" row that opens to its
+result, and the model carries on from it. The call's row opens to the task and the context it
+was given, a long task is cut in the row names, the sub-agent's own tool calls stay out of the
+chat, and the limits an admin sets (iterations, output length) show in the result. A call keeps
+to one row while the sub-agent works and after its result is in, also after thinking (one group
+naming the task once until it is opened).
 
 Each request is tied to its own prompt: the sub-agent's latest user message is its task, the
-parent's is what the person typed.
+parent's is what the person typed, and the report is matched by `harness.subagents.report_of`.
 
-`test_a_failing_subagent_shows_its_error_and_the_parent_still_replies`,
-`test_a_reload_after_the_run_keeps_the_rows_and_the_reply`,
-`test_a_subagent_answer_longer_than_the_output_limit_is_cut`,
-`test_a_subagent_runs_its_own_loop_and_the_parent_carries_on_with_its_answer`,
-`test_a_subagent_stops_at_the_iteration_limit_and_says_so`,
-`test_an_answer_within_the_output_limit_is_handed_over_whole`,
-`test_several_subagents_in_one_reply_each_get_a_row_and_a_result` and
-`test_the_result_row_opens_to_the_task_and_the_answer` are red on dev 62f70a844: since de73bb830 a
-chat request whose reply message is already stored in the chat, the way automations, sub-agents and
-timers prepare their reply, is refused with 409 and the reply is never written
-(open-webui/open-webui#32066, fixed by 641c82df1).
+Since dev 8522af2d6 every sub-agent of a chat works on after the reply that started it, and its
+result comes back as a report row of its own (e85500e77), where it used to be the call's tool
+result. The tests were retargeted on dev 9d19883f1. Tests that now cover the same as newer ones
+were removed: a failing sub-agent, several in one reply, a reload after the run and a failure next
+to a working sub-agent are e2e/chat/test_subagent_threads.py (finished, failed and stopped rows,
+the reload, the Threads list) and e2e/chat/test_background_subagents.py (a reload while it works,
+the failing report, two finishing together); the row reading Executing while the sub-agent works
+is now the Threads list's working entry; the answer within the output limit is
+integration/tools/test_subagents_admin_config.py, at the limit itself. The two limit-of-one tests
+went with the concurrent limit, which no longer holds a chat's sub-agents (it still holds an
+automation's, integration/tools/test_subagent_runs.py); the chat's limit is the background one.
 
-`test_the_row_reads_executing_while_the_subagent_is_still_working` is red on dev 93fc3fcb7
-for the same reason: the sub-agent is refused at once, so its row never reads Executing.
+Discriminates: written on dev 9d19883f1. In backend copies the limit tests turn red when the
+iteration limit is dropped or the truncation removed. The row tests pin the labels the build draws.
 
-Discriminates: passes on dev 176d31d1d. In backend copies the limit tests turn red when the
-iteration limit is dropped, the truncation is removed (or cut at `>=`), the failed status is
-swallowed, only the first call of a turn runs or the answer is replaced; on a build with the
-task cut at 600 characters, the executing label renamed and the tool output not drawn, the
-matching row tests turn red while the two that read only the provider's requests stay green.
-In a backend copy where a sub-agent's result never comes back the one-row, after-thinking,
-reload-while-working and failing-next-to-slow tests turn red; where a delegation is listed twice
-the one-row and after-thinking tests; where the limit is ignored the one-after-the-other test;
-where a finished or stopped sub-agent keeps its place the stop test.
-
-Every test runs in the main chat and in a side chat; the two limit-of-one tests boot an instance
-of their own and run there. The side chat variants are green on dev c15f28649 and on head
-e791cbdde, so no issue of open-webui/open-webui#34014 to #34036 applies.
+Every test runs in the main chat and in a side chat.
 """
 
 from __future__ import annotations
 
-import dataclasses
-import json
 import re
 import threading
-import time
 import uuid
 
 import pytest
 from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
-from harness.actors import admin_of
-from harness.backends import wait_until
-from utils.chat_surface import MAIN_CHAT, ChatOpener
-from utils.chat_ui import REPLY_TIMEOUT_MS, Chat, expect_reply, last_reply, send, stop_button
+from harness.subagents import delegated, report_of
+from utils.chat_ui import REPLY_TIMEOUT_MS, Chat, conversation, expect_reply, replies, send
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 CLOCK = "get_current_timestamp"
-ONE_AT_A_TIME = {"ENABLE_SUBAGENTS": "true", "SUBAGENTS_MAX_CONCURRENT": "1"}
 
 
 @pytest.fixture
@@ -83,24 +63,6 @@ def subagents_on(admin, preserve):
     return switch_on
 
 
-@pytest.fixture
-def one_at_a_time_chat_for(chat_for, instance_with, preserve) -> ChatOpener:
-    """`chat_for` on an instance of its own with a limit of one sub-agent at a time.
-
-    The limit is read once, when the first sub-agent of a server runs; side chats are allowed
-    there as well."""
-    booted = instance_with(ONE_AT_A_TIME)
-    admin = admin_of(booted)
-    if chat_for.place != MAIN_CHAT:
-        preserve("permissions", on=booted)
-        with admin.client() as client:
-            permissions = client.get("/api/v1/users/default/permissions").json()
-            permissions["chat"].update(side_chat=True)
-            saved = client.post("/api/v1/users/default/permissions", json=permissions)
-        assert saved.status_code == 200, saved.text
-    return dataclasses.replace(chat_for, upstream=booted.upstream, admin=admin)
-
-
 def unique(label: str) -> str:
     return f"{label} {uuid.uuid4().hex[:8]}"
 
@@ -111,16 +73,31 @@ def delegation(task: str, prompt: str, call_id: str = "call_1", **arguments) -> 
     )
 
 
-def sub_row(chat: Chat, task: str) -> Locator:
-    name = re.escape(f'View Result from Sub-agent: "{task}"')
-    return last_reply(chat).get_by_role("button", name=re.compile(name))
+def call_row(chat: Chat, task: str) -> Locator:
+    """The delegation call's own row, named for the task."""
+    name = re.compile(rf"^View Result from {re.escape(task)}")
+    return conversation(chat).get_by_role("button", name=name)
+
+
+def result_row(chat: Chat, task: str, ending: str = "finished") -> Locator:
+    name = re.compile(rf"^Sub-agent {ending} · {re.escape(task)}")
+    return conversation(chat).get_by_role("button", name=name)
+
+
+def task_rows(chat: Chat, task: str) -> Locator:
+    """Every row of the chat that names the task, whatever it reads."""
+    return conversation(chat).get_by_role("button").filter(has_text=task)
+
+
+def unfinished_rows(chat: Chat) -> Locator:
+    return conversation(chat).get_by_role("button", name=re.compile("^(Executing|Preparing) "))
 
 
 def sub_requests(upstream, task: str) -> list[dict]:
-    return [r for r in upstream.chat_requests() if reply.answering(task)(r)]
+    return [r for r in upstream.chat_requests() if delegated(task)(r)]
 
 
-def test_a_subagent_runs_its_own_loop_and_the_parent_carries_on_with_its_answer(
+def test_a_subagent_runs_its_own_loop_and_the_chat_carries_on_from_its_report(
     subagents_on, chat_for, make_user, upstream
 ):
     subagents_on()
@@ -128,26 +105,29 @@ def test_a_subagent_runs_its_own_loop_and_the_parent_carries_on_with_its_answer(
     answer = unique("It is late")
     upstream.queue(
         delegation(task, prompt),
-        reply.tool_call(CLOCK, {}, "clock_1", match=reply.answering(task)),
-        reply.tool_call(CLOCK, {}, "clock_2", match=reply.answering(task)),
-        reply.text(answer, match=reply.answering(task)),
-        reply.text("The helper says it is late.", match=reply.answering(prompt)),
+        reply.tool_call(CLOCK, {}, "clock_1", match=delegated(task)),
+        reply.tool_call(CLOCK, {}, "clock_2", match=delegated(task)),
+        reply.text(answer, match=delegated(task)),
+        reply.text("A helper is on it.", match=reply.answering(prompt)),
+        reply.text("The helper says it is late.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     send(chat, prompt)
 
+    expect(result_row(chat, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     expect_reply(chat, "The helper says it is late.")
-    expect(sub_row(chat, task)).to_be_visible()
+    expect(conversation(chat)).to_contain_text("A helper is on it.")
     expect(
-        last_reply(chat).get_by_role("button", name=re.compile("View Result from"))
-    ).to_have_count(1)
+        conversation(chat).get_by_role("button", name="Checked the time"),
+        "the sub-agent's own tool calls show in the chat",
+    ).to_have_count(0)
     assert len(sub_requests(upstream, task)) == 3
-    parent_followup = upstream.chat_requests()[-1]["messages"][-1]
-    assert (parent_followup["role"], parent_followup["content"]) == ("tool", answer)
+    [report] = [r for r in upstream.chat_requests() if report_of(task)(r)]
+    assert answer in reply.conversation(report)[-1]["content"]
 
 
-def test_the_result_row_opens_to_the_task_and_the_answer(
+def test_the_call_opens_to_the_task_and_the_result_row_to_the_answer(
     subagents_on, chat_for, make_user, upstream
 ):
     subagents_on()
@@ -155,60 +135,40 @@ def test_the_result_row_opens_to_the_task_and_the_answer(
     answer = unique("Vienna")
     upstream.queue(
         delegation(task, prompt, context="the country is Austria"),
-        reply.text(answer, match=reply.answering(task)),
-        reply.text("Done delegating.", match=reply.answering(prompt)),
+        reply.text(answer, match=delegated(task)),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+        reply.text("Done delegating.", match=report_of(task)),
     )
     chat = chat_for(make_user())
     send(chat, prompt)
     expect_reply(chat, "Done delegating.")
 
-    expect(last_reply(chat)).not_to_contain_text(answer)
-    sub_row(chat, task).click()
-
-    # exact matches: the task also sits in the row's own name
-    expect(last_reply(chat).get_by_text(task, exact=True)).to_be_visible()
-    expect(last_reply(chat).get_by_text("the country is Austria", exact=True)).to_be_visible()
-    expect(last_reply(chat).get_by_text(answer, exact=True)).to_be_visible()
+    expect(conversation(chat)).not_to_contain_text(answer)
+    call_row(chat, task).click()
+    expect(conversation(chat)).to_contain_text("the country is Austria")
+    result_row(chat, task).click()
+    expect(conversation(chat).get_by_text(answer, exact=True)).to_be_visible()
 
 
-def test_the_row_reads_executing_while_the_subagent_is_still_working(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt, task = unique("delegate slowly"), unique("take your time")
-    upstream.queue(
-        delegation(task, prompt),
-        reply.text("Finally.", delay=4.0, match=reply.answering(task)),
-        reply.text("It came back.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    send(chat, prompt)
-
-    working = re.escape(f'Executing Sub-agent: "{task}"...')
-    expect(last_reply(chat).get_by_role("button", name=re.compile(working))).to_be_visible(
-        timeout=REPLY_TIMEOUT_MS
-    )
-    expect_reply(chat, "It came back.")
-    expect(sub_row(chat, task)).to_be_visible()
-
-
-def test_a_long_task_is_cut_in_the_row_name(subagents_on, chat_for, make_user, upstream):
+def test_a_long_task_is_cut_in_the_row_names(subagents_on, chat_for, make_user, upstream):
     subagents_on()
     prompt = unique("delegate a long one")
-    task = f"{uuid.uuid4().hex[:8]} " + "and then some more words " * 6
+    task = (f"{uuid.uuid4().hex[:8]} " + "and then some more words " * 6).strip()
     upstream.queue(
         delegation(task, prompt),
-        reply.text("Long one done.", match=reply.answering(task)),
-        reply.text("The long task is over.", match=reply.answering(prompt)),
+        reply.text("Long one done.", match=delegated(task)),
+        reply.text("Sent it off.", match=reply.answering(prompt)),
+        reply.text("The long task is over.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     send(chat, prompt)
 
     expect_reply(chat, "The long task is over.")
-    shortened = re.escape(f'Sub-agent: "{task[:60]}..."')
-    expect(last_reply(chat).get_by_role("button", name=re.compile(shortened))).to_be_visible()
+    shortened = task[:60].strip()
+    expect(call_row(chat, shortened)).to_be_visible()
+    expect(result_row(chat, shortened)).to_be_visible()
+    expect(task_rows(chat, task)).to_have_count(0)
 
 
 def test_a_subagent_stops_at_the_iteration_limit_and_says_so(
@@ -218,18 +178,19 @@ def test_a_subagent_stops_at_the_iteration_limit_and_says_so(
     prompt, task = unique("delegate a long errand"), unique("keep checking the clock")
     upstream.queue(
         delegation(task, prompt),
-        *[reply.tool_call(CLOCK, {}, f"clock_{n}", match=reply.answering(task)) for n in range(3)],
-        reply.text("It gave up.", match=reply.answering(prompt)),
+        *[reply.tool_call(CLOCK, {}, f"clock_{n}", match=delegated(task)) for n in range(3)],
+        reply.text("Sent it off.", match=reply.answering(prompt)),
+        reply.text("It gave up.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     send(chat, prompt)
 
     expect_reply(chat, "It gave up.")
-    sub_row(chat, task).click()
+    result_row(chat, task, "failed").click()
     # since d87837372 the request after the last allowed round turns tool calls off for an answer,
     # and a call the model still makes there fails with the limit; since #34176 it keeps the tools
-    expect(last_reply(chat)).to_contain_text("Tool-call iteration limit reached.")
+    expect(conversation(chat)).to_contain_text("Tool-call iteration limit reached.")
     requests = sub_requests(upstream, task)
     assert len(requests) == 3
     assert requests[-1].get("tool_choice") == "none", requests[-1]
@@ -244,151 +205,22 @@ def test_a_subagent_answer_longer_than_the_output_limit_is_cut(
     kept, dropped = "K" * 20, "the tail nobody should see"
     upstream.queue(
         delegation(task, prompt),
-        reply.text(kept + dropped, match=reply.answering(task)),
-        reply.text("Report received.", match=reply.answering(prompt)),
+        reply.text(kept + dropped, match=delegated(task)),
+        reply.text("Sent it off.", match=reply.answering(prompt)),
+        reply.text("Report received.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     send(chat, prompt)
 
     expect_reply(chat, "Report received.")
-    sub_row(chat, task).click()
-    expect(last_reply(chat)).to_contain_text(f"{kept}\n\n[output truncated]")
-    expect(last_reply(chat)).not_to_contain_text(dropped)
-    handed_over = upstream.chat_requests()[-1]["messages"][-1]["content"]
-    assert handed_over == f"{kept}\n\n[output truncated]"
+    result_row(chat, task).click()
+    expect(conversation(chat)).to_contain_text(kept)
+    expect(conversation(chat)).to_contain_text("[output truncated]")
+    expect(conversation(chat)).not_to_contain_text(dropped)
 
 
-def test_an_answer_within_the_output_limit_is_handed_over_whole(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on(SUBAGENTS_MAX_OUTPUT=20)
-    prompt, task = unique("delegate a short one"), unique("write the note")
-    upstream.queue(
-        delegation(task, prompt),
-        reply.text("exactly twenty chars", match=reply.answering(task)),
-        reply.text("Note received.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    send(chat, prompt)
-
-    expect_reply(chat, "Note received.")
-    assert upstream.chat_requests()[-1]["messages"][-1]["content"] == "exactly twenty chars"
-
-
-def test_a_failing_subagent_shows_its_error_and_the_parent_still_replies(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt, task = unique("delegate a doomed job"), unique("call the broken model")
-    upstream.queue(
-        delegation(task, prompt),
-        reply.error(500, "the helper model is down", match=reply.answering(task)),
-        reply.text("The helper failed.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    send(chat, prompt)
-
-    expect_reply(chat, "The helper failed.")
-    sub_row(chat, task).click()
-    expect(last_reply(chat)).to_contain_text("Error:")
-    expect(last_reply(chat)).to_contain_text("the helper model is down")
-    failed = upstream.chat_requests()[-1]["messages"][-1]
-    assert failed["role"] == "tool"
-    assert "the helper model is down" in failed["content"]
-
-
-def test_several_subagents_in_one_reply_each_get_a_row_and_a_result(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt = unique("split this up")
-    tasks = [unique("count the apples"), unique("count the pears")]
-    answers = [unique("seven apples"), unique("nine pears")]
-    calls = [
-        {
-            "id": f"call_{n}",
-            "type": "function",
-            "function": {"name": "delegate_task", "arguments": f'{{"task": "{task}"}}'},
-        }
-        for n, task in enumerate(tasks)
-    ]
-    upstream.queue(
-        reply.Reply(tool_calls=calls, match=reply.answering(prompt)),
-        *[reply.text(a, match=reply.answering(t)) for t, a in zip(tasks, answers)],
-        reply.text("Both helpers reported.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    send(chat, prompt)
-
-    expect_reply(chat, "Both helpers reported.")
-    # two calls in one turn fold into a group of steps
-    last_reply(chat).get_by_text("Explored", exact=True).click()
-    for task, answer in zip(tasks, answers):
-        expect(sub_row(chat, task)).to_be_visible()
-        sub_row(chat, task).click()
-        expect(last_reply(chat)).to_contain_text(answer)
-    handed_over = {
-        entry["tool_call_id"]: entry["content"]
-        for entry in reply.conversation(upstream.chat_requests()[-1])
-        if entry["role"] == "tool"
-    }
-    assert handed_over == {"call_0": answers[0], "call_1": answers[1]}
-
-
-def test_a_reload_after_the_run_keeps_the_rows_and_the_reply(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt, task = unique("delegate then reload"), unique("find the answer")
-    answer = unique("forty two")
-    upstream.queue(
-        delegation(task, prompt),
-        reply.text(answer, match=reply.answering(task)),
-        reply.text("Reload me.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-    send(chat, prompt)
-    expect_reply(chat, "Reload me.")
-
-    chat = chat.reload()
-
-    expect_reply(chat, "Reload me.")
-    expect(sub_row(chat, task)).to_be_visible()
-    sub_row(chat, task).click()
-    expect(last_reply(chat)).to_contain_text(answer)
-
-
-def task_rows(chat: Chat, task: str) -> Locator:
-    """Every row of the last reply that names the task, whatever state it reads."""
-    return last_reply(chat).get_by_role("button").filter(has_text=task)
-
-
-def working_row(chat: Chat, task: str) -> Locator:
-    name = re.escape(f'Executing Sub-agent: "{task}"...')
-    return last_reply(chat).get_by_role("button", name=re.compile(name))
-
-
-def unfinished_rows(chat: Chat) -> Locator:
-    return last_reply(chat).get_by_role("button", name=re.compile("^(Executing|Preparing) "))
-
-
-def two_delegations(tasks: list[str], prompt: str) -> reply.Reply:
-    calls = [
-        {
-            "id": f"call_{n}",
-            "type": "function",
-            "function": {"name": "delegate_task", "arguments": json.dumps({"task": task})},
-        }
-        for n, task in enumerate(tasks)
-    ]
-    return reply.Reply(tool_calls=calls, match=reply.answering(prompt))
-
-
-def test_one_delegation_shows_one_row_from_the_call_to_its_result(
+def test_one_delegation_shows_one_row_while_it_works_and_one_result(
     subagents_on, chat_for, make_user, upstream
 ):
     subagents_on()
@@ -396,22 +228,25 @@ def test_one_delegation_shows_one_row_from_the_call_to_its_result(
     answered = threading.Event()
     upstream.queue(
         delegation(task, prompt),
-        reply.text("Found it.", hold=answered, match=reply.answering(task)),
-        reply.text("The helper found it.", match=reply.answering(prompt)),
+        reply.text("Found it.", hold=answered, match=delegated(task)),
+        reply.text("A helper looks.", match=reply.answering(prompt)),
+        reply.text("The helper found it.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     try:
         send(chat, prompt)
 
-        expect(working_row(chat, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        expect_reply(chat, "A helper looks.")
+        expect(call_row(chat, task)).to_be_visible()
         expect(task_rows(chat, task)).to_have_count(1)
+        expect(unfinished_rows(chat)).to_have_count(0)
     finally:
         answered.set()
 
     expect_reply(chat, "The helper found it.")
-    expect(sub_row(chat, task)).to_be_visible()
-    expect(task_rows(chat, task)).to_have_count(1)
+    expect(result_row(chat, task)).to_be_visible()
+    expect(task_rows(chat, task)).to_have_count(2)
     expect(unfinished_rows(chat)).to_have_count(0)
     assert len(sub_requests(upstream, task)) == 1
 
@@ -428,172 +263,27 @@ def test_a_delegation_after_thinking_folds_into_one_group_that_names_the_task_on
             tool_calls=delegation(task, prompt).tool_calls,
             match=reply.answering(prompt),
         ),
-        reply.text("Shelf checked.", hold=answered, match=reply.answering(task)),
-        reply.text("The shelf is fine.", match=reply.answering(prompt)),
+        reply.text("Shelf checked.", hold=answered, match=delegated(task)),
+        reply.text("A helper checks.", match=reply.answering(prompt)),
+        reply.text("The shelf is fine.", match=report_of(task)),
     )
     chat = chat_for(make_user())
 
     try:
         send(chat, prompt)
 
-        group = last_reply(chat).get_by_role("button", name="Toggle details")
-        expect(group).to_contain_text(f'Exploring Sub-agent: "{task}"', timeout=REPLY_TIMEOUT_MS)
+        expect_reply(chat, "A helper checks.")
+        delegating_reply = replies(chat).filter(has_text="A helper checks.")
+        group = delegating_reply.get_by_role("button", name="Toggle details")
+        expect(group).to_contain_text(f"Explored {task}")
         expect(task_rows(chat, task)).to_have_count(1)
     finally:
         answered.set()
 
     expect_reply(chat, "The shelf is fine.")
-    expect(group).to_contain_text(f'Explored Sub-agent: "{task}"')
-    expect(task_rows(chat, task)).to_have_count(1)
+    expect(task_rows(chat, task)).to_have_count(2)
     group.click()
     # opened, the group lists its steps under the header: the call's own row joins it
-    expect(sub_row(chat, task)).to_be_visible()
-    expect(task_rows(chat, task)).to_have_count(2)
+    expect(call_row(chat, task)).to_be_visible()
+    expect(task_rows(chat, task)).to_have_count(3)
     expect(unfinished_rows(chat)).to_have_count(0)
-
-
-def test_a_reload_while_the_subagent_works_shows_it_working_and_then_its_result(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt, task = unique("hand over then reload"), unique("dig through the archive")
-    answer = unique("box nine")
-    answered = threading.Event()
-    upstream.queue(
-        delegation(task, prompt),
-        reply.text(answer, hold=answered, match=reply.answering(task)),
-        reply.text("The archive had it.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    try:
-        send(chat, prompt)
-        expect(working_row(chat, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-
-        chat = chat.reload()
-
-        # reloaded mid-run the row reads Preparing, not Executing: either way it is still working
-        expect(unfinished_rows(chat).filter(has_text=task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-        expect(task_rows(chat, task)).to_have_count(1)
-    finally:
-        answered.set()
-
-    expect_reply(chat, "The archive had it.")
-    expect(task_rows(chat, task)).to_have_count(1)
-    expect(unfinished_rows(chat)).to_have_count(0)
-    sub_row(chat, task).click()
-    expect(last_reply(chat)).to_contain_text(answer)
-    assert len(sub_requests(upstream, task)) == 1
-
-
-def test_a_subagent_failing_next_to_one_still_working_ends_with_both_results(
-    subagents_on, chat_for, make_user, upstream
-):
-    subagents_on()
-    prompt = unique("split this in two")
-    doomed, slow = unique("ask the broken model"), unique("count the stairs")
-    answer = unique("ninety steps")
-    answered = threading.Event()
-    upstream.queue(
-        two_delegations([doomed, slow], prompt),
-        reply.error(500, "the helper model is down", match=reply.answering(doomed)),
-        reply.text(answer, hold=answered, match=reply.answering(slow)),
-        reply.text("One failed and one counted.", match=reply.answering(prompt)),
-    )
-    chat = chat_for(make_user())
-
-    try:
-        send(chat, prompt)
-        group = last_reply(chat).get_by_role("button", name="Toggle details")
-        expect(group).to_contain_text("Exploring", timeout=REPLY_TIMEOUT_MS)
-        group.click()
-
-        # the results of one turn arrive together, so the failed one waits for the slow one
-        expect(working_row(chat, slow)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-        assert wait_until(lambda: len(sub_requests(upstream, doomed)) == 1, timeout=10.0)
-    finally:
-        answered.set()
-
-    expect_reply(chat, "One failed and one counted.")
-    expect(sub_row(chat, doomed)).to_be_visible()
-    expect(sub_row(chat, slow)).to_be_visible()
-    expect(unfinished_rows(chat)).to_have_count(0)
-    handed_over = {
-        entry["tool_call_id"]: entry["content"]
-        for entry in reply.conversation(upstream.chat_requests()[-1])
-        if entry["role"] == "tool"
-    }
-    assert set(handed_over) == {"call_0", "call_1"}, handed_over
-    assert "the helper model is down" in handed_over["call_0"]
-    assert handed_over["call_1"] == answer
-
-
-@pytest.mark.slow
-def test_a_limit_of_one_runs_two_subagents_one_after_the_other_and_both_come_back(
-    one_at_a_time_chat_for,
-):
-    upstream = one_at_a_time_chat_for.upstream
-    prompt = unique("split this in a queue")
-    tasks = [unique("weigh the flour"), unique("weigh the sugar")]
-    answers = [unique("one kilo"), unique("two kilos")]
-    answered = threading.Event()
-
-    def asked() -> list[dict]:
-        return [r for task in tasks for r in sub_requests(upstream, task)]
-
-    upstream.queue(
-        two_delegations(tasks, prompt),
-        *[reply.text(a, hold=answered, match=reply.answering(t)) for t, a in zip(tasks, answers)],
-        reply.text("Both are weighed.", match=reply.answering(prompt)),
-    )
-    chat = one_at_a_time_chat_for(one_at_a_time_chat_for.admin)
-
-    try:
-        send(chat, prompt)
-        assert wait_until(lambda: len(asked()) >= 1, timeout=30.0), "no sub-agent ever started"
-        time.sleep(2.0)  # shows the second sub-agent does not start while the first one works
-        assert len(asked()) == 1, f"{len(asked())} sub-agents ran at once under a limit of one"
-    finally:
-        answered.set()
-
-    expect_reply(chat, "Both are weighed.")
-    expect(unfinished_rows(chat)).to_have_count(0)
-    handed_over = {
-        entry["tool_call_id"]: entry["content"]
-        for entry in reply.conversation(upstream.chat_requests()[-1])
-        if entry["role"] == "tool"
-    }
-    assert handed_over == {"call_0": answers[0], "call_1": answers[1]}
-
-
-@pytest.mark.slow
-def test_stopping_a_subagent_under_a_limit_of_one_frees_the_place_for_the_next(
-    one_at_a_time_chat_for,
-):
-    upstream = one_at_a_time_chat_for.upstream
-    prompt, task = unique("hand over then stop"), unique("wait at the door")
-    second, next_task = unique("hand over once more"), unique("ring the bell")
-    never_answered = threading.Event()
-    upstream.queue(
-        delegation(task, prompt),
-        reply.text("too late", hold=never_answered, match=reply.answering(task)),
-        delegation(next_task, second),
-        reply.text("It rang.", match=reply.answering(next_task)),
-        reply.text("The bell rang.", match=reply.answering(second)),
-    )
-    chat = one_at_a_time_chat_for(one_at_a_time_chat_for.admin)
-
-    try:
-        send(chat, prompt)
-        expect(working_row(chat, task)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-        assert wait_until(lambda: len(sub_requests(upstream, task)) == 1, timeout=10.0)
-
-        stop_button(chat).click()
-        expect(stop_button(chat)).to_have_count(0)
-        send(chat, second)
-
-        expect_reply(chat, "The bell rang.")
-        expect(sub_row(chat, next_task)).to_be_visible()
-        expect(unfinished_rows(chat)).to_have_count(0)
-    finally:
-        never_answered.set()
