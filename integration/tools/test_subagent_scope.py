@@ -11,6 +11,10 @@ stop request leaves a running sub-agent alone.
 
 The scripted model delegates, the sub-agent's provider requests show what it was offered and
 sent, and where a tool matters the sub-agent calls it and the test reads the result it got back.
+Since dev 8522af2d6 the reply that delegates ends before the sub-agent has run, so each test waits
+for the sub-agent's report to reach the lead model before it reads the requests, and keeps what
+the sub-agent needs (a tool, a server, a model) until then. A saved chat keeps its sub-agent's
+task and answer in the sub-agent's own chat, which its owner opens.
 
 A sub-agent's system prompt named each skill twice, since the parent's already-assembled
 prompt carried the skill list the sub-agent builds again (open-webui/open-webui#31568); dev
@@ -65,6 +69,7 @@ from harness.mcp_server import TOOL_SERVERS, mcp_connection, serving_mcp
 from harness.plugins import installed_function
 from harness.python_tools import EVERYONE_READS, python_tool
 from harness.socket_client import connected
+from harness.subagents import delegated, report_of, wait_for_report
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
     configure_terminals,
@@ -126,7 +131,14 @@ def offered(request: dict) -> set[str]:
 
 
 def sub_requests(upstream, task: str) -> list[dict]:
-    return [r for r in upstream.chat_requests() if reply.answering(task)(r)]
+    return [r for r in upstream.chat_requests() if delegated(task)(r)]
+
+
+def delegate_and_wait(chat, upstream, prompt: str, task: str, **options):
+    """Send the delegating message and return once the sub-agent's report reached the lead."""
+    sent = ask(chat, prompt, **options)
+    wait_for_report(upstream, task)
+    return sent
 
 
 def system_text(request: dict) -> str:
@@ -152,13 +164,13 @@ def delegating(upstream, prompt: str, task: str, *sub_steps: reply.Reply, **argu
 def sub_calls(task: str, name: str, arguments: dict) -> list[reply.Reply]:
     """The sub-agent calls one tool, then answers."""
     return [
-        reply.tool_call(name, arguments, "sub_call", match=reply.answering(task)),
-        reply.text("Finished.", match=reply.answering(task)),
+        reply.tool_call(name, arguments, "sub_call", match=delegated(task)),
+        reply.text("Finished.", match=delegated(task)),
     ]
 
 
 def sub_answer(task: str) -> reply.Reply:
-    return reply.text("Finished.", match=reply.answering(task))
+    return reply.text("Finished.", match=delegated(task))
 
 
 def tool_result(request: dict) -> str:
@@ -173,7 +185,7 @@ def test_a_workspace_tool_the_chat_uses_runs_in_the_subagent(
     prompt, task = unique("hand this over"), unique("shout the word")
     delegating(upstream, prompt, task, *sub_calls(task, "shout", {"text": "ahoy"}))
     with python_tool(admin, SHOUTING_TOOL) as tool_id, make_user().client() as client:
-        ask(client, prompt, tool_ids=[tool_id])
+        delegate_and_wait(client, upstream, prompt, task, tool_ids=[tool_id])
 
     first, *_, last = sub_requests(upstream, task)
     assert "shout" in offered(first), "the sub-agent was not offered the chat's workspace tool"
@@ -191,7 +203,7 @@ def test_an_mcp_tool_server_the_chat_uses_runs_in_the_subagent(
         connection = mcp_connection(url, server_id, [read_grant(person.id)])
         client.post(TOOL_SERVERS[1], json={"TOOL_SERVER_CONNECTIONS": [connection]})
         with person.client() as chat:
-            ask(chat, prompt, tool_ids=[f"server:mcp:{server_id}"])
+            delegate_and_wait(chat, upstream, prompt, task, tool_ids=[f"server:mcp:{server_id}"])
 
     first, *_, last = sub_requests(upstream, task)
     assert f"{server_id}_echo" in offered(first)
@@ -235,7 +247,7 @@ def test_a_skill_the_account_may_read_is_listed_to_the_subagent_and_loads(
     prompt, task = unique("hand this over"), unique("tie the boat up")
     delegating(upstream, prompt, task, *sub_calls(task, "view_skill", {"id": skill_id}))
     with make_user().client() as chat:
-        ask(chat, prompt)
+        delegate_and_wait(chat, upstream, prompt, task)
 
     first, *_, last = sub_requests(upstream, task)
     assert "view_skill" in offered(first)
@@ -249,7 +261,7 @@ def test_a_subagent_is_told_of_each_skill_once(subagents_on, skills, make_user, 
     prompt, task = unique("hand this over"), unique("tie the boat up")
     delegating(upstream, prompt, task, sub_answer(task))
     with make_user().client() as chat:
-        ask(chat, prompt)
+        delegate_and_wait(chat, upstream, prompt, task)
 
     [sub] = sub_requests(upstream, task)
     assert told(sub).count(f"<id>{skill_id}</id>") == 1, (
@@ -289,7 +301,7 @@ def test_a_model_with_attached_knowledge_gives_the_subagent_the_same_knowledge_t
         add_text_file(client, knowledge_id, "notes.txt", "Herons nest in colonies.")
         with model_with_knowledge(client, knowledge_id) as model_id:
             with make_user().client() as chat:
-                ask(chat, prompt, model=model_id)
+                delegate_and_wait(chat, upstream, prompt, task, model=model_id)
 
     [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
     [sub] = sub_requests(upstream, task)
@@ -311,7 +323,7 @@ def test_a_subagent_lists_only_the_knowledge_bases_its_account_may_read(
             knowledge_base(client, f"Ledger {tag}"),
             person.client() as chat,
         ):
-            ask(chat, prompt)
+            delegate_and_wait(chat, upstream, prompt, task)
 
     listed = {entry["name"] for entry in json.loads(tool_result(sub_requests(upstream, task)[-1]))}
     assert f"Guide {tag}" in listed
@@ -323,7 +335,7 @@ def test_the_models_own_system_prompt_leads_the_subagents(subagents_on, admin, m
     prompt, task = unique("hand this over"), unique("trim the lamp")
     delegating(upstream, prompt, task, sub_answer(task))
     with preset(admin, params={"system": persona}) as model_id, make_user().client() as chat:
-        ask(chat, prompt, model=model_id)
+        delegate_and_wait(chat, upstream, prompt, task, model=model_id)
 
     [sub] = sub_requests(upstream, task)
     assert system_text(sub).startswith(persona)
@@ -369,7 +381,7 @@ def test_a_delegation_naming_another_configured_model_runs_the_subagent_on_it(
         make_user().client() as chat,
     ):
         delegating(upstream, prompt, task, sub_answer(task), model_id=helper)
-        turn, _ = ask(chat, prompt, model=model_id)
+        turn, _ = delegate_and_wait(chat, upstream, prompt, task, model=model_id)
 
     [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
     [sub] = sub_requests(upstream, task)
@@ -418,7 +430,7 @@ def test_a_delegation_naming_no_model_runs_the_subagent_on_the_chats_model(
         delegating_model(admin, helper) as model_id,
         make_user().client() as chat,
     ):
-        turn, _ = ask(chat, prompt, model=model_id)
+        turn, _ = delegate_and_wait(chat, upstream, prompt, task, model=model_id)
 
     [sub] = sub_requests(upstream, task)
     assert sub["model"] == MOCK_MODEL_ID, f"the sub-agent ran on {sub['model']}"
@@ -435,8 +447,8 @@ def test_a_filter_the_person_switched_on_runs_on_the_subagent_too(
     delegating(upstream, plain_prompt, plain_task, sub_answer(plain_task))
     with installed_function(admin, TOGGLE_FILTER, is_global=True) as filter_id:
         with make_user().client() as chat:
-            ask(chat, prompt, filter_ids=[filter_id])
-            ask(chat, plain_prompt)
+            delegate_and_wait(chat, upstream, prompt, task, filter_ids=[filter_id])
+            delegate_and_wait(chat, upstream, plain_prompt, plain_task)
 
     [sub], [plain_sub] = sub_requests(upstream, task), sub_requests(upstream, plain_task)
     asked, plain_asked = reply.conversation(sub)[-1], reply.conversation(plain_sub)[-1]
@@ -451,7 +463,7 @@ def test_a_subagent_reads_the_memories_but_cannot_write_them(subagents_on, make_
     delegating(upstream, prompt, task, *sub_calls(task, "list_memories", {}))
     with person.client() as chat:
         chat.post("/api/v1/memories/add", json={"content": memory}).raise_for_status()
-        ask(chat, prompt, features={"memory": True})
+        delegate_and_wait(chat, upstream, prompt, task, features={"memory": True})
 
     first, *_, last = sub_requests(upstream, task)
     assert MEMORY_READERS <= offered(first)
@@ -485,7 +497,9 @@ def test_only_the_files_a_delegation_names_reach_the_subagent(
     prompt, task = unique("hand this over"), unique("read the tide table")
     delegating(upstream, prompt, task, *sub_calls(task, "list_chat_files", {}), file_ids=[first])
     with _chat_file_model(admin) as model_id, admin.client() as chat:
-        ask(chat, prompt, model=model_id, chat_files=_chat_files(first, second))
+        delegate_and_wait(
+            chat, upstream, prompt, task, model=model_id, chat_files=_chat_files(first, second)
+        )
 
     listed = json.loads(tool_result(sub_requests(upstream, task)[-1]))
     assert [entry["id"] for entry in listed] == [first]
@@ -498,7 +512,9 @@ def test_a_delegation_naming_no_file_gives_the_subagent_none(
     prompt, task = unique("hand this over"), unique("answer from memory")
     delegating(upstream, prompt, task, sub_answer(task))
     with _chat_file_model(admin) as model_id, admin.client() as chat:
-        ask(chat, prompt, model=model_id, chat_files=_chat_files(first, second))
+        delegate_and_wait(
+            chat, upstream, prompt, task, model=model_id, chat_files=_chat_files(first, second)
+        )
 
     [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
     [sub] = sub_requests(upstream, task)
@@ -516,7 +532,7 @@ def test_the_subagent_gets_none_of_the_conversation_before_its_task(
         {"role": "assistant", "content": unique("earlier answer")},
     ]
     with make_user().client() as chat:
-        ask(chat, prompt, history=history)
+        delegate_and_wait(chat, upstream, prompt, task, history=history)
 
     [sub] = sub_requests(upstream, task)
     assert [m["role"] for m in reply.conversation(sub)] == ["system", "user"]
@@ -562,7 +578,7 @@ def test_the_terminal_of_the_chat_is_offered_to_the_subagent_and_answers_it(
         server.route("POST", "/files/view", json_answer({"content": "LOG-LINE"}))
         connection = server.connection()
         configure_terminals(chat, connection)
-        ask(chat, prompt, machine_id=connection["id"])
+        delegate_and_wait(chat, upstream, prompt, task, machine_id=connection["id"])
         calls = server.requests_to("/files/view")
 
     first, *_, last = sub_requests(upstream, task)
@@ -582,7 +598,7 @@ def test_a_subagent_has_no_tool_the_account_may_not_use(
     prompt, task = unique("hand this over"), unique("jot it down")
     delegating(upstream, prompt, task, sub_answer(task))
     with make_user().client() as chat:
-        ask(chat, prompt)
+        delegate_and_wait(chat, upstream, prompt, task)
 
     [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
     [sub] = sub_requests(upstream, task)
@@ -600,24 +616,15 @@ def _dispatch_handle(message: dict) -> dict:
 
 
 def test_a_second_account_can_neither_open_nor_stop_the_subagent_of_another(
-    admin, preserve, make_user, upstream
+    subagents_on, make_user, upstream
 ):
-    preserve(SUBAGENTS)
-    with admin.client() as client:
-        current = client.get(SUBAGENTS[0]).json()
-        body = {**current, "ENABLE_SUBAGENTS": True, "SUBAGENTS_BACKGROUND_ENABLED": True}
-        client.post(SUBAGENTS[1], json=body).raise_for_status()
     owner, other = make_user(), make_user()
     prompt, task = unique("hand this over"), unique("watch the tide")
     upstream.queue(
-        reply.tool_call(
-            "delegate_task",
-            {"task": task, "background": True},
-            match=reply.answering(prompt),
-        ),
-        reply.text("Tide watched.", delay=3.0, match=reply.answering(task)),
+        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
+        reply.text("Tide watched.", delay=3.0, match=delegated(task)),
         reply.text("Handed over.", match=reply.answering(prompt)),
-        reply.text("Report read.", match=lambda body: "ASYNC SUBAGENT COMPLETE" in str(body)),
+        reply.text("Report read.", match=report_of(task)),
     )
     with owner.client() as mine, other.client() as theirs:
         _, stored = ask(mine, prompt)
@@ -662,7 +669,7 @@ def test_a_subagent_in_a_folder_chat_leads_with_the_folders_system_prompt(
             json={"name": unique("Harbour"), "data": {"system_prompt": folder_prompt}},
         )
         assert folder.status_code == 200, folder.text
-        ask(chat, prompt, folder_id=folder.json()["id"])
+        delegate_and_wait(chat, upstream, prompt, task, folder_id=folder.json()["id"])
 
     [sub] = sub_requests(upstream, task)
     assert system_text(sub).startswith(folder_prompt)
@@ -681,7 +688,7 @@ def test_a_subagent_in_a_folder_chat_gets_the_folders_knowledge_tools_its_parent
                 "/api/v1/folders/", json={"name": unique("Harbour"), "data": {"files": attached}}
             )
             assert folder.status_code == 200, folder.text
-            ask(chat, prompt, folder_id=folder.json()["id"])
+            delegate_and_wait(chat, upstream, prompt, task, folder_id=folder.json()["id"])
 
     [parent] = [r for r in upstream.chat_requests() if reply.answering(prompt)(r)][:1]
     [sub] = sub_requests(upstream, task)
@@ -705,9 +712,9 @@ def _stored_subagent_chats(instance, parent_chat_id: str) -> list[dict]:
 
 
 def _delegate_from(client, upstream, chat_id: str | None, task: str, answer: str, **extra) -> str:
-    """Send a delegating message and return once the parent has the sub-agent's result."""
+    """Send a delegating message and return once the delegation call's result is back."""
     prompt = unique("hand this over")
-    delegating(upstream, prompt, task, reply.text(answer, match=reply.answering(task)))
+    delegating(upstream, prompt, task, reply.text(answer, match=delegated(task)))
     turn = send_message(client, prompt, chat_id=chat_id, **extra)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -724,10 +731,17 @@ def test_a_saved_chat_keeps_the_task_and_answer_of_its_subagent(
     task, answer = unique("look it up"), unique("Found it")
     with make_user().client() as client:
         chat_id = _delegate_from(client, upstream, None, task, answer)
+        wait_for_report(upstream, task)
+        [stored] = _stored_subagent_chats(instance, chat_id)
+        opened = client.get(f"/api/v1/chats/{stored['id']}")
 
-    [stored] = _stored_subagent_chats(instance, chat_id)
-    assert task in json.dumps(stored)
-    assert answer in json.dumps(stored)
+    assert opened.status_code == 200, f"the owner cannot open the sub-agent's chat: {opened.text}"
+    said = [
+        str(message.get("content"))
+        for message in opened.json()["chat"]["history"]["messages"].values()
+    ]
+    assert task in said, f"the sub-agent's chat lost its task: {said}"
+    assert answer in said, f"the sub-agent's chat lost its answer: {said}"
 
 
 def test_a_temporary_chat_leaves_no_stored_subagent_chat_behind(

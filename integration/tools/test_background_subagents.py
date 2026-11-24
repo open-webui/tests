@@ -1,14 +1,17 @@
-"""Journey: a background sub-agent runs on after the reply ends and reports back into its chat.
+"""Journey: a sub-agent runs on after the reply ends and reports back into its chat.
 
-The model's delegation call with `background` set returns a dispatch handle at once, so the
-reply ends while the sub-agent works on, registered as a running task of its own chat. When it
-finishes, its report is stored in the parent chat as an internal user message that follows the
-reply which dispatched it, and the model continues from it without the person sending anything.
-A report that arrives while the reply is still written waits for it. The admin's background
-limit refuses a delegation over the cap at once and frees its slot when a sub-agent ends, the
-background switch off turns the call into an ordinary one, and neither the concurrent limit nor
-a second chat holds a background sub-agent back or mixes the reports. Stopping a sub-agent
-through its task lists it as interrupted and a failing one as failed.
+The model's delegation call returns a dispatch handle at once, so the reply ends while the
+sub-agent works on, registered as a running task of its own chat. When it finishes, its report is
+stored in the parent chat as an internal user message that follows the reply which dispatched it,
+and the model continues from it without the person sending anything. A report that arrives while
+the reply is still written waits for it. The admin's background limit refuses a delegation over
+the cap at once and frees its slot when a sub-agent ends, and neither the concurrent limit nor a
+second chat holds a sub-agent back or mixes the reports. Stopping a sub-agent through its task
+lists it as interrupted and a failing one as failed.
+
+Since dev 8522af2d6 every delegation from a chat works this way: the switch for background
+sub-agents and the delegation's `background` argument are gone, and the background limit is the
+one the admin sets for them. The test of a background call with the switch off went with it.
 
 The chat's stored current message follows the report's follow-up reply, which the open page
 reads when the server tells it to reload. Before PR #31576 it kept pointing at the earlier reply
@@ -20,7 +23,6 @@ set the pointer.
 A report that came while the answer to a later question was still written was attached to the
 answer before it and hid that question (open-webui/open-webui#31507, fixed by PR #31557).
 
-`test_a_background_call_while_background_sub_agents_are_off_runs_as_an_ordinary_delegation`,
 `test_a_background_limit_of_one_refuses_the_next_delegation_and_frees_the_slot_afterwards`,
 `test_a_concurrent_limit_of_one_does_not_hold_background_subagents_back`,
 `test_a_failing_background_subagent_is_reported_with_its_error`,
@@ -49,9 +51,9 @@ Discriminates: passes on dev a5bc78300; the two tests named above fail on dev 17
 their fixes. In backend copies each test turns red with its edit: the dispatch made to wait for the
 sub-agent, the sub-agent left out of the running tasks, the report not stored, stored without its
 metadata or under the wrong reply, the report never continuing the chat, a pending report dropped,
-the cap ignored, never released, applied to the unlimited setting or to a limit of zero, the switch
-ignored, the stop not reaching the task, the failure not reported, the concurrent limit applied to
-background work and the parent's id mixed up between chats.
+the cap ignored, never released, applied to the unlimited setting or to a limit of zero, the stop
+not reaching the task, the failure not reported, the concurrent limit applied to background work
+and the parent's id mixed up between chats. Passes on dev 9d19883f1 without the switch.
 """
 
 from __future__ import annotations
@@ -64,6 +66,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask, send_message, wait_for_reply
+from harness.subagents import report_of
 from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
@@ -72,15 +75,10 @@ pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
 SLOW_SECONDS = 3.0
 HELD_SECONDS = 8.0
-CONCURRENT_ENV = {
-    "ENABLE_SUBAGENTS": "true",
-    "SUBAGENTS_BACKGROUND_ENABLED": "true",
-    "SUBAGENTS_MAX_CONCURRENT": "1",
-}
+CONCURRENT_ENV = {"ENABLE_SUBAGENTS": "true", "SUBAGENTS_MAX_CONCURRENT": "1"}
 # a limit of 0 was valid up to v0.12.5 and meant the default
 ZERO_LIMITS_ENV = {
     "ENABLE_SUBAGENTS": "true",
-    "SUBAGENTS_BACKGROUND_ENABLED": "true",
     "SUBAGENTS_MAX_CONCURRENT": "0",
     "SUBAGENTS_MAX_ASYNC": "0",
 }
@@ -88,18 +86,13 @@ ZERO_LIMITS_ENV = {
 
 @pytest.fixture
 def background_on(admin, preserve):
-    """`background_on(SUBAGENTS_MAX_ASYNC=1)` turns background sub-agents on with a limit."""
+    """`background_on(SUBAGENTS_MAX_ASYNC=1)` turns sub-agents on with a background limit."""
     preserve(SUBAGENTS)
 
     def switch_on(**settings) -> None:
         with admin.client() as client:
             current = client.get(SUBAGENTS[0]).json()
-            body = {
-                **current,
-                "ENABLE_SUBAGENTS": True,
-                "SUBAGENTS_BACKGROUND_ENABLED": True,
-                **settings,
-            }
+            body = {**current, "ENABLE_SUBAGENTS": True, **settings}
             client.post(SUBAGENTS[1], json=body).raise_for_status()
 
     return switch_on
@@ -112,20 +105,9 @@ def unique(label: str) -> str:
 def dispatch(task: str, prompt: str, **arguments) -> reply.Reply:
     return reply.tool_call(
         "delegate_task",
-        {"task": task, "background": True, **arguments},
+        {"task": task, **arguments},
         match=reply.answering(prompt),
     )
-
-
-def report_of(task: str):
-    """A `match` for the request that carries the finished sub-agent's report back to the model."""
-
-    def matches(body: dict) -> bool:
-        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
-        content = str(users[-1].get("content")) if users else ""
-        return "[ASYNC SUBAGENT COMPLETE" in content and task in content
-
-    return matches
 
 
 def history_of(client, chat_id: str) -> dict:
@@ -176,7 +158,7 @@ def two_dispatches(tasks: list[str], prompt: str) -> reply.Reply:
             "type": "function",
             "function": {
                 "name": "delegate_task",
-                "arguments": json.dumps({"task": task, "background": True}),
+                "arguments": json.dumps({"task": task}),
             },
         }
         for number, task in enumerate(tasks)
@@ -441,7 +423,7 @@ def test_an_unlimited_background_setting_lets_every_delegation_through(
             "type": "function",
             "function": {
                 "name": "delegate_task",
-                "arguments": json.dumps({"task": task, "background": True}),
+                "arguments": json.dumps({"task": task}),
             },
         }
         for number, task in enumerate(tasks)
@@ -497,23 +479,6 @@ def test_a_limit_of_zero_kept_from_an_older_release_still_loads_and_refuses_noth
 
     handles = dispatch_handles(stored)
     assert [handle["status"] for handle in handles] == ["dispatched"] * 2, handles
-
-
-def test_a_background_call_while_background_sub_agents_are_off_runs_as_an_ordinary_delegation(
-    background_on, make_user, upstream
-):
-    background_on(SUBAGENTS_BACKGROUND_ENABLED=False)
-    prompt, task = unique("hand this over"), unique("look it up")
-    answer = unique("found it")
-    upstream.queue(
-        dispatch(task, prompt),
-        reply.text(answer, match=reply.answering(task)),
-        reply.text("It is back.", match=reply.answering(prompt)),
-    )
-    with make_user().client() as client:
-        _, stored = ask(client, prompt)
-
-    assert tool_outputs(stored) == [answer]
 
 
 def test_a_stopped_background_subagent_is_reported_as_interrupted_and_the_chat_continues(

@@ -4,8 +4,13 @@ The delegation tool (and the timer that shares its switch) is offered to an ordi
 while sub-agents are on, and not to a model whose Sub-agents tick is off, whether the tick sits on
 the model or in the models' default settings. Once on, the saved settings shape each sub-agent:
 the saved system prompt follows the parent's own system message on the next line (the built-in
-prompt when it is empty), the max output cuts a long answer short before it reaches the parent,
-and the max iterations stops a sub-agent that keeps calling tools.
+prompt when it is empty) and names the lead's chat, the max output cuts a long answer short
+before it reaches the parent, and the max iterations stops a sub-agent that keeps calling tools.
+
+Since dev 8522af2d6 a chat's sub-agent reports back after the reply that delegated has ended, as a
+message of its own to the lead model, so the tests wait for that report and read the answer from
+it; since then the sub-agent's system prompt also ends with the id of the lead's chat, which it
+messages with `send_message`.
 
 Since #34040 (2c8fa823f) the Sub-agents switch under Features in the user permissions decides who
 gets them: with it off in the default permissions an ordinary account is offered neither the
@@ -36,6 +41,7 @@ from harness.access import make_group
 from harness.actors import create_user
 from harness.chat import ask
 from harness.python_tools import EVERYONE_READS
+from harness.subagents import delegated, report_content, wait_for_report
 from harness.tool_calls import offered_tools
 from harness.upstream import MOCK_MODEL_ID, Reply
 
@@ -210,11 +216,15 @@ def _delegation(task: str) -> Reply:
 
 
 def _sub_agent_requests(upstream, task: str) -> list[dict]:
-    return [request for request in upstream.chat_requests() if reply.answering(task)(request)]
+    return [request for request in upstream.chat_requests() if delegated(task)(request)]
 
 
-def _tool_results(request: dict) -> list[str]:
-    return [entry["content"] for entry in reply.conversation(request) if entry["role"] == "tool"]
+def _reported_result(upstream, task: str) -> str:
+    """The sub-agent's answer as its report hands it to the lead model."""
+    report = report_content(wait_for_report(upstream, task))
+    _, marker, result = report.partition("--- RESULT ---\n")
+    assert marker, f"the report carries no result: {report}"
+    return result
 
 
 def _system_messages(request: dict) -> list[str]:
@@ -229,17 +239,20 @@ def test_the_saved_system_prompt_follows_the_parents_own_in_a_sub_agent(
     task = f"count the boats {uuid.uuid4().hex[:6]}"
     upstream.queue(
         _delegation(task),
-        reply.text("Three boats.", match=reply.answering(task)),
+        reply.text("Three boats.", match=delegated(task)),
         reply.text("The helper counted three."),
     )
     with make_user().client() as client:
-        ask(client, "how many boats are in?", history=PARENT_SYSTEM)
+        turn, _ = ask(client, "how many boats are in?", history=PARENT_SYSTEM)
+    wait_for_report(upstream, task)
 
     [sub_agent] = _sub_agent_requests(upstream, task)
     [system] = _system_messages(sub_agent)
     # skills other tests shared with everyone are listed after the prompt
     prompt, _, _ = system.partition("\n<available_skills>")
-    assert prompt == f"{PARENT_PROMPT}\n{saved_prompt}"
+    own, _, lead = prompt.partition("\n\n")
+    assert own == f"{PARENT_PROMPT}\n{saved_prompt}"
+    assert turn.chat_id in lead, f"the sub-agent was not told the lead's chat: {prompt}"
 
 
 def test_an_empty_system_prompt_gives_the_sub_agent_the_built_in_one(
@@ -249,11 +262,12 @@ def test_an_empty_system_prompt_gives_the_sub_agent_the_built_in_one(
     task = f"count the buoys {uuid.uuid4().hex[:6]}"
     upstream.queue(
         _delegation(task),
-        reply.text("Four buoys.", match=reply.answering(task)),
+        reply.text("Four buoys.", match=delegated(task)),
         reply.text("The helper counted four."),
     )
     with make_user().client() as client:
         ask(client, "how many buoys are out?", history=PARENT_SYSTEM)
+    wait_for_report(upstream, task)
 
     [sub_agent] = _sub_agent_requests(upstream, task)
     [system] = _system_messages(sub_agent)
@@ -267,14 +281,13 @@ def test_the_max_output_cuts_a_long_answer_before_it_reaches_the_parent(
     task = f"write the harbour log {uuid.uuid4().hex[:6]}"
     upstream.queue(
         _delegation(task),
-        reply.text("L" * 1500, match=reply.answering(task)),
+        reply.text("L" * 1500, match=delegated(task)),
         reply.text("The log is in."),
     )
     with make_user().client() as client:
         ask(client, "have the log written")
 
-    [result] = _tool_results(upstream.chat_requests()[-1])
-    assert result == f"{'L' * 1000}\n\n[output truncated]"
+    assert _reported_result(upstream, task) == f"{'L' * 1000}\n\n[output truncated]"
 
 
 def test_an_answer_within_the_max_output_reaches_the_parent_whole(
@@ -282,15 +295,16 @@ def test_an_answer_within_the_max_output_reaches_the_parent_whole(
 ):
     _configure(admin, SUBAGENTS_MAX_OUTPUT=1000)
     task = f"write the short log {uuid.uuid4().hex[:6]}"
+    # exactly at the limit: a cut at `>=` would shorten it
     upstream.queue(
         _delegation(task),
-        reply.text("L" * 900, match=reply.answering(task)),
+        reply.text("L" * 1000, match=delegated(task)),
         reply.text("The log is in."),
     )
     with make_user().client() as client:
         ask(client, "have the short log written")
 
-    assert _tool_results(upstream.chat_requests()[-1]) == ["L" * 900]
+    assert _reported_result(upstream, task) == "L" * 1000
 
 
 def test_the_max_iterations_stops_a_sub_agent_that_keeps_calling_tools(
@@ -299,19 +313,19 @@ def test_the_max_iterations_stops_a_sub_agent_that_keeps_calling_tools(
     _configure(admin, SUBAGENTS_MAX_ITERATIONS=2)
     task = f"watch the tide {uuid.uuid4().hex[:6]}"
     looping = [
-        reply.tool_call(
-            "get_current_timestamp", {}, call_id=f"call_{n}", match=reply.answering(task)
-        )
+        reply.tool_call("get_current_timestamp", {}, call_id=f"call_{n}", match=delegated(task))
         for n in range(5)
     ]
     upstream.queue(_delegation(task), *looping, reply.text("The helper gave up."))
     with make_user().client() as client:
         ask(client, "have someone watch the tide")
 
+    report = report_content(wait_for_report(upstream, task))
     assert len(_sub_agent_requests(upstream, task)) == 3
-    [result] = _tool_results(upstream.chat_requests()[-1])
     # worded "Tool-call limit reached (2 iterations)" before dev d87837372
-    assert result == "Error: Tool-call iteration limit reached.", result
+    assert "Status: error" in report and report.endswith("Tool-call iteration limit reached."), (
+        report
+    )
 
 
 def test_a_larger_max_iterations_lets_the_sub_agent_finish(
@@ -322,16 +336,14 @@ def test_a_larger_max_iterations_lets_the_sub_agent_finish(
     upstream.queue(
         _delegation(task),
         *[
-            reply.tool_call(
-                "get_current_timestamp", {}, call_id=f"call_{n}", match=reply.answering(task)
-            )
+            reply.tool_call("get_current_timestamp", {}, call_id=f"call_{n}", match=delegated(task))
             for n in range(3)
         ],
-        reply.text("The tide is rising.", match=reply.answering(task)),
+        reply.text("The tide is rising.", match=delegated(task)),
         reply.text("The helper reports a rising tide."),
     )
     with make_user().client() as client:
         ask(client, "have someone read the gauge")
 
+    assert _reported_result(upstream, task) == "The tide is rising."
     assert len(_sub_agent_requests(upstream, task)) == 4
-    assert _tool_results(upstream.chat_requests()[-1]) == ["The tide is rising."]
