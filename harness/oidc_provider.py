@@ -5,6 +5,7 @@ userinfo and a JWKS on a local port and records every request it gets. A test sa
 in next with `sign_in_as(...)`: the claims the ID token and userinfo carry, extra JOSE header
 entries or a userinfo answer that differs from the ID token. `rotate_key()` rolls the signing
 key under the same `kid`, the way an IdP rotates without renaming its key.
+`id_token_algs` is the list of ID token algorithms the discovery document advertises.
 
 The token endpoint also takes `grant_type=refresh_token`: a live refresh token gets new tokens
 and is spent (rotation), a spent, revoked or unknown one answers `invalid_grant`. Setting
@@ -96,6 +97,7 @@ class OidcProvider:
     userinfo: dict | None = None
     jose_header: dict = field(default_factory=dict)
     signature: str = "provider"
+    id_token_algs: list[str] = field(default_factory=lambda: ["RS256"])  # advertised in discovery
     codes: dict[str, dict] = field(default_factory=dict)
     access_tokens: dict[str, dict] = field(default_factory=dict)
     refresh_tokens: dict[str, dict] = field(default_factory=dict)  # live ones only
@@ -149,8 +151,8 @@ class OidcProvider:
 
         The claims go into the ID token and the userinfo answer alike, unless `id_token_claims`
         or `userinfo` replaces one of them. `signature` signs the ID token with the provider's
-        key (`provider`), a key it never published (`foreign-key`) or, HS256, the client secret
-        (`client-secret`).
+        key (`provider`), a key it never published (`foreign-key`) or, HS256 with no `kid`, the
+        client secret (`client-secret`) or a secret other than the client's (`wrong-secret`).
         """
         suffix = secrets.token_hex(4)
         person = {
@@ -232,7 +234,7 @@ class OidcProvider:
             "end_session_endpoint": f"{self.base_url}/logout",
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": ["RS256"],
+            "id_token_signing_alg_values_supported": self.id_token_algs,
             "scopes_supported": ["openid", "email", "profile"],
             "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -284,8 +286,11 @@ class OidcProvider:
         if grant["nonce"]:
             id_payload["nonce"] = grant["nonce"]
         header = {"kid": self.kid, **grant["jose_header"]}
-        if grant["signature"] == "client-secret":
-            id_token = jwt.encode(id_payload, self.client_secret, algorithm="HS256", headers=header)
+        if grant["signature"] in ("client-secret", "wrong-secret"):
+            secret = self.client_secret if grant["signature"] == "client-secret" else "x" * 40
+            # a secret-signed token names no key: the client secret is the only one
+            header.pop("kid")
+            id_token = jwt.encode(id_payload, secret, algorithm="HS256", headers=header)
         else:
             signing_key = _new_key() if grant["signature"] == "foreign-key" else self.key
             id_token = jwt.encode(id_payload, signing_key, algorithm="RS256", headers=header)

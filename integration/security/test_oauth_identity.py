@@ -17,6 +17,10 @@ open-webui 0.11.1 gathered these fixes to the provider sign-in path:
 * `aeda6ff13`: back-channel logout fetched the provider's keys with an anonymous `PyJWKClient`,
   so a provider whose key endpoint turns away such clients never signed anyone out. The keys
   now come through the provider's configured client.
+* Issue #34922: OIDC lets a provider sign the ID token HS256 with the client secret, which no
+  published key set carries. Open WebUI checked it against the provider's published keys only and
+  every sign-in failed with "Algorithm 'HS256' requires 'oct' key". Red on dev dc9886799 until the
+  fix (branch fix-oidc-hs256-id-token) merges.
 
 Accounts linked by releases before `a6834f089` are written into the instance's database the way
 those releases left them (the sub as a JSON number, other keys beside it) and then signed in to.
@@ -46,6 +50,7 @@ from harness.oidc_provider import (
     oauth_entry,
     oauth_settings,
     session_user,
+    serve,
     shared_provider,
     sign_in,
     sso_env,
@@ -70,6 +75,15 @@ def idp():
 @pytest.fixture
 def sso(instance_with, idp):
     return instance_with(sso_env(idp))
+
+
+@pytest.fixture(scope="module")
+def secret_signing_idp():
+    """A provider that, like the one in #34922, advertises HS256 and publishes only an RSA key."""
+    provider, shutdown = serve()
+    provider.id_token_algs = ["HS256", "RS256", "none"]
+    yield provider
+    shutdown()
 
 
 @pytest.fixture
@@ -108,6 +122,22 @@ def test_an_id_token_the_relaxation_must_not_accept_is_refused(sso, idp, tamperi
     idp.sign_in_as(**tampering)
     result = sign_in(sso)
     assert result.token is None and result.error
+
+
+def test_an_id_token_signed_with_the_client_secret_signs_in(instance_with, secret_signing_idp):
+    """Narrow (#34922): HS256 checks against the client secret; another secret is still refused."""
+    idp = secret_signing_idp
+    sso = instance_with(sso_env(idp))
+
+    person = idp.sign_in_as(signature="client-secret")
+    assert signed_in_user(sso)["email"] == person["email"]
+
+    idp.sign_in_as(signature="wrong-secret")
+    forged = sign_in(sso)
+    assert forged.token is None and forged.error, "an ID token signed with another secret signed in"
+
+    person = idp.sign_in_as(signature="provider")
+    assert signed_in_user(sso)["email"] == person["email"], "RS256 stopped working beside HS256"
 
 
 # --------------------------------------------------------------------------- sub lookup
