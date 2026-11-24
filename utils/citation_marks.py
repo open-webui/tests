@@ -17,8 +17,9 @@ from harness import slow_machine
 # marks are redrawn shortly after the page moves; give them that long to settle
 SETTLE_TIMEOUT_MS = slow_machine.scaled(5_000)
 
-# highlights in view whose middle lies on no character of the page, and cited lines (passed in)
-# whose glyphs are less than 80% covered by highlights; empty lists when every mark is in place
+# highlights in view whose middle lies on no line of the page's text, and cited lines (passed in)
+# whose glyphs are less than 80% covered by highlights; empty lists when every mark is in place.
+# By position, since the tab's zoom bar floats over the page and hides the text under it.
 MISPLACED = """([panel, lines]) => {
     const view = panel.getBoundingClientRect();
     const marks = [...panel.querySelectorAll('[data-quote]')]
@@ -26,21 +27,19 @@ MISPLACED = """([panel, lines]) => {
         .filter((box) => box.width > 0 && box.height > 0);
     const inView = (box) => box.top >= view.top && box.bottom <= view.bottom
         && box.left >= view.left && box.right <= view.right;
+    const textLines = [];
+    const walker = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.data.trim() || node.parentElement.closest('button')) continue;
+        const text = document.createRange();
+        text.selectNodeContents(node);
+        textLines.push(...text.getClientRects());
+    }
     const offText = [];
     for (const box of marks.filter(inView)) {
         const x = box.left + box.width / 2, y = box.top + box.height / 2;
-        const caret = document.caretRangeFromPoint(x, y);
-        const node = caret?.startContainer;
-        let onText = false;
-        if (node?.nodeType === Node.TEXT_NODE && node.length && panel.contains(node)) {
-            const glyph = document.createRange();
-            const offset = Math.min(caret.startOffset, node.length - 1);
-            glyph.setStart(node, offset);
-            glyph.setEnd(node, offset + 1);
-            const area = glyph.getBoundingClientRect();
-            onText = x >= area.left - 2 && x <= area.right + 2
-                && y >= area.top - 2 && y <= area.bottom + 2;
-        }
+        const onText = textLines.some((area) => x >= area.left - 2 && x <= area.right + 2
+            && y >= area.top - 2 && y <= area.bottom + 2);
         if (!onText) offText.push([box.left, box.top, box.width].map(Math.round));
     }
     const uncovered = [];
