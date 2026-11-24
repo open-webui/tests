@@ -26,7 +26,9 @@ review test fails; with every merge a squash, or a draft or a conflicting pull r
 the merge test fails; with Close not asking, a closed pull request not offered to open again or
 a refusal of the terminal not shown, the close test fails. The test of the list after a rename
 and a close is red on that build, where the list is not read again after a change
-(open-webui/open-webui#34098, fixed by c981f7661).
+(open-webui/open-webui#34098, fixed by c981f7661). The test of a change made from the Code or
+Checks tab is red on dev d3e87f8b1, where the pull request is not read again after a change made
+there (open-webui/open-webui#34288).
 
 New for 0.13.4. When the terminal says the repository's issues can be reached, an Issues view
 sits beside Pull requests with the number of open issues. A person lists issues by state, opens
@@ -752,6 +754,64 @@ def test_the_list_shows_a_pull_request_as_it_is_after_it_was_renamed_and_closed(
         f"the list beside the pull request did not follow it: {stale}; the terminal was asked "
         f"for the list {len(forge.asked_to('list'))} time(s)"
     )
+
+
+def test_a_pull_request_changed_from_its_code_or_checks_shows_its_new_state(page_for, forge):
+    """Red on dev d3e87f8b1 (open-webui/open-webui#34288)."""
+    page, git = _pull_requests(page_for, forge)
+    _listed(git, 12).click()
+    expect(git.get_by_text("Six metres at low water.")).to_be_visible()
+    git.get_by_role("button", name="Code", exact=True).click()
+    expect(git.get_by_text("east channel: six metres")).to_be_visible()
+
+    _actions(page, git).get_by_role("menuitem", name="Close pull request").click()
+    _confirm(page, "Close pull request", "#12 · Chart the east channel")
+    assert [body["number"] for body in forge.asked_to("close")] == [12]
+    # the panel stays on the code and offers what fits a closed pull request
+    _expect_offered(page, git, ["Reopen"], "closed from its Code tab")
+    expect(git.get_by_text("east channel: six metres")).to_be_visible()
+
+    _actions(page, git).get_by_role("menuitem", name="Reopen").click()
+    _expect_offered(
+        page, git, ["Update branch", "Close pull request"], "reopened from its Code tab"
+    )
+    assert [body["number"] for body in forge.asked_to("reopen")] == [12]
+
+    # a draft marked ready and renamed from its Checks tab
+    _listed(git, 14).click()
+    expect(git.get_by_text("No description")).to_be_visible()
+    git.get_by_role("button", name="Checks", exact=True).click()
+    expect(git.get_by_text("No checks")).to_be_visible()
+    _actions(page, git).get_by_role("menuitem", name="Mark ready").click()
+    _expect_offered(
+        page, git, ["Update branch", "Close pull request"], "marked ready from its Checks tab"
+    )
+    assert [body["number"] for body in forge.asked_to("ready")] == [14]
+
+    _actions(page, git).get_by_role("menuitem", name="Edit").click()
+    git.get_by_role("textbox", name="Pull request title").fill("Sketch both quays")
+    git.get_by_role("button", name="Save", exact=True).click()
+    expect(git.get_by_text("No checks")).to_be_visible()
+    expect(
+        _title_of_opened(git, 14, "Sketch both quays"),
+        "the title above the pull request renamed from its Checks tab",
+    ).to_be_visible()
+
+
+STATE_ACTIONS = ("Update branch", "Mark ready", "Close pull request", "Reopen")
+
+
+def _expect_offered(page: Page, git: Locator, offered: list[str], after: str) -> None:
+    """The opened pull request's actions offer exactly these of the state actions."""
+    menu = _actions(page, git)
+    for name in STATE_ACTIONS:
+        item = menu.get_by_role("menuitem", name=name, exact=True)
+        if name in offered:
+            expect(item, f"{name} offered for the pull request {after}").to_be_visible()
+        else:
+            expect(item, f"{name} not offered for the pull request {after}").to_have_count(0)
+    page.keyboard.press("Escape")
+    expect(menu).to_have_count(0)
 
 
 def _row(git: Locator, number: int) -> str:
