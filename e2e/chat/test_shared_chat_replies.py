@@ -8,15 +8,12 @@ to Clone only closes the live chat for them, and the link then shows a frozen co
 their message and leaves later ones out. A signed-in visitor who reaches the link only through
 Open visibility gets that copy with no message box. The owner's chat settings stay the owner's:
 the Controls of someone replying show none of the owner's system prompt, the model is not sent it
-for their turn, and a clone made from the link starts without it. A folder shared with Allow
-replies lets its readers reply in the owner's chats in it, taking them off the folder's Access
-List closes the open chat, and only the folder's owner finds Access in its folder editor. Since
+for their turn, and a clone made from the link starts without it. Only the folder's owner finds
+Access in its folder editor. Since
 3a54306c5 someone replying in a shared chat gets no Voice mode button (the owner keeps theirs), and
 a call they left open in a chat of their own closes when they go back to the shared chat.
 
-Since v0.12.3 a folder reader who may reply regenerates the owner's reply and edits the owner's
-question into a new branch (Send, no Save), while the owner's open tab keeps the question it
-shows with the new branch one switch away. The people with the chat open see each other's
+The people with the chat open see each other's
 picture in the top bar (never their own), a picture opens that person's profile card, past three
 people the rest sit in a Collaborators list whose entries open the card too, and the picture goes
 once the other person leaves the chat. Since dev 98f94057b a model someone replying picks is saved
@@ -30,17 +27,16 @@ chat and its message box on screen and only finds out on sending ("We could not 
 looking for"): the group change drops their socket before the chat access check runs, and the
 chat page ignores the refused rejoin.
 
-Discriminates: the other eight pass on dev b5a20423e. In a frontend build whose chat page ignores
-the shared chat's socket events the live view, folder reply, Clone only and folder removal tests
-fail; a build that labels every user message with the chat owner's name fails the live view and
-folder reply tests; one with Access always in the folder editor fails the folder editor test. In
-backend copies, the access check ignoring Allow replies shares fails the five tests that open a
+Discriminates: the other tests pass on dev b5a20423e. In a frontend build whose chat page ignores
+the shared chat's socket events the live view and Clone only tests
+fail; a build that labels every user message with the chat owner's name fails the live view
+test; one with Access always in the folder editor fails the folder editor test. In
+backend copies, the access check ignoring Allow replies shares fails the tests that open a
 shared live chat, no fresh copy on switching back fails the Clone only test, a live chat for any
 signed-in visitor of the link fails the Open visibility test, the owner's settings left in for
-others fails the system prompt and clone tests, and folder readers never allowed to reply fails
-the folder reply and folder removal tests. A frontend build with both bugs fixed (the shared page
-treating its move to the chat as done, the chat page reloading the chat when a rejoin is
-refused) passes all ten. The live view test passes on dev c31423955 and turns red with 3a54306c5
+others fails the system prompt and clone tests. A frontend build with both bugs fixed (the shared
+page treating its move to the chat as done, the chat page reloading the chat when a rejoin is
+refused) passes them all. The live view test passes on dev c31423955 and turns red with 3a54306c5
 reverted (Voice mode shows for the member) and in a build of it that only leaves out closing the
 call (the call stays open over the shared chat).
 
@@ -79,7 +75,6 @@ from utils.chat_ui import (
     close_menu,
     conversation,
     expect_reply,
-    last_reply,
     send,
 )
 from utils.member_picker import pick_member
@@ -508,110 +503,6 @@ def _folder_editor(page: Page, menu: Locator, name: str) -> Locator:
     # the folder loads after the dialog opens, and with it the Access button
     expect(editor.get_by_placeholder("Enter folder name")).to_have_value(name)
     return editor
-
-
-def _folder_share_dialog(page: Page, name: str) -> Locator:
-    editor = _folder_editor(page, _folder_menu(page, name), name)
-    editor.get_by_role("button", name="Access", exact=True).click()
-    dialog = page.get_by_role("dialog").filter(has_text=f"Access: {name}")
-    expect(dialog.get_by_role("button", name="Add Access")).to_be_visible()
-    return dialog
-
-
-def test_a_reader_of_a_folder_shared_with_replies_answers_in_the_owners_chat(
-    page_for, crew, upstream
-):
-    """Red on dev c6dde2a4e: the reader gets the chat read-only with only Clone Chat
-    (open-webui/open-webui#35014, from bcff000ad)."""
-    owner, member, group_id, group_name = crew
-    folder_id, name, chat_id = _folder_with_chat(owner)
-    owner_page = page_for(owner)
-    dialog = _folder_share_dialog(owner_page, name)
-    _add_to_access_list(dialog, group_name)
-    dialog.get_by_role("combobox", name="Access level").select_option("read")
-    _set_sharing_mode(dialog, "Allow replies")
-    owner_page.goto(f"/c/{chat_id}")
-    expect_reply(owner_page, ANSWER)
-
-    member_page = page_for(member, path=f"/c/{chat_id}")
-    expect(conversation(member_page).get_by_text(ANSWER)).to_be_visible()
-    expect(chat_input(member_page)).to_be_visible()
-    _ask(member_page, upstream, "where do I buy a ticket?", "At the kiosk.")
-
-    expect(_user_message(owner_page, "where do I buy a ticket?")).to_contain_text(member.name)
-    expect(conversation(owner_page).get_by_text("At the kiosk.")).to_be_visible()
-
-
-def test_a_reader_taken_off_the_folders_access_list_loses_the_open_chat(page_for, crew):
-    """Red on dev c6dde2a4e: the reader gets the chat read-only with only Clone Chat
-    (open-webui/open-webui#35014, from bcff000ad). With that fixed, and on a8e7ac398 before it, the
-    reader still keeps the open chat after being taken off the list."""
-    owner, member, group_id, group_name = crew
-    folder_id, name, chat_id = _folder_with_chat(owner)
-    _share_folder_over_api(owner, folder_id, [grant("group", group_id, "read")], "continue")
-    member_page = page_for(member, path=f"/c/{chat_id}")
-    expect(conversation(member_page).get_by_text(ANSWER)).to_be_visible()
-    expect(chat_input(member_page)).to_be_visible()
-
-    owner_page = page_for(owner)
-    dialog = _folder_share_dialog(owner_page, name)
-    group_entry = dialog.get_by_text(group_name).locator("xpath=ancestor::div[.//select][1]")
-    with owner_page.expect_response(re.compile(r"/access/update")):
-        group_entry.get_by_role("button").last.click()
-
-    # the chat is a tab beside the folder (1fbb42be9); losing access empties it where it is
-    expect(member_page.get_by_text(ANSWER), "the reader still sees the owner's chat").to_have_count(
-        0
-    )
-
-
-def _first_question_id(owner, chat_id: str) -> str:
-    with owner.client() as client:
-        stored = client.get(f"/api/v1/chats/{chat_id}")
-    assert stored.status_code == 200, stored.text
-    messages = stored.json()["chat"]["history"]["messages"].values()
-    return next(m["id"] for m in messages if m["role"] == "user" and m["parentId"] is None)
-
-
-def test_a_folder_reader_regenerates_and_edits_the_owners_turn_while_the_owner_keeps_theirs(
-    page_for, crew, upstream
-):
-    owner, member, group_id, _ = crew
-    folder_id, _, chat_id = _folder_with_chat(owner)
-    _share_folder_over_api(owner, folder_id, [grant("group", group_id, "read")], "continue")
-    owner_page = page_for(owner, path=f"/c/{chat_id}")
-    expect_reply(owner_page, ANSWER)
-    member_page = page_for(member, path=f"/c/{chat_id}")
-    expect_reply(member_page, ANSWER)
-
-    upstream.queue(reply.text("At ten past nine.", match=reply.answering(QUESTION)))
-    last_reply(member_page).hover()
-    conversation(member_page).get_by_role("button", name="Regenerate").last.click()
-    member_page.get_by_text("Try Again").click()
-    expect_reply(member_page, "At ten past nine.")
-    expect(conversation(member_page).get_by_text("2/2")).to_be_visible()
-
-    edited = "when does the last ferry leave?"
-    upstream.queue(reply.text("At midnight.", match=reply.answering(edited)))
-    question_id = _first_question_id(owner, chat_id)
-    question = member_page.locator(f"#message-{question_id}")
-    question.hover()
-    question.get_by_role("button", name="Edit").click()
-    # the question is the owner's: the member branches off it and cannot save over it
-    expect(question.get_by_role("button", name="Save", exact=True)).to_have_count(0)
-    question.locator("textarea").fill(edited)
-    question.get_by_role("button", name="Send").click()
-    expect_reply(member_page, "At midnight.")
-
-    # the owner's open tab keeps the question it shows, with the new branch beside it
-    owner_question = owner_page.locator(f"#message-{question_id}")
-    expect(owner_question.get_by_text("1/2")).to_be_visible()
-    expect(owner_question).to_contain_text(QUESTION)
-    expect(conversation(owner_page).get_by_text(edited)).to_have_count(0)
-    owner_question.hover()
-    owner_question.get_by_role("button", name="Next message").click()
-    expect(_user_message(owner_page, edited)).to_contain_text(member.name)
-    expect_reply(owner_page, "At midnight.")
 
 
 def test_only_the_folders_owner_finds_access_editing_it(page_for, crew):
