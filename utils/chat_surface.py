@@ -196,6 +196,22 @@ def ask_aside(
     return _new_panel(page, before, place)
 
 
+def show_the_folders_chat(page: Page, folder_name: str, directory: str | None = None) -> None:
+    """Show the chat input of a folder page that just opened.
+
+    A folder on a machine opens on its `directory` (or the machine's home) in a Files tab in
+    front (1fbb42be9); the folder's own tab, named after it, holds the chat input."""
+    if directory is not None:
+        strip = page.get_by_role("tablist", name="Tabs")
+        files = strip.get_by_role(
+            "tab", name=directory.rstrip("/").rsplit("/", 1)[-1] or "Home", exact=True
+        )
+        # the folder page reads the folder and its machine before it opens Files, a cold load
+        expect(files).to_have_attribute("aria-selected", "true", timeout=REPLY_TIMEOUT_MS)
+        strip.get_by_role("tab", name=folder_name, exact=True).click()
+    expect(main_chat(page).input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+
+
 def start_on_folder_page(page: Page, question: str, place: str = "folder chat") -> ChatSurface:
     """Send `question` from a folder page's box; the chat it starts opens in a tab beside the
     folder (since 06b47d455)."""

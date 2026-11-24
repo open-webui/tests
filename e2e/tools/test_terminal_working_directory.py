@@ -84,6 +84,13 @@ tab to the working folder (the browsing test, on its second Files check); a mode
 terminal applied in a folder's new chat (both cases of the turned-off test); a folder without a
 terminal turning the chat's off (the kept-before test). With the Files tab and the chat sharing
 one working folder, as before, the browsing test fails as well.
+
+Since dev 1fbb42be9 a folder's machine is where its chats run: the folder dialog names it Machine,
+a folder page on a machine opens its directory in a Files tab in front of the folder's own tab,
+and in a folder chat the Machine menu is disabled, so a model with another default terminal
+leaves the chat on the folder's terminal and directory (the turned-off-or-changed test this
+replaced pinned open-webui/open-webui#33973). The retargeted folder tests pass on the dev
+9d19883f1 build.
 """
 
 from __future__ import annotations
@@ -110,8 +117,8 @@ from harness.backends import wait_until
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals, serving_terminal
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
-from utils.chat_surface import start_on_folder_page
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, send
+from utils.chat_surface import show_the_folders_chat, start_on_folder_page
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
 from utils.model_editor import choose_model_default_terminal, save
 from utils.model_selector import SELECTOR_BUTTON, select_model
 from utils.sidebar_folders import (
@@ -205,11 +212,9 @@ def kept_with_the_chat(person, page: Page) -> tuple[str | None, str | None]:
     return chat.get("machine_id"), chat.get("working_directory")
 
 
-def open_folder_page(person, page_for, folder_id: str) -> Page:
+def open_folder_page(person, page_for, folder_id: str, name: str, directory=None) -> Page:
     page = page_for(person, path=f"/folders/{folder_id}")
-    # the folder page reads the folder and its terminal's models before it shows the chat input,
-    # the same cold load `send` allows for
-    expect(chat_input(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    show_the_folders_chat(page, name, directory and str(directory))
     return page
 
 
@@ -247,14 +252,14 @@ def open_folder_dialog(page: Page, name: str) -> Locator:
 
 
 def default_terminal(scope: Locator) -> Locator:
-    return scope.get_by_role("button", name=re.compile(r"^Default machine: "))
+    return scope.get_by_role("button", name=re.compile(r"^Machine: "))
 
 
 def choose_default_terminal(page: Page, scope: Locator, name: str) -> None:
     """Pick `name` in the folder's Default terminal menu, the chat input's Terminal menu."""
     default_terminal(scope).click()
     page.get_by_role("menu").get_by_role("menuitemradio", name=name, exact=True).click()
-    expect(default_terminal(scope)).to_have_accessible_name(f"Default machine: {name}")
+    expect(default_terminal(scope)).to_have_accessible_name(f"Machine: {name}")
 
 
 def clear_default_terminal(page: Page, scope: Locator, picked: str) -> None:
@@ -263,7 +268,7 @@ def clear_default_terminal(page: Page, scope: Locator, picked: str) -> None:
     entry = page.get_by_role("menu").get_by_role("menuitemradio", name=picked, exact=True)
     expect(entry).to_be_checked()
     entry.click()
-    expect(default_terminal(scope)).to_have_accessible_name("Default machine: None")
+    expect(default_terminal(scope)).to_have_accessible_name("Machine: None")
 
 
 def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_reload(
@@ -430,10 +435,10 @@ def test_a_new_chat_in_a_folder_starts_on_its_terminal_and_directory(
 ):
     person = make_user()
     folder = _directory(open_terminal)
-    folder_id, _ = create_folder(
+    folder_id, name = create_folder(
         person, {"machine_id": terminal["id"], "working_directory": str(folder)}
     )
-    page = open_folder_page(person, page_for, folder_id)
+    page = open_folder_page(person, page_for, folder_id, name, folder)
 
     expect(page.get_by_role("main").get_by_role("button", name=TERMINAL)).to_be_visible()
     expect(directory_button(page)).to_contain_text(folder.name)
@@ -450,7 +455,7 @@ def spare_terminal(admin, terminal) -> Iterator[dict]:
         yield connection
 
 
-def open_folder_from_the_sidebar(page: Page, name: str) -> None:
+def open_folder_from_the_sidebar(page: Page, name: str, directory=None) -> None:
     opener = page.get_by_role("button", name="Open Sidebar", exact=True)
     if opener.is_visible():
         opener.click()
@@ -461,7 +466,7 @@ def open_folder_from_the_sidebar(page: Page, name: str) -> None:
         folders.click()
     folder_link(sidebar, name).click()
     expect(page).to_have_url(re.compile(r"/folders/"))
-    expect(chat_input(page)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    show_the_folders_chat(page, name, directory and str(directory))
 
 
 def test_a_folders_terminal_replaces_the_terminal_picked_before(
@@ -475,7 +480,7 @@ def test_a_folders_terminal_replaces_the_terminal_picked_before(
     page = page_for(person)
     choose_terminal(page, SPARE)
 
-    open_folder_from_the_sidebar(page, name)
+    open_folder_from_the_sidebar(page, name, folder)
 
     composer = page.get_by_role("main")
     expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
@@ -490,7 +495,7 @@ def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
     person = make_user()
     folder = _directory(open_terminal)
     folder_id, name = create_folder(person, {})
-    page = open_folder_page(person, page_for, folder_id)
+    page = open_folder_page(person, page_for, folder_id, name)
     composer = page.get_by_role("main")
     expect(composer.get_by_role("button", name="Machine", exact=True)).to_be_visible()
 
@@ -505,26 +510,15 @@ def test_a_default_terminal_saved_for_the_open_folder_is_picked_at_once(
     assert where_pwd_ran(page, upstream) == str(folder), "the saved directory was not used"
 
 
-def switch_terminal(page: Page, picked: str, to: str) -> None:
-    """In the Terminal menu of the picked terminal `picked`, pick `to`; picking `picked` itself
-    again turns the chat's terminal off."""
-    composer = page.get_by_role("main")
-    composer.get_by_role("button", name=picked, exact=True).click()
-    page.get_by_role("menu").get_by_role("menuitemradio", name=to).click()
-    shown = "Machine" if to == picked else to
-    expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
-    expect(page.get_by_role("menu")).to_have_count(0)
-
-
 @pytest.fixture
-def harbour_model(admin, terminal):
-    """A model whose default terminal is the Open Terminal."""
-    model_id = f"harbour-{uuid.uuid4().hex[:8]}"
+def spare_model(admin, spare_terminal):
+    """A model whose default terminal is the spare one."""
+    model_id = f"spare-{uuid.uuid4().hex[:8]}"
     model = {
         "id": model_id,
         "base_model_id": MOCK_MODEL_ID,
         "name": model_id,
-        "meta": {"capabilities": {"terminal": True}, "machineId": terminal["id"]},
+        "meta": {"capabilities": {"terminal": True}, "machineId": spare_terminal["id"]},
         "params": {},
         "access_grants": [EVERYONE_READS],
     }
@@ -535,37 +529,33 @@ def harbour_model(admin, terminal):
         client.post("/api/v1/models/model/delete", json={"id": model_id})
 
 
-@pytest.mark.parametrize("choice", ["off", SPARE])
-def test_a_terminal_turned_off_or_changed_in_a_folder_chat_stays_when_the_model_changes(
-    page_for, make_user, terminal, spare_terminal, open_terminal, harbour_model, upstream, choice
+def test_a_folder_chat_stays_on_the_folders_terminal_when_the_model_changes(
+    page_for, make_user, terminal, spare_model, open_terminal, upstream
 ):
-    """Fixed on dev (open-webui/open-webui#33973): the folder's terminal came back."""
+    """1fbb42be9: a folder's chats run on its machine, so the Machine menu cannot change it.
+
+    Before, a terminal turned off or changed in a folder chat had to stay so when the model
+    changed (open-webui/open-webui#33973; the folder's terminal came back).
+    """
     person = make_user()
-    folder_id, _ = create_folder(
-        person,
-        {"machine_id": terminal["id"], "working_directory": str(_directory(open_terminal))},
+    folder = _directory(open_terminal)
+    folder_id, name = create_folder(
+        person, {"machine_id": terminal["id"], "working_directory": str(folder)}
     )
-    page = open_folder_page(person, page_for, folder_id)
+    page = open_folder_page(person, page_for, folder_id, name, folder)
     composer = page.get_by_role("main")
-    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_visible()
-    switch_terminal(page, TERMINAL, TERMINAL if choice == "off" else SPARE)
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_disabled()
 
-    select_model(page, harbour_model["name"])
+    select_model(page, spare_model["name"])
 
-    expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(harbour_model["name"])
-    shown = "Machine" if choice == "off" else SPARE
-    expect(composer.get_by_role("button", name=shown, exact=True)).to_be_visible()
-    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_have_count(0)
-    prompt = f"which terminal? {uuid.uuid4().hex[:8]}"
-    if choice == "off":
-        upstream.queue(reply.text("none needed", match=reply.answering(prompt)))
-    # the spare stand-in answers no chat turn; the chat is saved with its terminal all the same
-    send(page, prompt)
-    expect(page).to_have_url(re.compile("/c/"), timeout=REPLY_TIMEOUT_MS)
-    expected = None if choice == "off" else spare_terminal["id"]
-    stored, _ = kept_with_the_chat(person, page)
-    assert stored == expected, (
-        f"the folder chat was saved with the terminal {stored!r}; the person chose {expected!r}"
+    expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(spare_model["name"])
+    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_disabled()
+    expect(composer.get_by_role("button", name=SPARE, exact=True)).to_have_count(0)
+    assert where_pwd_ran(page, upstream) == str(folder), (
+        "the folder chat on a model with another default terminal left the folder's terminal"
+    )
+    assert kept_with_the_chat(person, page) == (terminal["id"], str(folder)), (
+        "the folder chat was not saved on the folder's terminal and directory"
     )
 
 
@@ -596,11 +586,11 @@ def test_a_folders_missing_directory_refuses_the_first_message(
     folder and opened in place of the folder page, which dropped the typed message.
     """
     person = make_user()
-    folder_id, _ = create_folder(
-        person,
-        {"machine_id": terminal["id"], "working_directory": str(open_terminal.home / "gone")},
+    gone = open_terminal.home / "gone"
+    folder_id, name = create_folder(
+        person, {"machine_id": terminal["id"], "working_directory": str(gone)}
     )
-    page = open_folder_page(person, page_for, folder_id)
+    page = open_folder_page(person, page_for, folder_id, name, gone)
     expect(directory_button(page)).to_contain_text("gone")
     before = len(upstream.chat_requests())
 
@@ -639,7 +629,7 @@ def test_the_folder_dialog_saves_a_default_terminal_and_directory(
         f"{folder}/",
     ), data
     reopened = open_folder_dialog(page, name)
-    expect(default_terminal(reopened)).to_have_accessible_name(f"Default machine: {TERMINAL}")
+    expect(default_terminal(reopened)).to_have_accessible_name(f"Machine: {TERMINAL}")
     expect(reopened.get_by_label("Working directory")).to_have_value(f"{folder}/")
 
 
