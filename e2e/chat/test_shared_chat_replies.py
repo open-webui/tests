@@ -93,7 +93,8 @@ pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.req
 QUESTION = "when does the ferry leave?"
 ANSWER = "At half past nine."
 OWNER_PROMPT = "You answer as the harbour master and never mention the toll."
-TERMINAL_WARNING = "People who can reply can also use this chat’s own machine."
+# reworded by dev 2be04aa5e
+TERMINAL_WARNING = "People who can reply may get access to this chat’s machine and files."
 
 
 def _accounts(make_user):
