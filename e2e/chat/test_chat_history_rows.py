@@ -8,7 +8,10 @@ and a search result open on the whole conversation; and a long chat opens, takes
 reopens with it. The integration twin, `integration/chat/test_chat_history_rows.py`, reads the
 same stored values over the API; these tests pin what the page shows.
 
-Discriminates: passes on dev b6aac5dee (before the PR) and on dev 414340682 (the PR merged).
+Discriminates: passes on dev b6aac5dee (before the PR) and on dev 414340682 (the PR merged). In a
+backend copy of 414340682 whose message delete deletes nothing and whose clone keeps only the
+shown versions, the first test fails on the deleted version back after the reload and the second
+on the clone missing the older version.
 """
 
 from __future__ import annotations

@@ -11,7 +11,8 @@ earlier release opens with every message, its order and its times after the upgr
 Every check reads the chat back from the server, as a reload does.
 
 Discriminates: passes on dev b6aac5dee (before the PR) and on dev 414340682 (the PR merged), the
-upgrade test on the three SQLite data sets.
+upgrade test on the three SQLite data sets. In a backend copy of 414340682 whose message delete
+deletes nothing and whose clone keeps only the shown versions, the delete and the clone tests fail.
 The Postgres data sets run only where Postgres is available; they were not run locally.
 """
 
