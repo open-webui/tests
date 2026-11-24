@@ -12,22 +12,23 @@ passed through to the loader.
 or declared type, so a zip uploaded under any name, a `.pdf` included, is checked too, while a
 real PDF still reaches its reader.
 
-Issue #34944: the check ran for every extraction engine, so a remote engine (External, Tika,
-Docling and the rest), to which Open WebUI only forwards the file, never got a valid workbook
-that declares more than the admin's file size limit unpacked. The check now applies only where
-Open WebUI unpacks the file itself, which includes a remote engine handing a file type it does
-not take to the built-in loaders.
+Issue #34944: a valid workbook whose pivot table covers whole columns stores about a million
+mostly empty pivot cache records, so a 4 MB file declared about 100 MB unpacked and was refused
+for every extraction engine. The pivot cache records are not sheet text, so Open WebUI now
+empties them in a copy before extraction and leaves them out of the size check: the built-in
+loaders read the workbook, a remote engine gets the small copy, and the stored file stays as
+uploaded. An archive whose other parts are over the limit is still refused.
 
 Twin of unit/security/test_archive_expansion_limit.py. Bounded by construction: every archive
-declares at most 16 MiB, so the pre-fix run inflates no more than that, and the sparse workbook
-(98 MB unpacked) only ever goes to the local stand-in engine or is refused.
+declares at most 16 MiB, so the pre-fix run inflates no more than that. The pivot workbook only
+ever reaches the reader that refuses it on the pre-fix ref, and the one over the limit is refused.
 
 Discriminates: passes on dev 3cda94d40; with the size check removed from `Loader._get_loader`
 the 16 MiB archives reach their extractor and fail (or pass) for other reasons, with
 `FILE_MAX_SIZE` no longer passed to the loader a 1 MiB limit refuses nothing, and on 4adf3083f^
-(archives still told apart by extension) the zip named `scan.pdf` is not refused. The external
-engine test fails on dev d89cd809c (#34944 unfixed: the workbook is refused and the engine never
-called) and passes with the check moved to the built-in loaders.
+(archives still told apart by extension) the zip named `scan.pdf` is not refused. The two pivot
+workbook tests fail on dev d89cd809c (#34944 unfixed: the workbook is refused as too large and
+the external engine is never called) and pass with the pivot cache records emptied.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ from pypdf import PdfReader, PdfWriter
 
 from harness.listener import json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
-from integration.retrieval.test_document_loaders import pdf_bytes
+from integration.retrieval.test_document_loaders import pdf_bytes, xlsx_bytes
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -193,20 +194,120 @@ def test_an_unreadable_archive_is_left_to_the_extractor(make_user):
     assert TOO_LARGE not in (data.get("error") or ""), data
 
 
-@functools.cache
-def _sparse_workbook() -> bytes:
-    """The workbook from #34944: a pivot cache of mostly empty cells, 98 MB unpacked in 3.7 MB."""
-    seeded = random.Random(34944)
-    padding = b"<c/>" * 20
-    records = b"".join(
-        b"<r><c>" + seeded.randbytes(2).hex().encode() + b"</c>" + padding + b"</r>"
-        for _ in range(1_000_000)
+SPREADSHEET_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+RELATIONSHIPS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PACKAGE_RELATIONSHIPS = "http://schemas.openxmlformats.org/package/2006/relationships"
+SPREADSHEET_PARTS = "application/vnd.openxmlformats-officedocument.spreadsheetml"
+PIVOT_RECORDS = "xl/pivotCache/pivotCacheRecords1.xml"
+PIVOT_FIELDS = 21
+SIGHTINGS = [["Harbour", "Herons"], ["North quay", 1200], ["South quay", 800]]
+
+
+def _relationship(rel_id: str, kind: str, target: str) -> str:
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<Relationships xmlns="{PACKAGE_RELATIONSHIPS}"><Relationship Id="{rel_id}" '
+        f'Type="{RELATIONSHIPS}/{kind}" Target="{target}"/></Relationships>'
     )
+
+
+@functools.cache
+def _pivot_workbook() -> bytes:
+    """A valid workbook whose pivot table covers whole columns, as in #34944.
+
+    Excel then caches a million mostly empty records: 4 MB on disk, about 100 MB unpacked.
+    """
+    seeded = random.Random(34944)
+    empty_fields = b"<m/>" * (PIVOT_FIELDS - 1)
+    records = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<pivotCacheRecords xmlns="{SPREADSHEET_MAIN}" count="1000000">'.encode()
+        + b"".join(
+            b'<r><n v="' + str(seeded.randrange(65536)).encode() + b'"/>' + empty_fields + b"</r>"
+            for _ in range(1_000_000)
+        )
+        + b"</pivotCacheRecords>"
+    )
+    cache_fields = "".join(
+        f'<cacheField name="F{index}" numFmtId="0"><sharedItems containsBlank="1"/></cacheField>'
+        for index in range(1, PIVOT_FIELDS + 1)
+    )
+    cache_definition = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<pivotCacheDefinition xmlns="{SPREADSHEET_MAIN}" xmlns:r="{RELATIONSHIPS}" r:id="rId1" '
+        f'refreshOnLoad="1" recordCount="1000000"><cacheSource type="worksheet">'
+        f'<worksheetSource ref="A1:U1000001" sheet="Sightings"/></cacheSource>'
+        f'<cacheFields count="{PIVOT_FIELDS}">{cache_fields}</cacheFields></pivotCacheDefinition>'
+    )
+    pivot_table = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        f'<pivotTableDefinition xmlns="{SPREADSHEET_MAIN}" name="PivotTable1" cacheId="1" '
+        f'dataCaption="Values"><location ref="A3:A4" firstHeaderRow="1" firstDataRow="1" '
+        f'firstDataCol="0"/><pivotFields count="{PIVOT_FIELDS}">'
+        + '<pivotField dataField="1" showAll="0"/>'
+        + '<pivotField showAll="0"/>' * (PIVOT_FIELDS - 1)
+        + '</pivotFields><dataFields count="1"><dataField name="Sum of F1" fld="0"/></dataFields>'
+        "</pivotTableDefinition>"
+    )
+    parts = {
+        "xl/worksheets/_rels/sheet2.xml.rels": _relationship(
+            "rId1", "pivotTable", "../pivotTables/pivotTable1.xml"
+        ),
+        "xl/pivotTables/pivotTable1.xml": pivot_table,
+        "xl/pivotTables/_rels/pivotTable1.xml.rels": _relationship(
+            "rId1", "pivotCacheDefinition", "../pivotCache/pivotCacheDefinition1.xml"
+        ),
+        "xl/pivotCache/pivotCacheDefinition1.xml": cache_definition,
+        "xl/pivotCache/_rels/pivotCacheDefinition1.xml.rels": _relationship(
+            "rId1", "pivotCacheRecords", "pivotCacheRecords1.xml"
+        ),
+        PIVOT_RECORDS: records,
+    }
+    content_types = "".join(
+        f'<Override PartName="/{part}" ContentType="{SPREADSHEET_PARTS}.{kind}+xml"/>'
+        for part, kind in [
+            ("xl/pivotTables/pivotTable1.xml", "pivotTable"),
+            ("xl/pivotCache/pivotCacheDefinition1.xml", "pivotCacheDefinition"),
+            (PIVOT_RECORDS, "pivotCacheRecords"),
+        ]
+    )
+    additions = {
+        "[Content_Types].xml": ("</Types>", content_types),
+        "xl/workbook.xml": (
+            "</workbook>",
+            f'<pivotCaches><pivotCache xmlns:r="{RELATIONSHIPS}" cacheId="1" '
+            f'r:id="rIdPivotCache1"/></pivotCaches>',
+        ),
+        "xl/_rels/workbook.xml.rels": (
+            "</Relationships>",
+            f'<Relationship Id="rIdPivotCache1" Type="{RELATIONSHIPS}/pivotCacheDefinition" '
+            f'Target="pivotCache/pivotCacheDefinition1.xml"/>',
+        ),
+    }
+
+    openpyxl = pytest.importorskip("openpyxl")
+    sheets = openpyxl.load_workbook(io.BytesIO(xlsx_bytes(SIGHTINGS)))
+    sheets.create_sheet("Pivot")
+    plain = io.BytesIO()
+    sheets.save(plain)
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        archive.writestr("xl/pivotCache/pivotCacheRecords1.xml", records)
+    with (
+        zipfile.ZipFile(plain) as source,
+        zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as workbook,
+    ):
+        for name in source.namelist():
+            content = source.read(name)
+            if name in additions:
+                closing_tag, addition = additions[name]
+                content = content.replace(closing_tag.encode(), (addition + closing_tag).encode())
+            workbook.writestr(name, content)
+        for name, content in parts.items():
+            workbook.writestr(name, content)
     return buffer.getvalue()
+
+
+def _unpacked_size(archive: bytes) -> int:
+    return sum(entry.file_size for entry in zipfile.ZipFile(io.BytesIO(archive)).infolist())
 
 
 @pytest.fixture
@@ -224,18 +325,48 @@ def document_settings(preserve, admin, file_size_limit):
     client.close()
 
 
-def test_the_external_engine_gets_a_workbook_too_large_to_unpack_locally(
-    document_settings, listener, make_user
+def _uploaded_and_processed(client, filename: str, payload: bytes) -> dict:
+    """Like `_processed`, but returns the whole stored file, its id included."""
+    uploaded = client.post(
+        "/api/v1/files/?process=true&process_in_background=false",
+        files={"file": (filename, payload, ARCHIVE_FORMATS["xlsx"])},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    return client.get(f"/api/v1/files/{uploaded.json()['id']}").json()
+
+
+def test_the_built_in_loaders_read_a_workbook_with_a_large_pivot_cache(
+    document_settings, make_user
 ):
-    workbook = _sparse_workbook()
-    unpacked = sum(entry.file_size for entry in zipfile.ZipFile(io.BytesIO(workbook)).infolist())
-    assert len(workbook) < 5 * MIB and 80 * MIB < unpacked < len(workbook) * 100, (
+    workbook = _pivot_workbook()
+    assert len(workbook) < 5 * MIB and 80 * MIB < _unpacked_size(workbook) < len(workbook) * 100, (
         "the workbook must be over the 80 MB limit unpacked yet under 100 times its size"
     )
+    document_settings(CONTENT_EXTRACTION_ENGINE="")
+
+    with make_user().client() as client:
+        stored = _uploaded_and_processed(client, "sightings.xlsx", workbook)
+        downloaded = client.get(f"/api/v1/files/{stored['id']}/content")
+
+    data = stored["data"]
+    assert TOO_LARGE not in (data.get("error") or ""), (
+        f"a valid workbook with a large pivot cache was refused: {data}"
+    )
+    for cell in ("North quay", "1200", "South quay", "800"):
+        assert cell in (data.get("content") or ""), f"the sheet text was not extracted: {data}"
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == workbook, "the stored workbook no longer matches the upload"
+
+
+def test_the_external_engine_gets_the_workbook_without_its_pivot_cache_records(
+    document_settings, listener, make_user
+):
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = _pivot_workbook()
     listener.route(
         "PUT",
         "/process",
-        json_answer({"page_content": "Plan revenue by cost centre.", "metadata": {}}),
+        json_answer({"page_content": "Herons by harbour.", "metadata": {}}),
     )
     document_settings(
         CONTENT_EXTRACTION_ENGINE="external",
@@ -244,53 +375,54 @@ def test_the_external_engine_gets_a_workbook_too_large_to_unpack_locally(
     )
 
     with make_user().client() as client:
-        data = _processed(client, "plan.xlsx", ARCHIVE_FORMATS["xlsx"], workbook)
+        data = _uploaded_and_processed(client, "sightings.xlsx", workbook)["data"]
 
     received = listener.requests_to("/process")
     assert TOO_LARGE not in (data.get("error") or ""), (
         f"a workbook the external engine reads was refused before it was sent there: {data}"
     )
-    assert [request.body == workbook for request in received] == [True], (
-        f"the external engine did not get the uploaded workbook once: {len(received)} requests"
+    assert len(received) == 1, f"the external engine was called {len(received)} times"
+    assert received[0].headers["X-Filename"].endswith("sightings.xlsx"), received[0].headers
+    sent = zipfile.ZipFile(io.BytesIO(received[0].body))
+    original = zipfile.ZipFile(io.BytesIO(workbook))
+    assert sent.namelist() == original.namelist(), "the sent workbook lost or gained parts"
+    changed = [name for name in original.namelist() if sent.read(name) != original.read(name)]
+    assert changed == [PIVOT_RECORDS], (
+        f"parts other than the pivot cache records changed: {changed}"
     )
-    assert data.get("content") == "Plan revenue by cost centre.", (
+    assert _unpacked_size(received[0].body) < MIB, "the pivot cache records were sent in full"
+    sent_sheets = openpyxl.load_workbook(io.BytesIO(received[0].body))
+    assert [list(row) for row in sent_sheets["Sightings"].iter_rows(values_only=True)] == SIGHTINGS
+    assert data.get("content") == "Herons by harbour.", (
         f"the text the external engine extracted was not stored: {data}"
     )
 
 
-def test_the_built_in_loaders_still_refuse_the_workbook_and_a_zip_bomb(
-    document_settings, make_user
-):
-    document_settings(CONTENT_EXTRACTION_ENGINE="")
-    bomb = _archive_declaring(16 * MIB)
-    assert len(bomb) * 100 < 16 * MIB, "the bomb must unpack to over 100 times its size"
-
-    with make_user().client() as client:
-        workbook = _processed(client, "plan.xlsx", ARCHIVE_FORMATS["xlsx"], _sparse_workbook())
-        zip_bomb = _processed(client, "report.docx", ARCHIVE_FORMATS["docx"], bomb)
-
-    assert TOO_LARGE in (workbook.get("error") or ""), (
-        f"the built-in loader unpacked a workbook over the 80 MB limit: {workbook}"
-    )
-    assert TOO_LARGE in (zip_bomb.get("error") or ""), (
-        f"the built-in loader unpacked a zip bomb: {zip_bomb}"
-    )
-
-
-def test_a_remote_engine_passing_a_file_type_to_the_built_in_loaders_keeps_the_check(
+def test_a_pivot_workbook_whose_other_parts_are_too_large_is_still_refused(
     document_settings, listener, make_user
 ):
-    """Mistral OCR takes only PDFs, so a workbook goes to the built-in loader and is checked."""
+    """The pivot cache is left out of the size check, everything else still counts."""
+    padded = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(_pivot_workbook())) as source,
+        zipfile.ZipFile(padded, "w", zipfile.ZIP_DEFLATED) as target,
+    ):
+        for entry in source.infolist():
+            target.writestr(entry, source.read(entry))
+        with target.open("xl/media/image1.bin", "w") as member:
+            for _ in range(81):
+                member.write(b"\0" * MIB)
+    listener.route("PUT", "/process", json_answer({"page_content": "unused", "metadata": {}}))
     document_settings(
-        CONTENT_EXTRACTION_ENGINE="mistral_ocr",
-        MISTRAL_OCR_API_BASE_URL=listener.base_url,
-        MISTRAL_OCR_API_KEY="ocr-key",
+        CONTENT_EXTRACTION_ENGINE="external",
+        EXTERNAL_DOCUMENT_LOADER_URL=listener.base_url,
+        EXTERNAL_DOCUMENT_LOADER_API_KEY="loader-key",
     )
 
     with make_user().client() as client:
-        data = _processed(client, "plan.xlsx", ARCHIVE_FORMATS["xlsx"], _sparse_workbook())
+        data = _processed(client, "sightings.xlsx", ARCHIVE_FORMATS["xlsx"], padded.getvalue())
 
-    assert TOO_LARGE in (data.get("error") or ""), (
-        f"a workbook the engine does not take was unpacked over the 80 MB limit: {data}"
+    assert data.get("status") == "failed" and TOO_LARGE in (data.get("error") or ""), (
+        f"a workbook with 81 MiB outside its pivot cache got past the 80 MB limit: {data}"
     )
-    assert listener.received == [], "Mistral OCR was sent a file type it does not take"
+    assert listener.received == [], "a workbook over the limit was sent to the engine"
