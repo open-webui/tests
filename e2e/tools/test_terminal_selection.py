@@ -36,6 +36,9 @@ having the terminal (may use it); no terminal list read on reconnect or on an ac
 (group, granted while open); a chat opening on a terminal the person lost (taken away, the admin
 case; for a user the page's own check still unpicks it).
 Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities section to Features.
+The opened-chat test is red on dev dc9886799 (#34928): opening a saved chat without a terminal
+dropped the pick for the next new chat and a reload. Fix: Classic298/open-webui branch
+fix/terminal-saved-chat-leak (8db3a2a9b), green there in five runs and two in parallel.
 """
 
 from __future__ import annotations
@@ -54,6 +57,7 @@ from harness import skill_files
 from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import admin_of, create_user
+from harness.chat_history import seed_chat
 from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -442,6 +446,48 @@ def test_a_new_chat_starts_on_the_default_terminal_all_its_models_share(
     expect_terminal(open_chat_on(person, page_for, on_slip), SLIP)
     # models that disagree leave the chat as it was, here without a terminal
     expect_terminal(open_chat_on(person, page_for, on_quay, on_slip), None)
+
+
+def saved_chat_without_a_terminal(person, model: dict | None = None) -> str:
+    """A stored chat on `model` (the mock without one) with no terminal, as the server keeps a
+    sub-agent's chat; its id."""
+    turn = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    with person.client() as client:
+        chat_id, _ = seed_chat(client, turn, model=model["id"] if model else MOCK_MODEL_ID)
+    return chat_id
+
+
+def expect_model(page: Page, model_name: str) -> None:
+    expect(page.get_by_role("button", name=f"Selected model: {model_name}")).to_be_visible()
+
+
+def test_opening_a_chat_without_a_terminal_leaves_new_chats_on_the_pick_or_the_models_default(
+    page_for, make_user, terminals, make_model, upstream
+):
+    """Red on dev dc9886799 (open-webui/open-webui#34928): opening a saved chat without a
+    terminal dropped the pick, so the next new chat and a reload started without one."""
+    on_quay = make_model(terminals[QUAY]["id"])
+    person = make_user()
+    plain = saved_chat_without_a_terminal(person)
+    on_quay_without = saved_chat_without_a_terminal(person, on_quay)
+    page = page_for(person)
+    choose_terminal(page, SLIP)
+
+    open_chat(page, plain)
+    expect_terminal(page, None)
+    start_new_chat(page)
+    # New Chat keeps the model of the chat open before it
+    expect_model(page, MOCK_MODEL_ID)
+    expect_terminal(page, SLIP)
+    reload_and_expect_still_picked(page, SLIP)
+    assert where_the_command_ran(page, upstream) == SLIP, "the new chat ran without the pick"
+
+    open_chat(page, on_quay_without)
+    expect_terminal(page, None)
+    start_new_chat(page)
+    expect_model(page, on_quay["name"])
+    expect_terminal(page, QUAY)
+    assert where_the_command_ran(page, upstream) == QUAY, "the new chat ran without the default"
 
 
 def test_a_models_default_terminal_is_picked_only_for_a_person_who_may_use_it(
