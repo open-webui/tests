@@ -521,6 +521,8 @@ def _folder_share_dialog(page: Page, name: str) -> Locator:
 def test_a_reader_of_a_folder_shared_with_replies_answers_in_the_owners_chat(
     page_for, crew, upstream
 ):
+    """Red on dev c6dde2a4e: the reader gets the chat read-only with only Clone Chat
+    (open-webui/open-webui#35014, from bcff000ad)."""
     owner, member, group_id, group_name = crew
     folder_id, name, chat_id = _folder_with_chat(owner)
     owner_page = page_for(owner)
@@ -541,6 +543,9 @@ def test_a_reader_of_a_folder_shared_with_replies_answers_in_the_owners_chat(
 
 
 def test_a_reader_taken_off_the_folders_access_list_loses_the_open_chat(page_for, crew):
+    """Red on dev c6dde2a4e: the reader gets the chat read-only with only Clone Chat
+    (open-webui/open-webui#35014, from bcff000ad). With that fixed, and on a8e7ac398 before it, the
+    reader still keeps the open chat after being taken off the list."""
     owner, member, group_id, group_name = crew
     folder_id, name, chat_id = _folder_with_chat(owner)
     _share_folder_over_api(owner, folder_id, [grant("group", group_id, "read")], "continue")
