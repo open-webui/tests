@@ -67,11 +67,20 @@ def drag(page: Page, source: Locator, target: Locator) -> None:
 
     A mouse drag across the sidebar rows sometimes never fires the drop. As in a browser the drag
     ends on the element that was dragged, which the drop may already have moved out of `source`'s
-    reach (a chat dragged out of its folder), so that element is held from the start.
+    reach (a chat dragged out of its folder), so that element is held from the start. The drop
+    lands on the middle of `target`: near a folder row's top or bottom edge a dragged folder is put
+    before or after it instead of into it (20c413371).
     """
     transfer = page.evaluate_handle("() => new DataTransfer()")
     dragged = source.element_handle()
     dragged.dispatch_event("dragstart", {"dataTransfer": transfer})
-    target.dispatch_event("dragover", {"dataTransfer": transfer})
-    target.dispatch_event("drop", {"dataTransfer": transfer})
+    box = target.bounding_box()
+    assert box, "the drop target is not on screen"
+    at_middle = {
+        "dataTransfer": transfer,
+        "clientX": box["x"] + box["width"] / 2,
+        "clientY": box["y"] + box["height"] / 2,
+    }
+    target.dispatch_event("dragover", at_middle)
+    target.dispatch_event("drop", at_middle)
     dragged.dispatch_event("dragend", {"dataTransfer": transfer})

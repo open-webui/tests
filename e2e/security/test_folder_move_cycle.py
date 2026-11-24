@@ -2,11 +2,13 @@
 
 open-webui 0.11.1, fix `23b3a69bc` (#28748): the server accepted a move of a folder under its own
 descendant, so the dragged folder and everything below it vanished from the sidebar for good.
-The sidebar only ignores a drop on the dragged folder's direct children, so a drop on a
-grandchild reaches the server, which now refuses it with an error the page shows as a toast.
+Since 20c413371 the sidebar ignores a drop on any folder below the dragged one, so no move is
+sent and the tree stays. The server's refusal is pinned in
+integration/security/test_folder_move_cycle.py.
+A valid drop right after it does move, so the ignored drop is not the drag failing.
 
-Discriminates: passes on bbfa876af; with the move route's subtree check removed the drop is
-accepted and no error appears.
+Discriminates: passes on dev 9d19883f1. Before 20c413371 the drop on the grandchild reached the
+server, which this test now reads as a sent move.
 """
 
 from __future__ import annotations
@@ -38,6 +40,14 @@ def owner_with_tree(make_user):
     return owner
 
 
+def _parents(owner) -> dict:
+    """Each folder's name mapped to its parent's name."""
+    with owner.client() as client:
+        folders = client.get("/api/v1/folders/").json()
+    names = {folder["id"]: folder["name"] for folder in folders}
+    return {folder["name"]: names.get(folder["parent_id"]) for folder in folders}
+
+
 def _open_folders_section(page) -> None:
     page.get_by_role("button", name="Open Sidebar", exact=True).click()
     toggle = page.get_by_role("button", name="Folders", exact=True)
@@ -56,12 +66,17 @@ def test_dropping_a_folder_on_its_grandchild_is_refused_and_keeps_the_tree(
     # every expanded folder has loaded its chats, so the tree has stopped moving
     expect(page.get_by_text("No chats")).to_have_count(len(FOLDER_NAMES))
 
+    moves = []
+    page.on(
+        "request",
+        lambda request: moves.append(request) if request.url.endswith("/update/parent") else None,
+    )
+    drag(page, folder_row(page, "projects"), folder_row(page, "q1"))
     with page.expect_response(lambda response: response.url.endswith("/update/parent")):
-        drag(page, folder_row(page, "projects"), folder_row(page, "q1"))
-
-    expect(
-        page.get_by_text("Cannot move a folder into itself or one of its subfolders")
-    ).to_be_visible()
+        drag(page, folder_row(page, "q1"), folder_row(page, "projects"))
+    assert len(moves) == 1, "dropping a folder on its grandchild sent a move"
+    parents = _parents(owner_with_tree)
+    assert parents["projects"] is None and parents["2026"] == parents["q1"], parents
     page.reload()  # the sidebar and its folders section stay open
     for name in FOLDER_NAMES:
         expect(folder_row(page, name)).to_be_visible()
