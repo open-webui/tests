@@ -12,7 +12,8 @@ Twin of integration/tools/test_knowledge_tool_citation_scores.py.
 
 The test runs in the main chat and in every way a side chat starts and every state it can be in
 (`utils/chat_surface.py`); a knowledge tool's source shows on a side chat answer on dev c15f28649
-and on dev e791cbdde alike.
+and on dev e791cbdde alike. Red in the temporary side chat since dev 072d0b51d: clicking the cited
+file there opens neither its tab nor the citation dialog (open-webui/open-webui#34921).
 
 Discriminates: passes on dev bc2416c5d; with the fix reverted in a backend copy and the dev
 build unchanged, the citation dialog shows the text with no relevance percentage.
