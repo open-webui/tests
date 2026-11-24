@@ -27,17 +27,18 @@ connection ends:
 Three tests run on real terminals, each on an Open Terminal the admin connected and on a
 terminal of a Terminals connection: a reload brings back the same shell with its variables and
 its earlier output, two shells of one chat are separate and closing one ends only that one, and
-a shell that is open in a second window waits there and takes over once the first is closed.
+a shell open in two windows is the same shell in both, either can type in it and closing one
+leaves the other working (Open Terminal 0.17.23; before, the second window waited and took over
+once the first was closed).
 On a Terminals terminal with a machine per chat or per model, a shell opened in a chat writes
 its file into that chat's machine or into the machine of the chat's model. Since Open Terminal
 0.17.8 reports the program running, a real shell's tab reads bash once connected, and on
 Terminals it takes the title the image's bash prompt sets, so these tests find a real shell
 through the tab that opened it (`utils.shell_tab`).
 
-`test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed` is red for
-a terminal on Terminals 0.4.1: the second window says "Session no longer available"
-(open-webui/terminals#80). Terminals 0.4.2 fixed it by passing the terminal's close code on, so
-it needs Terminals 0.4.2 or later.
+The second window test, when it still expected the second window to wait, was red for a terminal
+on Terminals 0.4.1: the second window said "Session no longer available"
+(open-webui/terminals#80). Terminals 0.4.2 fixed it by passing the terminal's close code on.
 
 Not here: a new chat started beside a shell of a saved chat cannot send its first message
 (finding "issue: [dev] The first message of a new chat is not sent while a shell tab from the
@@ -757,10 +758,14 @@ def test_a_shell_of_a_real_terminal_is_the_same_shell_after_a_reload(
     )
 
 
-def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_closed(
+def test_a_shell_open_in_a_second_window_is_the_same_shell_and_both_can_type(
     harbour, page_for, upstream
 ):
-    """Red on a terminal on Terminals 0.4.1, fixed in 0.4.2 (open-webui/terminals#80)."""
+    """Open Terminal 0.17.23: every window of the chat views the same shell and can type in it.
+
+    Before, the second window waited and took over once the first was closed; on a terminal on
+    Terminals 0.4.1 it said "Session no longer available" (open-webui/terminals#80).
+    """
     person, name, terminal_id = harbour
     page = page_for(person, init_script=READABLE_SHELL)
     tag = uuid.uuid4().hex[:8]
@@ -770,18 +775,19 @@ def test_a_shell_open_in_a_second_window_waits_and_takes_over_once_the_first_is_
     assert len(_stored_shells(person, chat_id)) == 1, _stored_tabs(person, chat_id)
 
     elsewhere = page_for(person, path=f"/c/{chat_id}", init_script=READABLE_SHELL)
-    waiting = shell_panel_by_tab(elsewhere, tab_id)
-    shell_tab_of(waiting).click()
-    expect(shell_notice(waiting)).to_have_text(RECONNECTING)
-    # the shell stays with the window that has it
+    second = shell_panel_by_tab(elsewhere, tab_id)
+    shell_tab_of(second).click()
     _enter(shell, "echo both-$tide")
     expect_on_screen(shell, f"both-{tag}")
+    expect_on_screen(second, f"both-{tag}")
+    expect(shell_notice(second)).to_have_count(0)
+    _enter(second, "echo second-$tide")
+    expect_on_screen(second, f"second-{tag}")
+    expect_on_screen(shell, f"second-{tag}")
 
     page.close()
-    expect_on_screen(waiting, f"both-{tag}")
-    expect(shell_notice(waiting)).to_have_count(0)
-    _enter(waiting, "echo after-$tide")
-    expect_on_screen(waiting, f"after-{tag}")
+    _enter(second, "echo after-$tide")
+    expect_on_screen(second, f"after-{tag}")
     running = _running_shells(person, terminal_id, chat_id)
     assert len(running) == 1, f"two windows on one shell left the terminal running {running}"
 
