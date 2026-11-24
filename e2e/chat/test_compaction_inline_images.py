@@ -74,14 +74,14 @@ def test_the_status_panel_does_not_count_an_inline_image_as_text(chat_for, make_
     chat = chat_for(account, chat_id=chat_id)
     expect_reply(chat, "a blank square")
 
-    expect(status_panel_usage(chat)).to_have_text(re.compile(r"^\d% \d+/20k$"))
+    expect(status_panel_usage(chat)).to_have_text(re.compile(r"^Context\s*\d% used\s*\d+/20k$"))
 
 
 def status_panel_usage(chat):
     chat_input(chat).click()
     chat.page.keyboard.type("/status")
     chat.page.keyboard.press("Enter")
-    return chat.page.get_by_text("Context usage").locator("xpath=following-sibling::span")
+    return chat.panel.get_by_text(re.compile(r"^Context\b")).locator("xpath=..")
 
 
 def test_the_status_panel_measures_against_the_models_own_threshold(
@@ -123,7 +123,9 @@ def test_the_status_panel_measures_against_the_models_own_threshold(
         chat = chat_for(account, chat_id=chat_id)
         expect_reply(chat, "hi there")
 
-        expect(status_panel_usage(chat)).to_have_text(re.compile(r"^\d+% \d+/500$"))
+        expect(status_panel_usage(chat)).to_have_text(
+            re.compile(r"^Context\s*\d+% used\s*\d+/500$")
+        )
     finally:
         with admin.client() as client:
             client.post("/api/v1/models/model/delete", json={"id": model_id})

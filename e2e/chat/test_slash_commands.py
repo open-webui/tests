@@ -202,7 +202,7 @@ def test_status_picked_or_typed_shows_the_chats_status_and_sends_nothing(
     """In a side chat: open-webui/open-webui#34018."""
     chat = chat_for(make_user())
     _ask(chat, upstream, "When did the ferry leave?", "The ferry left at nine.")
-    status = chat.panel.get_by_text("Context usage")
+    status = chat.panel.get_by_text(re.compile(r"^Context\b"))
     close = chat.panel.get_by_role("button", name="Close", exact=True)
 
     _command_menu(chat, "status").get_by_role("button", name=re.compile(r"^Status:")).click()
