@@ -191,7 +191,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: regression-report-${{ inputs.open-webui-ref }}
+          name: regression-report
           path: tests/report.html
           if-no-files-found: ignore
 
@@ -354,7 +354,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          name: integration-report-${{ matrix.shard }}
           path: tests/test-results
           if-no-files-found: ignore
 
@@ -520,7 +520,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-postgres-redis-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          name: integration-postgres-redis-report-${{ matrix.shard }}
           path: tests/test-results
           if-no-files-found: ignore
 
@@ -787,7 +787,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          name: e2e-report-${{ matrix.shard }}
           path: tests/test-results
           if-no-files-found: ignore
 

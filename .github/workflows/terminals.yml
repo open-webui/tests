@@ -327,7 +327,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terminals-integration-report-${{ inputs.open-webui-ref }}
+          name: terminals-integration-report
           path: tests/test-results
           if-no-files-found: ignore
 
@@ -475,7 +475,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terminals-integration-postgres-redis-report-${{ inputs.open-webui-ref }}
+          name: terminals-integration-postgres-redis-report
           path: tests/test-results
           if-no-files-found: ignore
 
@@ -687,7 +687,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terminals-e2e-report-${{ inputs.open-webui-ref }}-${{ matrix.shard }}
+          name: terminals-e2e-report-${{ matrix.shard }}
           path: tests/test-results
           if-no-files-found: ignore
 
@@ -873,6 +873,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terminals-full-terminal-report-${{ inputs.open-webui-ref }}
+          name: terminals-full-terminal-report
           path: tests/test-results
           if-no-files-found: ignore
