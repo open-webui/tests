@@ -468,6 +468,8 @@ def test_the_folder_page_lists_its_chats_and_files_a_new_chat_there(page_for, ma
     assert stored_chat(owner, new_chat_id)["folder_id"] == folder_id
 
     page.goto(f"/folders/{folder_id}")
+    # since 1fbb42be9 a folder opens on the tab it was left on, here the new chat
+    page.get_by_role("tab", name="Recipes", exact=True).click()
     expect(folder_chat(page, "how long to knead?")).to_have_attribute("href", f"/c/{new_chat_id}")
 
 
