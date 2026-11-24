@@ -67,7 +67,12 @@ from harness.terminal_server import (
 from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import choose_terminal
 from utils.chat_controls import choose_model_control, model_control_row
-from utils.chat_surface import open_chat_tab_from, open_sidebar, start_on_folder_page
+from utils.chat_surface import (
+    open_chat_tab_from,
+    open_sidebar,
+    show_the_folders_chat,
+    start_on_folder_page,
+)
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
@@ -326,11 +331,12 @@ def test_a_folders_new_chat_offers_the_agents_of_its_terminal_and_directory(
         connection["config"]["access_grants"] = [read_grant(person.id)]
         with admin.client() as client:
             configure_terminals(client, connection)
+        folder_name = f"Atlas {uuid.uuid4().hex[:6]}"
         with person.client() as client:
             created = client.post(
                 "/api/v1/folders/",
                 json={
-                    "name": f"Atlas {uuid.uuid4().hex[:6]}",
+                    "name": folder_name,
                     "data": {"machine_id": connection["id"], "working_directory": "/srv/atlas"},
                 },
             )
@@ -343,7 +349,7 @@ def test_a_folders_new_chat_offers_the_agents_of_its_terminal_and_directory(
         expect(model_options(outside, "opencode/model-of-atlas")).to_have_count(0)
 
         inside = page_for(person, path=f"/folders/{created.json()['id']}")
-        expect(chat_input(inside)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        show_the_folders_chat(inside, folder_name, "/srv/atlas")
         select_model(inside, "opencode/model-of-atlas")
         # red on dev 53d741157: the chat tab the folder page opens takes the default model
         # (finding open-webui-folder-page-agent-model-dropped)

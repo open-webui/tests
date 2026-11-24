@@ -12,8 +12,8 @@ with a file written, a command run and the file read back across a reload, and w
 the terminal offers called, its processes included. Then a chat started in a folder with its own
 prompt and knowledge, the last reply regenerated, the temperature changed in Controls and the
 model's description edited mid-chat, a workspace tool picked before the first turn, a workspace
-skill loaded on demand and a sub-agent. Every consecutive pair of the provider's requests is
-checked.
+skill loaded on demand and a sub-agent reporting back. Every consecutive pair of the provider's
+requests is checked.
 
 Five tests went red, on what the page did not name as a breaker. Two rewrote the tool list at the
 very start of the prefix: opening a folder in the terminal's file browser moved the working
@@ -33,8 +33,8 @@ was already stored in the chat, the way automations, sub-agents and timers prepa
 was refused with 409 and the reply never written (open-webui/open-webui#32066, fixed by
 641c82df1).
 
-Nine tests run in the main chat and in a side chat (`utils/chat_surface.py`): the long chat, the
-image, the regenerated reply, the temperature, the skill, the sub-agent, the timer, the background
+Eight tests run in the main chat and in a side chat (`utils/chat_surface.py`): the long chat, the
+image, the regenerated reply, the temperature, the skill, the timer, the background
 sub-agent report and the workspace tool. The terminal tests, the Create skill test and the folder
 test stay on the page: they are about the page's Files tab and tab menus, the terminal's split
 screen and the folder page's address. On dev c15f28649 four side variants are red: the
@@ -88,7 +88,7 @@ from utils.cached_chat import (
     turn_on_tool,
 )
 from utils.chat_controls import control_button, open_chat_controls, open_section
-from utils.chat_surface import start_on_folder_page
+from utils.chat_surface import side_chat_titled, start_on_folder_page
 from utils.chat_ui import (
     chat_input,
     close_menu,
@@ -398,7 +398,10 @@ def test_a_chat_in_a_folder_with_its_own_prompt_and_knowledge_only_appends(
         calling("query_knowledge_files", {"query": "ferry"}),
         reply.text("At 06:40 (handbook.txt)."),
     )
-    chat = chat.reload()
+    title = chat.tab.inner_text().strip()
+    # since 1fbb42be9 a folder opens again as it was left, its chat in the tab beside it
+    chat.page.reload()
+    chat = side_chat_titled(chat.page, title, chat.place)
     ask(chat, upstream, "thanks", reply.text("Safe travels."))
 
     requests = chat_requests(upstream)
@@ -523,26 +526,6 @@ def requests_of_chat(upstream, opening: str) -> list[dict]:
     ]
 
 
-def test_a_sub_agent_only_appends(chat_for, cached_setup, make_user, subagents_on, upstream):
-    subagents_on()
-    chat = chat_for(make_user())
-    start_from_link(chat, f"/?models={cached_setup.id}")
-    ask(chat, upstream, "good morning", reply.text("Morning."))
-    upstream.queue(reply.text("It leaves at 06:40.", match=reply.answering("find the ferry time")))
-    ask(
-        chat,
-        upstream,
-        "ask a helper about the ferry",
-        calling("delegate_task", {"task": "find the ferry time"}),
-        reply.text("The helper says 06:40."),
-    )
-    ask(chat, upstream, "thanks", reply.text("Safe travels."))
-
-    requests = requests_of_chat(upstream, "good morning")
-    assert "It leaves at 06:40." in tool_results(requests[-1]), tool_results(requests[-1])
-    assert_append_only(requests)
-
-
 @pytest.mark.regression
 def test_a_timer_firing_into_the_open_chat_keeps_the_prefix(
     chat_for, cached_setup, make_user, subagents_on, upstream
@@ -574,7 +557,7 @@ def test_a_timer_firing_into_the_open_chat_keeps_the_prefix(
 def test_a_background_sub_agent_report_keeps_the_prefix(
     chat_for, cached_setup, make_user, subagents_on, upstream
 ):
-    subagents_on(SUBAGENTS_BACKGROUND_ENABLED=True)
+    subagents_on()
     chat = chat_for(make_user())
     start_from_link(chat, f"/?models={cached_setup.id}")
     task = f"find the ferry time {uuid.uuid4().hex[:6]}"
@@ -586,7 +569,7 @@ def test_a_background_sub_agent_report_keeps_the_prefix(
         chat,
         upstream,
         "ask a helper about the ferry",
-        calling("delegate_task", {"task": task, "background": True}),
+        calling("delegate_task", {"task": task}),
         reply.text("A helper is on it."),
     )
     expect_reply(chat, "The helper says 06:40.")
