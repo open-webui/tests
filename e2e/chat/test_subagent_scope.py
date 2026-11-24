@@ -3,7 +3,10 @@
 The tool a person switches on under Integrations is the tool the sub-agent gets, and one left
 off stays out of its reach. The sub-agent's own chat never shows in the sidebar or its search,
 not for the account that delegated and not for another. A chat shared by link shows the reader
-the delegation row and the answer it holds.
+the "Sub-agent finished" row the owner sees, which opens to the answer.
+
+`test_a_chat_shared_by_link_shows_the_reader_the_delegation_and_its_answer` is red on dev b9e9857b1:
+the reader gets the sub-agent's report as raw text from the owner (open-webui/open-webui#34998).
 
 Twin of integration/tools/test_subagent_scope.py.
 
@@ -164,19 +167,49 @@ def share_with(page: Page, reader) -> str:
     return link.get_attribute("href")
 
 
+def report_of(task: str):
+    """A `match` for the request that hands the finished sub-agent's report to the lead."""
+
+    def matches(body: dict) -> bool:
+        users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
+        content = str(users[-1].get("content")) if users else ""
+        return "[ASYNC SUBAGENT COMPLETE" in content and task in content
+
+    return matches
+
+
+def finished_row(page: Page, task: str) -> Locator:
+    """The row the sub-agent's report leaves in the chat, "Sub-agent finished · <task>"."""
+    name = re.compile(rf"^{re.escape(f'Sub-agent finished · {task}')}")
+    return conversation(page).get_by_role("button", name=name)
+
+
 def test_a_chat_shared_by_link_shows_the_reader_the_delegation_and_its_answer(
     subagents_on, page_for, make_user, upstream
 ):
+    """A reader of the share link sees the chat as its owner does (open-webui/open-webui#34998)."""
     prompt, task, answer = unique("hand this over"), unique("name the capital"), unique("Vienna")
-    upstream.queue(*delegation(prompt, task, reply.text(answer, match=reply.answering(task))))
+    upstream.queue(
+        *delegation(prompt, task, reply.text(answer, match=reply.answering(task))),
+        reply.text("The capital is known.", match=report_of(task)),
+    )
     owner_page = page_for(make_user())
     send(owner_page, prompt)
-    expect_reply(owner_page, "The helper is done.")
+    expect_reply(owner_page, "The capital is known.")
+    expect(conversation(owner_page).get_by_text("The helper is done.")).to_be_visible()
+    expect(finished_row(owner_page, task)).to_be_visible()
     reader = make_user()
     path = share_with(owner_page, reader)
 
     reader_page = page_for(reader, path=path)
 
-    expect(conversation(reader_page).get_by_text("The helper is done.")).to_be_visible()
-    delegated_row(reader_page, task).click()
-    expect(last_reply(reader_page).get_by_text(answer, exact=True)).to_be_visible()
+    chat = conversation(reader_page)
+    expect(chat.get_by_text("The helper is done.")).to_be_visible()
+    expect(chat.get_by_text("The capital is known.")).to_be_visible()
+    row = finished_row(reader_page, task)
+    expect(row, "the reader does not get the sub-agent's row").to_be_visible()
+    expect(chat.get_by_text("ASYNC SUBAGENT COMPLETE")).to_have_count(0)
+    row.click()
+    expect(
+        chat.get_by_text(answer, exact=True), "the row does not open to the result"
+    ).to_be_visible()
