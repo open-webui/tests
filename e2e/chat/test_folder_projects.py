@@ -473,9 +473,11 @@ def test_the_folder_page_lists_its_chats_and_files_a_new_chat_there(page_for, ma
     expect(folder_chat(page, "how long to knead?")).to_have_attribute("href", f"/c/{new_chat_id}")
 
 
+@pytest.mark.regression
 def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
     page_for, make_user, upstream
 ):
+    """New Chat from another page opened no new chat tab: open-webui/open-webui#35002."""
     # the folder menu's New Chat entry, added in 0512f1b37
     owner = make_user()
     folder_id = create_folder(owner, "Voyages")
@@ -486,6 +488,9 @@ def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
     expect(new_chat, "the folder's menu has no New Chat entry").to_be_visible()
     # since 06b47d455 the folder opens as the page's tab and the new chat in a tab beside it
     chat = open_chat_tab_from(page, new_chat, place="folder chat")
+    expect(page.get_by_role("tab", name=re.compile("^New Chat"))).to_have_attribute(
+        "aria-selected", "true"
+    )
     expect(page.get_by_role("tab", name="Voyages", exact=True)).to_be_visible()
 
     question = f"where do we sail next? {uuid.uuid4().hex[:6]}"
@@ -495,6 +500,36 @@ def test_new_chat_in_a_folders_menu_starts_a_chat_filed_in_that_folder(
     expect(page).to_have_url(re.compile("/c/"))
     chat_id = page.url.rsplit("/", 1)[-1]
     assert stored_chat(owner, chat_id)["folder_id"] == folder_id, (
+        "the chat started from the folder menu's New Chat was not filed in the folder"
+    )
+
+
+@pytest.mark.regression
+def test_new_chat_in_a_folders_menu_opens_a_tab_beside_a_chat_of_that_folder(
+    page_for, make_user, upstream
+):
+    """New Chat from the folder's menu did nothing while its chat was open: open-webui/open-webui#35002."""
+    owner = make_user()
+    folder_id = create_folder(owner, "Voyages")
+    chat_id = create_chat(owner, "Harbour list", folder_id)
+    page = page_for(owner, path=f"/c/{chat_id}")
+    expect(page.get_by_role("tab", name="Voyages", exact=True)).to_be_visible()
+    sidebar = open_sidebar(page)
+
+    new_chat = folder_menu(sidebar, "Voyages").get_by_role("menuitem", name="New Chat")
+    chat = open_chat_tab_from(page, new_chat, place="folder chat")
+    expect(page.get_by_role("tab", name=re.compile("^New Chat"))).to_have_attribute(
+        "aria-selected", "true"
+    )
+
+    question = f"which harbour first? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("Lisbon", match=reply.answering(question)))
+    send(chat, question)
+    expect_reply(chat, "Lisbon")
+    expect(page).not_to_have_url(re.compile(f"/c/{chat_id}$"))
+    new_chat_id = page.url.rsplit("/", 1)[-1]
+    assert new_chat_id != chat_id, "the question went into the open chat, not a new one"
+    assert stored_chat(owner, new_chat_id)["folder_id"] == folder_id, (
         "the chat started from the folder menu's New Chat was not filed in the folder"
     )
 
