@@ -13,6 +13,10 @@ open-webui/open-webui#31486), until ef67cc3fa (open-webui/open-webui#31496) clos
 Discriminates: passes on dev 176d31d1d and a5bc78300 and fails with da36d149b reverted (the blank
 name is saved and "Folder updated successfully" shows). The empty name and the name with
 surrounding spaces that is trimmed and kept are steps of the first rename test, after its refusal.
+
+The in-place rename test fails on dev 9d19883f1 for open-webui/open-webui#34986: since dev
+a0cc08f1f the first click of the double click opens the folder page, which takes the focus, so the
+rename box closes before the name is typed.
 """
 
 from __future__ import annotations

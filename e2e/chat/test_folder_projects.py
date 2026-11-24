@@ -29,7 +29,9 @@ the folder's knowledge in a context round of its own.
 
 The in-place rename test also pins open-webui/open-webui#31582, fixed by PR #31584: pressing Enter
 saved the folder twice, so two update requests and two "Folder updated successfully" toasts
-followed one rename. It fails on dev 176d31d1d.
+followed one rename. It fails on dev 176d31d1d. It also pins open-webui/open-webui#34986: since
+dev a0cc08f1f the first click of the double click opens the folder page, which takes the focus, so
+the rename box closes with the old name before anything is typed. It fails on dev 9d19883f1.
 
 New Chat in a folder's sidebar menu (0512f1b37) opens the folder's page, and the chat sent from
 there is stored in the folder. With a folder's page open, deleting a different folder from the
