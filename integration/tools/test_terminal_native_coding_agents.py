@@ -44,14 +44,14 @@ In a saved chat the page sends only the system prompt and keeps a picture upload
 paperclip on the user message, so with Chat Uploads in Default mode the picture never reached the
 agent, on the first message or a later one (open-webui/open-webui#34660). Each attached picture
 now reaches the agent with its own message only, and a message without one sends none.
-Discriminates: passes on fix/agent-chat-images, fails on dev d74882eee (no turn gets its
-picture).
+Discriminates: fails on dev d74882eee and a43c15c7b (no turn gets its picture), passes on dev
+c6ef4a523 (fixed by 068fe7a39).
 
 While an agent waits for the person to allow a command, Open WebUI looks up the waiting reply
 twice a second, and that lookup read every message of the chat to return one, so in the 130 MB
 chat the server kept working for as long as nobody answered (open-webui/open-webui#34674). It
-now reads only that reply. Discriminates: passes on perf/send-reads-less (under 0.1 s of server
-CPU in 6 s of waiting on SQLite and Postgres), fails on dev d74882eee (about 1 s).
+now reads only that reply (fixed by 0f71ee15a). Discriminates: fails on dev d74882eee and
+a43c15c7b (about 1 s of server CPU in 6 s of waiting), passes on dev c6ef4a523.
 """
 
 from __future__ import annotations
