@@ -9,6 +9,10 @@ and when none are left the member gets the instance's own default again. Moving 
 what its members resolve at once, and the admin's group preview says where a group's effective
 defaults come from. A list that is not made of model ids is refused.
 
+The tests that start on a model created through the API are red on dev 708e6642a: the model is
+not used as a group's default until someone loads the model list, and a model hidden later stays
+the default (open-webui/open-webui#34987).
+
 Discriminates: in a backend copy, sorting `resolve_group_default_models` by shallowest instead of
 deepest turns the deepest-wins test red (the top group's models win), sorting by newest turns
 the oldest-wins test red, and ignoring the ancestors in the member's group list (no inherited
@@ -174,6 +178,28 @@ def test_the_instances_default_returns_when_no_group_model_is_left(
     private = _preset(admin, "private", grants=[])
     global_default(MOCK_MODEL_ID)
     _group(admin, groups, [member], default_models=[hidden, private])
+
+    assert _starts_with(member) == [MOCK_MODEL_ID]
+
+
+def test_a_default_model_hidden_later_is_dropped_at_once(admin, make_user, groups, global_default):
+    """A model hidden after the model list loaded stops being a default (#34987)."""
+    member = make_user()
+    later_hidden = _preset(admin, "later-hidden")
+    global_default(MOCK_MODEL_ID)
+    _group(admin, groups, [member], default_models=[later_hidden])
+    with admin.client() as client:
+        assert client.get("/api/models").status_code == 200
+    assert _starts_with(member) == [later_hidden]
+
+    time.sleep(1.1)  # models are stamped to the second
+    with admin.client() as client:
+        stored = client.get(f"/api/v1/models/model?id={later_hidden}").json()
+        hidden = client.post(
+            f"/api/v1/models/model/update?id={later_hidden}",
+            json={**stored, "meta": {**stored["meta"], "hidden": True}, "access_grants": [PUBLIC]},
+        )
+    assert hidden.status_code == 200, hidden.text
 
     assert _starts_with(member) == [MOCK_MODEL_ID]
 

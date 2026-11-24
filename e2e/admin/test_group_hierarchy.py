@@ -14,6 +14,9 @@ the parent group in the model selector, starts a new chat on the parent's defaul
 tab gains the shared model when the member joins the subgroup, without a reload. Each test works as
 a fresh admin on groups of its own.
 
+The starting model test is red on dev 708e6642a: a model created through the API is not used as
+a group's default model until someone loads the model list (open-webui/open-webui#34987).
+
 Discriminates: passes on dev b859124f9; in a frontend copy, the list ignoring parents (every
 group top-level), the Parent group dropdown offering the group's own branch, the permissions
 note and its parent-based marking gone, "Inherited via" gone, the inherited default models
