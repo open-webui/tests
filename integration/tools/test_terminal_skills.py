@@ -10,7 +10,8 @@ to use the terminal's own tools for its other files. A skill that changed on the
 `view_skill` and a later read is refused until the model views it again. On a model with the
 Skills tool off, a terminal skill picked with `$` arrives whole in the system prompt, the mention
 is taken out of the message, and a message that was only a mention without a label carries the
-skill's name.
+skill's name. Those two tests are red on dev c6ef4a523: the reply fails with "name
+'machine_skill_prefix' is not defined" (open-webui/open-webui#34794).
 
 Discriminates: passes on dev c15f28649. In a backend copy, each turned the named tests red: the
 terminal's skills never listed (list test, and the view, other files and changed skill tests,
