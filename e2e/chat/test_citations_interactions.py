@@ -25,9 +25,9 @@ new chat opened in a tab.
 Dev 1612ec981 previews what a single marker cites on hover (open-webui/open-webui#34829) and shows
 the sources of a marker citing several in a card that pages through them, from the pointer and the
 keyboard (open-webui/open-webui#34827); its sources are no longer listed side by side. Dev
-072d0b51d opens an embedded source from a side tab, in that tab's group. Red on dev 306f9be78: an
-embedded source opens as a tab named "Preview" and in place of the chat that cites it (the
-embedded source test, fix PR open-webui/open-webui#34859 for open-webui/open-webui#34828).
+072d0b51d opens an embedded source from a side tab, in that tab's group, so in a side chat it
+opens in the side chat's place, in front of it, as a cited file does; from the main chat it opens
+beside the chat. The tab is named after the source (open-webui/open-webui#34828).
 
 Discriminates: the rest passes on dev c1f3b6fd1. In a frontend copy where `[2, 1]` no longer
 parses as one marker, the sources row lists its sources in reverse, the row shows no site icons,
@@ -342,6 +342,9 @@ def test_an_embedded_source_opens_in_a_tab_beside_the_chat(chat_for, make_user, 
     marker.click()
     expect(view.get_by_text("Heron cam live")).to_be_visible()
     expect(tab, "the source's tab is not named after it").to_have_text("Heron cam")
+    if chat.is_side:
+        # in front of the side chat, which comes back when its tab is picked
+        chat.show()
     expect(
         conversation(chat).get_by_text("The colony is awake"),
         "the source's tab hides the chat that cites it",
