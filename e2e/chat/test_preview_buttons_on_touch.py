@@ -19,6 +19,7 @@ on fix/preview-buttons-work-on-touch.
 from __future__ import annotations
 
 import io
+import math
 
 import pytest
 from PIL import Image
@@ -121,8 +122,14 @@ def test_a_pinch_with_one_finger_on_a_button_still_zooms(page_for, make_user):
     download = centre(screen_box(preview(page).get_by_role("button", name="Download")))
 
     # first finger on the image, second lands on Download, then the first slides away
-    fingers.spread_off((195, 500), download, by=(-60, 180))
-    assert zoom_of(page, fitted) > 1.5, "a pinch with a finger on Download did not zoom"
+    start, by = (195, 500), (-60, 180)
+    fingers.spread_off(start, download, by=by)
+    # the image grows as far as the fingers spread apart (cf100751e)
+    spread = math.dist((start[0] + by[0], start[1] + by[1]), download) / math.dist(start, download)
+    zoom = zoom_of(page, fitted)
+    assert zoom == pytest.approx(spread, rel=0.1), (
+        f"a pinch with a finger on Download zoomed to {zoom:.2f}, the fingers spread {spread:.2f}"
+    )
     assert errors == [], f"the pinch raised page errors: {errors[:2]}"
 
 
