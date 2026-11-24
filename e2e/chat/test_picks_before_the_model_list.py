@@ -201,11 +201,12 @@ def test_a_skill_ticked_before_the_model_list_is_in_stays_ticked(page_for, make_
     account = make_user(role="admin")
     name = f"Puffin lore {uuid.uuid4().hex[:6]}"
     lore = f"Puffins nest in burrows {uuid.uuid4().hex[:6]}."
+    skill_id = f"skill_{uuid.uuid4().hex[:8]}"
     with account.client() as client:
         created = client.post(
             "/api/v1/skills/create",
             json={
-                "id": f"skill_{uuid.uuid4().hex[:8]}",
+                "id": skill_id,
                 "name": name,
                 "content": lore,
                 "meta": {},
@@ -213,20 +214,24 @@ def test_a_skill_ticked_before_the_model_list_is_in_stays_ticked(page_for, make_
                 "access_grants": [EVERYONE_READS],
             },
         )
-    assert created.status_code == 200, created.text
-    page = page_for(account)
-    held = new_chat_waiting_for_models(page)
-    menu = open_integrations_menu(page)
-    menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
-    skill = menu.get_by_role("menuitemcheckbox", name=re.compile(re.escape(name)))
-    skill.click()
-    expect(skill).to_have_attribute("aria-checked", "true")
-    close_menu(page)
+        assert created.status_code == 200, created.text
+        # every account reads it, so it would join the skills of later tests on the instance
+        try:
+            page = page_for(account)
+            held = new_chat_waiting_for_models(page)
+            menu = open_integrations_menu(page)
+            menu.get_by_role("menuitem", name=re.compile(r"^Skills")).click()
+            skill = menu.get_by_role("menuitemcheckbox", name=re.compile(re.escape(name)))
+            skill.click()
+            expect(skill).to_have_attribute("aria-checked", "true")
+            close_menu(page)
 
-    let_models_through(page, held)
+            let_models_through(page, held)
 
-    expect_picked(page, "Skills", 1)
-    assert lore in json.dumps(ask(page, upstream))
+            expect_picked(page, "Skills", 1)
+            assert lore in json.dumps(ask(page, upstream))
+        finally:
+            client.delete(f"/api/v1/skills/id/{skill_id}/delete")
 
 
 def attached_files(request: dict) -> str:
