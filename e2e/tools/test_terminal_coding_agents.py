@@ -19,7 +19,9 @@ name test fails on dev 1fc5b8f6d and passes on fix/agent-reply-keeps-name (the r
 shows the raw id without the fix).
 
 Once the agent's terminal is gone, its chat and a new chat take the default model, also when the
-person had the agent as their default model, and the next message goes to it (#33843, #33860).
+person had the agent as their default model (#33843, #33860, #35006). The gone terminal stays
+picked as "Unavailable machine", a message sent with it says so, and once it is cleared the next
+message goes to the default model.
 That test passes on dev e8c0ad85e and fails on a frontend build of it with both fixes undone,
 where no model is selected.
 
@@ -210,6 +212,8 @@ def _selected_model(page: Page) -> Locator:
 def test_once_the_agents_terminal_is_gone_its_chat_and_a_new_chat_take_the_default_model(
     agent_chat, admin, upstream
 ):
+    """Regression (open-webui#35006): once the gone terminal stayed picked as unavailable, the
+    chat and a new chat opened on "Select a model". Red on dev b9e9857b1."""
     page = agent_chat()
     send(page, "remember me")
     expect_reply(page, "Agent heard: remember me")
@@ -229,14 +233,25 @@ def test_once_the_agents_terminal_is_gone_its_chat_and_a_new_chat_take_the_defau
     with admin.client() as client:
         configure_terminals(client)
 
+    unavailable = page.get_by_role("main").get_by_role(
+        "button", name="Unavailable machine", exact=True
+    )
     page.reload()
     expect(last_reply(page)).to_contain_text("Agent heard: remember me", timeout=REPLY_TIMEOUT_MS)
     expect(_selected_model(page)).to_contain_text(MOCK_MODEL_ID)
     expect(_selected_model(page)).not_to_contain_text(AGENT_NAME)
+    expect(unavailable).to_be_visible()
 
     page.goto("/")
     expect(chat_input(page)).to_be_visible()
     expect(_selected_model(page)).to_contain_text(MOCK_MODEL_ID)
+    expect(unavailable).to_be_visible()
+    send(page, f"still there {uuid.uuid4().hex[:6]}")
+    expect(last_reply(page)).to_contain_text("Machine unavailable", timeout=REPLY_TIMEOUT_MS)
+
+    unavailable.click()
+    page.get_by_role("menu").get_by_role("menuitemradio", name="Unavailable machine").click()
+    expect(unavailable).to_have_count(0)
     question = f"hello again {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text("Back on the default model.", match=reply.answering(question)))
     send(page, question)
