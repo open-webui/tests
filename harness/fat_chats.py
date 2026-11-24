@@ -123,6 +123,7 @@ def import_fat_chat(
         chat_rows.append(
             {
                 **chat,
+                "chat": {key: value for key, value in chat["chat"].items() if key not in ("history", "messages")},
                 "user_id": owner.id,
                 "updated_at": now,
                 "last_read_at": now,
