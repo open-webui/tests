@@ -17,11 +17,21 @@ reverted (the archived chat is deleted with the folder).
 
 Export all also streams a stored 130 MB chat (`fat_chat`) whole, every message of it, and
 leaves its internal sub-agent chats out; this passes on dev f8a518648 on SQLite and Postgres.
+
+Regression open-webui/open-webui#35001: since chats keep their messages only as rows
+(open-webui/open-webui#34689), listing many chats with their messages read the messages one chat
+at a time, so export all, the admin's database export, a folder's chats, the archive and
+unarchive all took several times longer for 1500 short chats than for one chat holding the same
+3000 messages. Discriminates: passes with the fix on branch Classic298:fix/rows-list-slowdown
+(each step at most about three times the one-chat time), fails on dev b9e9857b1 (four to nine
+times), on SQLite.
 """
 
 from __future__ import annotations
 
 import json
+import statistics
+import time
 import uuid
 
 import httpx
@@ -178,6 +188,139 @@ def test_export_all_streams_every_chat_of_the_account_including_archived(
         f"{fat.manifest['messages']} messages"
     )
     assert stranger_chat_id not in exported.text
+
+
+MANY_CHATS = 1500
+# a step may take this many times as long for many chats as for one chat of the same messages
+SLOWER_AT_MOST = 3.5
+FLOOR_SECONDS = 0.1
+
+
+def conversation(title: str, turns: int, folder_id: str) -> dict:
+    """A chat of `turns` questions and answers, one after the other, as an import form."""
+    messages, parent_id = {}, None
+    for index in range(2 * turns):
+        message_id = str(uuid.uuid4())
+        role = ("user", "assistant")[index % 2]
+        messages[message_id] = {
+            "id": message_id,
+            "parentId": parent_id,
+            "childrenIds": [],
+            "role": role,
+            "content": f"{title}, {role} message {index}: a few words of text",
+            "timestamp": 1_700_000_000 + index,
+        }
+        if parent_id:
+            messages[parent_id]["childrenIds"].append(message_id)
+        parent_id = message_id
+    history = {"messages": messages, "currentId": parent_id}
+    return {"chat": {"title": title, "history": history}, "folder_id": folder_id}
+
+
+def import_conversations(client: httpx.Client, count: int, turns: int, folder_id: str) -> set[str]:
+    chat_ids = set()
+    for start in range(0, count, 100):
+        forms = [
+            conversation(f"Chat {index}", turns, folder_id)
+            for index in range(start, min(count, start + 100))
+        ]
+        imported = client.post("/api/v1/chats/import", json={"chats": forms})
+        assert imported.status_code == 200, imported.text
+        chat_ids |= {chat["id"] for chat in imported.json()}
+    return chat_ids
+
+
+def timed(step) -> tuple[float, object]:
+    """The median time of three runs of `step`, and what its last run returned."""
+    took = []
+    for _ in range(3):
+        started = time.perf_counter()
+        result = step()
+        took.append(time.perf_counter() - started)
+    return statistics.median(took), result
+
+
+def message_counts(chats: list[dict]) -> dict[str, int]:
+    return {chat["id"]: len(chat["chat"]["history"]["messages"]) for chat in chats}
+
+
+def walk_the_chat_list(client: httpx.Client, folder_id: str) -> dict[str, tuple[float, dict]]:
+    """Each bulk step a person takes on their chats, timed, with the chats it returned."""
+
+    def export_all():
+        exported = client.get("/api/v1/chats/all")
+        assert exported.status_code == 200, exported.text[:500]
+        return message_counts([json.loads(line) for line in exported.text.splitlines() if line])
+
+    def folder_chats():
+        listed = client.get(f"/api/v1/chats/folder/{folder_id}")
+        assert listed.status_code == 200, listed.text[:500]
+        return message_counts(listed.json())
+
+    steps = {"export all": timed(export_all), "the folder's chats": timed(folder_chats)}
+    archive_list, unarchive = [], []
+    for _ in range(3):
+        assert client.post("/api/v1/chats/archive/all").is_success
+        started = time.perf_counter()
+        archived = client.get("/api/v1/chats/all/archived")
+        archive_list.append(time.perf_counter() - started)
+        started = time.perf_counter()
+        restored = client.post("/api/v1/chats/unarchive/all")
+        unarchive.append(time.perf_counter() - started)
+        assert archived.status_code == 200, archived.text[:500]
+        assert restored.status_code == 200 and restored.json() is True, restored.text
+    steps["the archive"] = (statistics.median(archive_list), message_counts(archived.json()))
+    steps["unarchive all"] = (statistics.median(unarchive), None)
+    return steps
+
+
+@pytest.mark.regression
+def test_many_chats_list_about_as_fast_as_one_chat_of_the_same_messages(admin, make_user):
+    one, many = make_user(), make_user()
+
+    def admin_export():
+        exported = admin_client.get("/api/v1/chats/all/db")
+        assert exported.status_code == 200, exported.text[:500]
+        return message_counts(exported.json())
+
+    with admin.client() as admin_client:
+        before, _ = timed(admin_export)
+        with one.client() as client:
+            one_folder = create_folder(client)
+            one_ids = import_conversations(client, 1, MANY_CHATS, one_folder)
+        with_one, _ = timed(admin_export)
+        with many.client() as client:
+            many_folder = create_folder(client)
+            many_ids = import_conversations(client, MANY_CHATS, 1, many_folder)
+        with_many, everything = timed(admin_export)
+
+    with one.client() as client:
+        one_steps = walk_the_chat_list(client, one_folder)
+        assert sidebar_ids(client) == one_ids
+    with many.client() as client:
+        many_steps = walk_the_chat_list(client, many_folder)
+        assert sidebar_ids(client) == many_ids
+
+    for _, chats in [*one_steps.values(), *many_steps.values()]:
+        assert chats is None or chats in (
+            {chat_id: 2 * MANY_CHATS for chat_id in one_ids},
+            {chat_id: 2 for chat_id in many_ids},
+        ), "a step lost chats or messages"
+    assert {chat_id: everything.get(chat_id) for chat_id in one_ids | many_ids} == {
+        **{chat_id: 2 * MANY_CHATS for chat_id in one_ids},
+        **{chat_id: 2 for chat_id in many_ids},
+    }
+    one_steps["the admin's database export"] = (with_one - before, None)
+    many_steps["the admin's database export"] = (with_many - with_one, None)
+    slow = {
+        step: f"{many_steps[step][0]:.2f}s against {seconds:.2f}s"
+        for step, (seconds, _) in one_steps.items()
+        if many_steps[step][0] > SLOWER_AT_MOST * max(seconds, FLOOR_SECONDS)
+    }
+    assert not slow, (
+        f"with {MANY_CHATS} short chats these steps took far longer than with one chat holding "
+        f"the same messages: {slow}"
+    )
 
 
 def test_the_admin_database_export_holds_every_accounts_chats(admin, owner, stranger_chat):
