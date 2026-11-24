@@ -554,7 +554,10 @@ def test_a_reader_taken_off_the_folders_access_list_loses_the_open_chat(page_for
     with owner_page.expect_response(re.compile(r"/access/update")):
         group_entry.get_by_role("button").last.click()
 
-    _sent_home(member_page)
+    # the chat is a tab beside the folder (1fbb42be9); losing access empties it where it is
+    expect(member_page.get_by_text(ANSWER), "the reader still sees the owner's chat").to_have_count(
+        0
+    )
 
 
 def _first_question_id(owner, chat_id: str) -> str:
