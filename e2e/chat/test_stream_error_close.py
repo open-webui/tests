@@ -18,6 +18,9 @@ wraps the token inside the box.
 Discriminates: passes on the bbfa876af build; with the toast-and-return block restored in
 Chat.svelte the second message is refused with that toast and never reaches the provider. The
 line checks fail on dev c6ef4a523 (the lines read as one) and pass with the fix for #34950.
+Since 8b185d8d2 (#34951) the box renders the error as Markdown, so the error here carries no
+Markdown marks (a `---` under a line made the lines above it a heading) and the lines are read
+from the whole box.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ REFUSAL = "Oops! There was an error in the previous response."
 ERROR_LINES = [
     "Your request was blocked by the provider.",
     "Please rephrase your message or switch to a different model.",
-    "---",
+    "Details:",
     "request_id=demo-123",
     "trace=" + "a1b2c3d4" * 40,
 ]
@@ -51,7 +54,14 @@ def test_a_provider_error_is_shown_and_the_next_message_still_sends(chat_page, u
     expect_reply(chat_page, ERROR_LINES[0])
     expect(stop_button(chat_page)).to_be_hidden()
 
-    error_box = last_reply(chat_page).get_by_text(ERROR_LINES[0])
+    # the box beside its info icon; since 8b185d8d2 its text is rendered Markdown
+    error_box = (
+        last_reply(chat_page)
+        .locator("div")
+        .filter(has=chat_page.page.get_by_text(ERROR_LINES[0]))
+        .filter(has=chat_page.page.locator("svg"))
+        .last
+    )
     shown_lines = error_box.inner_text().splitlines()
     assert shown_lines == ERROR_LINES, f"the error box shows its lines as {shown_lines}"
     overflow = error_box.evaluate("box => box.scrollWidth - box.clientWidth")
