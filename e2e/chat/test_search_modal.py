@@ -575,3 +575,77 @@ def test_a_channels_search_button_searches_that_channels_messages(
     with page.expect_response(answers_query(word)):
         location.click()
     expect(results(dialog)).to_have_count(2)
+
+
+LATER_TURNS = 12
+
+
+def test_a_message_opened_from_search_stays_in_the_address_through_a_reload(page_for, make_user):
+    """open-webui/open-webui#34502: the address dropped the message, so a reload opened the chat at
+    its newest reply."""
+    account = make_user()
+    word = unique_word()
+    match = f"Where does the {word} sleep?"
+    messages = {
+        "q": {"id": "q", "parentId": None, "childrenIds": ["a"], "role": "user", "content": match},
+        "a": {
+            "id": "a",
+            "parentId": "q",
+            "childrenIds": [],
+            "role": "assistant",
+            "content": "In a burrow.",
+        },
+    }
+    parent = "a"
+    # enough later turns that the chat opened at its newest reply would not show the match
+    for turn in range(LATER_TURNS):
+        asked, answered = f"q{turn}", f"a{turn}"
+        messages[parent]["childrenIds"] = [asked]
+        messages[asked] = {
+            "id": asked,
+            "parentId": parent,
+            "childrenIds": [answered],
+            "role": "user",
+            "content": f"Later question {turn}. " + "More detail please. " * 30,
+        }
+        messages[answered] = {
+            "id": answered,
+            "parentId": asked,
+            "childrenIds": [],
+            "role": "assistant",
+            "content": f"Later answer {turn}. " + "Here is more detail. " * 40,
+        }
+        parent = answered
+    with account.client() as client:
+        chat = {
+            "title": "Burrows",
+            "models": [],
+            "history": {"currentId": parent, "messages": messages},
+        }
+        entry = {"chat": chat, "created_at": LONG_AGO, "updated_at": LONG_AGO}
+        imported = client.post("/api/v1/chats/import", json={"chats": [entry]})
+    assert imported.status_code == 200, imported.text
+    chat_id = imported.json()[0]["id"]
+    newest = f"Later answer {LATER_TURNS - 1}."
+
+    page = page_for(account)
+    dialog = open_search(page)
+    search(dialog, word)
+    expect(results(dialog)).to_have_count(1)
+    page.keyboard.press("Enter")
+    expect(dialog).to_be_hidden()
+    conversation = page.get_by_role("log")
+
+    expect(conversation.get_by_text(match, exact=True)).to_be_in_viewport()
+    expect(conversation.get_by_text(newest)).not_to_be_in_viewport()
+    expect(page, "the address dropped the message it was opened at").to_have_url(
+        re.compile(rf"/c/{chat_id}\?message=q$")
+    )
+
+    page.reload()
+    expect(page).to_have_url(re.compile(rf"/c/{chat_id}\?message=q$"))
+    expect(
+        conversation.get_by_text(match, exact=True),
+        "the reload did not open the chat at the message",
+    ).to_be_in_viewport()
+    expect(conversation.get_by_text(newest)).not_to_be_in_viewport()
