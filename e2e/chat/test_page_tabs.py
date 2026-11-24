@@ -9,6 +9,8 @@ tabs beside it.
 Discriminates: passes on dev 485103cde. In a frontend copy of it whose sidebar, user menu and note
 links navigate in place of opening a tab, all three fail (the chat's tab is gone, no Notes tab
 opens); in one whose new chat clears the open tabs, the third fails while the note test passes.
+The narrow window test fails on dev d3e87f8b1 (the tabs panel opens over the chat, #34314) and
+passes with its fix 468db999e.
 """
 
 from __future__ import annotations
@@ -115,6 +117,34 @@ def test_a_note_linked_in_a_reply_opens_in_a_tab_beside_the_chat(page_for, make_
 
     _expect_selected(page, note_title, f"/notes/{note_id}")
     _back_to_the_chat(page, chat_id, title)
+
+
+def test_a_narrow_window_shows_the_chat_once_the_tab_beside_it_is_closed(page_for, make_user):
+    """Regression open-webui/open-webui#34314: once the tab beside a chat was closed, narrowing
+    the window to phone width covered the chat with an empty tabs panel."""
+    account = make_user()
+    page, chat_id, title = _open_chat(page_for, account)
+    page.get_by_role("link", name="Notes", exact=True).click()
+    _expect_selected(page, "Notes", "/notes")
+    _tabs(page).get_by_role("button", name="Close Notes", exact=True).click()
+    expect(_tab(page, "Notes")).to_have_count(0)
+    _expect_selected(page, title, f"/c/{chat_id}")
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    tabs_button = page.get_by_role("button", name="Tabs", exact=True)
+    drawer = page.get_by_role("dialog", name="Tabs")
+    expect(tabs_button, "narrowing the window opened the tabs panel").to_have_attribute(
+        "aria-expanded", "false"
+    )
+    expect(drawer, "an empty tabs panel covers the chat").to_have_count(0)
+    expect(page.get_by_role("log").get_by_text(CHAT[1]["content"])).to_be_in_viewport()
+
+    # the panel still opens when asked for
+    tabs_button.click()
+    expect(drawer).to_be_visible()
+    drawer.get_by_role("button", name="Hide tabs").click()
+    expect(drawer).to_have_count(0)
+    expect(tabs_button).to_have_attribute("aria-expanded", "false")
 
 
 def test_a_new_chat_keeps_the_page_tabs_open_beside_the_chat(page_for, make_user):
