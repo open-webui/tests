@@ -50,7 +50,8 @@ The builtin tool test was retargeted for 8d0ff76f2, whose Builtin Tools categori
 section that opens on a click: passes on dev 76ad6f97c (3 of 3) and fails in a build of it whose
 editor saves the model's settings as they were loaded.
 The two Using Entire Document tests set the Full Text Threshold to 0: since 98f7a6146 a file under
-it goes whole and its dialog shows no switch.
+it goes whole and shows no switch. Since e1855444a an attachment opens in a tab beside the chat and
+the switch is named Full text.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ import uuid
 import pytest
 from playwright.sync_api import Page, expect
 
+from e2e.chat.test_file_previews import close_file, full_text_switch, open_file
 from harness import upstream as reply
 from harness.knowledge_bases import knowledge_base
 from harness.prompt_caching import (
@@ -208,14 +210,15 @@ def retrieved_in_pieces(admin, preserve):
     assert saved.status_code == 200, saved.text
 
 
-def use_entire_document(chat: ChatSurface, name: str) -> None:
-    chat_scope(chat).get_by_role("button", name=re.compile(re.escape(name))).click()
-    dialog = chat.page.get_by_role("dialog")
-    expect(dialog.get_by_text("Using Focused Retrieval")).to_be_visible()
-    dialog.get_by_role("switch").click()
-    expect(dialog.get_by_text("Using Entire Document")).to_be_visible()
-    chat.page.keyboard.press("Escape")
-    expect(dialog).to_have_count(0)
+def use_entire_document(chat: ChatSurface, name: str, chip: str | None = None) -> None:
+    """Switch the attachment `name` (its chip reads `chip`) from its closest pieces to whole."""
+    button = chat_scope(chat).get_by_role("button", name=re.compile(re.escape(chip or name)))
+    shown = open_file(chat.page, button, name)
+    switch = full_text_switch(shown)
+    expect(switch).to_have_attribute("aria-checked", "false")
+    switch.click()
+    expect(switch).to_have_attribute("aria-checked", "true")
+    close_file(chat.page, shown, name)
 
 
 @pytest.mark.usefixtures("retrieved_in_pieces")
@@ -261,7 +264,7 @@ def test_a_whole_knowledge_base_with_file_context_off_does_nothing(
     start_from_link(chat, f"/?models={cached_setup.id}")
 
     attach_from_menu(chat, "Attach Knowledge", "Harbour handbook")
-    use_entire_document(chat, "Harbour handbook Knowledge")
+    use_entire_document(chat, "Harbour handbook", chip="Harbour handbook Knowledge")
     ask(chat, upstream, "when does the ferry leave?", reply.text("At 06:40."))
     ask(chat, upstream, "and from which pier?", reply.text("Pier 7."))
 
