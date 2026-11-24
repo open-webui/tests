@@ -1,14 +1,15 @@
 """Journey: chatting through a connection set to the OpenAI Responses API.
 
-A chat with such a model is sent as a Responses request (the system prompt as `instructions`,
-messages and earlier tool calls as `input` items, `max_output_tokens`, flat function tools) and
+A chat with such a model is sent as a Responses request (the system prompt as a developer
+message, since dev 5d1c7d39d so it is prompt-cached (#34801), messages and earlier tool calls as
+`input` items, `max_output_tokens`, flat function tools) and
 its event stream is assembled into the stored reply: reasoning summaries and bodies, text,
 function calls whose arguments arrive in pieces, refusals, url citations, the final `output`
 of `response.completed` and its usage. An API client can also call the connection without
 streaming, or through the `/openai/responses` proxy. The tests at
 test_stream_event_handling.py pin single repairs on the same path; these walk whole replies.
 
-Discriminates: in a backend copy, dropping `instructions` fails the payload test, leaving a
+Discriminates: in a backend copy, dropping the system prompt fails the payload test, leaving a
 tool in the Chat Completions shape fails the tool test, ignoring `response.reasoning_text.delta`
 fails the reasoning test, skipping url citations fails the citation test, and a non-streamed
 result returned unconverted fails the API client test.
@@ -62,9 +63,14 @@ def test_a_request_is_sent_in_the_responses_shape(responses):
     )
 
     [sent] = provider.sent()
-    assert sent["instructions"] == SYSTEM_PROMPT
+    assert "instructions" not in sent, "the system prompt went out uncached as instructions"
     assert responses_api.conversation(sent) == [
-        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": SYSTEM_PROMPT}],
+        },
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hello"}]},
     ]
     assert (sent["max_output_tokens"], sent["temperature"], sent["stream"]) == (50, 0.5, True)
     assert not {"messages", "max_tokens", "stop", "stream_options"} & sent.keys()
@@ -275,7 +281,12 @@ def test_an_api_client_gets_a_non_streamed_result_in_chat_completions_shape(resp
     assert usage == {"prompt_tokens": 10, "completion_tokens": 4}, body["usage"]
     assert body["usage"]["total_tokens"] == 14
     [sent] = provider.sent()
-    assert sent["instructions"] == SYSTEM_PROMPT
+    assert "instructions" not in sent
+    assert responses_api.conversation(sent)[0] == {
+        "type": "message",
+        "role": "developer",
+        "content": [{"type": "input_text", "text": SYSTEM_PROMPT}],
+    }
     assert sent["max_output_tokens"] == 30
     assert sent["tool_choice"] == {"type": "function", "name": "lookup"}
     assert sent["tools"] == [{"type": "function", **lookup, "strict": False}]
