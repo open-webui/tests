@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from harness.listener import json_answer
+from harness.docling_server import CONVERT, serve_docling
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
 
@@ -30,11 +30,7 @@ OCTET_STREAM = "application/octet-stream"
 def docling(admin, preserve, listener):
     """The admin's client with Docling as the extraction engine, served by `listener`."""
     preserve(RETRIEVAL_CONFIG)
-    listener.route(
-        "POST",
-        "/v1/convert/file",
-        json_answer({"status": "success", "document": {"md_content": "converted"}}),
-    )
+    serve_docling(listener, {"status": "success", "document": {"md_content": "converted"}})
     with admin.client() as client:
         saved = client.post(
             RETRIEVAL_CONFIG[1],
@@ -52,7 +48,7 @@ def _name_docling_was_sent(client, listener, filename: str) -> str:
     assert uploaded.status_code == 200, uploaded.text
     stored = client.get(f"/api/v1/files/{uploaded.json()['id']}").json()
     assert stored["data"].get("content") == "converted", stored["data"]
-    [conversion] = listener.requests_to("/v1/convert/file")
+    [conversion] = listener.requests_to(CONVERT)
     names = re.findall(rb'filename="([^"]*)"', conversion.body)
     assert len(names) == 1, f"expected one file part, got {names}"
     return names[0].decode()

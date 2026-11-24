@@ -37,6 +37,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
+from harness.docling_server import CONVERT, serve_docling
 from harness.listener import json_answer
 
 pytestmark = [
@@ -220,11 +221,7 @@ def test_a_knowledge_upload_is_linked_once_indexed(knowledge_base):
 
 @pytest.fixture
 def docling(retrieval_settings, listener):
-    listener.route(
-        "POST",
-        "/v1/convert/file",
-        json_answer({"status": "success", "document": {"md_content": "a red pixel"}}),
-    )
+    serve_docling(listener, {"status": "success", "document": {"md_content": "a red pixel"}})
     retrieval_settings(
         CONTENT_EXTRACTION_ENGINE="docling",
         DOCLING_SERVER_URL=listener.base_url,
@@ -249,7 +246,7 @@ def test_an_image_outside_the_enabled_types_is_still_refused(docling, make_user)
         stored = _upload(client, "pixel.gif", PIXEL_GIF, "image/gif")
 
     assert stored["data"].get("status") == "failed"
-    assert docling.requests_to("/v1/convert/file") == []
+    assert docling.requests_to(CONVERT) == []
 
 
 def test_a_video_is_still_stored_without_extraction(docling, make_user):
@@ -257,7 +254,7 @@ def test_a_video_is_still_stored_without_extraction(docling, make_user):
         stored = _upload(client, "clip.mp4", b"\x00\x00\x00\x18ftypmp42\x00\x01\x02", "video/mp4")
 
     assert stored["data"].get("status") == "completed"
-    assert docling.requests_to("/v1/convert/file") == []
+    assert docling.requests_to(CONVERT) == []
 
 
 # ---------------------------------------------------------------- embedding prefixes

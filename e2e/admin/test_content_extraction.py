@@ -31,6 +31,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from harness import upstream as reply
+from harness.docling_server import CONVERT, serve_docling
 from harness.listener import ReceivedRequest, json_answer
 from harness.web_retrieval import RETRIEVAL_CONFIG
 from utils.admin_settings import save
@@ -149,11 +150,7 @@ def test_docling_converts_the_file_with_its_api_key(
     page_for, make_user, upstream, listener, preserve
 ):
     preserve(RETRIEVAL_CONFIG)
-    listener.route(
-        "POST",
-        "/v1/convert/file",
-        json_answer({"status": "success", "document": {"md_content": EXTRACTED}}),
-    )
+    serve_docling(listener, {"status": "success", "document": {"md_content": EXTRACTED}})
     admin_page = page_for(make_user(role="admin"))
     settings = pick_engine(admin_page, "docling")
     settings.get_by_placeholder("Enter Docling Server URL").fill(listener.base_url)
@@ -165,7 +162,7 @@ def test_docling_converts_the_file_with_its_api_key(
     )
 
     assert EXTRACTED in sent
-    [converted] = listener.requests_to("/v1/convert/file")
+    [converted] = listener.requests_to(CONVERT)
     assert converted.headers["X-Api-Key"] == "docling-key-3"
 
 

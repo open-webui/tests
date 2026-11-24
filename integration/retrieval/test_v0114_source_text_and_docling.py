@@ -43,6 +43,7 @@ import pytest
 from harness import upstream as reply
 from harness.actors import admin_of
 from harness.chat import ask
+from harness.docling_server import serve_docling
 from harness.listener import json_answer
 
 pytestmark = [pytest.mark.regression, pytest.mark.api, pytest.mark.requires_source]
@@ -83,10 +84,6 @@ def upload(client, filename: str, content: bytes, content_type: str) -> dict:
     stored = client.get(f"/api/v1/files/{uploaded.json()['id']}")
     assert stored.status_code == 200, stored.text
     return stored.json()["data"]
-
-
-def serve_docling(listener, answer: dict) -> None:
-    listener.route("POST", "/v1/convert/file", json_answer(answer))
 
 
 @pytest.mark.parametrize("engine", ["tika", "docling"])
@@ -214,7 +211,7 @@ def test_docling_pages_reach_the_model_as_the_page_a_person_sees(pages_shown, pr
                 "CONTENT_EXTRACTION_ENGINE": "docling",
                 "DOCLING_SERVER_URL": listener.base_url,
                 # a file under the threshold is sent whole, without its pages
-                "RAG_FULL_TEXT_CHAR_THRESHOLD": 0,
+                "RAG_FULL_TEXT_THRESHOLD": 0,
             },
         )
         assert saved.status_code == 200, saved.text
