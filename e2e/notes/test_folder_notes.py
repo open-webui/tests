@@ -114,8 +114,10 @@ def row_menu(page: Page, title: str, scope: Locator | None = None) -> Locator:
     return menu
 
 
-def open_folder(page: Page, folder_id: str) -> None:
+def open_folder(page: Page, folder_id: str, name: str) -> None:
     page.goto(f"/folders/{folder_id}")
+    # since 1fbb42be9 a folder opens on the tab it was left on, here the note
+    page.get_by_role("tab", name=name, exact=True).click()
     expect(section_switch(page)).to_be_visible()
 
 
@@ -123,10 +125,11 @@ def title_note(page: Page, title: str) -> str:
     """Type `title` into the open note's Title box and leave it; the note's id."""
     expect(page).to_have_url(NOTE_URL)
     note_id = page.url.rsplit("/", 1)[1]
-    box = page.get_by_role("textbox", name="Title", exact=True)
+    # the folder keeps each note it opened in a tab of its own; only the selected one shows
+    box = page.get_by_role("textbox", name="Title", exact=True).filter(visible=True)
     expect(box).to_be_editable()
     box.fill(title)
-    page.get_by_label("Write something...").click()
+    page.get_by_label("Write something...").filter(visible=True).click()
     return note_id
 
 
@@ -155,7 +158,7 @@ def test_new_notes_from_the_folder_page_are_filed_and_listed_newest_first(page_f
         "New Note on the folder page did not file the note"
     )
 
-    open_folder(page, folder_id)
+    open_folder(page, folder_id, folder_name)
     page.get_by_role("button", name="Folder options", exact=True).click()
     page.get_by_role("menuitem", name="New Note", exact=True).click()
     second = title_note(page, f"Berth list {tag}")
@@ -164,7 +167,7 @@ def test_new_notes_from_the_folder_page_are_filed_and_listed_newest_first(page_f
         "New Note in the folder menu did not file the note"
     )
 
-    open_folder(page, folder_id)
+    open_folder(page, folder_id, folder_name)
     show_notes(page)
     expect(section_switch(page)).to_have_text(re.compile(r"Notes\s*2"))
     expect(note_links(page)).to_have_text([f"Berth list {tag}", f"Tide table {tag}"])
@@ -173,7 +176,7 @@ def test_new_notes_from_the_folder_page_are_filed_and_listed_newest_first(page_f
     expect(page).to_have_url(re.compile(rf"/notes/{first}$"))
     title_note(page, f"Tide table, spring {tag}")
     wait_stored_title(owner, first, f"Tide table, spring {tag}")
-    open_folder(page, folder_id)
+    open_folder(page, folder_id, folder_name)
     show_notes(page)
     expect(note_links(page)).to_have_text([f"Tide table, spring {tag}", f"Berth list {tag}"])
 
@@ -243,7 +246,7 @@ def test_move_files_a_note_in_a_folder_and_takes_it_out_again(page_for, make_use
     menu = page.get_by_role("menu").first
     _pick_move(page, menu, "No folder")
     expect(page.get_by_role("menuitem", name="No folder", exact=True)).to_have_count(0)
-    open_folder(page, folder_id)
+    open_folder(page, folder_id, folder_name)
     show_notes(page)
     expect(folder_region(page).get_by_text("No Notes", exact=True)).to_be_visible()
     page.goto("/notes")

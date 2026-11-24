@@ -57,7 +57,13 @@ from harness import upstream as reply
 from harness.access import make_group
 from harness.chat_history import seed_chat
 from harness.comments import switch_comments
-from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface, surface_of
+from utils.chat_surface import (
+    EVERYWHERE,
+    TEMPORARY_SIDE,
+    ChatSurface,
+    side_tab_name,
+    surface_of,
+)
 from utils.chat_ui import artifacts_pane, conversation
 from utils.sidebar_folders import click_folder_menu_button, folder_row
 
@@ -281,6 +287,13 @@ def _own_tab(surface: ChatSurface) -> Locator:
     return surface.tab_bar.locator("[data-panel-tab]").filter(has=surface.tab)
 
 
+def _folder_chat_tab(page: Page, title: str) -> ChatSurface:
+    """A chat in a folder, which opens in a tab beside the folder (1fbb42be9), held by its id."""
+    panel = page.get_by_role("tabpanel", name=side_tab_name(title))
+    expect(panel).to_have_count(1)
+    return ChatSurface(page, page.locator(f"[id='{panel.get_attribute('id')}']"), "folder chat")
+
+
 def _start_rename(chat: Page | ChatSurface, title: str) -> Locator:
     """Pick Rename in the chat's header menu; returns the text box that replaced the title."""
     surface = surface_of(chat)
@@ -410,14 +423,15 @@ def test_shared_folder_owner_renames_a_members_chat_from_its_header_but_not_the_
     members_chat = _create_chat(member, title, folder_id)
     owners_chat = _create_chat(owner, f"Harbour log {suffix}", folder_id)
     owner_page = page_for(owner, path=f"/c/{members_chat}")
+    members_tab = _folder_chat_tab(owner_page, title)
 
     # the owner sees the member's chat read-only, yet may rename it as the folder's owner
     expect(owner_page.get_by_role("button", name="Clone Chat")).to_be_visible()
-    box = _start_rename(owner_page, title)
+    box = _start_rename(members_tab, title)
     status = _save_title(owner_page, box, members_chat, renamed)
 
     assert status == 200, f"the owner's rename got {status}"
-    expect(_shown_title(owner_page)).to_have_text(renamed)
+    expect(_shown_title(members_tab)).to_have_text(renamed)
     assert _stored_title(member, members_chat) == renamed
 
     # a member reading the owner's chat in the folder gets no Rename
