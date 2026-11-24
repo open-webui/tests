@@ -11,7 +11,7 @@ sends them, and checks every consecutive pair of requests the provider received,
 included: plain turns, single and multi-step tool rounds, parallel tool calls, reasoning, the
 chat file tools, knowledge bases, notes and chats attached to the chat, the model's knowledge,
 the memory tools, unchanged memories recalled with the memory system context on, skills, a
-sub-agent, a background sub-agent's report, a timer, web search and fetch, an image a tool
+sub-agent's report, a timer, web search and fetch, an image a tool
 returned, a real Open Terminal connected from the first turn, time passing and a change to
 settings outside the prefix. The controls at the end take the breakers the page names (File
 Context on, web search switched on mid-chat, an earlier message edited) and show the check goes
@@ -28,6 +28,8 @@ fixed both by handing those turns the chat's own system messages to build on. A 
 called a second tool straight after the first, with no text in between, had both calls folded
 into one assistant message on the next round, so that round rewrote the assistant message the
 previous request ended with; PR #31593 fixed that (open-webui/open-webui#31588).
+Since dev 8522af2d6 every sub-agent of a saved chat works in the background and its answer comes
+back as a report the chat answers in a turn of its own, so the report test covers the sub-agent.
 
 A provider caches what the model generated as well, so each request is also checked against the
 one before it plus the tool calls the model wrote, arguments byte for byte. With Tool Call Labels
@@ -823,26 +825,6 @@ def test_after_compaction_the_new_prefix_only_appends(
     assert broken is None, f"after compaction a request rewrote the new prefix: {broken}"
 
 
-def test_a_sub_agent_only_appends(cached_setup, make_user, subagents_on, upstream):
-    subagents_on()
-    with make_user().client() as client:
-        chat = Conversation(client, upstream, cached_setup.id)
-        chat.say("hello")
-        upstream.queue(
-            reply.text("It leaves at 06:40.", match=reply.answering("find the ferry time"))
-        )
-        chat.say(
-            "ask a helper about the ferry",
-            calling("delegate_task", {"task": "find the ferry time"}),
-            reply.text("The helper says 06:40."),
-        )
-        chat.say("thanks")
-
-    assert "delegate_task" in offered_tools(chat.requests()[0])
-    assert "It leaves at 06:40." in tool_results(chat.requests()[-1])
-    assert_append_only(chat.requests(), chat.generated)
-
-
 @pytest.mark.slow
 def test_web_search_and_fetch_only_append(instance_with, preserve, listener):
     fetching = instance_with(LOCAL_WEB_FETCH)
@@ -924,7 +906,7 @@ def test_a_timer_only_appends(cached_setup, make_user, subagents_on, upstream):
 def test_a_background_sub_agent_report_only_appends(
     cached_setup, make_user, subagents_on, upstream
 ):
-    subagents_on(SUBAGENTS_BACKGROUND_ENABLED=True)
+    subagents_on()
     task = f"find the ferry time {uuid.uuid4().hex[:6]}"
     upstream.queue(
         reply.text("It leaves at 06:40.", match=reply.answering(task)),
@@ -934,13 +916,17 @@ def test_a_background_sub_agent_report_only_appends(
         chat = Conversation(client, upstream, cached_setup.id)
         chat.say(
             "ask a helper about the ferry",
-            calling("delegate_task", {"task": task, "background": True}),
+            calling("delegate_task", {"task": task}),
             reply.text("A helper is on it."),
         )
         chat.parent_id = wait_for_answer_to(client, chat.chat_id, "[ASYNC SUBAGENT COMPLETE")
         chat.say("thanks")
 
     requests = chat.requests()
+    assert "delegate_task" in offered_tools(requests[0])
+    assert "It leaves at 06:40." in str(requests[2]["messages"][-1]["content"]), (
+        "the sub-agent's answer did not reach the chat with its report"
+    )
     assert reply.answering("[ASYNC SUBAGENT COMPLETE")(requests[2]), [
         str(request["messages"][-1])[:200] for request in requests
     ]

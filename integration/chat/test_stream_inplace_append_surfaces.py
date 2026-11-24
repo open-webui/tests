@@ -7,12 +7,14 @@ runs on an instance of each kind and expects the same literal outcome: a global 
 each chunk, an outlet filter editing the reply and reporting what it saw, a pipe yielding text
 pieces or chunks and SSE lines with reasoning, an action run on the finished reply, an API client
 without a socket session (with and without reasoning), a temporary chat and its follow-up, a
-channel where a model answers and what the members receive, a sub-agent in the foreground and
-one in the background, a timer, an automation that streams into a chat and an Anthropic client
-of the messages endpoint whose reply an outlet filter audits.
+channel where a model answers and what the members receive, a sub-agent in an automation's run
+and one in a chat (since 8522af2d6 always in the background), a timer, an automation that
+streams into a chat and an Anthropic client of the messages endpoint whose reply an outlet filter
+audits.
 
 `test_a_background_subagent_reports_its_whole_reply_and_the_chat_continues`,
-`test_a_subagent_reply_of_many_pieces_comes_back_whole_to_the_parent_chat`,
+`test_a_subagent_reply_of_many_pieces_comes_back_whole_to_the_parent_chat` (now run in an
+automation),
 `test_a_timer_run_saves_its_reply_of_many_pieces_in_the_chat` and
 `test_an_automation_run_streams_its_reply_into_a_new_chat` are red on dev 62f70a844: since de73bb830
 a chat request whose reply message is already stored in the chat, the way automations, sub-agents
@@ -494,29 +496,6 @@ def subagents_on(instance_admin, preserve, streaming):
         client.post(SUBAGENTS[1], json={**current, "ENABLE_SUBAGENTS": True}).raise_for_status()
 
 
-def test_a_subagent_reply_of_many_pieces_comes_back_whole_to_the_parent_chat(
-    subagents_on, person, streaming
-):
-    upstream = streaming.upstream
-    upstream.queue(
-        reply.tool_call(
-            "delegate_task", {"task": "check the ledger"}, match=reply.answering("hand over")
-        ),
-        reply.text(
-            ["The ledger ", "is ", "balanced ", "for March."],
-            match=reply.answering("check the ledger"),
-        ),
-        reply.text(["Handed ", "over."], match=reply.answering("hand over")),
-    )
-    with person.client() as client:
-        _, message = ask(client, "hand over the books")
-
-    follow_up = upstream.chat_requests()[-1]
-    assert follow_up["messages"][-1]["role"] == "tool"
-    assert follow_up["messages"][-1]["content"] == "The ledger is balanced for March."
-    assert message["content"].endswith("Handed over.")
-
-
 def timer_reply(client, chat_id: str) -> dict:
     """The reply to the timer's prompt once it is done."""
 
@@ -589,6 +568,46 @@ def test_an_automation_run_streams_its_reply_into_a_new_chat(scheduler, streamin
     assert run["status"] == "success", run
     answers = [m for m in messages.values() if m["role"] == "assistant"]
     assert [m["content"] for m in answers] == ["All quiet on the front."]
+
+
+def test_a_subagent_reply_of_many_pieces_comes_back_whole_to_an_automation_run(
+    subagents_on, scheduler, streaming
+):
+    prompt = f"Hand over the books, batch {uuid.uuid4().hex[:6]}."
+    task = f"check the ledger {uuid.uuid4().hex[:6]}"
+    streaming.upstream.queue(
+        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
+        reply.text(["The ledger ", "is ", "balanced ", "for March."], match=reply.answering(task)),
+        reply.text(["Handed ", "over."], match=reply.answering(prompt)),
+    )
+    with scheduler.client() as client:
+        created = client.post(
+            "/api/v1/automations/create",
+            json={
+                "name": "books",
+                "is_active": True,
+                "data": {"prompt": prompt, "model_id": MOCK_MODEL_ID, "rrule": SCHEDULE},
+            },
+        )
+        created.raise_for_status()
+        run = run_automation(client, created.json())
+        messages = client.get(f"/api/v1/chats/{run['chat_id']}").json()["chat"]["history"][
+            "messages"
+        ]
+
+    assert run["status"] == "success", run
+    answers = [m["content"] for m in messages.values() if m["role"] == "assistant"]
+    assert answers and answers[-1].endswith("Handed over."), answers
+    follow_ups = [
+        body
+        for body in streaming.upstream.chat_requests()
+        if reply.answering(prompt)(body) and body["messages"][-1]["role"] == "tool"
+    ]
+    assert follow_ups, "the sub-agent's reply never came back to the automation's run"
+    returned = follow_ups[-1]["messages"][-1]["content"]
+    # the result opens with the sub-agent's chat id
+    assert returned.endswith("\nThe ledger is balanced for March."), returned
+    assert returned.count("The ledger") == 1, returned
 
 
 def test_an_automation_run_streams_its_reply_into_a_channel(scheduler, channels_on, streaming):
@@ -672,28 +691,19 @@ def test_an_anthropic_client_gets_the_stream_and_the_outlet_sees_the_whole_reply
 # --- a background sub-agent reporting back ------------------------------------------------------
 
 
-@pytest.fixture
-def background_subagents_on(instance_admin, preserve, streaming):
-    preserve(SUBAGENTS, on=streaming)
-    with instance_admin.client() as client:
-        current = client.get(SUBAGENTS[0]).json()
-        switched = {**current, "ENABLE_SUBAGENTS": True, "SUBAGENTS_BACKGROUND_ENABLED": True}
-        client.post(SUBAGENTS[1], json=switched).raise_for_status()
-
-
 def carries_the_report(body: dict) -> bool:
     users = [entry for entry in body.get("messages", []) if entry.get("role") == "user"]
     return bool(users) and "[ASYNC SUBAGENT COMPLETE" in str(users[-1].get("content"))
 
 
 def test_a_background_subagent_reports_its_whole_reply_and_the_chat_continues(
-    background_subagents_on, person, streaming
+    subagents_on, person, streaming
 ):
     task = f"count the crates {uuid.uuid4().hex[:6]}"
     streaming.upstream.queue(
         reply.tool_call(
             "delegate_task",
-            {"task": task, "background": True},
+            {"task": task},
             match=reply.answering("send someone"),
         ),
         reply.text(["Forty ", "crates ", "in ", "bay three."], match=reply.answering(task)),
