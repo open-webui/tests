@@ -3,7 +3,7 @@
 open-webui/open-webui#34619. With the admin's Tool Output Limit set, a longer tool result reaches
 the model cut off with a `[Truncated: N characters, limit M]` note. When the chat has an Open
 Terminal connected, the full result of a tool that is not the terminal's own is now written to
-`.tool_outputs/<id>.txt` on the terminal and the note names that path, so the model can read the
+`.tool_outputs/<id>.txt` on the machine and the note names that path, so the model can read the
 rest. Without a terminal the note stays plain and nothing is written.
 
 An admin's Python tool, readable by everyone, returns a long report; the scripted model calls it
@@ -39,7 +39,7 @@ REPORT = "".join(
 PLAIN_NOTE = f"[Truncated: {len(REPORT)} characters, limit {LIMIT}]"
 SAVED_NOTE = re.compile(
     rf"\[Truncated: {len(REPORT)} characters, limit {LIMIT}, "
-    r"full output saved to (?P<path>\S+) on the terminal\]$"
+    r"full output saved to (?P<path>\S+) on the machine\]$"
 )
 REPORT_TOOL = f'''
 class Tools:
