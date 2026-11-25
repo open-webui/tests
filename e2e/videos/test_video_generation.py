@@ -13,8 +13,8 @@ off. A picture attached to the chat becomes the first frame of the video made fr
 The provider's requests, the pick order and access rules are pinned in
 integration/videos/test_video_generation.py.
 
-Picking the model in the menu and then pressing Escape to close it also switches Video off again,
-as Escape in the message box clears its selections, so the tests close the menu by clicking away.
+The menu is closed with Escape, as a user would, and Video is still on, with the picked model,
+when the menu opens again.
 
 Discriminates: passes on the dev f80a4f782 build. In a backend copy whose `generate_video` keeps
 its files off the chat message the setup test fails (no video in the reply), whose
@@ -49,6 +49,7 @@ from utils.admin_settings import save
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     chat_input,
+    close_menu,
     expect_reply,
     open_integrations_menu,
     replies,
@@ -132,9 +133,12 @@ def turn_on_video(page: Page, model: str | None = None) -> None:
     else:
         entry.click()
     expect(entry).to_have_attribute("aria-checked", "true")
-    # Escape in the message box also clears its selections, so close the menu by clicking away
-    chat_input(page).click()
-    expect(menu).to_have_count(0)
+    close_menu(page)
+    entry = video_entry(open_integrations_menu(page))
+    expect(entry).to_have_attribute("aria-checked", "true")
+    if model:
+        expect(entry).to_contain_text(model)
+    close_menu(page)
 
 
 def film(page: Page, upstream, prompt: str, **arguments) -> str:
