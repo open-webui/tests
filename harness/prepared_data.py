@@ -9,10 +9,12 @@ the admin works on a data directory without accounts; `booted_again(...)` is suc
 on the data directory a first boot with other settings left behind. `with_legacy_config(...)`
 is one too, shared by the API and browser tests: its data directory starts with a legacy
 `config.json`, whose import at boot writes each key as a config row verbatim, ahead of the
-boot's repair of old row shapes. `serving(data_dir)` keeps the backend running on a data
-directory that already has accounts, and `restored_postgres(dump)` loads a `pg_dump` into an
-embedded Postgres for it to use. `release_data(archive, root)` unpacks a data set an older
-release wrote (`integration/migrations/upgrade_data/`), on its own database, ready to serve.
+boot's repair of old row shapes. `killed_when(data_dir, condition)` kills a boot outright
+once `condition()` holds, as a crash or an out-of-memory kill would. `serving(data_dir)` keeps
+the backend running on a data directory that already has accounts, and
+`restored_postgres(dump)` loads a `pg_dump` into an embedded Postgres for it to use.
+`release_data(archive, root)` unpacks a data set an older release wrote
+(`integration/migrations/upgrade_data/`), on its own database, ready to serve.
 `manual_alembic(data_dir, ...)` runs the `alembic` command an operator runs by hand, which is
 also how a test builds a database as a release from before a migration left it.
 """
@@ -171,6 +173,34 @@ def boot_until_settled(
                 return BootOutcome(healthy=healthy, exit_code=exit_code, log=_read_log(scratch))
             time.sleep(0.5)
         pytest.fail(f"the backend neither exited nor answered /health within {timeout:.0f}s")
+    finally:
+        _stop(process, scratch)
+
+
+def killed_when(
+    data_dir: Path,
+    condition: Callable[[], bool],
+    settings: dict[str, str] | None = None,
+    timeout: float = 180.0,
+) -> str:
+    """Start the backend on `data_dir` and kill it outright once `condition()` holds; its log.
+
+    Fails when the backend exits or answers `/health` first, since then nothing was interrupted.
+    """
+    process, base_url, scratch = _start(data_dir, None, settings or {})
+    try:
+        deadline = time.monotonic() + timeout
+        while not condition():
+            if process.poll() is not None or _answers_health(base_url):
+                pytest.fail(
+                    f"the backend got past the point to kill it at:\n{_read_log(scratch)[-3000:]}"
+                )
+            if time.monotonic() > deadline:
+                pytest.fail(f"the point to kill the backend at never came within {timeout:.0f}s")
+            time.sleep(0.05)
+        process.kill()
+        process.wait(timeout=30)
+        return _read_log(scratch)
     finally:
         _stop(process, scratch)
 
