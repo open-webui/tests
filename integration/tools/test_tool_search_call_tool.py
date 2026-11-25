@@ -517,6 +517,8 @@ UNAVAILABLE_ROCKETS = 'Error: Tool "launch_rockets" is not available. Search for
 def test_one_call_tool_batch_runs_each_tool_and_is_sent_back_as_one_call(
     tool_search, admin, make_user, upstream
 ):
+    """Red on dev since #34689: a tool before a failed one in the batch reads unknown
+    (open-webui/open-webui#35021)."""
     batch = batch_call(
         "call_1",
         ("harbour_lights", {"harbour": "Pula"}),
