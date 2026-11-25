@@ -247,7 +247,7 @@ def restored_postgres(dump: Path, root: Path) -> Iterator[str]:
     """An embedded Postgres (`pgserver`) holding a plain `pg_dump`; yields its SQLAlchemy URL."""
     pgserver = pytest.importorskip("pgserver", reason="pgserver not installed")
     (root / "pgdata").mkdir(parents=True)
-    server = pgserver.get_server(str(root / "pgdata"), cleanup_mode=None)
+    server = pgserver.get_server(str(root / "pgdata"), cleanup_mode="stop")
     try:
         url = server.get_uri()
         psql = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
