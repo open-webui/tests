@@ -54,11 +54,17 @@ metadata or under the wrong reply, the report never continuing the chat, a pendi
 the cap ignored, never released, applied to the unlimited setting or to a limit of zero, the stop
 not reaching the task, the failure not reported, the concurrent limit applied to background work
 and the parent's id mixed up between chats. Passes on dev 9d19883f1 without the switch.
+
+Regression open-webui/open-webui#35056: deleting a folder with its chats, or all chats, left
+their sub-agents running, and a running one kept the only background slot, so the next
+delegation was refused. Red on dev 893584700 for those two cases until the fix merges; deleting
+the chat itself passes there.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 
@@ -66,7 +72,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask, send_message, wait_for_reply
-from harness.subagents import report_of
+from harness.subagents import delegated, report_of
 from harness.tool_calls import without_hidden_calls
 from harness.upstream import MOCK_MODEL_ID
 
@@ -409,6 +415,71 @@ def test_a_background_limit_of_one_refuses_the_next_delegation_and_frees_the_slo
         [handle] = dispatch_handles(wait_for_reply(client, again))
         assert handle["status"] == "dispatched"
         wait_for_message(client, turn.chat_id, finished_reply("Third came back."))
+
+
+def delete_the_chat(client, chat_id: str):
+    return client.delete(f"/api/v1/chats/{chat_id}")
+
+
+def delete_its_folder(client, chat_id: str):
+    created = client.post("/api/v1/folders/", json={"name": unique("Folder")})
+    assert created.status_code == 200, created.text
+    folder_id = created.json()["id"]
+    moved = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
+    assert moved.status_code == 200, moved.text
+    return client.delete(f"/api/v1/folders/{folder_id}", params={"delete_contents": True})
+
+
+def delete_all_chats(client, chat_id: str):
+    return client.delete("/api/v1/chats/")
+
+
+@pytest.mark.parametrize(
+    "delete",
+    [delete_the_chat, delete_its_folder, delete_all_chats],
+    ids=["the chat", "its folder with its chats", "all chats"],
+)
+def test_deleting_the_chat_stops_its_subagent_and_frees_the_background_slot(
+    delete, background_on, admin, make_user, upstream
+):
+    """The folder and all-chats cases are open-webui/open-webui#35056."""
+    background_on(SUBAGENTS_MAX_ASYNC=1)
+    prompt, task = unique("hand this over"), unique("watch the queue")
+    later, next_task = unique("one more thing"), unique("second errand")
+    never_answered = threading.Event()
+    upstream.queue(
+        dispatch(task, prompt),
+        reply.text("never used", hold=never_answered, match=delegated(task)),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+        dispatch(next_task, later),
+        reply.text("done", match=delegated(next_task)),
+        reply.text("Sent off.", match=reply.answering(later)),
+        reply.text("It came back.", match=report_of(next_task)),
+    )
+    try:
+        with make_user().client() as client, admin.client() as admin_client:
+            turn, stored = ask(client, prompt)
+            [handle] = dispatch_handles(stored)
+            wait_for_request(upstream, delegated(task))
+            running = client.get(f"/api/tasks/chat/{handle['subagent_chat_id']}").json()
+            assert running["task_ids"], "the sub-agent has no task to stop"
+
+            deleted = delete(client, turn.chat_id)
+            assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+
+            listed = set(admin_client.get("/api/tasks").json()["tasks"])
+            still_running = listed & set(running["task_ids"])
+            assert not still_running, (
+                f"the deleted chat's sub-agent kept running: tasks {sorted(still_running)} listed"
+            )
+            next_turn, next_stored = ask(client, later)
+            assert tool_outputs(next_stored)[0].startswith("{"), (
+                "the deleted chat's sub-agent still held the only background slot: "
+                f"{tool_outputs(next_stored)}"
+            )
+            wait_for_message(client, next_turn.chat_id, finished_reply("It came back."))
+    finally:
+        never_answered.set()
 
 
 def test_an_unlimited_background_setting_lets_every_delegation_through(
