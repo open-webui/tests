@@ -49,7 +49,16 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from utils.chat_surface import EVERYWHERE, ChatSurface
-from utils.chat_ui import Chat, chat_input, conversation, expect_reply, last_reply, replies, send
+from utils.chat_ui import (
+    REPLY_TIMEOUT_MS,
+    Chat,
+    chat_input,
+    conversation,
+    expect_reply,
+    last_reply,
+    replies,
+    send,
+)
 from utils.clipboard import on_clipboard, read_text, write_text
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -65,6 +74,14 @@ def interface_switch(page: Page, name: str) -> Locator:
     return switch
 
 
+def open_new_chat(page: Page) -> None:
+    """A new chat, once it shows the model that answers: it drops a message sent before."""
+    page.goto("/")
+    expect(page.get_by_role("button", name=re.compile("^Selected model"))).to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
+
+
 def flip(page: Page, name: str) -> None:
     switch = interface_switch(page, name)
     checked = switch.get_attribute("aria-checked")
@@ -74,7 +91,7 @@ def flip(page: Page, name: str) -> None:
 
 
 def chat_once(page: Page, upstream, question: str) -> None:
-    page.goto("/")
+    open_new_chat(page)
     answer_once(page, upstream, question)
 
 
@@ -125,7 +142,7 @@ def test_display_the_username_puts_the_accounts_name_on_its_message(page_for, ma
 
 
 def type_markdown(page: Page) -> Locator:
-    page.goto("/")
+    open_new_chat(page)
     expect(chat_input(page)).to_be_visible()
     chat_input(page).click()
     page.keyboard.type("**bold** words")
@@ -249,7 +266,7 @@ def test_always_collapse_code_blocks_shows_a_replys_code_collapsed(page_for, mak
     flip(page, "Always Collapse Code Blocks")
 
     upstream.queue(reply.text(LONG_ANSWER, match=reply.answering("Show the script")))
-    page.goto("/")
+    open_new_chat(page)
     send(page, "Show the script")
     expect_reply(page, "That is all.")
     expect(last_reply(page).get_by_text("2 hidden lines")).to_be_visible()
@@ -260,7 +277,7 @@ def test_always_collapse_code_blocks_shows_a_replys_code_collapsed(page_for, mak
 
     other = page_for(make_user())
     upstream.queue(reply.text(LONG_ANSWER, match=reply.answering("Show the script again")))
-    other.goto("/")
+    open_new_chat(other)
     send(other, "Show the script again")
     expect_reply(other, "That is all.")
     expect(code_lines(other)).to_have_count(2)
@@ -273,7 +290,7 @@ def ask_with_reasoning(page: Page, upstream, question: str) -> None:
             "The tide is out.", reasoning="checking the tide table", match=reply.answering(question)
         )
     )
-    page.goto("/")
+    open_new_chat(page)
     send(page, question)
     expect_reply(page, "The tide is out.")
 
@@ -341,7 +358,7 @@ def test_insert_follow_up_prompt_puts_the_question_in_the_input_instead_of_sendi
 ):
     page = page_for(make_user())
     flip(page, "Insert Follow-Up Prompt to Input")
-    page.goto("/")
+    open_new_chat(page)
     ask_with_follow_ups(page, upstream, "Is the lamp lit?", ["Who lit it?", "When did it go out?"])
 
     follow_up_button(page, "When did it go out?").click()
@@ -366,7 +383,7 @@ def test_keep_follow_up_prompts_leaves_an_earlier_replys_follow_ups_in_the_chat(
 ):
     page = page_for(make_user())
     flip(page, "Keep Follow-Up Prompts in Chat")
-    page.goto("/")
+    open_new_chat(page)
     ask_with_follow_ups(page, upstream, "Is the lamp lit?", ["Who lit it?"])
     expect(follow_up_button(page, "Who lit it?")).to_be_visible()
 
@@ -511,7 +528,7 @@ def test_temporary_chat_by_default_starts_new_chats_temporary_and_unstored(
     page = page_for(account)
     flip(page, "Temporary Chat by Default")
 
-    page.goto("/")
+    open_new_chat(page)
     expect(chat_input(page)).to_be_visible()
     expect(page.locator("#chat-pane").get_by_text("Temporary Chat", exact=True)).to_be_visible()
     chat_once(page, upstream, "Where is the harbour?")
@@ -558,7 +575,7 @@ def test_insert_suggestion_prompt_fills_the_input_instead_of_sending(
 ):
     page = page_for(make_user())
     flip(page, "Insert Suggestion Prompt to Input")
-    page.goto("/")
+    open_new_chat(page)
 
     suggestion(page).click()
 
@@ -568,13 +585,13 @@ def test_insert_suggestion_prompt_fills_the_input_instead_of_sending(
 
     other = page_for(make_user())
     upstream.queue(reply.text(ANSWER, match=reply.answering("Read the tide table")))
-    other.goto("/")
+    open_new_chat(other)
     suggestion(other).click()
     expect_reply(other, "is lit")
 
 
 def select_typed_text(page: Page) -> None:
-    page.goto("/")
+    open_new_chat(page)
     expect(chat_input(page)).to_be_visible()
     chat_input(page).click()
     page.keyboard.type("select these words")
@@ -608,7 +625,7 @@ def test_landing_page_mode_chat_shows_the_conversation_pane_on_a_new_chat(page_f
         mode.click()
     expect(mode).to_contain_text("Chat")
 
-    page.goto("/")
+    open_new_chat(page)
     expect(chat_input(page)).to_be_visible()
     expect(page.locator("#messages-container")).to_be_visible()
 
@@ -619,7 +636,7 @@ def test_landing_page_mode_chat_shows_the_conversation_pane_on_a_new_chat(page_f
 
 def ask_with_markdown(page: Page, upstream, question: str) -> Locator:
     upstream.queue(reply.text(ANSWER, match=reply.answering(question)))
-    page.goto("/")
+    open_new_chat(page)
     send(page, question)
     expect_reply(page, "is lit")
     return conversation(page).locator(".user-message")
