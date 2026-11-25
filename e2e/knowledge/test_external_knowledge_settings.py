@@ -11,7 +11,10 @@ links open that page; a point with a plain source shows its name as text (open-w
 The settings offer no way to delete a connection or its source. For Milvus the admin picks the
 provider, which fills the column names Milvus needs (a vector field among them, without which the
 test does not run), names a database and adds the source; a chat that attaches it is sent the rows
-a local gRPC service played as Milvus found.
+a local gRPC service played as Milvus found. For an OpenAI-compatible endpoint, Verify Connection
+loads the stores, so the picked store IDs show by name, and the source is created once its Test
+passes; with 'List stores as knowledge bases' on, the connection saves without a test and every
+store shows in Workspace > Knowledge as read-only, where a test question is answered live.
 
 Discriminates: passes on dev 176d31d1d; in a frontend copy, with the source form sending an
 empty API key on an edit the edit test fails (Qdrant gets no key), with the Create button enabled
@@ -23,6 +26,9 @@ with the test form no longer asking for a vector field on Milvus the no-vector-f
 On dev 5032e834e the Qdrant chat test passes; it fails in a frontend build with ca3a6cf26
 (open-webui#32232) reverted (the source is listed by its address) and in a backend copy with
 1369027db (open-webui#32233) reverted (the title links to `/api/v1/files/21/content`).
+The vector store tests pass on dev f80a4f782; in a backend copy, with the store listing reading
+only its first page the verify test fails (two stores loaded), and with the listed stores left out
+of the knowledge search the listing test fails.
 """
 
 from __future__ import annotations
@@ -41,11 +47,15 @@ from harness.external_knowledge import (
     MILVUS_SOURCE_CONFIG,
     MILVUS_TOKEN,
     QDRANT_API_KEY,
+    VECTOR_STORE_API_KEY,
+    VectorStore,
+    VectorStores,
     external_connection,
     external_knowledge_base,
     milvus_row,
     point,
     queries_to,
+    search_hit,
     searches_of,
     serve_milvus,
     serve_qdrant,
@@ -386,3 +396,104 @@ def test_a_chat_with_the_milvus_source_attached_is_sent_the_rows_milvus_found(
     sent = json.dumps(chat_request["messages"])
     assert "The fuel dock takes cards only." in sent
     assert "The chandlery opens at six." in sent
+
+
+def _vector_stores(listener) -> VectorStores:
+    return VectorStores(
+        listener,
+        "openai",
+        [
+            VectorStore(
+                "vs_slipway",
+                "Slipway handbook",
+                "Rules for the slipway",
+                [search_hit("The slipway winch needs two people.", "winch.md", 0.9)],
+            ),
+            VectorStore(
+                "vs_moorings",
+                "Mooring plan",
+                "",
+                [search_hit("Berth 12 is kept for visitors.", "berths.md", 0.8)],
+            ),
+            VectorStore("vs_unused", "Unused store"),
+        ],
+    )
+
+
+def _fill_vector_store_connection(form: Locator, name: str, endpoint: str) -> None:
+    # a new form starts on OpenAI-compatible
+    expect(form.get_by_label("Provider")).to_have_value("openai")
+    form.get_by_label("Name", exact=True).fill(name)
+    form.get_by_label("Endpoint").fill(endpoint)
+    form.get_by_label("API Key / Token").fill(VECTOR_STORE_API_KEY)
+
+
+def test_an_openai_compatible_source_is_built_from_the_stores_verify_connection_loaded(
+    page_for, curator, listener
+):
+    name = f"Slipway {uuid.uuid4().hex[:6]}"
+    endpoint = _vector_stores(listener)
+    page = page_for(curator)
+    _add_button(_open_integrations(page)).click()
+    form = _source_form(page, "Add Knowledge Connection")
+    _fill_vector_store_connection(form, name, endpoint.endpoint)
+
+    form.get_by_role("button", name="Verify Connection").click()
+    expect(page.get_by_text("Loaded 3 vector stores.").first).to_be_visible()
+    stores = form.get_by_label("Vector Stores")
+    for store_id in ("vs_slipway", "vs_moorings"):
+        stores.fill(store_id)
+        stores.press("Enter")
+    # a picked store shows under the name the endpoint gave it
+    expect(form.get_by_text("Slipway handbook", exact=True)).to_be_visible()
+    expect(form.get_by_text("Mooring plan", exact=True)).to_be_visible()
+    form.get_by_label("Test Query").fill("who works the winch?")
+    expect(form.get_by_role("button", name="Create")).to_be_disabled()
+    form.get_by_role("button", name="Test", exact=True).click()
+    expect(page.get_by_text("Test succeeded.").first).to_be_visible()
+    form.get_by_role("button", name="Create").click()
+    expect(page.get_by_text("Knowledge source created.").first).to_be_visible()
+
+    settings = _open_integrations(page)
+    expect(settings.get_by_text(name)).to_be_visible()
+    expect(settings.get_by_text("openai · vs_slipway, vs_moorings")).to_be_visible()
+    searched = endpoint.searches()
+    assert sorted(searched) == ["vs_moorings", "vs_slipway"], sorted(searched)
+
+
+def test_listed_stores_show_in_the_workspace_as_read_only_knowledge(page_for, curator, listener):
+    name = f"Harbour stores {uuid.uuid4().hex[:6]}"
+    endpoint = _vector_stores(listener)
+    page = page_for(curator)
+    _add_button(_open_integrations(page)).click()
+    form = _source_form(page, "Add Knowledge Connection")
+    _fill_vector_store_connection(form, name, endpoint.endpoint)
+    form.get_by_label("List stores as knowledge bases").click()
+    expect(form.get_by_label("Store IDs")).to_be_visible()
+    expect(form.get_by_label("Test Query")).to_have_count(0)
+    form.get_by_role("button", name="Create").click()
+    expect(page.get_by_text("Saved").first).to_be_visible()
+
+    settings = _open_integrations(page)
+    expect(settings.get_by_text("openai · All stores")).to_be_visible()
+
+    page.goto("/workspace/knowledge")
+    for store_name in ("Slipway handbook", "Mooring plan", "Unused store"):
+        entry = page.get_by_role("link", name=store_name)
+        expect(entry).to_be_visible()
+    # the block of this one store, holding its badges
+    row = (
+        page.locator("div")
+        .filter(has=page.get_by_role("link", name="Slipway handbook"))
+        .filter(has_not=page.get_by_role("link", name="Mooring plan"))
+        .filter(has_text="Read Only")
+        .last
+    )
+    expect(row.get_by_text("Read Only")).to_be_visible()
+    expect(row.get_by_text("openai", exact=True)).to_be_visible()
+
+    page.get_by_role("link", name="Slipway handbook").click()
+    expect(page.get_by_text("Read Only").first).to_be_visible()
+    page.get_by_label("Test Query").fill("who works the winch?")
+    page.get_by_role("button", name="Test", exact=True).click()
+    expect(page.get_by_text("The slipway winch needs two people.")).to_be_visible()
