@@ -12,6 +12,10 @@ with the loader opening a locked PDF with its owner password the PDF is read wit
 
 Both tests run in the main chat and in a side chat, which attaches through its own More menu and
 shows the same warning. The side chat variants are green on dev c15f28649 and on dev e791cbdde.
+
+The .rst case caught https://github.com/open-webui/open-webui/issues/35064: the server briefly
+stores the raw pypandoc error before the pandoc message, so a composer that reads the failed file
+in that moment shows the raw text. It fails only when the read lands in that window.
 """
 
 from __future__ import annotations
