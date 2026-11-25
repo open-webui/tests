@@ -9,7 +9,8 @@ go to the boot, such as `FRONTEND_BUILD_DIR` for the browser suite. `Upgraded.si
 a manifest account in with its old password, `client(who)` keeps that session and `actor(who)` is
 the account as the browser suite's `page_for` takes it. `prepare(release)` runs on the unpacked
 data set before the checkout first starts on it. `data_set_params()` gives every data set
-as a pytest param, the Postgres ones marked `requires_postgres`.
+as a pytest param, the Postgres ones marked `requires_postgres`; `released_before=(0, 12)` only
+those of releases older than v0.12.
 """
 
 from __future__ import annotations
@@ -29,10 +30,13 @@ from harness.prepared_data import ReleaseData, RunningBackend, release_data, ser
 DATA_SETS = Path(__file__).resolve().parent.parent / "integration" / "migrations" / "upgrade_data"
 
 
-def data_set_params() -> list:
+def data_set_params(released_before: tuple[int, int] | None = None) -> list:
     params = []
     for manifest in sorted(DATA_SETS.glob("*.json")):
         name = manifest.stem
+        release = tuple(int(part) for part in name.split("-")[0].lstrip("v").split(".")[:2])
+        if released_before and release >= released_before:
+            continue
         marks = [pytest.mark.requires_postgres] if name.endswith("-postgres") else []
         params.append(pytest.param(name, marks=marks, id=name))
     return params

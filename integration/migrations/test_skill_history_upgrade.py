@@ -69,7 +69,8 @@ class Migrated:
     added: dict[str, str]  # the content of every skill added before the first start
 
 
-@pytest.fixture(scope="module", params=data_set_params())
+# releases from v0.12 on already shipped the skill history
+@pytest.fixture(scope="module", params=data_set_params(released_before=(0, 12)))
 def migrated(request, tmp_path_factory) -> Iterator[Migrated]:
     name = request.param
     states: dict = {}

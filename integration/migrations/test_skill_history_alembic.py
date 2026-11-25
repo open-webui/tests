@@ -72,7 +72,8 @@ class Steps:
     added: dict[str, str]
 
 
-@pytest.fixture(scope="module", params=data_set_params())
+# releases from v0.12 on already shipped the skill history
+@pytest.fixture(scope="module", params=data_set_params(released_before=(0, 12)))
 def steps(request, tmp_path_factory) -> Iterator[Steps]:
     """Each data set taken up, up again, down to the migration, one past it and up once more."""
     name = request.param
