@@ -20,6 +20,9 @@ Since dev f14dca0ee a message sent to a saved chat of one's own while its answer
 waits on the server, and the waiting messages are answered together, as one question, once that
 answer ends; Send now on one of them stops the answer, so the whole queue is answered at once. The
 page still holds the queue of a temporary chat, where Send now sends only the chosen message.
+That queue is kept when the page is reloaded, and the running reply wraps up after the tool call
+it is making, so the queued message is answered next while the stopped reply keeps the call; the
+twin integration/chat/test_queued_message_steering.py pins what the model is sent.
 
 `test_send_now_sends_only_the_chosen_message` is red on dev 62f70a844: Send now stops the running
 reply first, and since de73bb830 a stopped reply never ends on the page, so the chosen message is
@@ -30,7 +33,9 @@ tests fail (the message behind the failed one is never sent), and with `aea7d34f
 Send now test fails (the rest of the queue is sent while the chosen message is answered). The
 saved chat Send now test is red on the dev 6a67b5b01 build (the queue is sent one message at a
 time). It is red on the dev de68d0ce4 build in every place (the Stop button stays) and passes on
-the build of the fix for open-webui/open-webui#34553.
+the build of the fix for open-webui/open-webui#34553. The reload test passes on dev f80a4f782
+and turns red in every place on a backend copy where the reply goes on after its tool call (the
+plan's next step shows) or where the server answers the message at once instead of holding it.
 
 Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), and the Send now
 test in every way a side chat starts and every state it can be in. A side chat had no send queue:
@@ -45,11 +50,19 @@ import re
 import threading
 
 import pytest
-from playwright.sync_api import Locator, Route, expect
+from playwright.sync_api import Locator, Response, Route, expect
 
 from harness import upstream as reply
 from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
-from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, send, stop_button
+from utils.chat_ui import (
+    chat_input,
+    conversation,
+    expect_reply,
+    last_reply,
+    send,
+    stop_button,
+    tool_step,
+)
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -274,3 +287,58 @@ def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(
     expect(queued_item(chat, SECOND)).to_have_count(0)
     expect(queued_item(chat, THIRD)).to_have_count(0)
     expect(stop_button(chat)).to_be_hidden()
+
+
+# what the reply would do next if nobody had written; it must never show
+PLAN_GOES_ON = "Next I will check the calendar as planned."
+
+
+def is_send_of(response: Response, text: str) -> bool:
+    return response.url.endswith("/api/chat/completions") and text in (
+        response.request.post_data or ""
+    )
+
+
+def test_a_queued_message_stays_after_a_reload_and_steers_the_reply(chat_for, make_user, upstream):
+    """Since 0.13.4: the queue of a saved chat is held on the server, and the running reply wraps
+    up after its current tool call so the queued message is answered next."""
+    chat = chat_for(make_user())
+    page = chat.page
+    expect(chat_input(chat)).to_be_visible()
+    work, steer = "check the time, then the calendar", "use the Berlin time zone"
+    released = threading.Event()
+    upstream.queue(
+        reply.tool_call("get_current_timestamp", {}, match=reply.answering(work), hold=released),
+        reply.text(PLAN_GOES_ON, match=reply.answering(work)),
+        reply.text("It is noon in Berlin.", match=reply.answering(steer)),
+    )
+    try:
+        send(chat, work)
+        expect(stop_button(chat)).to_be_visible()
+        wait_on_page(
+            chat,
+            lambda: any(reply.answering(work)(body) for body in upstream.chat_requests()),
+            "the reply never reached the model",
+        )
+        with page.expect_response(lambda response: is_send_of(response, steer)) as sent:
+            send(chat, steer)
+        assert sent.value.json().get("queued"), f"the server did not hold it: {sent.value.json()}"
+        expect(queued_item(chat, steer)).to_be_visible()
+
+        chat = chat.reload()
+        expect(queued_item(chat, steer)).to_be_visible()
+        expect(stop_button(chat)).to_be_visible()
+    finally:
+        released.set()
+
+    expect_reply(chat, "It is noon in Berlin.")
+    expect(queued_item(chat, steer)).to_have_count(0)
+    expect(stop_button(chat)).to_be_hidden()
+    questions = conversation(chat).locator(".chat-user")
+    expect(questions).to_have_text([re.compile(work), re.compile(steer)])
+    expect(chat.replies).to_have_count(2)
+    # the stopped reply keeps what it did before it wrapped up
+    expect(
+        tool_step(chat.replies.first, "Checked the time", "get_current_timestamp")
+    ).to_be_visible()
+    expect(conversation(chat)).not_to_contain_text(PLAN_GOES_ON)
