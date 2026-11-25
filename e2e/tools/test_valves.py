@@ -530,8 +530,12 @@ def test_a_nullable_valve_switched_to_custom_and_emptied_again_saves_without_an_
 
     # an optional text keeps an emptied box as an empty text
     note_valve = valve(panel, "Desk Note", "A note for the desk")
+    notices = page.get_by_text("Valves updated", exact=True)
+    expect(notices).to_have_count(0)
     customise(note_valve)
     expect(note_valve.get_by_role("textbox")).to_have_value("ring twice")
+    # Custom saves the default and takes it back with this notice; an earlier edit would be replaced
+    expect(notices).to_be_visible()
     type_into(note_valve, "")
     saved = saved_user_valves(booker, tool_id, {"desk_note": ""})
     assert saved == {"desk_note": ""}, f"the emptied optional text was not kept: {saved}"
