@@ -4,8 +4,8 @@
         "e2e": 1948,
         "e2e-build": 320,
         "frontend": 85,
-        "integration": 2214,
-        "integration-postgres-redis": 1469,
+        "integration": 2366,
+        "integration-postgres-redis": 2300,
         "run": 345,
         "timeouts": 9
     },
