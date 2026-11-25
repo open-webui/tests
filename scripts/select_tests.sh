@@ -1,11 +1,10 @@
 #!/bin/bash
 # The pytest arguments of one regression job: the selected tests of its suite when the run selects
-# some (SELECT, the workflow's select input), else its whole suite and this shard of it.
-# usage: select_tests.sh <suite directory> "<shard arguments>"
+# some (SELECT, the workflow's select input), else the test modules of this shard of its suite.
+# usage: select_tests.sh <suite directory> <shards> <shard> <durations file>
 suite=$1
-shard=$2
 if [ -z "$SELECT" ]; then
-    echo "$suite $shard --splitting-algorithm duration_based_chunks"
+    python3 scripts/shard.py "$@"
     exit 0
 fi
 selected=()

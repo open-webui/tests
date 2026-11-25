@@ -342,7 +342,7 @@ jobs:
           SELECT: ${{ inputs.select }}
         shell: bash
         run: |
-          tests=$(bash scripts/select_tests.sh integration "--splits 10 --group ${{ matrix.shard }} --durations-path durations/integration.json")
+          tests=$(bash scripts/select_tests.sh integration 10 ${{ matrix.shard }} durations/integration.json)
           pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
@@ -508,7 +508,7 @@ jobs:
           SELECT: ${{ inputs.select }}
         shell: bash
         run: |
-          tests=$(bash scripts/select_tests.sh integration "--splits 11 --group ${{ matrix.shard }} --durations-path durations/integration-postgres-redis.json")
+          tests=$(bash scripts/select_tests.sh integration 11 ${{ matrix.shard }} durations/integration-postgres-redis.json)
           pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/integration-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
@@ -775,7 +775,7 @@ jobs:
           SELECT: ${{ inputs.select }}
         shell: bash
         run: |
-          tests=$(bash scripts/select_tests.sh e2e "--splits 36 --group ${{ matrix.shard }} --durations-path durations/e2e.json")
+          tests=$(bash scripts/select_tests.sh e2e 36 ${{ matrix.shard }} durations/e2e.json)
           pytest $tests -q --junitxml=test-results/junit.xml --html=test-results/e2e-report.html --self-contained-html 2>&1 | cut -c -10000
 
       - name: Summarise the results
