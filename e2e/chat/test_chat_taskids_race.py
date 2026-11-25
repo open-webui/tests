@@ -7,13 +7,14 @@ existed, replaced it with nothing: the page treated the chat as idle while the r
 streamed, and offered to delete the messages under it. The fix drops an answer that arrives
 after the page's own record changed.
 
-The page reloads the chat after `/compact`. The test holds the page's running-generations
-request until a new message streams, then lets through the answer the server gave before the
-message was sent. The message's Delete action must stay hidden until its reply is done.
+The page reloads the chat after `/compact`, and the reload answer carries the generations still
+running in it (since dev 72184499b; before, the page asked for them in a request of their own).
+The test holds the page's reload request until a new message streams, then lets through the
+answer the server gave before the message was sent. The message's Delete action must stay
+hidden until its reply is done.
 
-Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). On dev c15f28649
-the late reload answer test is red in a side chat: /compact did nothing there
-(open-webui/open-webui#34018, fix PR open-webui/open-webui#34064).
+Every test runs in the main chat and in a side chat (`utils/chat_surface.py`). /compact did
+nothing in a side chat until b428dbaf2 (open-webui/open-webui#34018, PR #34064).
 
 Discriminates: passes on the ef67cc3fa build; on a build with the `if (taskIds !==
 activeTaskIds) return` guard removed the Delete action shows while the reply streams.
@@ -21,6 +22,7 @@ activeTaskIds) return` guard removed the Delete action shows while the reply str
 
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -58,13 +60,20 @@ def user_message(chat: ChatSurface, text: str) -> Locator:
     return conversation(chat).locator(".chat-user").filter(has_text=text)
 
 
-def hold_task_lookups(page: Page) -> list[Route]:
+def chat_reload(chat_id: str) -> re.Pattern:
+    return re.compile(rf"/api/v1/chats/{re.escape(chat_id)}(\?.*)?$")
+
+
+def hold_chat_reloads(page: Page, chat_id: str) -> list[Route]:
     held: list[Route] = []
 
     def hold(route: Route) -> None:
-        held.append(route)
+        if route.request.method == "GET":
+            held.append(route)
+        else:
+            route.continue_()
 
-    page.route("**/api/tasks/chat/**", hold)
+    page.route(chat_reload(chat_id), hold)
     return held
 
 
@@ -73,7 +82,7 @@ def wait_until_held(page: Page, held: list[Route], timeout_ms: int = 15_000) -> 
         if held:
             return
         page.wait_for_timeout(100)
-    raise AssertionError("the page never asked which generations run after /compact")
+    raise AssertionError("the page never reloaded the chat after /compact")
 
 
 def test_a_late_reload_answer_keeps_the_new_generation_tracked(
@@ -91,17 +100,18 @@ def test_a_late_reload_answer_keeps_the_new_generation_tracked(
     expect(stop_button(chat)).to_have_count(0)
     chat_id = chat.page.url.rstrip("/").split("/")[-1]
 
-    held = hold_task_lookups(chat.page)
+    held = hold_chat_reloads(chat.page, chat_id)
     send(chat, "/compact")
     wait_until_held(chat.page, held)
     with account.client() as client:
-        stale = client.get(f"/api/tasks/chat/{chat_id}").json()
+        stale = client.get(f"/api/v1/chats/{chat_id}").json()
+    assert not stale.get("task_ids"), stale.get("task_ids")
 
     send(chat, second)
     expect_reply(chat, PIECES[1])
     for route in held:
         route.fulfill(json=stale)
-    chat.page.unroute("**/api/tasks/chat/**")
+    chat.page.unroute(chat_reload(chat_id))
     chat.page.wait_for_timeout(1_000)
 
     expect(stop_button(chat)).to_be_visible()
