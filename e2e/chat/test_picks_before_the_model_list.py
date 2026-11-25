@@ -314,7 +314,13 @@ def test_a_file_in_a_draft_shows_once_after_a_reload(page_for, make_user, upstre
     expect(form.get_by_text(name).first).to_be_visible()
     chat_input(page).click()
     page.keyboard.type("About the cliff")
-    saved_draft(page, name)
+    saved_draft(page, "About the cliff")
+    # the draft is kept from the moment the file shows, upload or not; reload once it is uploaded
+    page.wait_for_function(
+        """name => (JSON.parse(sessionStorage.getItem('chat-input') ?? '{}').files ?? [])
+            .some(file => file.name === name && file.status === 'uploaded')""",
+        arg=name,
+    )
 
     held = new_chat_waiting_for_models(page)
     let_models_through(page, held)
