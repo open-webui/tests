@@ -101,7 +101,12 @@ def test_a_run_whose_model_is_gone_is_recorded_as_an_error(scheduler):
     assert run["status"] == "error", run
     assert "Model not found" in run["error"]
     assert chat.status_code == 200, chat.text
-    assert prompt in str(chat.json()["chat"]["messages"])
+    asked = [
+        message["content"]
+        for message in chat.json()["chat"]["history"]["messages"].values()
+        if message["role"] == "user"
+    ]
+    assert asked == [prompt], f"the failed run's chat does not hold its prompt: {asked}"
 
 
 def test_a_run_now_run_sets_the_last_run_time(scheduler, upstream):

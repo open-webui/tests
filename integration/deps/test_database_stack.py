@@ -158,11 +158,17 @@ def test_a_chat_keeps_its_nested_json_exactly(author):
         stored = client.get(f"/api/v1/chats/{created.json()['id']}")
 
     assert stored.status_code == 200, stored.text
-    expected = {
-        **NESTED_CHAT,
-        "messages": [authored(message, author) for message in NESTED_CHAT["messages"]],
-    }
-    assert {key: stored.json()["chat"].get(key) for key in NESTED_CHAT} == expected
+    chat = stored.json()["chat"]
+    expected = {key: value for key, value in NESTED_CHAT.items() if key != "messages"}
+    assert {key: chat.get(key) for key in expected} == expected
+    # since #34689 the conversation reads back as its history, with no flat message list
+    history = chat["history"]
+    assert history["currentId"] == "m2", history
+    assert list(history["messages"]) == ["m1", "m2"], history
+    for sent, parent_id in zip(NESTED_CHAT["messages"], [None, "m1"]):
+        read = history["messages"][sent["id"]]
+        recorded = {**authored(sent, author), "parentId": parent_id}
+        assert {key: read.get(key) for key in recorded} == recorded, read
 
 
 def test_a_model_presets_json_settings_read_back_exactly(on_database):

@@ -189,16 +189,21 @@ def test_admin_can_delete_another_users_folder_at_any_depth(admin, make_user, de
     assert not _folder_exists(owner, folders[depth])
 
 
-def test_collaborator_can_delete_their_own_folder_inside_the_shared_one(shared_tree):
+def test_collaborator_keeps_and_deletes_their_own_folder_after_a_refused_move(shared_tree):
+    """Since PR #34978 a folder moves only into a folder its mover owns."""
     folders, collaborator = shared_tree
     own_folder = _create_folder(collaborator)
     with collaborator.client() as client:
         moved = client.post(
             f"/api/v1/folders/{own_folder}/update/parent", json={"parent_id": folders["root"]}
         )
-    assert moved.status_code == 200, moved.text
+        assert moved.status_code == 403, moved.text
+        kept = client.get(f"/api/v1/folders/{own_folder}")
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["parent_id"] is None, f"the refused move still moved it: {kept.json()}"
 
     assert _delete_folder(collaborator, own_folder).status_code == 200
+    assert not _folder_exists(collaborator, own_folder)
 
 
 def test_user_without_chat_delete_can_delete_an_empty_folder(chat_delete_denied, make_user):
