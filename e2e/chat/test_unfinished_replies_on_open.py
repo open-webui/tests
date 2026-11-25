@@ -13,6 +13,9 @@ Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), a
 dragged into a tab beside a new chat. On dev c15f28649 a chat in a tab drew its replies without
 the reply rows of the main chat (no filed issue), so the side variants are red there; they pass
 on dev e791cbdde, with PR open-webui/open-webui#34064.
+
+On dev 45f28636f every test is red again (open-webui/open-webui#35022): the copy of the chat the
+page fetches on joining its live session puts the stored unfinished state back over the replies.
 """
 
 from __future__ import annotations
