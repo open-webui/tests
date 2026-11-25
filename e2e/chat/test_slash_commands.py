@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 
 import pytest
@@ -35,7 +36,14 @@ from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_surface import EVERYWHERE, REPLY_TIMEOUT_MS, TEMPORARY_SIDE, ChatSurface
+from utils.chat_surface import (
+    EVERYWHERE,
+    MAIN_CHAT,
+    REPLY_TIMEOUT_MS,
+    SIDE_CHAT,
+    TEMPORARY_SIDE,
+    ChatSurface,
+)
 from utils.chat_ui import chat_input, expect_reply, replies, send
 from utils.model_selector import model_search
 
@@ -257,3 +265,43 @@ def test_compact_is_offered_and_typed_summarizes_the_earlier_turns(
     assert summaries, f"/compact typed in the {chat.place} had nothing summarized"
     sent = _sent_as_a_message(upstream, "/compact")
     assert not sent, f"/compact typed in the {chat.place} went to the model: {sent}"
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT, SIDE_CHAT)
+def test_compact_and_fork_in_a_menu_opened_during_the_reply_are_usable_once_it_ends(
+    chat_for, make_user, upstream, compaction
+):
+    """The / menu opened while a reply runs kept Compact and Fork greyed out after the reply ended
+    (open-webui/open-webui#35026)."""
+    chat = chat_for(make_user())
+    question = f"When did the ferry leave? ({uuid.uuid4().hex[:8]})"
+    rest_of_reply = threading.Event()
+    upstream.queue(
+        reply.text(
+            ["The ferry ", "left at nine."],
+            match=reply.answering(question),
+            hold=rest_of_reply,
+            hold_after=1,
+        )
+    )
+    send(chat, question)
+    expect(chat.stop_button).to_be_visible()
+    menu = _command_menu(chat, "")
+    compact = menu.get_by_role("button", name=re.compile(r"^Compact:"))
+    fork = menu.get_by_role("button", name=re.compile(r"^Fork:"))
+    expect(compact, "Compact is usable while the reply still runs").to_be_disabled()
+    expect(fork, "Fork is usable while the reply still runs").to_be_disabled()
+
+    rest_of_reply.set()
+    expect_reply(chat, "The ferry left at nine.")
+    expect(chat.stop_button).to_be_hidden(timeout=REPLY_TIMEOUT_MS)
+    expect(fork, "Fork stays greyed out after the reply ended").to_be_enabled()
+    expect(compact, "Compact stays greyed out after the reply ended").to_be_enabled()
+
+    def is_summary_of_the_question(body: dict) -> bool:
+        return not body.get("stream") and question in json.dumps(body["messages"])
+
+    upstream.queue(reply.text(SUMMARY, match=is_summary_of_the_question))
+    with chat.page.expect_response(lambda response: response.url.endswith("/compact")) as done:
+        compact.click()
+    assert done.value.json().get("compacted") is True, done.value.text()
