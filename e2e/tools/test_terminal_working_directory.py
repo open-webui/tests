@@ -91,6 +91,14 @@ and in a folder chat the Machine menu is disabled, so a model with another defau
 leaves the chat on the folder's terminal and directory (the turned-off-or-changed test this
 replaced pinned open-webui/open-webui#33973). The retargeted folder tests pass on the dev
 9d19883f1 build.
+
+Instant first message (0.13.4, c26c928ce): a new chat in a picked folder is created and opened in
+that folder when its first message is sent, and the message shows at once meanwhile; before, it
+stayed in the box until the chat existed. The test holds the chat's creation and then checks the
+reply, the address, the sidebar entry and the stored terminal and folder.
+Discriminates: passes on the dev f80a4f782 build and fails on a build of it with the order before
+c26c928ce, where the chat is set up before the message is posted (the message waits for the held
+creation); the picked-folder test, run as a control on that build, passes.
 """
 
 from __future__ import annotations
@@ -109,7 +117,7 @@ from typing import Iterator
 from urllib.parse import urlparse
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from harness import upstream as reply
 from harness.access import grant
@@ -118,7 +126,8 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
 from utils.chat_surface import show_the_folders_chat, start_on_folder_page
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, send
+from utils.chat_ui import conversation as shown_conversation
 from utils.model_editor import choose_model_default_terminal, save
 from utils.model_selector import SELECTOR_BUTTON, select_model
 from utils.sidebar_folders import (
@@ -297,6 +306,43 @@ def test_commands_run_in_the_folder_picked_for_the_chat_and_it_stays_after_a_rel
     assert (terminal_id, stored.rstrip("/")) == (terminal["id"], str(moved)), (
         f"the chat is stored with {terminal_id!r} in {stored!r} after the folder was changed"
     )
+
+
+def test_the_first_message_shows_while_the_chat_in_the_picked_folder_is_created(
+    page_for, make_user, terminal, open_terminal, upstream
+):
+    person = make_user()
+    page = page_for(person)
+    pick_terminal(page, TERMINAL)
+    folder = _directory(open_terminal)
+    choose_directory(page, folder)
+    question = f"set up yet? {uuid.uuid4().hex[:8]}"
+    upstream.queue(reply.text("all set up", match=reply.answering(question)))
+
+    creations: list[Route] = []
+    page.route("**/api/v1/chats/new", lambda route: creations.append(route))
+    try:
+        send(page, question)
+        for _ in range(150):
+            if creations:
+                break
+            page.wait_for_timeout(100)
+        assert creations, "the page never created the chat"
+        expect(
+            shown_conversation(page).get_by_text(question),
+            "the first message waited for its chat to be created",
+        ).to_be_visible()
+        expect(chat_input(page)).not_to_contain_text(question)
+    finally:
+        for route in creations:
+            route.continue_()
+        page.unroute("**/api/v1/chats/new")
+
+    expect_reply(page, "all set up")
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    chat_id = urlparse(page.url).path.removeprefix("/c/")
+    expect(page.locator(f'a[href="/c/{chat_id}"]')).to_contain_text(question)
+    assert kept_with_the_chat(person, page) == (terminal["id"], f"{folder}/")
 
 
 def test_a_temporary_chat_saved_afterwards_keeps_its_terminal_and_directory(

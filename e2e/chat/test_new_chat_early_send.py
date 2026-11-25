@@ -25,19 +25,33 @@ the message back into the box to send again. The second test holds the creation,
 the message shows while the creation is held, is back in the box after the refusal and gets its
 reply when sent again. Retargeted for c26c928ce from the box-only behaviour of 03d8d3e35; passes
 on dev 53d741157.
+
+Instant first message (0.13.4): the first message of a new chat shows at once while the chat is
+still being created, unless a file is still uploading with it. The third test holds whatever
+creates the chat and checks the message is in the conversation and out of the box meanwhile, then
+that the reply arrives in a saved chat with its own address, its sidebar entry and both messages
+stored. The fourth holds an attached file's upload: the message sent meanwhile stays on screen but
+reaches the model only once the upload is done, and the model can read the file. The same check for
+a chat in a picked folder is in e2e/tools/test_terminal_working_directory.py.
+Discriminates: both pass on the dev f80a4f782 build. On a build of it that creates the chat
+before it shows the first message and sends a message with a file still uploading at once, both
+fail (the message waits for the held creation; the model is asked before the upload is done).
 """
 
 from __future__ import annotations
 
+import json
 import re
+import time
 import uuid
 
 import pytest
 from playwright.sync_api import Page, Route, expect
 
 from harness import upstream as reply
+from utils.cached_chat import this_turns_tool_results
 from utils.chat_surface import open_new_chat_tab
-from utils.chat_ui import chat_input, conversation, expect_reply
+from utils.chat_ui import chat_input, conversation, expect_reply, open_input_menu, send
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -123,3 +137,111 @@ def test_the_first_message_of_a_side_chat_comes_back_to_the_box_when_its_chat_is
     page.keyboard.press("Enter")
     side.expect_reply("early answer")
     expect(side.conversation.get_by_text(question)).to_be_visible()
+
+
+CHAT_CREATION = re.compile(r"/api/v1/chats/new$|/api/chat/completions$")
+FILE_UPLOAD = re.compile(r"/api/v1/files/(\?|$)")
+
+
+def hold_uploads(page: Page) -> list[Route]:
+    held: list[Route] = []
+
+    def handle(route: Route) -> None:
+        if route.request.method == "POST":
+            held.append(route)
+        else:
+            route.continue_()
+
+    page.route(FILE_UPLOAD, handle)
+    return held
+
+
+def stored_messages(owner, chat_id: str, answer: str) -> list[dict]:
+    """The chat's stored messages once the reply holding `answer` is saved as done."""
+    stored: dict = {}
+    with owner.client() as client:
+        for _ in range(100):
+            found = client.get(f"/api/v1/chats/{chat_id}")
+            assert found.status_code == 200, found.text
+            stored = found.json()["chat"]["history"]["messages"]
+            if any(m.get("done") and answer in json.dumps(m) for m in stored.values()):
+                return list(stored.values())
+            time.sleep(0.1)
+    raise AssertionError(f"the reply was never saved in the chat; it holds {stored}")
+
+
+def test_the_first_message_of_a_new_chat_shows_while_the_chat_is_created(
+    page_for, make_user, upstream
+):
+    owner = make_user()
+    page = page_for(owner)
+    question = f"instant question {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.text("instant answer", match=reply.answering(question)))
+
+    creations = hold(page, CHAT_CREATION)
+    try:
+        send(page, question)
+        wait_until_held(page, creations, "the new chat to be created")
+        expect(
+            conversation(page).get_by_text(question),
+            "the first message waited for its chat to be created",
+        ).to_be_visible()
+        expect(chat_input(page)).not_to_contain_text(question)
+    finally:
+        for route in creations:
+            route.continue_()
+        page.unroute(CHAT_CREATION)
+
+    expect_reply(page, "instant answer")
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    chat_id = page.url.rsplit("/c/", 1)[1]
+    expect(
+        page.locator(f'a[href="/c/{chat_id}"]'), "the new chat is missing in the sidebar"
+    ).to_contain_text(question)
+    saved = stored_messages(owner, chat_id, "instant answer")
+    assert [m["content"] for m in saved if m["role"] == "user"] == [question], saved
+
+
+def test_the_first_message_waits_for_a_file_still_uploading_with_it(page_for, make_user, upstream):
+    owner = make_user()
+    page = page_for(owner)
+    question = f"what does the attachment say? {uuid.uuid4().hex[:6]}"
+    answering = reply.answering(question)
+    upstream.queue(
+        reply.tool_call("grep_chat_files", {"pattern": "mentions"}, match=answering),
+        reply.text("Noted.", match=answering),
+    )
+
+    uploads = hold_uploads(page)
+    try:
+        menu = open_input_menu(page)
+        with page.expect_file_chooser() as chooser:
+            menu.get_by_role("menuitem", name="Upload Files").click()
+        chooser.value.set_files(
+            {
+                "name": "harbour.txt",
+                "mimeType": "text/plain",
+                "buffer": b"The file mentions herons.",
+            }
+        )
+        wait_until_held(page, uploads, "the file to be uploaded")
+        send(page, question)
+        expect(
+            page.get_by_role("main").get_by_text(question).first, "the message was lost"
+        ).to_be_visible()
+        page.wait_for_timeout(1500)  # bounded: nothing may reach the model while the file uploads
+        asked = [body for body in upstream.chat_requests() if answering(body)]
+        assert not asked, "the first message went out while its file was still uploading"
+    finally:
+        for route in uploads:
+            route.continue_()
+        page.unroute(FILE_UPLOAD)
+
+    expect_reply(page, "Noted.")
+    expect(page).to_have_url(re.compile(r"/c/[\w-]+$"))
+    expect(conversation(page).get_by_text("harbour.txt")).to_be_visible()
+    answered = [body for body in upstream.chat_requests() if answering(body)]
+    read_back = json.dumps(this_turns_tool_results(answered[-1]))
+    assert "herons" in read_back, (
+        f"the model could not read the file; its tools returned {read_back}"
+    )
