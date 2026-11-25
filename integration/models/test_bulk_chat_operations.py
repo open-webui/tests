@@ -39,6 +39,10 @@ and returns them).
 Regression open-webui/open-webui#35053: deleting a folder with its chats left the sub-agent
 conversations of those chats behind, still counted and listed in the admin analytics, while every
 other way of deleting the chat removed them. Red on dev f80a4f782 until the fix merges.
+
+Regression open-webui/open-webui#35057: deleting a note, on its own or with the folder holding it,
+left the chat of its chat panel behind, still counted, listed and returned in the admin
+analytics. Red on dev 893584700 in both cases until the fix merges.
 """
 
 from __future__ import annotations
@@ -708,6 +712,73 @@ def test_a_deleted_chat_takes_its_subagents_words_with_it(
     assert missing == [], f"before the deletion the chat was already missing from {missing}"
     assert still_showing(after) == [], (
         f"the deleted chat's sub-agent still shows in {still_showing(after)}"
+    )
+
+
+@pytest.fixture
+def notes_on(admin, preserve):
+    preserve("admin_config")
+    with admin.client() as client:
+        config = client.get("/api/v1/auths/admin/config").json()
+        saved = client.post("/api/v1/auths/admin/config", json={**config, "ENABLE_NOTES": True})
+    assert saved.status_code == 200, saved.text
+
+
+def talk_in_a_note(client: httpx.Client, upstream, model: str, word: str, folder_id: str):
+    """A note in the folder and its chat, where `word` was asked and answered; both ids."""
+    created = client.post(
+        "/api/v1/notes/create",
+        json={
+            "title": f"Note {uuid.uuid4().hex[:6]}",
+            "folder_id": folder_id,
+            "data": {"content": {"md": "ferns", "html": "<p>ferns</p>", "json": None}},
+        },
+    )
+    assert created.status_code == 200, created.text
+    note_id = created.json()["id"]
+    opened = client.post(f"/api/v1/notes/{note_id}/chat")
+    assert opened.status_code == 200, opened.text
+    chat_id = opened.json()["id"]
+    question = f"Tell me about {word}"
+    upstream.queue(reply.text(f"{word} is a fern", usage=USAGE, match=reply.answering(question)))
+    _, stored = ask(client, question, chat_id=chat_id, model=model)
+    assert stored["content"] == f"{word} is a fern", stored
+    return note_id, chat_id
+
+
+@pytest.mark.parametrize("delete", ["the note", "its folder"])
+def test_a_deleted_notes_chat_is_gone_from_every_search_export_and_report(
+    delete, admin, make_user, upstream, deletion_model, community_sharing, notes_on
+):
+    """open-webui/open-webui#35057."""
+    owner, word = make_user(), unique_word()
+    with owner.client() as client, admin.client() as admin_client:
+        folder_id = create_folder(client)
+        note_id, chat_id = talk_in_a_note(client, upstream, deletion_model, word, folder_id)
+
+        def everywhere() -> dict[str, bool]:
+            return {
+                **owner_sees(client, word, [chat_id]),
+                **admin_sees(admin_client, owner.id, deletion_model, word, [chat_id]),
+            }
+
+        before = everywhere()
+        if delete == "the note":
+            deleted = client.delete(f"/api/v1/notes/{note_id}/delete")
+        else:
+            folder = f"/api/v1/folders/{folder_id}"
+            deleted = client.delete(folder, params={"delete_contents": True})
+
+        assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+        assert client.get(f"/api/v1/notes/{note_id}").status_code == 404
+        after = everywhere()
+    # a note's chat stays out of the chat list, the searches and the exports while it exists
+    shown_before = still_showing(before)
+    assert "the analytics messages of the owner" in shown_before, (
+        f"before the deletion analytics did not count the note's chat: {before}"
+    )
+    assert still_showing(after) == [], (
+        f"the deleted note's chat still shows in {still_showing(after)}"
     )
 
 
