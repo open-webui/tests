@@ -37,7 +37,7 @@ from playwright.sync_api import Page, Route, expect
 
 from harness import upstream as reply
 from utils.chat_surface import open_new_chat_tab
-from utils.chat_ui import chat_input, conversation, expect_reply, send
+from utils.chat_ui import chat_input, conversation, expect_reply
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -68,8 +68,13 @@ def test_a_first_message_sent_during_new_chat_setup_keeps_its_reply(page_for, ma
     page.reload()
     wait_until_held(page, model_lists, "the model list")
 
-    # the input is offered before the setup, which waits for the model list
-    send(page, question)
+    # the input is offered before the setup, which waits for the model list; typed here since
+    # send() waits for the model the setup picks
+    expect(chat_input(page)).to_be_visible()
+    expect(page.get_by_role("button", name="Selected model")).to_have_count(0)
+    chat_input(page).click()
+    page.keyboard.type(question)
+    page.keyboard.press("Enter")
     expect(chat_input(page), "a message sent during setup left the box").to_contain_text(question)
     with page.expect_response(MODEL_LIST):
         for route in model_lists:
