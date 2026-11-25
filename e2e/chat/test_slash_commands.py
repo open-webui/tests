@@ -35,7 +35,7 @@ from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, ChatSurface
+from utils.chat_surface import EVERYWHERE, REPLY_TIMEOUT_MS, TEMPORARY_SIDE, ChatSurface
 from utils.chat_ui import chat_input, expect_reply, replies, send
 from utils.model_selector import model_search
 
@@ -66,6 +66,8 @@ def _ask(chat: ChatSurface, upstream, question: str, answer: str) -> None:
     upstream.queue(reply.text(answer, match=reply.answering(question)))
     send(chat, question)
     expect_reply(chat, answer)
+    # the answer shows before the reply ends, and /compact waits for the end
+    expect(chat.stop_button).to_be_hidden(timeout=REPLY_TIMEOUT_MS)
 
 
 def _sent_as_a_message(upstream, text: str) -> list[dict]:
