@@ -10,6 +10,10 @@ by a marker in the prompt text:
 - `[work]` runs two commands (the second fails), reads three files and edits one, then
   answers; `COMMANDS`, `READS` and `EDITED` say what each step does.
 - `[permission]` asks the client to allow a command and answers with the option it got back.
+- `[escalate]` runs the routine `ROUTINE`, then asks to be allowed the risky `RISKY` and
+  answers with `escalation_answer(...)`. Started with `--permission-mode auto`, as Open
+  Terminal starts Grok for Auto, its own review approves the routine command; otherwise it
+  asks for that one too.
 - `[ask]` asks the user a form question and answers with the value it got back.
 - `[refuse]` answers the prompt with a JSON-RPC error.
 - `[crash]` exits with status 3 halfway through the turn.
@@ -53,6 +57,23 @@ EDITED_BEFORE = "harbour log\nferry at nine\nend of log\n"
 EDITED_AFTER = "harbour log\nferry at ten\nend of log\n"
 EDITED_DIFF = "@@ -1,3 +1,3 @@\n harbour log\n-ferry at nine\n+ferry at ten\n end of log\n"
 WORK_DONE = "The harbour work is done."
+# what `[escalate]` does, also for `harness/fake_native_agent.py`
+ROUTINE = "git status"
+ROUTINE_OUTPUT = "nothing to commit, working tree clean\n"
+RISKY = "rm -rf build"
+# the routine command's outcome when the agent's own review approved it
+SELF_APPROVED = "self-approved"
+
+
+def escalation_answer(routine: str, risky: str) -> str:
+    return f"Routine: {routine}. Escalated: {risky}."
+
+
+def reviews_itself(arguments: list[str]) -> bool:
+    """Whether the agent was started to approve routine actions with its own review."""
+    flag = "--permission-mode"
+    return flag in arguments and arguments[arguments.index(flag) + 1 :][:1] == ["auto"]
+
 
 state = {"model": "fake-fast", "session": None, "next_id": 1000}
 
@@ -135,6 +156,38 @@ def tool(call_id: str, kind: str, title: str, outcome: str = "completed", **fiel
     update("tool_call_update", toolCallId=call_id, status=outcome, rawOutput=raw_output)
 
 
+def permission(call_id: str, title: str, command: str) -> str:
+    """Ask the client to allow `command`; returns the option it picked."""
+    answer = ask_client(
+        "session/request_permission",
+        {
+            "sessionId": state["session"],
+            "toolCall": {
+                "toolCallId": call_id,
+                "title": title,
+                "kind": "execute",
+                "rawInput": {"command": command},
+            },
+            "options": [
+                {"optionId": "allow-it", "name": "Allow", "kind": "allow_once"},
+                {"optionId": "deny-it", "name": "Reject", "kind": "reject_once"},
+            ],
+        },
+    )
+    outcome = (answer.get("result") or {}).get("outcome") or {}
+    return outcome.get("optionId") or outcome.get("outcome")
+
+
+def escalate() -> None:
+    routine = SELF_APPROVED
+    if not reviews_itself(sys.argv[1:]):
+        routine = permission("shell-0", f"Run {ROUTINE}", ROUTINE)
+    if routine in (SELF_APPROVED, "allow-it"):
+        tool("shell-0", "execute", ROUTINE, rawInput={"command": ROUTINE}, rawOutput=ROUTINE_OUTPUT)
+    risky = permission("shell-1", "Remove the build folder", RISKY)
+    say(escalation_answer(routine, risky))
+
+
 def work() -> None:
     folder = os.getcwd()
     for number, (command, output, exit_code) in enumerate(COMMANDS):
@@ -202,25 +255,11 @@ def run_turn(request_id, params: dict) -> None:
         say("The notes start with: first line of notes")
     elif "[work]" in text:
         work()
+    elif "[escalate]" in text:
+        escalate()
     elif "[permission]" in text:
-        answer = ask_client(
-            "session/request_permission",
-            {
-                "sessionId": state["session"],
-                "toolCall": {
-                    "toolCallId": "shell-1",
-                    "title": "Remove the build folder",
-                    "kind": "execute",
-                    "rawInput": {"command": "rm -rf build"},
-                },
-                "options": [
-                    {"optionId": "allow-it", "name": "Allow", "kind": "allow_once"},
-                    {"optionId": "deny-it", "name": "Reject", "kind": "reject_once"},
-                ],
-            },
-        )
-        outcome = (answer.get("result") or {}).get("outcome") or {}
-        say(f"Permission outcome: {outcome.get('optionId') or outcome.get('outcome')}")
+        outcome = permission("shell-1", "Remove the build folder", RISKY)
+        say(f"Permission outcome: {outcome}")
     elif "[ask]" in text:
         answer = ask_client(
             "elicitation/create",

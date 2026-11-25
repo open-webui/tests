@@ -45,6 +45,13 @@ frontend build with the `terminal` checks of the model item menu and the base mo
 A Pi agent model pinned to the sidebar opens a new chat on that model (#34168, PR #34171). The
 test passes on the dev 485103cde build and fails in a backend copy that URL-quotes the model name
 in the id again (the chat opens on "Select a model").
+
+In Auto (0.13.4), picked in the message input's Tool Permissions, Codex runs a routine command with
+its own review and the person answers only what it escalates: the reply shows the routine command
+as run with its output and a single request, which names the risky command once opened, and its
+Allow reaches Codex. Discriminates: passes on the dev f80a4f782 build with Open Terminal 0.18.1;
+fails with a backend copy that starts the agent as for Ask whatever the chat's mode (the routine
+command waits for the person in place of running).
 """
 
 from __future__ import annotations
@@ -58,7 +65,14 @@ from playwright.sync_api import Locator, Page, expect
 from harness import upstream as reply
 from harness.agent_carrier import agent, catalog, serving_agents
 from harness.coding_agent import FAST, connect_agent_terminal
-from harness.fake_acp_agent import REFUSAL
+from harness.fake_acp_agent import (
+    REFUSAL,
+    RISKY,
+    ROUTINE,
+    ROUTINE_OUTPUT,
+    SELF_APPROVED,
+    escalation_answer,
+)
 from harness.plain_http import loopback_url
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -85,6 +99,7 @@ from utils.chat_ui import (
     set_tool_approval_mode,
 )
 from utils.model_selector import model_options, model_search, select_model
+from utils.reply_steps import open_step, open_steps
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -119,6 +134,21 @@ def tool_approval_on(admin, preserve) -> None:
     with admin.client() as client:
         current = client.get(CHAT_CONFIG[0]).json()
         saved = client.post(CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True})
+    assert saved.status_code == 200, saved.text
+
+
+@pytest.fixture
+def auto_permissions_on(admin, preserve) -> None:
+    """Tool Permissions with Auto offered, reviewed by the default engine."""
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        changes = {
+            "ENABLE_TOOL_PERMISSIONS": True,
+            "ENABLE_TOOL_PERMISSIONS_AUTO": True,
+            "TOOL_PERMISSIONS_AUTO_ENGINE": "",
+        }
+        saved = client.post(CHAT_CONFIG[1], json={**current, **changes})
     assert saved.status_code == 200, saved.text
 
 
@@ -280,6 +310,33 @@ def test_an_agent_permission_request_can_be_denied_from_the_chat(agent_chat, too
     deny.click()
 
     expect_reply(page, "Permission outcome: deny-it")
+
+
+def test_in_auto_codex_runs_routine_commands_itself_and_the_person_answers_only_its_escalation(
+    page_for, make_user, admin, preserve, native_agent_terminal, auto_permissions_on
+):
+    preserve(TERMINAL_SERVERS_CONFIG)
+    person = make_user()
+    name = f"Agent box {uuid.uuid4().hex[:6]}"
+    connect_agent_terminal(admin, native_agent_terminal, person, name=name)
+    page = page_for(person)
+    choose_terminal(page, name)
+    select_model(page, "codex/codex-fake")
+    set_tool_approval_mode(page, "Auto")
+
+    send(page, f"[escalate] tidy up {uuid.uuid4().hex[:6]}")
+    allow = conversation(page).get_by_role("button", name="Allow", exact=True)
+    expect(allow).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
+    waiting = last_reply(page)
+    open_steps(waiting)
+    routine = open_step(waiting, f"Ran {ROUTINE}")
+    expect(routine).to_contain_text(ROUTINE_OUTPUT.strip())
+    request = open_step(waiting, "Allow agent_tool?")
+    expect(request).to_contain_text(RISKY)
+    request.get_by_role("button", name="Allow", exact=True).click()
+
+    expect_reply(page, escalation_answer(SELF_APPROVED, "accept"))
+    expect(allow).to_have_count(0)
 
 
 def test_an_agent_question_is_answered_on_its_card(agent_chat):

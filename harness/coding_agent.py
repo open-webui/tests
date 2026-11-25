@@ -10,6 +10,10 @@ shows up. `AgentTerminal.log()` reads what the agent processes received.
 terminal's Claude Code, Codex and Pi: the three agents that speak a protocol of their own.
 `messages(agent)` and `started(agent)` read what each of them received and was started with.
 
+`serving_agent_terminal(grok_and_added=True)` installs `harness/fake_acp_agent.py` as the
+terminal's Grok and as `ADDED_AGENT`, an agent the admin adds to Open Terminal with
+`OPEN_TERMINAL_ACP_AGENTS`, which Open Terminal names `ADDED_PROVIDER`; OpenCode is not installed.
+
 `install_agent(client, terminal_id)` puts the same stand-in into a machine of a terminal on the
 Terminals orchestrator, where the agent has to be inside the container: as `opencode` on the
 machine user's own path, through Open WebUI's proxy.
@@ -47,12 +51,16 @@ NATIVE_COMMANDS = (
     "OPEN_TERMINAL_CODEX_COMMAND",
     "OPEN_TERMINAL_PI_COMMAND",
 )
+GROK_COMMAND = "OPEN_TERMINAL_GROK_COMMAND"
 OTHER_AGENT_COMMANDS = (
     "OPEN_TERMINAL_CURSOR_COMMAND",
-    "OPEN_TERMINAL_GROK_COMMAND",
+    GROK_COMMAND,
     "OPEN_TERMINAL_CLINE_COMMAND",
     "OPEN_TERMINAL_GEMINI_COMMAND",
 )
+ADDED_AGENT, ADDED_NAME = "harbour", "Harbour"
+# Open Terminal prefixes the ids of added agents so they never shadow its own
+ADDED_PROVIDER = f"acp-{ADDED_AGENT}"
 
 
 def model_id(terminal_id: str, model: str = FAST, provider: str = PROVIDER) -> str:
@@ -142,18 +150,27 @@ def install_agent(client: httpx.Client, terminal_id: str, **context) -> None:
 
 
 @contextlib.contextmanager
-def serving_agent_terminal(native: bool = False) -> Iterator[AgentTerminal]:
+def serving_agent_terminal(
+    native: bool = False, grok_and_added: bool = False
+) -> Iterator[AgentTerminal]:
     scratch = Path(tempfile.mkdtemp(prefix="fake-agent-"))
     command = scratch / "agent"
     script = NATIVE_AGENT_SCRIPT if native else AGENT_SCRIPT
     command.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n')
     command.chmod(command.stat().st_mode | stat.S_IXUSR)
     log_path = scratch / "agent.jsonl"
-    installed, missing = (
-        (NATIVE_COMMANDS, ACP_COMMANDS) if native else (ACP_COMMANDS, NATIVE_COMMANDS)
-    )
-    env = {name: str(scratch / "not-installed") for name in (*OTHER_AGENT_COMMANDS, *missing)}
+    if native:
+        installed, missing = NATIVE_COMMANDS, ACP_COMMANDS
+    elif grok_and_added:
+        installed, missing = (GROK_COMMAND,), (*ACP_COMMANDS, *NATIVE_COMMANDS)
+    else:
+        installed, missing = ACP_COMMANDS, NATIVE_COMMANDS
+    not_installed = {*OTHER_AGENT_COMMANDS, *missing} - set(installed)
+    env = {name: str(scratch / "not-installed") for name in not_installed}
     env.update({name: str(command) for name in installed}, FAKE_AGENT_LOG=str(log_path))
+    if grok_and_added:
+        added = {ADDED_AGENT: {"name": ADDED_NAME, "command": str(command)}}
+        env["OPEN_TERMINAL_ACP_AGENTS"] = json.dumps(added)
     try:
         with serving_open_terminal(env=env) as terminal:
             yield AgentTerminal(terminal=terminal, log_path=log_path)

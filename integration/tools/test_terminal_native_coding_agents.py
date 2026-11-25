@@ -52,6 +52,13 @@ twice a second, and that lookup read every message of the chat to return one, so
 chat the server kept working for as long as nobody answered (open-webui/open-webui#34674). It
 now reads only that reply (fixed by 0f71ee15a). Discriminates: fails on dev d74882eee and
 a43c15c7b (about 1 s of server CPU in 6 s of waiting), passes on dev c6ef4a523.
+
+Auto for tool permissions (0.13.4) lets Claude Code and Codex approve routine actions with their
+own review: in Auto the person is asked only about the command the agent escalates, the agent gets
+their answer, and the routine command shows as run with its output. With Ask for approval the same
+turn asks for both. Discriminates: passes on dev f80a4f782 with Open Terminal 0.18.1; fails in a
+backend copy that starts the agent as for Ask whatever the chat's mode (the person is asked about
+the routine command too) and in one that approves every agent request in Auto (nobody is asked).
 """
 
 from __future__ import annotations
@@ -70,6 +77,7 @@ import pytest
 from harness.backends import read_rows
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import AgentTerminal, connect_agent_terminal, model_id
+from harness.fake_acp_agent import ROUTINE, ROUTINE_OUTPUT, SELF_APPROVED, escalation_answer
 from harness.fake_native_agent import (
     COMMAND,
     NOTES,
@@ -80,7 +88,12 @@ from harness.fake_native_agent import (
 )
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
-from integration.tools.test_terminal_coding_agents import after_the_second_of
+from integration.tools.test_terminal_coding_agents import (
+    after_the_second_of,
+    answer_every_request,
+    commands_asked_about,
+    routine_runs,
+)
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -169,6 +182,21 @@ def tool_permissions(admin, preserve):
         current = client.get(CHAT_CONFIG[0]).json()
         saved = client.post(CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True})
     assert saved.status_code == 200, f"switching tool permissions on failed: {saved.text}"
+
+
+@pytest.fixture
+def auto_permissions(admin, preserve):
+    """Tool Permissions with Auto offered, reviewed by the default engine."""
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        changes = {
+            "ENABLE_TOOL_PERMISSIONS": True,
+            "ENABLE_TOOL_PERMISSIONS_AUTO": True,
+            "TOOL_PERMISSIONS_AUTO_ENGINE": "",
+        }
+        saved = client.post(CHAT_CONFIG[1], json={**current, **changes})
+    assert saved.status_code == 200, f"switching Auto permissions on failed: {saved.text}"
 
 
 def _send(client: httpx.Client, terminal_id: str, native: Native, text: str, **extra) -> ChatTurn:
@@ -330,6 +358,41 @@ def test_a_request_to_be_allowed_a_command_waits_for_the_person_and_follows_thei
     assert reply["content"] == f"Permission outcome: {outcome}", (
         f"the agent did not get the person's answer: {reply}"
     )
+
+
+@pytest.mark.parametrize("native", [CLAUDE, CODEX], ids=lambda native: native.provider)
+def test_in_auto_the_agent_runs_routine_commands_itself_and_asks_only_for_what_it_escalates(
+    native, make_user, connect, auto_permissions
+):
+    person = make_user()
+    terminal_id = connect(person)
+
+    with person.client() as client:
+        auto = _send(
+            client, terminal_id, native, "[escalate] tidy up", params={"tool_approval_mode": "auto"}
+        )
+        auto_asked, auto_reply = answer_every_request(client, auto)
+        ask = _send(
+            client, terminal_id, native, "[escalate] tidy up", params={"tool_approval_mode": "ask"}
+        )
+        ask_asked, ask_reply = answer_every_request(client, ask)
+
+    assert commands_asked_about(auto_asked) == [COMMAND], (
+        f"in Auto {native.provider} showed the person requests for "
+        f"{commands_asked_about(auto_asked)} where only {COMMAND!r} was escalated: {auto_asked}"
+    )
+    assert [item["name"] for item in auto_asked] == [native.asks_as], auto_asked
+    assert auto_reply["content"] == escalation_answer(SELF_APPROVED, native.allowed), (
+        f"{native.provider} did not get the person's answer in Auto: {auto_reply.get('content')!r}"
+    )
+    runs = routine_runs(auto_reply)
+    assert runs == [{"status": "completed", "output": ROUTINE_OUTPUT}], (
+        f"the routine command {native.provider} approved itself is not shown once as run: {runs}"
+    )
+    assert commands_asked_about(ask_asked) == [ROUTINE, COMMAND], (
+        f"with Ask for approval {native.provider} did not ask for each action: {ask_asked}"
+    )
+    assert ask_reply["content"] == escalation_answer(native.allowed, native.allowed), ask_reply
 
 
 @each_agent

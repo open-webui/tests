@@ -13,6 +13,10 @@ What a turn does is chosen by a marker in the prompt, as in `harness/fake_acp_ag
 - `[work]` (Codex) runs two commands (the second fails), reads three files and edits one,
   then answers, with the steps of `harness/fake_acp_agent.py`.
 - `[permission]` asks to be allowed a command and answers with the decision it got back.
+- `[escalate]` (Claude Code, Codex) runs a routine command, then asks to be allowed a risky
+  one, as in `harness/fake_acp_agent.py`. Its own review approves the routine one when
+  started for Auto: Claude Code with `--permission-mode auto`, Codex with a thread whose
+  approvals go to `auto_review`.
 - `[ask]` asks the person which colour and answers with the value it got back.
 - `[refuse]` fails the turn the way that agent reports a failed turn.
 - `[slow]` starts answering, then waits to be interrupted.
@@ -29,9 +33,31 @@ import time
 import uuid
 
 try:
-    from harness.fake_acp_agent import COMMANDS, EDITED, EDITED_DIFF, READS, WORK_DONE
+    from harness.fake_acp_agent import (
+        COMMANDS,
+        EDITED,
+        EDITED_DIFF,
+        READS,
+        ROUTINE,
+        ROUTINE_OUTPUT,
+        SELF_APPROVED,
+        WORK_DONE,
+        escalation_answer,
+        reviews_itself,
+    )
 except ImportError:  # run as a script by Open Terminal, from inside harness/
-    from fake_acp_agent import COMMANDS, EDITED, EDITED_DIFF, READS, WORK_DONE
+    from fake_acp_agent import (
+        COMMANDS,
+        EDITED,
+        EDITED_DIFF,
+        READS,
+        ROUTINE,
+        ROUTINE_OUTPUT,
+        SELF_APPROVED,
+        WORK_DONE,
+        escalation_answer,
+        reviews_itself,
+    )
 
 REFUSAL = "The fake agent refused the prompt"
 QUESTION = "Which colour should the button be?"
@@ -139,6 +165,21 @@ def claude() -> None:
             ):
                 return response.get("response") or {}
 
+    def run_bash(command: str, output: str) -> None:
+        use = {"type": "tool_use", "id": "toolu_2", "name": "Bash", "input": {"command": command}}
+        done = {"type": "tool_result", "tool_use_id": "toolu_2", "content": output}
+        send({"type": "assistant", "message": {"role": "assistant", "content": [use]}})
+        send({"type": "user", "message": {"role": "user", "content": [done]}})
+
+    def escalate() -> None:
+        routine = SELF_APPROVED
+        if not reviews_itself(arguments):
+            routine = may_use("Bash", {"command": ROUTINE}).get("behavior")
+        if routine in (SELF_APPROVED, "allow"):
+            run_bash(ROUTINE, ROUTINE_OUTPUT)
+        risky = may_use("Bash", {"command": COMMAND}).get("behavior")
+        say(escalation_answer(routine, risky))
+
     def result(**fields) -> None:
         usage = {"input_tokens": 11, "output_tokens": 7}
         send({"type": "result", "session_id": session, "usage": usage, **fields})
@@ -167,6 +208,8 @@ def claude() -> None:
             send({"type": "assistant", "message": {"role": "assistant", "content": [use]}})
             send({"type": "user", "message": {"role": "user", "content": [done]}})
             say(f"The notes start with: {NOTES}")
+        elif "[escalate]" in text:
+            escalate()
         elif "[permission]" in text:
             answer = may_use("Bash", {"command": COMMAND})
             say(f"Permission outcome: {answer.get('behavior')}")
@@ -202,7 +245,13 @@ def claude() -> None:
 
 
 def codex() -> None:
-    state = {"model": None, "thread": None, "turn": f"turn-{uuid.uuid4().hex[:8]}", "next": 500}
+    state = {
+        "model": None,
+        "thread": None,
+        "turn": f"turn-{uuid.uuid4().hex[:8]}",
+        "next": 500,
+        "reviews_itself": False,
+    }
 
     def notify(method: str, **params) -> None:
         send({"method": method, "params": {"turnId": state["turn"], **params}})
@@ -252,6 +301,23 @@ def codex() -> None:
         run_item(id="edit_0", type="fileChange", changes=[change])
         say(WORK_DONE)
 
+    def escalate() -> None:
+        routine = SELF_APPROVED
+        if not state["reviews_itself"]:
+            approval = ask("item/commandExecution/requestApproval", itemId="cmd_3", command=ROUTINE)
+            routine = approval.get("decision")
+        if routine in (SELF_APPROVED, "accept"):
+            run_item(
+                id="cmd_3",
+                type="commandExecution",
+                command=ROUTINE,
+                commandActions=[{"type": "unknown", "command": ROUTINE}],
+                aggregatedOutput=ROUTINE_OUTPUT,
+                exitCode=0,
+            )
+        approval = ask("item/commandExecution/requestApproval", itemId="cmd_2", command=COMMAND)
+        say(escalation_answer(routine, approval.get("decision")))
+
     def turn(text: str) -> None:
         log({"conversation": state["thread"]})
         if "[refuse]" in text:
@@ -272,6 +338,8 @@ def codex() -> None:
             say(f"The notes start with: {NOTES}")
         elif "[work]" in text:
             work()
+        elif "[escalate]" in text:
+            escalate()
         elif "[permission]" in text:
             answer = ask("item/commandExecution/requestApproval", itemId="cmd_2", command=COMMAND)
             say(f"Permission outcome: {answer.get('decision')}")
@@ -308,6 +376,10 @@ def codex() -> None:
         elif method in ("thread/start", "thread/resume"):
             state["model"] = params.get("model")
             state["thread"] = params.get("threadId") or f"thread-{uuid.uuid4().hex[:12]}"
+            state["reviews_itself"] = (
+                params.get("approvalPolicy") == "on-request"
+                and params.get("approvalsReviewer") == "auto_review"
+            )
             send({"id": request_id, "result": {"thread": {"id": state["thread"]}}})
         elif method == "turn/start":
             send({"id": request_id, "result": {"turn": {"id": state["turn"]}}})

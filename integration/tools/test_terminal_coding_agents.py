@@ -67,6 +67,21 @@ way: the agent is told the path once, the next message does not repeat it, a fil
 terminal is refused, and an API client that sends the file on the request alone, with no stored
 message, still gets it to the agent. Discriminates: passes with the fix on dev 2e0e9f25c; fails
 on dev 2e0e9f25c (the prompt carries no path).
+
+New for 0.13.4 ("Coding agents as chat models"): any ACP agent an admin adds to Open Terminal with
+`OPEN_TERMINAL_ACP_AGENTS` works as a chat model. The stand-in is added as `harbour`: it is offered
+as `acp-harbour/<model>` next to Grok, answers with the picked model through its own command, and
+the next message continues its session. Auto for tool permissions lets Grok approve routine
+actions with its own review, so the person is asked only about what it escalates, while an added
+agent keeps asking for each action under the default engine, and the Decisions API engine reviews
+its requests as it does any tool call. Each turn (`[escalate]`) runs a routine command, then a
+risky one; with Ask for approval Grok asks for both. A real Open Terminal runs the stand-in as its
+Grok and as the added agent (`grok_and_added_agent_terminal`).
+Discriminates: these pass on dev f80a4f782 with Open Terminal 0.18.1. Mutations in a backend copy:
+the agent always started as for Ask fails the Grok case; every agent request approved without
+asking in Auto fails both Auto tests and the Decisions test; no runner for added `acp-` agents
+fails the added agent test, its Auto case and the Decisions test; the Decisions engine skipped for
+agent requests fails the Decisions test.
 """
 
 from __future__ import annotations
@@ -81,13 +96,22 @@ import pytest
 from harness import upstream as reply
 from harness.chat import ChatTurn, send_message, wait_for_reply
 from harness.coding_agent import (
+    ADDED_PROVIDER,
     DEEP,
     FAST,
     AgentTerminal,
     connect_agent_terminal,
     model_id,
 )
-from harness.fake_acp_agent import REFUSAL
+from harness.fake_acp_agent import (
+    REFUSAL,
+    RISKY,
+    ROUTINE,
+    ROUTINE_OUTPUT,
+    SELF_APPROVED,
+    escalation_answer,
+)
+from harness.listener import ReceivedRequest, json_answer
 from harness.socket_client import connected
 from harness.terminal_server import TERMINAL_SERVERS_CONFIG
 from harness.upstream import MOCK_MODEL_ID
@@ -108,12 +132,46 @@ def connect(admin, preserve, agent_terminal: AgentTerminal):
 
 
 @pytest.fixture
+def connect_grok_and_added(admin, preserve, grok_and_added_agent_terminal: AgentTerminal):
+    """`connect(*people)` saves a connection to the terminal with Grok and the added agent."""
+    preserve(TERMINAL_SERVERS_CONFIG)
+    return lambda *people: connect_agent_terminal(admin, grok_and_added_agent_terminal, *people)
+
+
+@pytest.fixture
 def tool_permissions(admin, preserve):
     preserve(CHAT_CONFIG)
     with admin.client() as client:
         current = client.get(CHAT_CONFIG[0]).json()
         saved = client.post(CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True})
     assert saved.status_code == 200, f"switching tool permissions on failed: {saved.text}"
+
+
+def save_chat_settings(admin, **changes) -> None:
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(CHAT_CONFIG[1], json={**current, **changes})
+    assert saved.status_code == 200, f"saving {changes} failed: {saved.text}"
+
+
+@pytest.fixture
+def auto_permissions(admin, preserve):
+    """Tool Permissions with Auto offered, reviewed by the default engine."""
+    preserve(CHAT_CONFIG)
+    save_chat_settings(
+        admin,
+        ENABLE_TOOL_PERMISSIONS=True,
+        ENABLE_TOOL_PERMISSIONS_AUTO=True,
+        TOOL_PERMISSIONS_AUTO_ENGINE="",
+    )
+
+
+def risky_when_it_removes(request: ReceivedRequest):
+    """The reviewer rates a call risky when it removes something."""
+    evidence = json.loads(request.json()["input"])
+    probability = 0.9 if "rm -rf" in json.dumps(evidence["arguments"]) else 0.1
+    answer = {"type": "predicate", "name": "requires_confirmation", "probability": probability}
+    return json_answer({"answers": [answer]})
 
 
 def agent_models(client: httpx.Client, terminal_id: str | None) -> list[dict]:
@@ -156,6 +214,50 @@ def resolve(client: httpx.Client, turn: ChatTurn, call_id: str, **answer) -> htt
         f"/api/v1/chats/{turn.chat_id}/messages/{turn.assistant_message_id}/resolve",
         json={"call_id": call_id, **answer},
     )
+
+
+def answer_every_request(
+    client: httpx.Client, turn: ChatTurn, action: str = "approve"
+) -> tuple[list[dict], dict]:
+    """Answer each request the person is shown with `action` until the reply is done.
+
+    Returns the requests in the order they were shown, and the finished reply."""
+    asked: list[dict] = []
+    deadline = time.monotonic() + REPLY_TIMEOUT
+    message: dict = {}
+    while time.monotonic() < deadline:
+        message = stored(client, turn)
+        seen = {item["call_id"] for item in asked}
+        for item in message.get("output") or []:
+            if item.get("status") == "pending" and item["call_id"] not in seen:
+                asked.append(item)
+                answered = resolve(client, turn, item["call_id"], action=action)
+                assert answered.status_code == 200, f"answering {item} failed: {answered.text}"
+        if message.get("done"):
+            return asked, message
+        time.sleep(0.1)
+    raise AssertionError(f"the reply never finished; last stored state: {message}")
+
+
+def commands_asked_about(asked: list[dict]) -> list[str]:
+    """Which of the routine and the risky command each request showed the person."""
+    return [
+        command for item in asked for command in (ROUTINE, RISKY) if command in item["arguments"]
+    ]
+
+
+def routine_runs(reply: dict) -> list[dict]:
+    """The steps of the reply that show the routine command, with their stored output."""
+    outputs = {
+        item["call_id"]: "".join(part.get("text", "") for part in item.get("output") or [])
+        for item in reply.get("output") or []
+        if item["type"] == "function_call_output"
+    }
+    return [
+        {"status": item["status"], "output": outputs.get(item["call_id"], "")}
+        for item in reply.get("output") or []
+        if item["type"] == "function_call" and ROUTINE in item["arguments"]
+    ]
 
 
 def after_the_second_of(message: dict) -> None:
@@ -391,6 +493,150 @@ def test_with_full_access_an_agent_permission_request_is_allowed_without_asking(
     assert reply["content"] == "Permission outcome: allow-it", reply
     approvals = [item for item in reply["output"] if item.get("name") == "agent_tool"]
     assert [item["status"] for item in approvals] == ["completed"], approvals
+
+
+def test_an_agent_added_with_open_terminal_acp_agents_is_offered_and_chats_like_any_agent(
+    make_user, connect_grok_and_added, grok_and_added_agent_terminal
+):
+    person = make_user()
+    terminal = connect_grok_and_added(person)
+    added = model_id(terminal["id"], DEEP, ADDED_PROVIDER)
+    first_prompt = f"remember the word lantern {uuid.uuid4().hex[:6]}"
+
+    with person.client() as client:
+        listed = agent_models(client, terminal["id"])
+        first = send_message(client, first_prompt, model=added, machine_id=terminal["id"])
+        first_reply = wait_for_reply(client, first, REPLY_TIMEOUT)
+        started = grok_and_added_agent_terminal.received("session/prompt")[-1]["sessionId"]
+        after_the_second_of(first_reply)
+        second = send_message(
+            client,
+            "what was the word?",
+            model=added,
+            machine_id=terminal["id"],
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+        )
+        second_reply = wait_for_reply(client, second, REPLY_TIMEOUT)
+
+    names = {model["name"] for model in listed}
+    assert names == {
+        f"grok/{FAST}",
+        f"grok/{DEEP}",
+        f"{ADDED_PROVIDER}/{FAST}",
+        f"{ADDED_PROVIDER}/{DEEP}",
+    }, f"the added agent was not offered next to Grok as the docs name it: {sorted(names)}"
+    folder = str(grok_and_added_agent_terminal.terminal.home)
+    assert "error" not in first_reply, f"the added agent's turn failed: {first_reply.get('error')}"
+    assert first_reply["content"] == (
+        f"Agent heard: {first_prompt} [model {DEEP}, folder {folder}]"
+    ), f"the added agent did not answer with the picked model: {first_reply['content']!r}"
+    assert output_text(first_reply, "reasoning") == "Thinking it over.", first_reply.get("output")
+    assert first_reply["usage"] == {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18}
+    log = grok_and_added_agent_terminal.log()
+    prompted = {
+        entry["pid"]
+        for entry in log
+        if first_prompt in json.dumps((entry.get("received") or {}).get("params"))
+    }
+    launches = [
+        entry["started"] for entry in log if entry["pid"] in prompted and "started" in entry
+    ]
+    # the added agent's command has no arguments, where Grok gets `agent stdio`
+    assert launches == [[]], f"the turn did not run the added agent's own command: {launches}"
+    loads = grok_and_added_agent_terminal.received("session/load")
+    assert loads and loads[-1]["sessionId"] == started, (
+        f"the next message did not continue the added agent's session {started}: {loads}"
+    )
+    assert second_reply.get("content", "").startswith("Agent heard: what was the word? ["), (
+        f"the added agent's next message did not go on in its session: {second_reply}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "asked_in_auto", "routine_outcome"),
+    [
+        pytest.param("grok", [RISKY], SELF_APPROVED, id="grok-reviews-itself"),
+        pytest.param(ADDED_PROVIDER, [ROUTINE, RISKY], "allow-it", id="added-agent-asks"),
+    ],
+)
+def test_in_auto_grok_asks_only_for_what_it_escalates_and_other_acp_agents_ask_for_each_action(
+    make_user, connect_grok_and_added, auto_permissions, provider, asked_in_auto, routine_outcome
+):
+    person = make_user()
+    terminal = connect_grok_and_added(person)
+    agent = model_id(terminal["id"], FAST, provider)
+
+    with person.client() as client:
+        auto = send_message(
+            client,
+            "[escalate] tidy up",
+            model=agent,
+            machine_id=terminal["id"],
+            params={"tool_approval_mode": "auto"},
+        )
+        auto_asked, auto_reply = answer_every_request(client, auto)
+        ask = send_message(
+            client,
+            "[escalate] tidy up",
+            model=agent,
+            machine_id=terminal["id"],
+            params={"tool_approval_mode": "ask"},
+        )
+        ask_asked, ask_reply = answer_every_request(client, ask)
+
+    assert commands_asked_about(auto_asked) == asked_in_auto, (
+        f"in Auto {provider} showed the person requests for "
+        f"{commands_asked_about(auto_asked)}: {auto_asked}"
+    )
+    assert [item["name"] for item in auto_asked] == ["agent_tool"] * len(asked_in_auto)
+    assert auto_reply["content"] == escalation_answer(routine_outcome, "allow-it"), (
+        f"{provider} did not get the person's answer in Auto: {auto_reply.get('content')!r}"
+    )
+    runs = routine_runs(auto_reply)
+    assert {"status": "completed", "output": ROUTINE_OUTPUT} in runs, (
+        f"the routine command {provider} ran in Auto is not shown with its output: {runs}"
+    )
+    assert commands_asked_about(ask_asked) == [ROUTINE, RISKY], (
+        f"with Ask for approval {provider} did not ask for each action: {ask_asked}"
+    )
+    assert ask_reply["content"] == escalation_answer("allow-it", "allow-it"), ask_reply
+
+
+def test_in_auto_the_decisions_engine_reviews_an_added_acp_agents_requests(
+    make_user, admin, connect_grok_and_added, auto_permissions, listener
+):
+    listener.route("POST", "/v1/decisions", risky_when_it_removes)
+    save_chat_settings(
+        admin,
+        TOOL_PERMISSIONS_AUTO_ENGINE="decisions",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_BASE_URL=f"{listener.base_url}/v1",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_API_KEY="sk-reviewer-test",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_MODEL="reviewer-model",
+        TOOL_PERMISSIONS_AUTO_DECISIONS_THRESHOLD=0.5,
+    )
+    person = make_user()
+    terminal = connect_grok_and_added(person)
+
+    with person.client() as client:
+        turn = send_message(
+            client,
+            "[escalate] tidy up",
+            model=model_id(terminal["id"], FAST, ADDED_PROVIDER),
+            machine_id=terminal["id"],
+            params={"tool_approval_mode": "auto"},
+        )
+        asked, reply = answer_every_request(client, turn)
+
+    reviewed = [
+        json.loads(request.json()["input"])["arguments"]
+        for request in listener.requests_to("/v1/decisions")
+    ]
+    assert len(reviewed) == 2, f"the reviewer did not rate both of the agent's actions: {reviewed}"
+    assert commands_asked_about(asked) == [RISKY], (
+        f"under the Decisions engine the person was asked about {commands_asked_about(asked)}"
+    )
+    assert reply["content"] == escalation_answer("allow-it", "allow-it"), reply.get("content")
 
 
 def test_someone_else_cannot_answer_an_agents_permission_request(
