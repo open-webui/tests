@@ -330,6 +330,34 @@ def test_a_file_in_a_draft_shows_once_after_a_reload(page_for, make_user, upstre
     assert attached_files(ask(page, upstream)).count(name) == 1
 
 
+def test_a_file_still_uploading_at_a_reload_does_not_hold_up_the_next_message(
+    page_for, make_user, upstream
+):
+    """Issue: the cut-off upload came back stuck uploading and the message waited forever."""
+    page = page_for(make_user())
+    uploads: list[Route] = []
+    page.route(
+        UPLOAD,
+        lambda route: uploads.append(route) if route.request.method == "POST" else route.fallback(),
+    )
+    name = f"cut-{uuid.uuid4().hex[:6]}.txt"
+    attach(page, name, "Puffins nest on the north cliff.")
+    form = page.locator("form")
+    expect(form.get_by_text(name).first).to_be_visible()
+    assert len(uploads) == 1, "the file did not start uploading"
+    chat_input(page).click()
+    page.keyboard.type("About the cliff")
+    saved_draft(page, "About the cliff")
+    page.unroute(UPLOAD)
+
+    held = new_chat_waiting_for_models(page)
+    let_models_through(page, held)
+
+    expect(chat_input(page)).to_have_text("About the cliff")
+    expect(form.get_by_text(name)).to_have_count(0)
+    ask(page, upstream)
+
+
 def test_a_drafts_tools_give_way_to_the_defaults_of_the_model_it_reopens_on(
     page_for, make_user, upstream, tide_model
 ):
