@@ -4,8 +4,7 @@
 # usage: select_tests.sh <suite directory> <shards> <shard> <durations file>
 suite=$1
 if [ -z "$SELECT" ]; then
-    python3 scripts/shard.py "$@"
-    exit 0
+    exec python3 scripts/shard.py "$@"
 fi
 selected=()
 for path in $SELECT; do
