@@ -14,6 +14,10 @@ reply, also after a reload. The Image switch, its permission and the OpenAI engi
 in e2e/chat/test_image_generation.py; Image Prompt Generation only runs with legacy function calling
 and is left out.
 
+With several connections the admin picks the Default Generation Model and Default Edit Model in
+the tab, each offering only the models able to do it, and a model's own default image model in
+the model editor; both are saved and shown again on the next visit.
+
 Discriminates: passes on the dev ebc6add67 build. In a backend copy whose `_apply_workflow_nodes`
 skips the width and height nodes the ComfyUI test fails, whose Automatic1111 branch drops
 `IMAGE_STEPS` the Automatic1111 test fails, whose Gemini branch always calls `:predict` the Gemini
@@ -21,7 +25,8 @@ test fails, whose `load_url_image` hands the engines the file id in place of the
 three edit tests fail, and whose OpenAI generation leaves out `IMAGES_OPENAI_API_PARAMS` the
 OpenAI test fails. In a frontend build whose Images tab saves no node ids for the width node the
 ComfyUI test fails too. Moved to the connection dialog of e1d272252, passes on the dev 00bd84944
-build.
+build. The default models test passes on the dev f80a4f782 build and fails on
+a backend copy whose settings update drops the default edit model.
 """
 
 from __future__ import annotations
@@ -48,18 +53,21 @@ from harness.comfyui import (
 )
 from harness.image_engines import (
     CHECKPOINT,
+    EVERYONE,
     GEMINI_API_KEY,
     GEMINI_IMAGE_MODEL,
     IMAGES_CONFIG,
     PNG_BASE64,
     checkpoint_switches,
     gemini_calls,
+    image_connection,
     image_settings,
     save_image_settings,
     serve_automatic1111,
     serve_gemini,
 )
 from harness.listener import json_answer
+from harness.upstream import MOCK_MODEL_ID
 from utils.admin_settings import save
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -79,6 +87,8 @@ from utils.image_settings import (
     show_advanced,
     verify_connection,
 )
+from utils.model_editor import open_editor
+from utils.model_editor import save as save_model
 from utils.tool_servers import make_public
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -455,3 +465,91 @@ def test_an_attached_picture_is_edited_through_the_comfyui_image_node(
     assert comfyui.uploads == [ATTACHED_PNG], "ComfyUI never got the attached picture"
     source = expect_stored_picture(page)
     assert stored_bytes(person, source) == PNG
+
+
+def selected_option(settings: Locator, label: str) -> Locator:
+    return settings.get_by_label(label, exact=True).locator("option:checked")
+
+
+def image_model_row(editor: Locator) -> Locator:
+    """The model editor's Image model row under Images & Videos, which it opens."""
+    title = editor.page.locator("summary").get_by_text("Images & Videos", exact=True)
+    part = editor.locator("details").filter(has=title)
+    if part.get_attribute("open") is None:
+        part.locator("summary").click()
+    expect(part).to_have_attribute("open", "")
+    return part.get_by_role("button", name=re.compile(r"^Image model"))
+
+
+def test_the_default_image_models_are_chosen_in_the_tab_and_in_the_model_editor(
+    page_for, make_user, admin, images_restored, listener
+):
+    studio_a = {
+        **image_connection(
+            "studio-a", "openai", f"{listener.base_url}/a", "sk-a", models=("a-sketch", "a-paint")
+        ),
+        "name": "Studio A",
+    }
+    studio_b = {
+        **image_connection(
+            "studio-b", "openai", f"{listener.base_url}/b", "sk-b", models=("b-paint",), edits=False
+        ),
+        "name": "Studio B",
+    }
+    model_id = f"illustrator-{uuid.uuid4().hex[:8]}"
+    model_form = {
+        "id": model_id,
+        "name": model_id,
+        "base_model_id": MOCK_MODEL_ID,
+        "meta": {"capabilities": {"image_generation": True}},
+        "params": {},
+        "access_grants": EVERYONE,
+    }
+    with admin.client() as client:
+        save_image_settings(client, **image_settings(studio_a, studio_b))
+        created = client.post("/api/v1/models/create", json=model_form)
+        assert created.status_code == 200, created.text
+        offered = client.get("/api/v1/images/models").json()
+    refs = {(model["connection_id"], model["model"]): model["id"] for model in offered}
+    admin_page = page_for(make_user(role="admin"))
+
+    try:
+        settings = open_image_settings(admin_page)
+        generation = settings.get_by_label("Default Generation Model", exact=True)
+        edit = settings.get_by_label("Default Edit Model", exact=True)
+        expect(generation.locator("option")).to_have_text(
+            ["First available", "Studio A / a-sketch", "Studio A / a-paint", "Studio B / b-paint"]
+        )
+        expect(edit.locator("option")).to_have_text(
+            ["First available", "Studio A / a-sketch", "Studio A / a-paint"]
+        )
+        generation.select_option(label="Studio B / b-paint")
+        edit.select_option(label="Studio A / a-paint")
+        save(settings)
+
+        with admin.client() as client:
+            saved = client.get(IMAGES_CONFIG[0]).json()
+        assert saved["IMAGE_GENERATION_DEFAULT_MODEL"] == refs[("studio-b", "b-paint")], saved
+        assert saved["IMAGE_EDIT_DEFAULT_MODEL"] == refs[("studio-a", "a-paint")], saved
+        settings = open_image_settings(admin_page)
+        expect(selected_option(settings, "Default Generation Model")).to_have_text(
+            "Studio B / b-paint"
+        )
+        expect(selected_option(settings, "Default Edit Model")).to_have_text("Studio A / a-paint")
+
+        editor = open_editor(admin_page, model_form)
+        row = image_model_row(editor)
+        expect(row).to_contain_text("Default")
+        row.click()
+        admin_page.get_by_role("menuitem", name="b-paint (Studio B)", exact=True).click()
+        expect(row).to_contain_text("b-paint (Studio B)")
+        save_model(editor)
+
+        with admin.client() as client:
+            stored = client.get(f"/api/v1/models/model?id={model_id}").json()
+        assert stored["meta"].get("imageModelId") == refs[("studio-b", "b-paint")], stored["meta"]
+        editor = open_editor(admin_page, model_form)
+        expect(image_model_row(editor)).to_contain_text("b-paint (Studio B)")
+    finally:
+        with admin.client() as client:
+            client.post("/api/v1/models/model/delete", json={"id": model_id})

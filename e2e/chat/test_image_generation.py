@@ -27,6 +27,12 @@ on errors the failing engine test fails. In a frontend build, with the composer 
 switch and the user permission the two toggle tests fail, and with the model's default features
 ignored the default feature test fails (no Image chip).
 
+With several image connections the Image entry names the image model in use, and its arrow opens
+the models the user was granted, grouped by connection; the one picked there draws. A user with
+a single image model gets no choice. The picker test passes on the dev f80a4f782 build and fails
+on a backend copy whose image model list skips the connections' access (the user granted one
+model is offered all four).
+
 Every test but the admin's engine setup runs in the main chat and in a side chat (that one is about
 Admin Settings > Images and stays on a page of its own); the side variants are green on dev
 c15f28649 and on the side chat rework build (open-webui/open-webui#34064).
@@ -42,8 +48,16 @@ import pytest
 from playwright.sync_api import Locator, expect
 
 from harness import upstream as reply
+from harness.access import make_group
 from harness.channel_chat import drawing_model, serve_openai_images
-from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, image_settings, save_image_settings
+from harness.image_engines import (
+    EVERYONE,
+    IMAGES_CONFIG,
+    PNG_BASE64,
+    image_connection,
+    image_settings,
+    save_image_settings,
+)
 from harness.listener import json_answer
 from utils.admin_settings import save
 from utils.chat_surface import ChatSurface
@@ -51,6 +65,7 @@ from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
     Chat,
     chat_input,
+    close_menu,
     expect_reply,
     last_reply,
     open_integrations_menu,
@@ -298,3 +313,82 @@ def test_a_failing_engine_shows_its_error_and_no_picture(
     failed = tool_step(last_reply(chat), "Failed to generate image", "generate_image")
     failed.click()
     expect(last_reply(chat).get_by_text(re.compile("Internal Server Error"))).to_be_visible()
+
+
+def studio(listener, name: str, models: tuple[str, ...], grants: list[dict], **options) -> dict:
+    """An OpenAI compatible connection called `name`, served under its own path of `listener`."""
+    path = f"/{name.lower().replace(' ', '-')}"
+    listener.route(
+        "POST", f"{path}/images/generations", json_answer({"data": [{"b64_json": PNG_BASE64}]})
+    )
+    connection = image_connection(
+        path.strip("/"),
+        "openai",
+        listener.base_url + path,
+        "sk-studio",
+        models=models,
+        access_grants=grants,
+        **options,
+    )
+    return {**connection, "name": name}
+
+
+def test_a_user_picks_one_of_their_image_models_from_the_image_entry(
+    chat_for, make_user, admin, preserve, listener, upstream
+):
+    preserve(IMAGES_CONFIG)
+    picker, single = make_user(), make_user()
+    studio_b_group = make_group(admin, [picker])
+    studio_b_grants = [
+        {"principal_type": "group", "principal_id": studio_b_group, "permission": "read"}
+    ]
+    connections = [
+        studio(listener, "Studio A", ("a-sketch",), EVERYONE),
+        studio(listener, "Studio B", ("b-paint",), studio_b_grants),
+        studio(listener, "Studio B Retouch", ("b-touchup",), studio_b_grants, generates=False),
+        studio(listener, "Vault", ("vault-model",), []),
+    ]
+    with admin.client() as client:
+        save_image_settings(client, **image_settings(*connections))
+
+    chat = open_chat(chat_for(single))
+    page = chat.page if isinstance(chat, ChatSurface) else chat
+    # the menu reads the image models when it first opens; reopened, it shows them
+    with page.expect_response(lambda response: "/api/v1/images/models" in response.url) as loaded:
+        open_integrations_menu(chat)
+    assert [model["name"] for model in loaded.value.json()] == ["a-sketch"], loaded.value.text()
+    close_menu(chat)
+    menu = open_integrations_menu(chat)
+    expect(menu.get_by_role("menuitemcheckbox", name="Image", exact=True)).to_be_visible()
+    expect(menu.get_by_role("menuitem", name="Choose image model")).to_have_count(0)
+
+    chat = open_chat(chat_for(picker))
+    menu = open_integrations_menu(chat)
+    image_entry = menu.get_by_role("menuitemcheckbox", name=re.compile(r"^Image\b"))
+    expect(image_entry).to_have_accessible_name(re.compile(r"^Image\s+Default$"))
+    menu.get_by_role("menuitem", name="Choose image model").click()
+    models = menu.get_by_role("group", name="Image model")
+    expect(models.get_by_role("menuitemradio", name="Default")).to_have_attribute(
+        "aria-checked", "true"
+    )
+    expect(models.get_by_role("menuitemradio", name="a-sketch")).to_be_visible()
+    expect(
+        models.get_by_role("menuitemradio", name=re.compile(r"^b-touchup\s+Edit only$"))
+    ).to_be_visible()
+    for heading in ("Studio A", "Studio B", "Studio B Retouch"):
+        expect(models.get_by_text(heading, exact=True)).to_be_visible()
+    expect(models.get_by_text("vault-model")).to_have_count(0)
+    expect(models.get_by_text("Vault", exact=True)).to_have_count(0)
+
+    models.get_by_role("menuitemradio", name="b-paint").click()
+    expect(image_entry).to_have_accessible_name(re.compile(r"^Image\s+b-paint$"))
+    expect(image_entry).to_have_attribute("aria-checked", "true")
+    close_menu(chat)
+    draw(chat, upstream, "draw a red buoy", "Here is your red buoy.")
+
+    expect(reply_image(chat)).to_be_visible()
+    asked = [call.json()["model"] for call in listener.requests_to("/studio-b/images/generations")]
+    assert asked == ["b-paint"], f"the picked image model was not the one drawing: {asked}"
+    assert listener.requests_to("/studio-a/images/generations") == [], (
+        "the default model drew although the user picked another"
+    )
