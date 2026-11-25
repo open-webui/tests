@@ -29,17 +29,17 @@ untagged one under Untagged), a card dragged to another column takes that status
 tags, and the arrangement is kept after a reload. With activity as columns a chat waiting for a
 tool approval sits under Waiting for approval, an unread one under Unread and a read one under
 Read, and the folder's badge in the sidebar counts the unread chat and the waiting one. The chat
-menu archives a chat from its list row and from its board card. A tag made with Create in the Tags
-submenu of the chat actions menu and given a colour there shows that colour on every chat of the
-folder carrying it. A member who may write to a shared folder creates an automation with New
-automation on the folder's page, which lands in the folder and lists there for the owner too, and
-runs the owner's automation from the page the section opens; a reading member sees that run on the
-same page, without Run now.
+menu archives a chat from its list row, and archives and renames one from its board card. A tag
+made with Create in the Tags submenu of the chat actions menu and given a colour there shows that
+colour on every chat of the folder carrying it. A member who may write to a shared folder creates
+an automation with New automation on the folder's page, which lands in the folder and lists there
+for the owner too, and runs the owner's automation from the page the section opens; a reading
+member sees that run on the same page, without Run now.
 
 The board card menu test is red on dev f80a4f782 and on v0.13.4: board cards have no chat menu,
 though the 0.13.4 changelog and the docs give every chat on the board the sidebar's menu (board
-added without it in 06491f013; issue draft cov-board-card-menu, fix branch
-fix-board-card-chat-menu).
+added without it in 06491f013; issue draft cov-board-card-menu). It passes on the build of the fix
+branch fix-board-card-chat-menu (ffd7e1d30, 5 of 5).
 
 Discriminates: journey, no fix. All pass on the dev 941bf3674 build. With the dev build on a
 backend copy of it whose status route stores nothing the status pick and board drag tests go red,
@@ -865,14 +865,14 @@ def _archive_from_menu(page: Page, scope: Locator, chat_id: str) -> None:
     assert archived.value.status == 200, archived.value.text()
 
 
-def test_the_sidebars_chat_menu_archives_a_chat_from_its_row_and_from_its_board_card(
+def test_the_sidebars_chat_menu_archives_from_a_row_and_archives_and_renames_from_a_board_card(
     page_for, make_user
 ):
     owner = make_user()
     folder_id = _folder(owner, [TODO, DONE])
     row_chat = _chat(owner, folder_id, "Old ferry timetable")
     card_chat = _chat(owner, folder_id, "Old harbour map")
-    _chat(owner, folder_id, "Current charts")
+    renamed_chat = _chat(owner, folder_id, "Current charts")
     page = page_for(owner, path=f"/folders/{folder_id}")
     expect(folder_chat(page, "Current charts")).to_be_visible()
 
@@ -893,10 +893,30 @@ def test_the_sidebars_chat_menu_archives_a_chat_from_its_row_and_from_its_board_
     card.hover()
     _archive_from_menu(page, card, card_chat)
     expect(folder_chat(board, "Old harbour map")).to_have_count(0)
-    expect(folder_chat(board, "Current charts")).to_be_visible()
+
+    card = board.get_by_role("article").filter(
+        has=page.get_by_role("button", name="Current charts", exact=True)
+    )
+    card.hover()
+    card.get_by_role("button", name="Chat Menu").click()
+    page.get_by_role("menuitem", name="Rename", exact=True).click()
+    # the title turns into the box, so the card is no longer found by its title
+    title_box = board.get_by_role("textbox", name="Rename")
+    expect(title_box).to_have_value("Current charts")
+    title_box.fill("Charts for spring")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith(f"/chats/{renamed_chat}")
+        )
+    ) as renamed:
+        title_box.press("Enter")
+    assert renamed.value.status == 200, renamed.value.text()
+    expect(folder_chat(board, "Charts for spring")).to_be_visible()
     with owner.client() as client:
         archived = {chat["id"] for chat in client.get("/api/v1/chats/archived").json()}
+        stored_title = client.get(f"/api/v1/chats/{renamed_chat}").json()["title"]
     assert {row_chat, card_chat} <= archived, f"archived chats on the server: {archived}"
+    assert stored_title == "Charts for spring", f"the card's rename was not stored: {stored_title}"
 
 
 def _answered_chat(owner: Actor, folder_id: str, title: str) -> str:
