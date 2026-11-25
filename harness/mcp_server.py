@@ -28,6 +28,8 @@ HTTPS with a self-signed certificate. With `bearer_key` every request without th
 plain 401, the way a server keyed by an API key answers (no OAuth metadata). With `moved_from` a
 request to that path gets a 307 to `/mcp` on the same server, the way a server that moved within
 its own address answers.
+`STDIO_COMMAND` runs the echo server as a local command over stdio, run from the tests' root,
+the way Tether launches a local MCP server.
 `mcp_connection(...)` is the admin's connection to it without auth; save it through
 `TOOL_SERVERS` after `preserve(TOOL_SERVERS)`. Given MCPServer's `auth` settings and a
 `token_verifier`, the SDK guards it the way a real OAuth-protected MCP server is guarded: a
@@ -47,6 +49,7 @@ import base64
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import threading
 import time
@@ -67,6 +70,7 @@ from harness.instance import free_port
 from harness.object_storage import self_signed_certificate
 
 ECHO_DESCRIPTION = "Repeat the text back."
+STDIO_COMMAND = [sys.executable, "-m", "harness.mcp_server"]
 CAPSIZE_ERROR = "the boat capsized in the harbour"
 PONDERED = "slept on it"
 NAME_TAG = "Name tag for {name}"
@@ -511,3 +515,7 @@ def mcp_connection(url: str, server_id: str, access_grants: list[dict]) -> dict:
         "config": {"enable": True, "access_grants": access_grants},
         "info": {"id": server_id, "name": server_id},
     }
+
+
+if __name__ == "__main__":
+    _echo_server().run("stdio")

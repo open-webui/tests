@@ -15,8 +15,16 @@ handler made for the fake terminal works here unchanged. A WebSocket the server 
 `DeviceSocket` in `sockets`, echoed unless `script_sockets` says otherwise. `announce` and
 `reauthenticate` send the device's own updates, `notifications` holds what it was notified of.
 `connections` are the person's own connections the device offers (`own_connection`): an
-OpenAI-compatible provider, an OpenAPI tool server or a terminal, each served under a service of
-its own, which a handler reads as `request.service`.
+OpenAI-compatible provider, an OpenAPI tool server, a terminal or an MCP server, each served under
+a service of its own, which a handler reads as `request.service`.
+
+An MCP server is a local command or an address. `run_mcp(service, command)` launches the command
+for each `stdio-open` on the service, answers `stdio-ready` and pipes the stream's `data` to its
+stdin and its stdout back, one process per MCP session, stopped when Open WebUI ends the stream;
+each is a `DeviceProcess` in `processes`. `forward_mcp(service, url)` passes each request on the
+service to the MCP endpoint `url` and streams its answer back. Both refuse an operation that
+does not carry the connection's announced `revision` or, by address, asks for another path, as
+Tether does.
 
 To misbehave, a handler takes the request's `stream` and returns None, which leaves the
 answer to it: `stream.send("error", message=...)`, a frame number skipped with
@@ -32,10 +40,12 @@ from __future__ import annotations
 import json
 import queue
 import struct
+import subprocess
 import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Iterable, Iterator
 
 import httpx
@@ -51,6 +61,11 @@ from harness.mfa import new_address
 CHUNK = 65536
 DEFAULT_WINDOW = 256 * 1024
 CREDIT_SECONDS = 30
+# the folder a local MCP command starts in
+ROOT = Path(__file__).resolve().parents[1]
+# request and answer headers Tether keeps from a local MCP server
+DROPPED_REQUEST_HEADERS = {"authorization", "cookie", "host", "connection", "content-length"}
+DROPPED_ANSWER_HEADERS = {"set-cookie", "connection", "transfer-encoding"}
 
 
 class StreamClosed(Exception):
@@ -186,6 +201,17 @@ class DeviceSocket:
         self.stream.send("end", code=code)
 
 
+@dataclass
+class DeviceProcess:
+    """A local MCP command the device launched for one MCP session."""
+
+    service: str
+    command: list[str]
+    revision: str | None
+    process: subprocess.Popen = field(repr=False)
+    stopped: threading.Event = field(default_factory=threading.Event)
+
+
 Handler = Callable[[DeviceRequest], Answer | None]
 SocketScript = Callable[[DeviceSocket], None]
 
@@ -213,6 +239,7 @@ class TetherDevice:
     sockets: list[DeviceSocket] = field(default_factory=list)
     streams: dict[str, RelayStream] = field(default_factory=dict)
     notifications: list[dict] = field(default_factory=list)
+    processes: list[DeviceProcess] = field(default_factory=list)
     # what a handler or a socket script raised, for the test to assert on
     failures: list[BaseException] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -221,6 +248,10 @@ class TetherDevice:
     _closed: threading.Event = field(default_factory=threading.Event, repr=False)
     _sending: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _socket_scripts: dict[str, SocketScript] = field(default_factory=dict, repr=False)
+    _mcp_commands: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _mcp_endpoints: dict[str, str] = field(default_factory=dict, repr=False)
+    # the revision each MCP connection was last announced with
+    _revisions: dict[str, str | None] = field(default_factory=dict, repr=False)
 
     @property
     def terminal_id(self) -> str:
@@ -235,6 +266,14 @@ class TetherDevice:
     def script_sockets(self, script: SocketScript, path: str = "*") -> None:
         """Run `script(socket)` for each WebSocket opened on `path` in place of the echo."""
         self._socket_scripts[path] = script
+
+    def run_mcp(self, service: str, command: list[str]) -> None:
+        """Launch `command` for each MCP session on `service`, as for a local command."""
+        self._mcp_commands[service] = command
+
+    def forward_mcp(self, service: str, url: str) -> None:
+        """Pass each request on `service` to the MCP endpoint `url`, as for an MCP address."""
+        self._mcp_endpoints[service] = url
 
     def requests_to(self, path: str) -> list[DeviceRequest]:
         with self.lock:
@@ -269,11 +308,17 @@ class TetherDevice:
         update = {"type": "services", "services": list(services)}
         if connections is not None:
             update["connections"] = list(connections)
+            self._remember_revisions(update["connections"])
         self.send_json(update if name is None else {**update, "name": name})
 
     def reauthenticate(self, token: str) -> None:
         """Hand the server the access token the device got from a refresh."""
         self.send_json({"type": "auth", "token": token})
+
+    def _remember_revisions(self, connections: Iterable[dict]) -> None:
+        self._revisions = {
+            item["service"]: item.get("revision") for item in connections if item["type"] == "mcp"
+        }
 
     def drop(self) -> None:
         """Hang up at once, as a device that lost its network does."""
@@ -301,17 +346,21 @@ class TetherDevice:
             self.notifications.append(json.loads(data))
             return
         stream = self.streams.get(header["stream"])
-        if header["type"] in ("http-open", "ws-open"):
+        if header["type"] in ("http-open", "ws-open", "stdio-open"):
             stream = RelayStream(header["stream"], self, opened=header, credit=self.window)
             self.streams[stream.id] = stream
-            serve = self._serve_request if header["type"] == "http-open" else self._serve_socket
+            serve = {
+                "http-open": self._serve_request,
+                "ws-open": self._serve_socket,
+                "stdio-open": self._serve_process,
+            }[header["type"]]
             threading.Thread(target=self._guarded, args=(serve, stream), daemon=True).start()
         if stream:
             stream._take(header, data)
 
-    def _guarded(self, serve: Callable[[RelayStream], None], stream: RelayStream) -> None:
+    def _guarded(self, serve: Callable[..., None], stream: RelayStream, *more) -> None:
         try:
-            serve(stream)
+            serve(stream, *more)
         except StreamClosed:
             pass
         except BaseException as error:
@@ -337,6 +386,9 @@ class TetherDevice:
         )
         with self.lock:
             self.received.append(request)
+        if request.service in self._mcp_endpoints:
+            self._forward_mcp(request, opened)
+            return
         handler = self.routes.get((request.method, opened["path"]))
         answer = handler(request) if handler else (404, {"Content-Type": "text/plain"}, b"")
         if answer is None:
@@ -347,6 +399,77 @@ class TetherDevice:
             for offset in range(0, len(piece), CHUNK):
                 stream.send("data", piece[offset : offset + CHUNK])
         stream.send("end")
+
+    def _forward_mcp(self, request: DeviceRequest, opened: dict) -> None:
+        stream = request.stream
+        if (
+            opened.get("revision") != self._revisions.get(request.service)
+            or opened["path"] != "/"
+            or opened.get("query")
+        ):
+            stream.send("error", message="Invalid MCP request")
+            return
+        headers = {
+            name: value
+            for name, value in request.headers.items()
+            if name not in DROPPED_REQUEST_HEADERS
+        }
+        endpoint = self._mcp_endpoints[request.service]
+        with httpx.Client(timeout=300, trust_env=False) as client:
+            with client.stream(
+                request.method, endpoint, headers=headers, content=request.body
+            ) as answer:
+                kept = {
+                    name: value
+                    for name, value in answer.headers.items()
+                    if name.lower() not in DROPPED_ANSWER_HEADERS
+                }
+                stream.send("http-response", status=answer.status_code, headers=kept)
+                for piece in answer.iter_raw(CHUNK):
+                    stream.send("data", piece)
+        stream.send("end")
+
+    def _serve_process(self, stream: RelayStream) -> None:
+        opened, _ = stream._next(10)
+        service = opened.get("service", "")
+        command = self._mcp_commands.get(service)
+        if command is None or opened.get("revision") != self._revisions.get(service):
+            stream.send("error", message="Local stdio service unavailable")
+            return
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        launched = DeviceProcess(service, command, opened.get("revision"), process)
+        with self.lock:
+            self.processes.append(launched)
+        try:
+            stream.send("stdio-ready")
+            output = threading.Thread(
+                target=self._guarded, args=(self._pipe_output, stream, launched), daemon=True
+            )
+            output.start()
+            while True:
+                header, data = stream._next(3600)
+                if header["type"] == "end":
+                    break
+                process.stdin.write(data)
+                process.stdin.flush()
+        finally:
+            # Open WebUI ended the session; nothing more goes back on the stream
+            stream.cancelled.set()
+            process.kill()
+            process.wait(timeout=10)
+            launched.stopped.set()
+
+    def _pipe_output(self, stream: RelayStream, launched: DeviceProcess) -> None:
+        for piece in iter(lambda: launched.process.stdout.read1(CHUNK), b""):
+            stream.send("data", piece)
+        if not stream.cancelled.is_set():
+            stream.send("end")
 
     def _serve_socket(self, stream: RelayStream) -> None:
         opened, _ = stream._next(10)
@@ -374,10 +497,14 @@ def _for_path(scripted: dict, path: str):
     return scripted[max(prefixes, key=len)] if prefixes else None
 
 
-def own_connection(kind: str, service: str, name: str) -> dict:
-    """A connection the person added in the Tether app: `kind` is `openai`, `openapi` or
-    `terminal`, `service` the name its calls are relayed under."""
-    return {"type": kind, "service": service, "name": name}
+def own_connection(kind: str, service: str, name: str, transport: str | None = None) -> dict:
+    """A connection the person added in the Tether app: `kind` is `openai`, `openapi`,
+    `terminal` or `mcp`, `service` the name its calls are relayed under. An MCP server is
+    reached by `transport` (`stdio` or `streamable-http`) and carries a fresh `revision`."""
+    connection = {"type": kind, "service": service, "name": name}
+    if kind == "mcp":
+        connection.update(transport=transport, revision=str(uuid.uuid4()))
+    return connection
 
 
 def tether_session(instance: LaunchedInstance, account: Actor, name: str | None = None) -> dict:
@@ -413,6 +540,7 @@ def tether_device(
     """
     connection_id = connection_id or str(uuid.uuid4())
     name = name or f"Device {uuid.uuid4().hex[:8]}"
+    connections = list(connections)
     message = {
         "type": "hello",
         "version": 2,
@@ -422,13 +550,14 @@ def tether_device(
         "window": window,
         "services": list(services),
         "notifications": notifications,
-        "connections": list(connections) or None,
+        "connections": connections or None,
         **(hello or {}),
     }
     message = {key: value for key, value in message.items() if value is not None}
     url = base_url.replace("http://", "ws://", 1) + "/api/v1/tether/connect"
     with connect(url, proxy=None, open_timeout=10, close_timeout=2, max_size=None) as socket:
         device = TetherDevice(connection_id=connection_id, name=name, socket=socket)
+        device._remember_revisions(connections)
         socket.send(json.dumps(message))
         try:
             device.ready = json.loads(socket.recv(timeout=15))

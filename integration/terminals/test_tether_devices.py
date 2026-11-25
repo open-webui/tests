@@ -45,7 +45,11 @@ sent down the device under that service with no credential of the owner's; nobod
 reaches the model, and it leaves the list when the device withdraws the connection. The tool
 server is listed among the owner's tools as `server:tether:<connection id>:<service>` and the
 model's call to it reaches the device. The terminal is listed as
-`tether:<connection id>:<service>` under "<device> · <connection>".
+`tether:<connection id>:<service>` under "<device> · <connection>". An MCP server added in Tether,
+a local command the device launches or one it reaches by address, is listed for its owner alone as
+`server:mcp:tether:<connection id>:<service>` with its tools; in a chat the model is offered its
+tools and its call runs on the device, a local command's process ends with the reply, and once the
+device goes away the server leaves the list and the model is offered nothing of it.
 
 Reconnects. A read (a model list) cut off because the device dropped before answering is
 repeated once the device has connected again, and a command (a POST) is never repeated. The
@@ -95,19 +99,26 @@ Own connections and reconnects, on dev 485103cde: the user's Tether connections 
 fails the model, tool server and terminal tests and the reconnect test; a read never repeated
 fails the reconnect test; the page's file read passes once the terminal proxy sends a body-less
 read without a streamed body.
+MCP servers, on dev f80a4f782: the user's Tether MCP servers left out of the tools list fails
+the MCP test for both kinds (not listed); a Tether MCP server never connected fails it for both
+(its tools do not load); a local command's relay stream left open after the session fails it for
+the local command (the process still runs after the reply).
 """
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import random
+import re
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from email.parser import BytesParser
 from email.policy import HTTP
+from typing import Iterator
 
 import httpx
 import pytest
@@ -119,6 +130,7 @@ from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask, send_message, wait_for_reply
 from harness.image_engines import IMAGES_CONFIG, PNG_BASE64, save_image_settings
 from harness.listener import json_answer
+from harness.mcp_server import ECHO_DESCRIPTION, STDIO_COMMAND, serving_mcp
 from harness.mfa import new_address
 from harness.openapi_server import openapi_spec
 from harness.socket_client import SocketSession, connected
@@ -1259,6 +1271,123 @@ def test_a_tool_server_added_in_tether_is_listed_for_its_owner_and_serves_the_mo
         f"the model was told {_tool_results(told)} of its call"
     )
     assert message["content"] == f"sunny it is {tag}", f"the reply ended as {message}"
+
+
+def _offered_names(body: dict) -> dict[str, str]:
+    return {
+        tool["function"]["name"]: tool["function"]["description"] for tool in body.get("tools", [])
+    }
+
+
+@contextlib.contextmanager
+def _serving_mcp_on(device: TetherDevice, service: str, transport: str) -> Iterator[None]:
+    """The device serves the echo server under `service` as a local command or by its address."""
+    if transport == "stdio":
+        device.run_mcp(service, STDIO_COMMAND)
+        yield
+        return
+    with serving_mcp() as url:
+        device.forward_mcp(service, url)
+        yield
+
+
+@pytest.mark.parametrize("transport", ["stdio", "streamable-http"])
+def test_an_mcp_server_added_in_tether_serves_its_owners_model_and_goes_with_the_device(
+    make_user, connect_device, upstream, transport
+):
+    owner, stranger = make_user(), make_user()
+    tag = uuid.uuid4().hex[:8]
+    device = connect_device(
+        owner,
+        name=f"Laptop {tag}",
+        services=["home_mcp"],
+        connections=[own_connection("mcp", "home_mcp", "Notes", transport=transport)],
+    )
+    server_id = f"tether:{device.connection_id}:home_mcp"
+    tool_id = f"server:mcp:{server_id}"
+    echo = re.sub(r"[^a-zA-Z0-9_-]", "_", f"{server_id}_echo")
+
+    with _serving_mcp_on(device, "home_mcp", transport):
+        with owner.client() as client:
+            tools = client.get("/api/v1/tools/")
+            specs = client.get(f"/api/v1/tools/id/{tool_id}/specs")
+        with stranger.client() as client:
+            of_stranger = client.get("/api/v1/tools/")
+            specs_of_stranger = client.get(f"/api/v1/tools/id/{tool_id}/specs")
+        assert tools.status_code == 200 and of_stranger.status_code == 200, tools.text
+        names = {tool["id"]: tool["name"] for tool in tools.json()}
+        assert names.get(tool_id) == f"Laptop {tag} · Notes", (
+            f"the owner's tools list the device's MCP server as {names.get(tool_id)!r}: {names}"
+        )
+        assert tool_id not in {tool["id"] for tool in of_stranger.json()}, (
+            "a stranger sees the owner's MCP server"
+        )
+        assert specs.status_code == 200, f"the server's tools did not load: {specs.text}"
+        assert specs.json()["specs"] == [{"name": "echo", "description": ECHO_DESCRIPTION}], (
+            f"the server's tools read {specs.json()}"
+        )
+        assert specs_of_stranger.status_code == 404, (
+            f"a stranger read the owner's MCP tools: {specs_of_stranger.status_code}"
+        )
+
+        prompt = f"take a note {tag}"
+        upstream.queue(
+            reply.tool_call(echo, {"text": f"note {tag}"}, match=reply.answering(prompt)),
+            reply.text(f"noted {tag}", match=reply.answering(prompt)),
+        )
+        with owner.client() as client:
+            _, message = ask(client, prompt, tool_ids=[tool_id])
+
+        asked, told = _requests_for(upstream, prompt)
+        offered = _offered_names(asked)
+        assert offered.get(echo) == ECHO_DESCRIPTION, f"the model was offered {offered}"
+        results = [entry["content"] for entry in conversation(told) if entry["role"] == "tool"]
+        assert results and f"note {tag}" in results[-1], f"the model was told {results} of its call"
+        assert message["content"] == f"noted {tag}", f"the reply ended as {message}"
+        if transport == "stdio":
+            assert device.processes, "the device never launched the MCP server's command"
+            assert all(launched.command == STDIO_COMMAND for launched in device.processes)
+            assert wait_until(
+                lambda: all(launched.stopped.is_set() for launched in device.processes), 15
+            ), "a process of the MCP server still runs on the device after the reply"
+        else:
+            sent = device.requests_to("/")
+            assert sent and {entry.service for entry in sent} == {"home_mcp"}, sent
+            assert all(owner.token not in json.dumps(entry.headers) for entry in sent), (
+                f"the owner's credential reached the device's MCP server: {sent[0].headers}"
+            )
+
+        before = len(device.received) + len(device.processes)
+        stranger_prompt = f"me too {tag}"
+        upstream.queue(reply.text(f"no notes {tag}", match=reply.answering(stranger_prompt)))
+        with stranger.client() as client:
+            ask(client, stranger_prompt, tool_ids=[tool_id])
+        [stranger_asked] = _requests_for(upstream, stranger_prompt)
+        assert echo not in _offered_names(stranger_asked), "a stranger's model got the owner's tool"
+        assert len(device.received) + len(device.processes) == before, (
+            "the stranger's chat reached the device"
+        )
+
+        device.drop()
+        assert wait_until(lambda: tool_id not in _listed_tool_ids(owner), 10), (
+            "the MCP server stayed listed after its device went away"
+        )
+        after_prompt = f"one more note {tag}"
+        upstream.queue(reply.text(f"device gone {tag}", match=reply.answering(after_prompt)))
+        with owner.client() as client:
+            _, after = ask(client, after_prompt, tool_ids=[tool_id])
+        [after_asked] = _requests_for(upstream, after_prompt)
+        assert echo not in _offered_names(after_asked), (
+            "the model was offered the tool of a device that went away"
+        )
+        assert after["content"] == f"device gone {tag}", f"the reply ended as {after}"
+
+
+def _listed_tool_ids(actor) -> set[str]:
+    with actor.client() as client:
+        listed = client.get("/api/v1/tools/")
+    assert listed.status_code == 200, listed.text
+    return {tool["id"] for tool in listed.json()}
 
 
 def test_a_terminal_added_in_tether_is_listed_under_its_own_name_and_serves_its_owner_alone(

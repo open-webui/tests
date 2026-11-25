@@ -8,7 +8,11 @@ device connects, follow a new name, and go when the device disconnects; a person
 device sees no such heading. Connections the person added in the Tether app show as theirs: the
 provider's model in the model selector, which answers through the device, the tool server
 under "Your devices" in the Tools list and the terminal under "Your devices" in the Terminal
-menu, each named "<device> · <connection>".
+menu, each named "<device> · <connection>". MCP servers added in Tether, a local command and
+one by its address, show under "Your devices" in the Tools list too, and the one the person
+picks there gives the model its tool, which runs on the device. They show under "Tool Servers"
+on dev f80a4f782, so the fourth test stays red until open-webui/open-webui#35049 is fixed
+(fix branch Classic298:fix/tether-mcp-your-devices).
 
 The device is the fake of `harness/tether_device.py`; the admin's terminal is the fake terminal
 server.
@@ -17,13 +21,16 @@ Discriminates: passes on the dev c15f28649 build. In a backend copy, with every 
 sent to `/` the device has no `run_command` to offer and the first test fails; with no
 `machines:changed` sent when a device connects, changes or goes, the second test fails (the
 open page never shows the device). With the user's Tether connections never looked up (dev
-485103cde) the third test fails (no tool server under "Your devices").
+485103cde) the third test fails (no tool server under "Your devices"). With a Tether MCP
+server never connected in a chat the fourth test fails (the model is not offered `echo`);
+on the dev f80a4f782 build it fails at its last step (the MCP servers under "Tool Servers").
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
+import re
 import uuid
 from typing import Iterator
 
@@ -32,6 +39,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.listener import json_answer
+from harness.mcp_server import STDIO_COMMAND
 from harness.openapi_server import openapi_spec
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -41,10 +49,10 @@ from harness.terminal_server import (
 )
 from harness.tether_device import DeviceRequest, TetherDevice, own_connection
 from harness.upstream import conversation
-from utils.cached_chat import ask, calling
+from utils.cached_chat import ask, calling, offered_tools
 from utils.chat_ui import chat_input, close_menu, expect_reply, send
 from utils.model_selector import select_model
-from utils.tool_servers import open_tools_menu
+from utils.tool_servers import open_tools_menu, pick_tool
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -275,3 +283,44 @@ def test_a_persons_own_model_tool_server_and_terminal_from_tether_show_in_the_ch
         f"the device's provider was asked for {[body['model'] for body in asked]}"
     )
     assert prompt in json.dumps(asked[0]["messages"]), asked[0]["messages"]
+
+
+def test_mcp_servers_from_tether_show_under_your_devices_and_the_picked_one_serves_the_model(
+    page_for, admin, make_user, connect_device, upstream
+):
+    person = make_user()
+    tag = uuid.uuid4().hex[:8]
+    name = f"Laptop {tag}"
+    notes, wiki = f"{name} · Notes", f"{name} · Wiki"
+    device = connect_device(
+        person,
+        name=name,
+        services=["home_mcp", "wiki_mcp"],
+        connections=[
+            own_connection("mcp", "home_mcp", "Notes", transport="stdio"),
+            own_connection("mcp", "wiki_mcp", "Wiki", transport="streamable-http"),
+        ],
+    )
+    device.run_mcp("home_mcp", STDIO_COMMAND)
+    echo = re.sub(r"[^a-zA-Z0-9_-]", "_", f"tether:{device.connection_id}:home_mcp_echo")
+    prompt = f"take a note {tag}"
+
+    page = page_for(person)
+    pick_tool(page, notes)
+    ask(page, upstream, prompt, calling(echo, {"text": f"note {tag}"}), reply.text(f"Noted {tag}."))
+
+    answered = [request for request in upstream.chat_requests() if reply.answering(prompt)(request)]
+    assert answered and echo in offered_tools(answered[0]), (
+        f"the model was offered {sorted(offered_tools(answered[0])) if answered else 'nothing'}"
+    )
+    results = [entry["content"] for entry in conversation(answered[-1]) if entry["role"] == "tool"]
+    assert results and f"note {tag}" in results[-1], f"the model was told {results} of its call"
+    assert device.processes, "the device never launched the MCP server's command"
+
+    with _workspace_tool(admin, person, f"Jots {tag}"):
+        tools = open_tools_menu(page)
+        expect(tools.get_by_role("menuitemcheckbox", name=wiki)).to_be_visible()
+        expect(tools.get_by_role("menuitemcheckbox", name=f"Jots {tag}")).to_be_visible()
+        assert sorted(_under_your_devices(tools)) == [notes, wiki], (
+            f"under {DEVICES!r} the Tools list shows {_under_your_devices(tools)}"
+        )
