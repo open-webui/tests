@@ -7,15 +7,19 @@ answered by a terminal's coding agent with its signed sessions, and the sub-agen
 delegated to. `FAT_CHATS` names them, smallest first; `scripts/generate_fat_chats.py` made them.
 
 `import_fat_chat(instance, owner, name)` writes one into the instance's own database, SQLite or
-Postgres, the way the app stores a chat: the chat record with its whole history and one
-`chat_message` row per message. Every import gets new chat ids, so a data set can be imported
-any number of times; `owner` owns it and is its author, and `terminal_id` and `cwd` point the
-agent's sessions at a real terminal (they are signed again for the new ids either way). It
-returns a `FatChat` with the new ids and the data set's manifest: message counts and the ids of
-messages worth a test's attention (an edited turn, a regenerated one, the largest reply, the
-agent's latest reply, the term only one early message holds). `delete_fat_chat` removes it with
-its sub-agent chats through the API, as the sidebar's Delete does. `fat_chat` in
-`harness/fixtures.py` does both around a test.
+Postgres, the way an install upgraded to message rows keeps a chat: the chat record without its
+history and one `chat_message` row per message, its `data` holding every key of the message the
+row's columns do not read back as it was, as the upgrade fills it. With `before_rows=True` it is
+written as a version before that upgrade left it, for a test to upgrade: the record keeps the
+whole history and the rows have no `data`; `instance` may then be any object with the
+`database_url` of a database no backend is serving yet. Every import gets new chat ids, so a
+data set can be imported any number of times; `owner` owns it and is its author, and
+`terminal_id` and `cwd` point the agent's sessions at a real terminal (they are signed again for
+the new ids either way). It returns a `FatChat` with the new ids and the data set's manifest:
+message counts and the ids of messages worth a test's attention (an edited turn, a regenerated
+one, the largest reply, the agent's latest reply, the term only one early message holds).
+`delete_fat_chat` removes it with its sub-agent chats through the API, as the sidebar's Delete
+does. `fat_chat` in `harness/fixtures.py` does both around a test.
 """
 
 from __future__ import annotations
@@ -50,6 +54,7 @@ COLUMN_KEYS = {
     "model_id": "model",
     "status_history": "statusHistory",
     "context_summary": "contextSummary",
+    "created_at": "timestamp",
 }
 MESSAGE_COLUMNS = (
     "role",
@@ -97,6 +102,7 @@ def import_fat_chat(
     name: str,
     terminal_id: str | None = None,
     cwd: str | None = None,
+    before_rows: bool = False,
 ) -> FatChat:
     started = time.monotonic()
     manifest = stored_manifest(name)
@@ -120,10 +126,15 @@ def import_fat_chat(
         messages = chat["chat"]["history"]["messages"]
         for message in messages.values():
             _sign_agent_session(message, replaced)
+        record = chat["chat"]
+        if not before_rows:
+            record = {
+                key: value for key, value in record.items() if key not in ("history", "messages")
+            }
         chat_rows.append(
             {
                 **chat,
-                "chat": {key: value for key, value in chat["chat"].items() if key not in ("history", "messages")},
+                "chat": record,
                 "user_id": owner.id,
                 "updated_at": now,
                 "last_read_at": now,
@@ -133,7 +144,8 @@ def import_fat_chat(
             }
         )
         message_rows += [
-            _message_row(chat["id"], owner.id, message, now) for message in messages.values()
+            _message_row(chat["id"], owner.id, message, now, before_rows)
+            for message in messages.values()
         ]
     _insert(instance, chat_rows, message_rows)
     manifest = data["manifest"]
@@ -166,10 +178,12 @@ def _sign_agent_session(message: dict, replaced) -> None:
     meta["agent"] = jwt.encode(session, WEBUI_SECRET_KEY, algorithm="HS256")
 
 
-def _message_row(chat_id: str, owner_id: str, message: dict, now: int) -> dict:
-    """The `chat_message` row the app writes for a message of the chat's history."""
+def _message_row(
+    chat_id: str, owner_id: str, message: dict, now: int, before_rows: bool = False
+) -> dict:
+    """A message's `chat_message` row, as the upgrade leaves it or as older versions wrote it."""
     row = {column: message.get(COLUMN_KEYS.get(column, column)) for column in MESSAGE_COLUMNS}
-    return {
+    row = {
         **row,
         "id": f"{chat_id}-{message['id']}",
         "chat_id": chat_id,
@@ -178,6 +192,29 @@ def _message_row(chat_id: str, owner_id: str, message: dict, now: int) -> dict:
         "usage": _row_usage(message.get("usage")),
         "created_at": message["timestamp"],
         "updated_at": now,
+    }
+    if before_rows:
+        return row
+    # The upgrade keeps `done` only where the message says so.
+    row["done"] = message["done"] if isinstance(message.get("done"), bool) else None
+    return {**row, "data": _row_data(row, message)}
+
+
+def _row_data(row: dict, message: dict) -> dict:
+    """The message's keys that the row's columns read back differently or not at all."""
+    from_columns = {
+        COLUMN_KEYS.get(column, column): value
+        for column, value in row.items()
+        if column not in ("id", "chat_id", "updated_at") and value is not None
+    }
+    if from_columns.get("role") == "":
+        del from_columns["role"]
+    from_columns.setdefault("content", "")
+    return {
+        key: value
+        for key, value in message.items()
+        if key not in ("id", "user_id", "output")
+        and (key not in from_columns or from_columns[key] != value)
     }
 
 

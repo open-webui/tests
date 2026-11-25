@@ -11,7 +11,8 @@ is one too, shared by the API and browser tests: its data directory starts with 
 `config.json`, whose import at boot writes each key as a config row verbatim, ahead of the
 boot's repair of old row shapes. `killed_when(data_dir, condition)` kills a boot outright
 once `condition()` holds, as a crash or an out-of-memory kill would. `serving(data_dir)` keeps
-the backend running on a data directory that already has accounts, and
+the backend running on a data directory that already has accounts, with its process id and how
+long it took to answer `/health`, and
 `restored_postgres(dump)` loads a `pg_dump` into an embedded Postgres for it to use.
 `release_data(archive, root)` unpacks a data set an older release wrote
 (`integration/migrations/upgrade_data/`), on its own database, ready to serve.
@@ -209,6 +210,8 @@ def killed_when(
 class RunningBackend:
     base_url: str
     scratch: Path
+    process_id: int
+    seconds_to_start: float  # from launch until /health answered
 
     def client(self, token: str | None = None) -> httpx.Client:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -229,15 +232,16 @@ def serving(
 
     `backend` defaults to the checkout under test; the seeding script passes an older release.
     """
+    launched = time.monotonic()
     process, base_url, scratch = _start(data_dir, backend, settings or {})
     try:
-        deadline = time.monotonic() + timeout
+        deadline = launched + timeout
         while not _answers_health(base_url):
             if process.poll() is not None or time.monotonic() > deadline:
                 tail = _read_log(scratch)[-4000:]
                 pytest.fail(f"the backend did not start on {data_dir}:\n{tail}")
             time.sleep(0.5)
-        yield RunningBackend(base_url=base_url, scratch=scratch)
+        yield RunningBackend(base_url, scratch, process.pid, time.monotonic() - launched)
     finally:
         _stop(process, scratch)
 
