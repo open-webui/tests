@@ -400,8 +400,17 @@ def test_regenerate_continue_and_edit_give_each_reply_its_text(chat, account, st
     expect_whole_reply(chat, "reply to the rewrite")
 
     expected = ["first try here", "second try here and then more.", "reply to the rewrite"]
-    stored = stored_replies(account, chat_id_of(chat.page), 3)
-    assert stored == expected
+    chat_id = chat_id_of(chat.page)
+    assert sorted(stored_replies(account, chat_id, 3)) == sorted(expected)
+    with account.client() as client:
+        history = client.get(f"/api/v1/chats/{chat_id}").json()["chat"]["history"]
+    messages = history["messages"]
+    shown = messages[history["currentId"]]
+    assert shown["content"] == "reply to the rewrite"
+    assert messages[shown["parentId"]]["content"] == "rewritten question"
+    [asked] = [m for m in messages.values() if m["content"] == "name a colour"]
+    versions = [messages[child]["content"] for child in asked["childrenIds"]]
+    assert versions == expected[:2]
     chat = reload_and_expect(chat, "reply to the rewrite")
     _previous_question(chat).click()
     expect_whole_reply(chat, "second try here and then more.")

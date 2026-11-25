@@ -119,6 +119,17 @@ def _exported_chat(saved: Path) -> dict:
     return exported[0]
 
 
+def reply_chain(history: dict) -> list[str]:
+    """The contents of the conversation the chat opens on, first message first."""
+    contents = []
+    message_id = history["currentId"]
+    while message_id:
+        message = history["messages"][message_id]
+        contents.insert(0, message["content"])
+        message_id = message["parentId"]
+    return contents
+
+
 def test_the_header_json_export_is_the_stored_chat(page_for, owner, chat_id, tmp_path):
     page = page_for(owner)
     saved = _download(page, _header_menu(page, chat_id), "Export chat (.json)", tmp_path)
@@ -126,8 +137,9 @@ def test_the_header_json_export_is_the_stored_chat(page_for, owner, chat_id, tmp
     exported = _exported_chat(saved)
     assert exported["id"] == chat_id
     assert exported["title"] == TITLE
-    contents = [message["content"] for message in exported["chat"]["history"]["messages"].values()]
-    assert sorted(contents) == sorted([QUESTION, FIRST_ANSWER, FOLLOW_UP, SECOND_ANSWER])
+    history = exported["chat"]["history"]
+    assert len(history["messages"]) == 4
+    assert reply_chain(history) == [QUESTION, FIRST_ANSWER, FOLLOW_UP, SECOND_ANSWER]
 
 
 def test_the_sidebar_json_export_is_the_stored_chat(page_for, owner, chat_id, tmp_path):

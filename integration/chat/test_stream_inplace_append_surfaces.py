@@ -591,13 +591,12 @@ def test_a_subagent_reply_of_many_pieces_comes_back_whole_to_an_automation_run(
         )
         created.raise_for_status()
         run = run_automation(client, created.json())
-        messages = client.get(f"/api/v1/chats/{run['chat_id']}").json()["chat"]["history"][
-            "messages"
-        ]
+        history = client.get(f"/api/v1/chats/{run['chat_id']}").json()["chat"]["history"]
 
     assert run["status"] == "success", run
-    answers = [m["content"] for m in messages.values() if m["role"] == "assistant"]
-    assert answers and answers[-1].endswith("Handed over."), answers
+    shown = history["messages"][history["currentId"]]
+    assert shown["role"] == "assistant", shown
+    assert shown["content"].endswith("Handed over."), shown["content"]
     follow_ups = [
         body
         for body in streaming.upstream.chat_requests()
