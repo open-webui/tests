@@ -393,7 +393,7 @@ def test_without_sub_agents_a_message_call_reaches_nothing_and_starts_no_thread(
 
 
 def test_a_deleted_chat_gets_no_report_from_its_stopped_sub_agent(sub_agents, make_user, upstream):
-    # the stopped sub-agent's report still started a reply in the chat being deleted
+    # the stopped sub-agent's report still started a reply in the chat being deleted (issue #35062)
     sub_agents(True)
     prompt, task = unique("hand this over"), unique("weigh the crates")
     release = threading.Event()
