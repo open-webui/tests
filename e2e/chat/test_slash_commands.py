@@ -305,3 +305,69 @@ def test_compact_and_fork_in_a_menu_opened_during_the_reply_are_usable_once_it_e
     with chat.page.expect_response(lambda response: response.url.endswith("/compact")) as done:
         compact.click()
     assert done.value.json().get("compacted") is True, done.value.text()
+
+
+@pytest.mark.chat_surfaces(MAIN_CHAT)
+def test_compacts_fill_in_a_menu_opened_during_the_reply_follows_it(
+    chat_for, make_user, upstream, compaction
+):
+    """The / menu opened while a reply ran kept Compact's "% full" at the value it had when it
+    opened, until it was opened again (open-webui/open-webui#35033)."""
+    account = make_user(role="admin")
+    model_id = f"window-{uuid.uuid4().hex[:6]}"
+    with account.client() as client:
+        form = {
+            "id": model_id,
+            "name": "Small window",
+            "base_model_id": MOCK_MODEL_ID,
+            "meta": {},
+            "params": {"compact_token_threshold": 2000},
+        }
+        created = client.post("/api/v1/models/create", json=form)
+        assert created.status_code == 200, created.text
+        picked = client.post(
+            "/api/v1/users/user/settings/update", json={"ui": {"models": [model_id]}}
+        )
+        assert picked.status_code == 200, picked.text
+    chat = chat_for(account)
+    expect(chat.panel.get_by_role("button", name="Selected model: Small window")).to_be_visible()
+    question = f"When did the ferry leave? ({uuid.uuid4().hex[:8]})"
+    rest_of_reply = threading.Event()
+    long_rest = "left at nine and came back at five. " * 25
+    upstream.queue(
+        reply.text(
+            ["The ferry ", long_rest],
+            match=reply.answering(question),
+            hold=rest_of_reply,
+            hold_after=1,
+        )
+    )
+    send(chat, question)
+    expect(chat.stop_button).to_be_visible()
+
+    def fill_of(menu: Locator) -> Locator:
+        compact = menu.get_by_role("button", name=re.compile(r"^Compact:"))
+        return compact.get_by_text(re.compile(r"^\d+% full$"))
+
+    fill = fill_of(_command_menu(chat, ""))
+    expect(fill, "Compact shows no fill while the reply runs").to_be_visible()
+    fill_at_open = fill.inner_text()
+
+    rest_of_reply.set()
+    expect(chat.last_reply).to_contain_text("came back at five.")
+    expect(chat.stop_button).to_be_hidden(timeout=REPLY_TIMEOUT_MS)
+    expect(fill, "Compact's fill in the open menu did not move with the reply").not_to_have_text(
+        fill_at_open
+    )
+    fill_after_reply = fill.inner_text()
+
+    chat_input(chat).press("Escape")
+    chat_input(chat).press("Backspace")
+    expect(chat_input(chat)).to_have_text("")
+    reopened = fill_of(_command_menu(chat, ""))
+    expect(
+        reopened, f"the open menu showed {fill_after_reply} after the reply, a new one differs"
+    ).to_have_text(fill_after_reply)
+    assert int(fill_after_reply.split("%")[0]) > int(fill_at_open.split("%")[0]), (
+        f"the fill went from {fill_at_open} to {fill_after_reply} over a long reply"
+    )
