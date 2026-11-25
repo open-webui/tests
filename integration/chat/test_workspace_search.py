@@ -22,8 +22,9 @@ chats, the six filter-word tests go red.
 
 Since 07029af63 a chat whose messages are kept in their own rows is searched there, and its
 result shows the matching excerpt and links to that message; before, only the copy in the chat
-record was searched. The test empties the record's copy to reach that state. It passes on dev
-e8c0ad85e and fails on a backend copy with 07029af63 reverted (the chat is not found).
+record was searched. Since #34689 the rows are the only copy, which the test checks before it
+searches. It passed on dev e8c0ad85e (with the record's copy emptied) and failed on a backend copy
+with 07029af63 reverted (the chat is not found).
 
 #34162: since 07029af63 (v0.13.1) the search reads those rows, and a chat started, imported or
 continued with a null byte in a message kept it in the message's row. PostgreSQL cannot read
@@ -272,18 +273,19 @@ def test_a_chat_result_links_to_the_matching_message(make_user):
     assert item(answer, f"chat:{in_title}")["url"] == f"/c/{in_title}"
 
 
-def keep_messages_in_rows_only(instance, chat_id: str) -> None:
-    """Empty the message text in the chat record, leaving it in the chat's message rows."""
-    [row] = read_rows(instance, "SELECT chat FROM chat WHERE id = :id", {"id": chat_id})
-    chat = row["chat"] if isinstance(row["chat"], dict) else json.loads(row["chat"])
-    for message in chat["history"]["messages"].values():
-        message.update(content="", output=[])
-    statement = (
-        "UPDATE chat SET chat = CAST(:chat AS JSON) WHERE id = :id"
-        if on_postgres(instance)
-        else "UPDATE chat SET chat = :chat WHERE id = :id"
+def assert_text_only_in_message_rows(instance, chat_id: str, text: str) -> None:
+    """The chat record holds no copy of the text; only the chat's message rows have it."""
+    [record] = read_rows(instance, "SELECT chat FROM chat WHERE id = :id", {"id": chat_id})
+    record_json = record["chat"] if isinstance(record["chat"], str) else json.dumps(record["chat"])
+    assert text not in record_json, (
+        f"the chat record still keeps a copy of the messages: {record_json}"
     )
-    write_rows(instance, statement, [{"chat": json.dumps(chat), "id": chat_id}])
+    rows = read_rows(
+        instance, "SELECT content, output FROM chat_message WHERE chat_id = :id", {"id": chat_id}
+    )
+    assert any(text in json.dumps([row["content"], row["output"]]) for row in rows), (
+        f"no message row holds the text: {rows}"
+    )
 
 
 def test_a_chat_whose_messages_live_in_their_own_rows_is_found_with_an_excerpt(
@@ -296,7 +298,7 @@ def test_a_chat_whose_messages_live_in_their_own_rows_is_found_with_an_excerpt(
     with account.client() as client:
         turn, stored = ask(client, question)
     assert word in stored["content"], stored
-    keep_messages_in_rows_only(instance, turn.chat_id)
+    assert_text_only_in_message_rows(instance, turn.chat_id, word)
 
     answer = search(account, word)
 
