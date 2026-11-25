@@ -15,6 +15,14 @@ channel keeps its message, reaction and thread. Alice's old skill opens in the e
 instructions and saves a new version on top of the one the skill history migration gave it,
 and Bob, who reads it through the group, mentions it in a new chat and the model gets it.
 
+The chats v0.13.4 saved, after the move of chat messages into rows (`5e7a2c9d4b13`, PR
+open-webui/open-webui#34689), run on both v0.13.4 sets: each shows every question and answer of
+its branch, the reply with a tool call keeps its steps with the tool's output and its reasoning
+folded, the edited reply shows the edited text, the regenerated reply counts 2/2 without the
+deleted version, two models' answers stand side by side, the delegated task opens on the
+sub-agent's report, whose own chat opens too, the cited reply keeps its source and the chat
+started in a folder is listed in it.
+
 Discriminates: passes on dev ebc6add67 for both data sets; with the last migration of a copy of it
 mangling one kind of data on the v0.10.2 SQLite set, each test fails on its kind: assistant replies
 blanked (the branch, cited reply and continuation tests), the regenerated branch dropped (the
@@ -25,6 +33,10 @@ filter switched off and the channel's reactions and thread links dropped. With t
 migration (`d6a8c3f912ab`) of a copy setting no `version_id`, the editor test fails on both sets
 (the save is refused as a conflict); with it writing `SKILL.md` empty, the editor opens the skill
 without its instructions.
+The v0.13.4 chat tests pass on dev 893584700 on both v0.13.4 sets, and all but the folder test
+(whose sidebar opens another way there) pass on v0.13.4 itself with its own frontend; with
+`5e7a2c9d4b13` of a backend copy clearing each moved reply's output items, the tool reply and
+delegation tests fail on the SQLite set (no steps to open).
 """
 
 from __future__ import annotations
@@ -39,6 +51,7 @@ from harness import upstream as reply
 from harness.file_context import file_context_ticked
 from harness.instance import resolve_backend, resolve_frontend_build
 from harness.upgraded_release import Upgraded, data_set_params, upgraded_release
+from harness.upstream import MOCK_MODEL_ID
 from utils.cached_chat import attach_from_menu, calling, turn_on_tool
 from utils.chat_ui import chat_input, conversation, expect_reply, last_reply, replies, send
 from utils.citations_files import expect_marked, file_panel
@@ -63,6 +76,8 @@ RELEASE_ENVIRONMENT = {
 
 
 KEPT_DATA_SETS = {"v0.10.2-sqlite", "v0.11.4-postgres"}
+# chats as 0.13 stores them, kept whole per message: the move into rows changes what each holds
+V013_DATA_SETS = [param for param in data_set_params() if param.id.startswith("v0.13.")]
 
 
 @pytest.fixture(
@@ -99,7 +114,8 @@ def open_as(page_for, upgraded):
 
 
 def _sidebar(page: Page) -> Locator:
-    page.get_by_role("button", name="Open Sidebar", exact=True).click()
+    # with unread notifications the name reads "Open Sidebar · Notifications (1)"
+    page.get_by_role("button", name=re.compile(r"^Open Sidebar( ·|$)")).click()
     return page.get_by_role("navigation", name="Chat history")
 
 
@@ -187,6 +203,159 @@ def test_the_cited_reply_opens_the_passage_it_was_answered_from(open_as, upgrade
     # since 072d0b51d the cited file opens beside the chat with the cited text marked
     cited = file_panel(page, knowledge["filename"]).get_by_text(knowledge["text"], exact=True)
     expect_marked(cited)
+
+
+def _shown_path(chat: dict) -> list[dict]:
+    """The messages a chat shows on its current branch, first to last, as the manifest has them."""
+    messages, path, current = chat["messages"], [], chat["current_id"]
+    while current:
+        path.insert(0, messages[current])
+        current = messages[current]["parent"]
+    return path
+
+
+def _shown_answers(chat: dict, question: dict) -> list[dict]:
+    """The answers to `question` on screen: the one on the branch and other models' beside it."""
+    stored, path = chat["stored"], _shown_path(chat)
+    [on_branch] = [child for child in question["children"] if chat["messages"][child] in path]
+    beside = [
+        child
+        for child in question["children"]
+        if stored[child]["model"] != stored[on_branch]["model"]
+    ]
+    return [chat["messages"][child] for child in [on_branch, *beside]]
+
+
+def _open_chat(open_as, chat: dict) -> Page:
+    page = open_as("alice", f"/c/{chat['id']}")
+    expect(conversation(page).get_by_text(_shown_path(chat)[0]["content"])).to_be_visible()
+    return page
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_every_message_of_a_chat_v0_13_saved_shows_its_text(open_as, upgraded):
+    chats = [chat for chat in upgraded.manifest["chats"].values() if "stored" in chat]
+    assert len(chats) >= 6, f"the data set holds too few chats v0.13 saved: {chats}"
+    page = open_as("alice")
+    for chat in chats:
+        page.goto(f"/c/{chat['id']}")
+        path = _shown_path(chat)
+        questions = [entry for entry in path if entry["role"] == "user"]
+        answers = [answer for question in questions for answer in _shown_answers(chat, question)]
+        shown_questions = conversation(page).locator(".chat-user")
+        expect(shown_questions.first).to_contain_text(questions[0]["content"])
+        expect(shown_questions).to_have_count(len(questions))
+        for index, question in enumerate(questions):
+            expect(shown_questions.nth(index)).to_contain_text(question["content"])
+        expect(replies(page)).to_have_count(len(answers))
+        for index, answer in enumerate(answers):
+            expect(replies(page).nth(index), f"{chat['title']}: reply {index}").to_contain_text(
+                answer["content"]
+            )
+        # what the model's skill list returned stayed out of sight in v0.13.4
+        expect(conversation(page).get_by_text("Plans multi-city trips by train.")).to_have_count(0)
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_the_tool_reply_keeps_its_steps_with_the_tool_output_and_folded_reasoning(
+    open_as, upgraded
+):
+    tooled = upgraded.manifest["chats"]["tooled"]
+    page = _open_chat(open_as, tooled)
+    reply_turn = last_reply(page)
+    expect(reply_turn).to_contain_text(tooled["answer"])
+    thoughts = reply_turn.get_by_text(tooled["reasoning"])
+    expect(thoughts).to_be_hidden()
+
+    reply_turn.get_by_role("button", name="Toggle details", expanded=False).click()
+    reply_turn.get_by_role("button", name="View Result from get_weather").click()
+
+    expect(reply_turn.get_by_text("Sunny in Graz").first).to_be_visible()
+    expect(thoughts).to_be_hidden()
+    reply_turn.get_by_text("Thought for").click()
+    expect(thoughts).to_be_visible()
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_the_reply_edited_in_v0_13_shows_the_edited_text(open_as, upgraded):
+    edited = upgraded.manifest["chats"]["edited"]
+    page = _open_chat(open_as, edited)
+
+    expect(last_reply(page).get_by_text(edited["edited_text"], exact=True)).to_be_visible()
+    expect(last_reply(page).get_by_text("Burg Kreuzenstein.", exact=True)).to_have_count(0)
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_a_regenerated_reply_counts_its_kept_versions_without_the_deleted_one(open_as, upgraded):
+    regenerated = upgraded.manifest["chats"]["regenerated"]
+    first, last = regenerated["texts"]
+    page = _open_chat(open_as, regenerated)
+    expect(last_reply(page)).to_contain_text(last)
+    expect(_turn_with(page, last).get_by_text("2/2")).to_be_visible()
+
+    _turn_with(page, last).get_by_role("button", name="Previous message").click()
+
+    expect(last_reply(page)).to_contain_text(first)
+    expect(_turn_with(page, first).get_by_text("1/2")).to_be_visible()
+    _turn_with(page, first).get_by_role("button", name="Next message").click()
+    expect(last_reply(page)).to_contain_text(last)
+    expect(conversation(page).get_by_text("Melk Abbey by train.")).to_have_count(0)
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_two_models_answers_still_stand_side_by_side(open_as, upgraded):
+    side_by_side, model = upgraded.manifest["chats"]["side_by_side"], upgraded.manifest["model"]
+    page = _open_chat(open_as, side_by_side)
+
+    expect(replies(page)).to_have_count(2)
+    expect(replies(page).filter(has_text="The Albertina.")).to_be_visible()
+    expect(replies(page).filter(has_text="The handbook says the Leopold.")).to_be_visible()
+    for name in (MOCK_MODEL_ID, model["name"]):
+        expect(conversation(page).get_by_text(name, exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_the_delegated_task_opens_on_the_sub_agents_report(open_as, upgraded):
+    delegating, subagent = (
+        upgraded.manifest["chats"]["delegating"],
+        upgraded.manifest["chats"]["subagent"],
+    )
+    page = _open_chat(open_as, delegating)
+    reply_turn = last_reply(page)
+    report = reply_turn.get_by_text(subagent["answer"])
+    expect(reply_turn).to_contain_text(delegating["messages"][delegating["reply_id"]]["content"])
+    expect(report).to_be_hidden()
+
+    reply_turn.get_by_role("button", name=re.compile(re.escape(delegating["task"]))).click()
+
+    expect(report.first).to_be_visible()
+    own_chat = _open_chat(open_as, subagent)
+    expect(last_reply(own_chat)).to_contain_text(subagent["answer"])
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_the_chat_started_in_a_folder_is_listed_in_it(open_as, upgraded):
+    foldered, folders = upgraded.manifest["chats"]["foldered"], upgraded.manifest["folders"]
+    [folder] = [entry for entry in folders.values() if entry["id"] == foldered["folder_id"]]
+    sidebar = _sidebar(open_as("alice"))
+    _expand(sidebar, "Folders")
+
+    _open_folder(sidebar, folder["name"])
+
+    expect(
+        chat_row(_folder_with_its_chats(sidebar, folder["id"]), foldered["title"])
+    ).to_be_visible()
+
+
+@pytest.mark.parametrize("upgraded", V013_DATA_SETS, indirect=True)
+def test_the_cited_reply_of_v0_13_keeps_its_source(open_as, upgraded):
+    cited, knowledge = upgraded.manifest["chats"]["cited"], upgraded.manifest["knowledge"]
+    page = open_as("alice", f"/c/{cited['id']}")
+
+    expect(last_reply(page)).to_contain_text("Behind the blue door")
+    expect(last_reply(page).get_by_role("button", name="Toggle 1 source")).to_be_visible()
+    marker = last_reply(page).get_by_role("button", name=f"View source: {knowledge['filename']}")
+    expect(marker).to_be_visible()
 
 
 def test_the_pinned_chat_sits_in_its_nested_folder_once_unpinned(open_as, upgraded):
