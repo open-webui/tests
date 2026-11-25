@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 import pytest
 
+from harness.actors import admin_of, sign_in
 from harness.chat import ask, wait_for_reply
 from harness.inflight import LAST_PIECE, start_slow_reply
 
@@ -129,7 +131,7 @@ def test_the_owners_delete_still_stops_their_reply(delete, admin, make_user, ups
 
 
 def test_deleting_a_user_stops_their_reply(admin, make_user, upstream):
-    """Regression open-webui/open-webui#35060: deleting a user left their streaming reply running."""
+    """Regression open-webui/open-webui#35060: deleting a user left their reply running."""
     owner = make_user()
     with owner.client() as owner_client, admin.client() as admin_client:
         # streams for six seconds, so a reply left running is still listed after the delete
@@ -144,6 +146,53 @@ def test_deleting_a_user_stops_their_reply(admin, make_user, upstream):
         still_running = set(admin_client.get("/api/tasks").json()["tasks"]) & set(running)
         assert not still_running, (
             f"the deleted user's reply kept running: tasks {sorted(still_running)} still listed"
+        )
+
+
+SCIM_TOKEN = "scim-provisioning-token"
+
+
+def test_deprovisioning_a_user_over_scim_stops_their_reply(instance_with):
+    """Regression open-webui/open-webui#35060: a SCIM delete left the user's reply running."""
+    launched = instance_with(
+        {"ENABLE_SCIM": "true", "SCIM_TOKEN": SCIM_TOKEN, "SCIM_AUTH_PROVIDER": "oidc"}
+    )
+    scim_headers = {"Authorization": f"Bearer {SCIM_TOKEN}"}
+    email = f"sso-{uuid.uuid4().hex[:8]}@example.com"
+    provisioned = httpx.post(
+        f"{launched.base_url}/api/v1/scim/v2/Users",
+        headers=scim_headers,
+        json={
+            "userName": email,
+            "displayName": "SSO User",
+            "emails": [{"value": email, "primary": True}],
+        },
+        timeout=60.0,
+    )
+    assert provisioned.status_code == 201, provisioned.text
+    account_id = provisioned.json()["id"]
+    with admin_of(launched).client() as admin_client:
+        password_set = admin_client.post(
+            f"/api/v1/users/{account_id}/update", json={"password": "userpassword123"}
+        )
+        assert password_set.status_code == 200, password_set.text
+        token = sign_in(launched, email, "userpassword123")
+        with launched.client(token) as owner_client:
+            turn = start_slow_reply(owner_client, launched.upstream, chunk_delay=0.3)
+            running = owner_client.get(f"/api/tasks/chat/{turn.chat_id}").json()["task_ids"]
+            assert running, "the slow reply has no task to stop"
+
+        deprovisioned = httpx.delete(
+            f"{launched.base_url}/api/v1/scim/v2/Users/{account_id}",
+            headers=scim_headers,
+            timeout=60.0,
+        )
+        assert deprovisioned.status_code == 204, deprovisioned.text
+        assert admin_client.get(f"/api/v1/chats/{turn.chat_id}").status_code != 200
+
+        still_running = set(admin_client.get("/api/tasks").json()["tasks"]) & set(running)
+        assert not still_running, (
+            f"the removed user's reply kept running: tasks {sorted(still_running)} still listed"
         )
 
 
