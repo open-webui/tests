@@ -7,20 +7,21 @@ event with the author on the user message and then the reply through `chat:compl
 without access, or with a "Clone only" grant, cannot join. Taking a grant off the folder sends
 the joined tabs a `chat:access` event. Removing a member from the group, or taking a grant off
 the folder, drops the tab that lost access from the live feed and closes the chat to that account,
-while the members who keep access go on getting it. A folder reader can reply in
-the owner's chats only while the folder is in "Allow replies" mode, and the folder's chat list
-then names both of them as the people who wrote in that chat. Only the owner shares a folder
-and sets its mode: a member with a write grant is refused, while their ordinary Edit Folder save
-still works.
+while the members who keep access go on getting it. Someone with write access to a folder can
+reply in the owner's chats only while the folder is in "Allow replies" mode, and the folder's chat
+list then names both of them as the people who wrote in that chat. Since dev bcff000ad a reader of
+the folder without write access gets the chat read-only, "Allow replies" or not. Only the owner
+shares a folder and sets its mode: a member with a write grant is refused, while their ordinary
+Edit Folder save still works.
 
-A folder reader who may reply also regenerates the owner's reply and edits the owner's question
-(v0.12.3, 788a61180): the new reply is stored as theirs, the owner's question keeps its content
-and models, and the edit becomes a sibling branch; saving over the owner's question stays
-refused. Regenerating from an answer's id is refused with 403, and a Clone only reader or a
-reader of a folder without Allow replies is refused with 404. Every joined tab gets a
-`chat:presence` list of the people with the chat open, carrying only their id and name; leaving,
-closing the tab, leaving the group or losing the folder grant takes the person off it, and a tab
-refused at join neither shows up in it nor receives it.
+Someone who may reply in a folder also regenerates the owner's reply and edits the owner's
+question (v0.12.3, 788a61180): the new reply is stored as theirs, the owner's question keeps its
+content and models, and the edit becomes a sibling branch; saving over the owner's question stays
+refused. Regenerating from an answer's id is refused with 403, and a Clone only reader, a folder
+reader without write access or a writer of a folder without Allow replies is refused with 404.
+Every joined tab gets a `chat:presence` list of the people with the chat open, carrying only
+their id and name; leaving, closing the tab, leaving the group or losing the folder grant takes
+the person off it, and a tab refused at join neither shows up in it nor receives it.
 
 Discriminates: passes on dev a9adb2b78; in a backend copy, `get_event_emitter` skipping the
 shared room emit (`if shared_event:` made false) fails the live turn test and the group removal
@@ -182,6 +183,11 @@ def _share_folder(owner, folder_id: str, grants: list[dict], share_mode: str | N
             json={"access_grants": grants, "share_mode": share_mode},
         )
     assert saved.status_code == 200, saved.text
+
+
+def _write_access(account) -> list[dict]:
+    """The grants the share dialog saves for someone set to Write: read and write."""
+    return [grant("user", account.id, "read"), grant("user", account.id, "write")]
 
 
 def _stored_folder(owner, folder_id: str) -> dict:
@@ -394,33 +400,41 @@ def test_removing_a_member_from_the_group_cuts_their_live_feed_and_presence(
                 )
 
 
-def test_a_folder_reader_replies_only_while_the_folder_allows_replies(admin, make_user, upstream):
+def test_a_folder_writer_replies_only_while_the_folder_allows_replies(admin, make_user, upstream):
     owner = _folder_owner(make_user, admin)
-    reader = make_user()
+    writer, reader = make_user(), make_user()
     folder_id = _create_folder(owner)
     chat_id, last_id = _filed_chat(owner, folder_id)
-    reader_read = [grant("user", reader.id, "read")]
-    _share_folder(owner, folder_id, reader_read, "continue")
+    grants = [*_write_access(writer), grant("user", reader.id, "read")]
+    _share_folder(owner, folder_id, grants, "continue")
 
-    turn, _ = _reply_in(reader, upstream, chat_id, last_id, "is the tide table up to date?")
+    with reader.client() as client:
+        assert client.get(f"/api/v1/chats/{chat_id}").status_code == 200
+        with pytest.raises(AssertionError, match="chat request refused: HTTP 404"):
+            send_message(client, "can I add something?", chat_id=chat_id, parent_id=last_id)
+
+    turn, _ = _reply_in(writer, upstream, chat_id, last_id, "is the tide table up to date?")
 
     with owner.client() as client:
         stored = client.get(f"/api/v1/chats/{chat_id}").json()["chat"]["history"]["messages"]
     assert stored[turn.user_message_id]["content"] == "is the tide table up to date?"
-    assert stored[turn.user_message_id]["user_id"] == reader.id
-    assert stored[turn.user_message_id]["user"] == {"id": reader.id, "name": reader.name}
+    assert stored[turn.user_message_id]["user_id"] == writer.id
+    assert stored[turn.user_message_id]["user"] == {"id": writer.id, "name": writer.name}
     assert stored[turn.assistant_message_id]["content"] == "answer to is the tide table up to date?"
-    writers = [{"id": owner.id, "name": owner.name}, {"id": reader.id, "name": reader.name}]
-    for account in (owner, reader):
+    assert not [m for m in stored.values() if m.get("content") == "can I add something?"], (
+        "the read-only reader's message was stored"
+    )
+    writers = [{"id": owner.id, "name": owner.name}, {"id": writer.id, "name": writer.name}]
+    for account in (owner, writer, reader):
         with account.client() as client:
             listed = client.get(f"/api/v1/folders/{folder_id}/shared/chats", params={"page": 1})
         assert listed.status_code == 200, listed.text
         [entry] = [chat for chat in listed.json()["chats"] if chat["id"] == chat_id]
         assert entry["participants"] == writers
 
-    _share_folder(owner, folder_id, reader_read, None)
+    _share_folder(owner, folder_id, grants, None)
 
-    with reader.client() as client:
+    with writer.client() as client:
         assert client.get(f"/api/v1/chats/{chat_id}").status_code == 200
         with pytest.raises(AssertionError, match="chat request refused: HTTP 404"):
             send_message(
@@ -432,32 +446,32 @@ def test_a_folder_reader_replies_only_while_the_folder_allows_replies(admin, mak
     assert not [m for m in after.values() if m.get("content") == "one more thing"]
 
 
-def test_a_folder_reader_regenerates_and_edits_the_owners_turns_into_new_branches(
+def test_a_folder_writer_regenerates_and_edits_the_owners_turns_into_new_branches(
     admin, make_user, upstream
 ):
     owner = _folder_owner(make_user, admin)
-    reader = make_user()
+    writer = make_user()
     folder_id = _create_folder(owner)
     chat_id, (_, first_reply, question_id, owner_reply) = _owner_chat_with_two_turns(
         owner, upstream, folder_id
     )
-    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], "continue")
+    _share_folder(owner, folder_id, _write_access(writer), "continue")
     before = _messages_of(owner, chat_id)
     question = before[question_id]
     assert question["models"] == [MOCK_MODEL_ID]
 
-    upstream.queue(reply.text("the reader's answer", match=reply.answering(question["content"])))
+    upstream.queue(reply.text("the writer's answer", match=reply.answering(question["content"])))
     regenerated, new_reply = _regenerate(
-        reader, chat_id, question, [MOCK_MODEL_ID, "the-readers-pick"]
+        writer, chat_id, question, [MOCK_MODEL_ID, "the-writers-pick"]
     )
     assert regenerated.status_code == 200, (
-        f"the reader could not regenerate the owner's reply: {regenerated.text}"
+        f"the writer could not regenerate the owner's reply: {regenerated.text}"
     )
-    with reader.client() as client:
+    with writer.client() as client:
         stored_reply = wait_for_reply(client, ChatTurn(chat_id, question_id, new_reply))
 
-    assert stored_reply["content"] == "the reader's answer"
-    assert stored_reply["user_id"] == reader.id
+    assert stored_reply["content"] == "the writer's answer"
+    assert stored_reply["user_id"] == writer.id
     assert stored_reply["parentId"] == question_id
     after = _messages_of(owner, chat_id)
     assert after[question_id]["childrenIds"] == [owner_reply, new_reply]
@@ -468,19 +482,19 @@ def test_a_folder_reader_regenerates_and_edits_the_owners_turns_into_new_branche
     assert after[owner_reply] == before[owner_reply]
 
     edited = f"and the last ferry back? {uuid.uuid4().hex[:6]}"
-    turn, edited_reply = _reply_in(reader, upstream, chat_id, first_reply, edited)
+    turn, edited_reply = _reply_in(writer, upstream, chat_id, first_reply, edited)
 
     after_edit = _messages_of(owner, chat_id)
     branch = after_edit[turn.user_message_id]
     assert branch["content"] == edited
     assert branch["parentId"] == first_reply
-    assert branch["user"] == {"id": reader.id, "name": reader.name}
+    assert branch["user"] == {"id": writer.id, "name": writer.name}
     assert after_edit[first_reply]["childrenIds"] == [question_id, turn.user_message_id]
     assert after_edit[question_id]["content"] == question["content"]
     assert after_edit[turn.assistant_message_id]["content"] == edited_reply["content"]
 
-    # Saving an edit in place stays the author's own: the reader's Save is refused
-    with reader.client() as client:
+    # Saving an edit in place stays the author's own: the writer's Save is refused
+    with writer.client() as client:
         in_place = client.post(
             f"/api/v1/chats/{chat_id}/messages/{question_id}", json={"content": "rewritten"}
         )
@@ -488,29 +502,36 @@ def test_a_folder_reader_regenerates_and_edits_the_owners_turns_into_new_branche
     assert _messages_of(owner, chat_id)[question_id]["content"] == question["content"]
 
 
-def test_only_a_reader_of_a_chat_open_for_replies_regenerates_and_only_from_a_question(
+def test_only_a_member_who_may_reply_regenerates_and_only_from_a_question(
     admin, make_user, upstream
 ):
     owner = _folder_owner(make_user, admin)
-    reader, clone_only_reader = make_user(), make_user()
+    writer, reader, clone_only_reader = make_user(), make_user(), make_user()
     folder_id = _create_folder(owner)
     chat_id, (_, first_reply, question_id, _) = _owner_chat_with_two_turns(
         owner, upstream, folder_id
     )
-    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], "continue")
+    grants = [*_write_access(writer), grant("user", reader.id, "read")]
+    _share_folder(owner, folder_id, grants, "continue")
     _share_continue(owner, chat_id, grant("user", clone_only_reader.id, "read"), share_mode=None)
     before = _messages_of(owner, chat_id)
     question, answer = before[question_id], before[first_reply]
 
-    on_an_answer, _ = _regenerate(reader, chat_id, {**answer, "role": "user"}, [MOCK_MODEL_ID])
+    on_an_answer, _ = _regenerate(writer, chat_id, {**answer, "role": "user"}, [MOCK_MODEL_ID])
     clone_only, _ = _regenerate(clone_only_reader, chat_id, question, [MOCK_MODEL_ID])
-    _share_folder(owner, folder_id, [grant("user", reader.id, "read")], None)
-    read_only, _ = _regenerate(reader, chat_id, question, [MOCK_MODEL_ID])
+    folder_reader, _ = _regenerate(reader, chat_id, question, [MOCK_MODEL_ID])
+    _share_folder(owner, folder_id, grants, None)
+    read_only, _ = _regenerate(writer, chat_id, question, [MOCK_MODEL_ID])
 
     assert on_an_answer.status_code == 403, on_an_answer.text
     assert "You can only regenerate replies to user messages." in on_an_answer.text
     assert clone_only.status_code == 404, f"a Clone only reader regenerated: {clone_only.text}"
-    assert read_only.status_code == 404, f"a read-only folder reader regenerated: {read_only.text}"
+    assert folder_reader.status_code == 404, (
+        f"a folder reader without write access regenerated: {folder_reader.text}"
+    )
+    assert read_only.status_code == 404, (
+        f"a writer of a read-only folder regenerated: {read_only.text}"
+    )
     assert _messages_of(owner, chat_id) == before
 
 

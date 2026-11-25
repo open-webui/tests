@@ -4,9 +4,11 @@ A tab that has the chat open sends `events:chat` with a `typing` event while its
 in the message box. The server passes it on to every other tab in the chat's room, the sender's
 own other tabs included, as a shared event that names only the sender's id and name. It drops
 the event, answering false, when the tab has not joined the chat's room, when the account may
-read the chat but not reply in it (a read-only folder, an admin looking at someone's chat), and
-for an id that is no saved chat. So nobody outside the chat learns who is typing there, and a
-reader who cannot reply never shows up as typing.
+read the chat but not reply in it (a folder without "Allow replies", a reader of a folder with it,
+an admin looking at someone's chat), and for an id that is no saved chat. So nobody outside the
+chat learns who is typing there, and a reader who cannot reply never shows up as typing. Since
+dev bcff000ad "Allow replies" on a folder lets only people with write access reply, so only they
+show as typing there.
 
 Discriminates: passes on dev 226dca18c; in a backend copy, the typing handler skipping its room
 check fails the room test, skipping its write check (`permission='write'` dropped) fails the
@@ -93,8 +95,10 @@ def _expected(sender, chat_id: str, typing: bool = True) -> dict:
     }
 
 
-def _folder_chat(admin, make_user, reader, share_mode: str | None) -> tuple[object, str, str]:
-    """An owner's chat filed in a folder shared read with `reader`; returns owner, folder, chat."""
+def _folder_chat(
+    admin, make_user, grants: list[dict], share_mode: str | None
+) -> tuple[object, str, str]:
+    """An owner's chat filed in a folder shared with `grants`; returns owner, folder, chat."""
     owner = make_user()
     make_group(admin, [owner], FOLDER_SHARING)
     with owner.client() as client:
@@ -105,15 +109,20 @@ def _folder_chat(admin, make_user, reader, share_mode: str | None) -> tuple[obje
     with owner.client() as client:
         moved = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
     assert moved.status_code == 200, moved.text
-    _share_folder(owner, folder_id, reader, share_mode)
+    _share_folder(owner, folder_id, grants, share_mode)
     return owner, folder_id, chat_id
 
 
-def _share_folder(owner, folder_id: str, reader, share_mode: str | None) -> None:
+def _write_access(account) -> list[dict]:
+    """The grants the share dialog saves for someone set to Write: read and write."""
+    return [grant("user", account.id, "read"), grant("user", account.id, "write")]
+
+
+def _share_folder(owner, folder_id: str, grants: list[dict], share_mode: str | None) -> None:
     with owner.client() as client:
         saved = client.post(
             f"/api/v1/folders/{folder_id}/access/update",
-            json={"access_grants": [grant("user", reader.id, "read")], "share_mode": share_mode},
+            json={"access_grants": grants, "share_mode": share_mode},
         )
     assert saved.status_code == 200, saved.text
 
@@ -242,33 +251,44 @@ def test_typing_from_a_tab_outside_the_chat_is_dropped(make_user):
 
 
 def test_only_an_account_that_can_reply_shows_as_typing(admin, make_user):
-    reader = make_user()
-    owner, folder_id, chat_id = _folder_chat(admin, make_user, reader, share_mode=None)
+    reader, writer = make_user(), make_user()
+    grants = [grant("user", reader.id, "read"), *_write_access(writer)]
+    owner, folder_id, chat_id = _folder_chat(admin, make_user, grants, share_mode=None)
     onlooker = make_user(role="admin")
 
     with (
         connected(owner) as owner_tab,
         connected(reader) as reader_tab,
+        connected(writer) as writer_tab,
         connected(onlooker) as onlooker_tab,
     ):
         assert _join(owner_tab, chat_id) is True
         assert _join(reader_tab, chat_id) is True, "a folder reader could not open the chat live"
+        assert _join(writer_tab, chat_id) is True, "a folder writer could not open the chat live"
         assert _join(onlooker_tab, chat_id) is True, "an admin could not open the user's chat live"
 
-        assert _type(reader_tab, chat_id) is False, "a reader of a read-only folder sent typing"
+        assert _type(reader_tab, chat_id) is False, "a reader of a folder without replies typed"
+        assert _type(writer_tab, chat_id) is False, "a writer of a folder without replies typed"
         assert _type(onlooker_tab, chat_id) is False, "an admin who only reads the chat sent typing"
         time.sleep(QUIET_SECONDS)
         assert _typing_events(owner_tab, chat_id) == [], (
             f"the owner saw typing from a non-replier: {_typing_events(owner_tab, chat_id)}"
         )
 
-        _share_folder(owner, folder_id, reader, "continue")
-        assert _type(reader_tab, chat_id) is True, (
-            "the reader could not type once replies were allowed"
+        _share_folder(owner, folder_id, grants, "continue")
+        assert _type(writer_tab, chat_id) is True, (
+            "the writer could not type once replies were allowed"
         )
-        assert _wait_for_typing(owner_tab, chat_id) == [_expected(reader, chat_id)]
-
-        _share_folder(owner, folder_id, reader, None)
+        assert _wait_for_typing(owner_tab, chat_id) == [_expected(writer, chat_id)]
         assert _type(reader_tab, chat_id) is False, (
-            "the reader still sent typing after replies were turned off"
+            "a reader without write access typed in a folder that allows replies"
+        )
+        time.sleep(QUIET_SECONDS)
+        assert _typing_events(owner_tab, chat_id) == [_expected(writer, chat_id)], (
+            f"the owner saw typing from the reader: {_typing_events(owner_tab, chat_id)}"
+        )
+
+        _share_folder(owner, folder_id, grants, None)
+        assert _type(writer_tab, chat_id) is False, (
+            "the writer still sent typing after replies were turned off"
         )
