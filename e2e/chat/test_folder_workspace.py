@@ -38,8 +38,8 @@ member sees that run on the same page, without Run now.
 
 The board card menu test is red on dev f80a4f782 and on v0.13.4: board cards have no chat menu,
 though the 0.13.4 changelog and the docs give every chat on the board the sidebar's menu (board
-added without it in 06491f013; issue draft cov-board-card-menu). It passes on the build of the fix
-branch fix-board-card-chat-menu (ffd7e1d30, 5 of 5).
+added without it in 06491f013; open-webui/open-webui#35045). It passes on the build of the fix
+branch fix-board-card-chat-menu (9f7f6d34a, 5 of 5).
 
 Discriminates: journey, no fix. All pass on the dev 941bf3674 build. With the dev build on a
 backend copy of it whose status route stores nothing the status pick and board drag tests go red,
