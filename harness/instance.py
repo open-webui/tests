@@ -232,6 +232,8 @@ def launch(upstream: MockUpstream, extra_env: dict[str, str]) -> Iterator[Launch
             "STATIC_DIR": str(scratch / "static"),
             "FRONTEND_BUILD_DIR": str(build or scratch / "build"),
             "OFFLINE_MODE": "true",
+            # the stand-in video provider finishes a job in one poll; 5s between polls only waits
+            "VIDEO_GENERATION_POLL_INTERVAL": "0.2",
             "RAG_EMBEDDING_ENGINE": "openai",  # served by the mock, so nothing is downloaded
             # its default is the hardcoded api.openai.com, not OPENAI_API_BASE_URL
             "RAG_OPENAI_API_BASE_URL": upstream.base_url,
