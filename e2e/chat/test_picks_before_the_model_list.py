@@ -333,7 +333,7 @@ def test_a_file_in_a_draft_shows_once_after_a_reload(page_for, make_user, upstre
 def test_a_file_still_uploading_at_a_reload_does_not_hold_up_the_next_message(
     page_for, make_user, upstream
 ):
-    """Issue: the cut-off upload came back stuck uploading and the message waited forever."""
+    """open-webui#35029: the cut-off upload came back stuck and the message waited forever."""
     page = page_for(make_user())
     uploads: list[Route] = []
     page.route(
