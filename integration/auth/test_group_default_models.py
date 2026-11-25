@@ -4,14 +4,13 @@ An admin sets default models on a group; its members, and the members of its sub
 as `default_models` in the config the web client loads, in place of the instance's Selected
 Models. When a member's groups set different defaults the deepest group wins, a subgroup that sets
 none passes on the nearest parent's, and between groups at the same depth the one created first
-wins. Models that are hidden or that the member cannot read are dropped from the winner's list,
-and when none are left the member gets the instance's own default again. Moving a group changes
-what its members resolve at once, and the admin's group preview says where a group's effective
-defaults come from. A list that is not made of model ids is refused.
+wins. Moving a group changes what its members resolve at once, and the admin's group preview says
+where a group's effective defaults come from. A list that is not made of model ids is refused.
 
-The tests that start on a model created through the API are red on dev 708e6642a: the model is
-not used as a group's default until someone loads the model list, and a model hidden later stays
-the default (open-webui/open-webui#34987).
+The config carries the winner's list as the admin set it. Dropping the hidden models and the ones
+the member cannot read, and falling back to the instance's default when none are left, happens in
+the browser against the model list it loads (2801ee9ea, after open-webui/open-webui#34987), so
+those steps are pinned in e2e/admin/test_group_hierarchy.py.
 
 Discriminates: in a backend copy, sorting `resolve_group_default_models` by shallowest instead of
 deepest turns the deepest-wins test red (the top group's models win), sorting by newest turns
@@ -67,15 +66,15 @@ def _group(admin, groups: list[str], members, default_models=None, parent_id=Non
     return group_id
 
 
-def _preset(admin, name: str, grants: list[dict] | None = None, hidden: bool = False) -> str:
+def _preset(admin, name: str) -> str:
     model_id = f"preset-{name}-{uuid.uuid4().hex[:6]}"
     body = {
         "id": model_id,
         "base_model_id": MOCK_MODEL_ID,
         "name": name,
-        "meta": {"hidden": hidden},
+        "meta": {},
         "params": {},
-        "access_grants": [PUBLIC] if grants is None else grants,
+        "access_grants": [PUBLIC],
     }
     with admin.client() as client:
         created = client.post("/api/v1/models/create", json=body)
@@ -155,53 +154,6 @@ def test_between_groups_at_the_same_depth_the_older_one_wins(admin, make_user, g
     _group(admin, groups, [member], default_models=[newer])
 
     assert _starts_with(member) == [older]
-
-
-def test_hidden_and_unreadable_models_are_dropped_from_the_winners_list(
-    admin, make_user, groups, global_default
-):
-    member = make_user()
-    visible = _preset(admin, "visible")
-    hidden = _preset(admin, "hidden", hidden=True)
-    private = _preset(admin, "private", grants=[])
-    global_default(MOCK_MODEL_ID)
-    _group(admin, groups, [member], default_models=[hidden, private, visible])
-
-    assert _starts_with(member) == [visible]
-
-
-def test_the_instances_default_returns_when_no_group_model_is_left(
-    admin, make_user, groups, global_default
-):
-    member = make_user()
-    hidden = _preset(admin, "hidden", hidden=True)
-    private = _preset(admin, "private", grants=[])
-    global_default(MOCK_MODEL_ID)
-    _group(admin, groups, [member], default_models=[hidden, private])
-
-    assert _starts_with(member) == [MOCK_MODEL_ID]
-
-
-def test_a_default_model_hidden_later_is_dropped_at_once(admin, make_user, groups, global_default):
-    """A model hidden after the model list loaded stops being a default (#34987)."""
-    member = make_user()
-    later_hidden = _preset(admin, "later-hidden")
-    global_default(MOCK_MODEL_ID)
-    _group(admin, groups, [member], default_models=[later_hidden])
-    with admin.client() as client:
-        assert client.get("/api/models").status_code == 200
-    assert _starts_with(member) == [later_hidden]
-
-    time.sleep(1.1)  # models are stamped to the second
-    with admin.client() as client:
-        stored = client.get(f"/api/v1/models/model?id={later_hidden}").json()
-        hidden = client.post(
-            f"/api/v1/models/model/update?id={later_hidden}",
-            json={**stored, "meta": {**stored["meta"], "hidden": True}, "access_grants": [PUBLIC]},
-        )
-    assert hidden.status_code == 200, hidden.text
-
-    assert _starts_with(member) == [MOCK_MODEL_ID]
 
 
 def test_clearing_a_groups_defaults_gives_its_members_the_parents_again(admin, make_user, groups):

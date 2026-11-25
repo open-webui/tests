@@ -11,8 +11,10 @@ inherited and marks the ones that remain enabled. Deleting a parent names where 
 they show at that level afterwards. The Default models field names where inherited defaults come
 from and sets a group's own. In their own browser, a subgroup member finds a model shared only with
 the parent group in the model selector, starts a new chat on the parent's default model, and an open
-tab gains the shared model when the member joins the subgroup, without a reload. Each test works as
-a fresh admin on groups of its own.
+tab gains the shared model when the member joins the subgroup, without a reload. A new chat passes
+over the group's default models that are hidden or that the member cannot read, and over one hidden
+later, and starts on the instance's Selected Models once none is left. Each test works as a fresh
+admin on groups of its own.
 
 The starting model test is red on dev 708e6642a: a model created through the API is not used as
 a group's default model until someone loads the model list (open-webui/open-webui#34987).
@@ -26,7 +28,8 @@ red; in a backend copy, the update and create routes ignoring the parent turn th
 creation and drag tests red, subgroup deletion leaving subgroups top-level turns the middle
 delete test red, group memberships ignoring parents turns the Users tab, shared model, starting
 model and open tab tests red, and the access refresh message not being sent turns the open tab
-test red.
+test red. The skipped defaults test passes on dev 45f28636f; in a backend copy, the config without
+the instance's default to fall back on, or the model list ignoring read access, turns it red.
 """
 
 from __future__ import annotations
@@ -482,6 +485,54 @@ def test_a_new_chat_starts_on_the_default_model_of_a_parent_group(
     expect(
         outsider_page.get_by_role("button", name=f"Selected model: {preset['name']}")
     ).to_have_count(0)
+
+
+def _hide(admin: Actor, preset: dict) -> None:
+    with admin.client() as client:
+        stored = client.get(f"/api/v1/models/model?id={preset['id']}").json()
+        hidden = client.post(
+            f"/api/v1/models/model/update?id={preset['id']}",
+            json={**stored, "meta": {**stored["meta"], "hidden": True}},
+        )
+    assert hidden.status_code == 200, hidden.text
+
+
+def test_a_new_chat_skips_group_defaults_the_member_cannot_use(
+    admin, page_for, make_user, make_group, make_preset, preserve, suffix
+):
+    """The winner's hidden and unreadable models are passed over, a model hidden later too, and
+    with none left the member starts on the instance's Selected Models (#34987)."""
+    hidden = make_preset("Hidden", [EVERYONE_READS])
+    private = make_preset("Private", [])
+    usable = make_preset("Usable", [EVERYONE_READS])
+    instance_default = make_preset("Instance", [EVERYONE_READS])
+    _hide(admin, hidden)
+    preserve(("/api/v1/configs/models", "/api/v1/configs/models"))
+    with admin.client() as client:
+        models_config = client.get("/api/v1/configs/models").json()
+        saved = client.post(
+            "/api/v1/configs/models",
+            json={**models_config, "DEFAULT_MODELS": instance_default["id"]},
+        )
+    assert saved.status_code == 200, saved.text
+    group = make_group(
+        f"Defaults {suffix}",
+        data={"config": {"default_models": [hidden["id"], private["id"], usable["id"]]}},
+    )
+    member = make_user()
+    _add_member(admin, group, member)
+
+    first_visit = page_for(member)
+    expect(
+        first_visit.get_by_role("button", name=f"Selected model: {usable['name']}")
+    ).to_be_visible()
+
+    _hide(admin, usable)
+
+    next_visit = page_for(member)
+    expect(
+        next_visit.get_by_role("button", name=f"Selected model: {instance_default['name']}")
+    ).to_be_visible()
 
 
 def test_the_default_models_field_shows_where_the_defaults_come_from_and_sets_its_own(
