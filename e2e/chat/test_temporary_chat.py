@@ -100,6 +100,17 @@ def stored_chats(account, text: str) -> list[dict]:
     return list({chat["id"]: chat for chat in matching}.values())
 
 
+def reply_chain(history: dict) -> list[str]:
+    """The contents of the conversation a saved chat opens on, first message first."""
+    contents = []
+    message_id = history["currentId"]
+    while message_id:
+        message = history["messages"][message_id]
+        contents.insert(0, message["content"])
+        message_id = message["parentId"]
+    return contents
+
+
 def sidebar_entry(page: Page):
     """The sidebar link of the chat the page shows."""
     chat_id = page.url.rsplit("/", 1)[-1]
@@ -246,8 +257,12 @@ def test_saving_a_temporary_chat_keeps_the_conversation(page_for, make_user, ups
     assert chats
     with account.client() as client:
         chat = client.get(f"/api/v1/chats/{chats[0]['id']}").json()["chat"]
-    contents = [message["content"] for message in chat["history"]["messages"].values()]
-    assert contents == [PROMPT_TWO, ANSWER_TWO]
+    assert len(chat["history"]["messages"]) == 2
+    assert reply_chain(chat["history"]) == [PROMPT_TWO, ANSWER_TWO]
+    reload(page)
+    expect(conversation(page)).to_contain_text(
+        re.compile(f"{re.escape(PROMPT_TWO)}.*{re.escape(ANSWER_TWO)}", re.S)
+    )
 
 
 def test_temporary_chat_by_default_starts_new_chats_temporary(page_for, make_user, upstream):
