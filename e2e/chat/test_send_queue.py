@@ -11,7 +11,10 @@
 * open-webui/open-webui#34553: in a side chat the Stop button stayed after Send now until the page
   was reloaded, now and then. The queued answer starts while the page reloads the chat, and when
   it ended while the page was still asking which replies run, the page took the late answer for a
-  running reply. The test holds that question until the answer has ended.
+  running reply. The test holds that question until the answer has ended. Since dev 72184499b the
+  page asks it with the chat it loads, so the test holds that load. Red on dev 72184499b in every
+  place: when the queue's answer ends while that load is on its way, the answer stays empty and the
+  Stop button stays until the page is reloaded.
 
 Since dev f14dca0ee a message sent to a saved chat of one's own while its answer is being written
 waits on the server, and the waiting messages are answered together, as one question, once that
@@ -55,7 +58,8 @@ FIRST, SECOND, THIRD = "queued alpha", "queued bravo", "queued charlie"
 # the server answers the messages that waited under one answer as one question
 SECOND_AND_THIRD = f"{SECOND}\n\n{THIRD}"
 QUEUE_SEND_BUTTON = re.compile("^(Send now|Waiting for upload|Upload failed)$")
-TASK_LOOKUPS = "**/api/tasks/chat/**"
+# loading one chat, whose answer says which of its replies are running
+CHAT_LOADS = re.compile(r"/api/v1/chats/[0-9a-f-]{36}(\?.*)?$")
 # counts the replies the socket says have ended, before the chat page handles the message
 COUNT_REPLY_ENDS = r"""
 window.replyEnds = 0;
@@ -239,7 +243,7 @@ def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(
         else:
             route.continue_()
 
-    page.route(TASK_LOOKUPS, hold_lookups)
+    page.route(CHAT_LOADS, hold_lookups)
 
     try:
         queued_item(chat, SECOND).get_by_role("button", name="Send now").click()
@@ -254,12 +258,13 @@ def test_send_now_in_a_saved_chat_stops_the_answer_and_answers_the_whole_queue(
         ended_before = page.evaluate("window.replyEnds")
     finally:
         queue_answered.set()
-    expect_reply(chat, "bravo and charlie answered")
+    # the page shows the queue's answer from the chat it loads, so that load is late by now
     page.wait_for_function(f"window.replyEnds > {ended_before}")
     held_lookups[0].fulfill(response=late_answer)
     for lookup in held_lookups[1:]:
         lookup.continue_()
-    page.unroute(TASK_LOOKUPS)
+    page.unroute(CHAT_LOADS)
+    expect_reply(chat, "bravo and charlie answered")
     page.wait_for_timeout(1_000)  # bounded: the late answer must not bring the Stop button back
 
     assert last_user_messages(upstream) == [FIRST, SECOND_AND_THIRD], (
