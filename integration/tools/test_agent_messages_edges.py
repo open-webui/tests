@@ -288,6 +288,7 @@ def test_a_message_whose_answer_fails_leaves_the_chat_usable_and_is_not_answered
 def test_deleting_a_chat_stops_its_running_sub_agent_and_removes_its_thread(
     sub_agents, make_user, upstream
 ):
+    # on Postgres with Redis the delete left the chat in place (issue #35034)
     sub_agents(True)
     prompt, task = unique("hand this over"), unique("count the crates")
     release = threading.Event()
