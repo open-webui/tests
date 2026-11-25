@@ -2,29 +2,41 @@
 
 Since 0.13.4 a page picked from the sidebar (Notes) or from the user menu (Workspace) opens in a tab
 of its own beside the chat that is open, which stays in its tab; picking the page again selects
-its tab instead of adding one. A note linked in a reply opens the same way. Starting a new chat,
-from New Chat or by opening a folder in the sidebar, swaps the chat in its tab and leaves the page
-tabs beside it.
+its tab instead of adding one. Calendar, Automations and the Playground open the same way from the
+user menu and, once pinned, from the sidebar, each showing its own content in its tab. A page
+dragged from the sidebar into the tab bar opens as a tab there, and onto the edge of the chat it
+opens in a pane beside it. A note or the home page linked in a reply opens the same way. Starting
+a new chat, from New Chat or by opening a folder in the sidebar, swaps the chat in its tab and
+leaves the page tabs beside it.
 
 Discriminates: passes on dev 485103cde. In a frontend copy of it whose sidebar, user menu and note
 links navigate in place of opening a tab, all three fail (the chat's tab is gone, no Notes tab
 opens); in one whose new chat clears the open tabs, the third fails while the note test passes.
 The narrow window test fails on dev d3e87f8b1 (the tabs panel opens over the chat, #34314) and
-passes with its fix 468db999e.
+passes with its fix 468db999e. The Calendar, Automations and Playground tests and the home page
+link pass on dev f80a4f782; in a frontend copy of it whose user menu Calendar loads the page in
+place of the app the user menu test fails (the chat's tab is gone), whose Automations tab has no
+page the sidebar test fails, whose sidebar pages cannot be dragged the sidebar test fails (no tab
+from the drop) and whose reply links to the home page are no page tab the link test fails.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import uuid
+from contextlib import contextmanager
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
+from harness.calendar_api import HOUR_NS, NO_REMINDER, create_event, default_calendar_id, to_ns
 from harness.chat_history import seed_chat
+from harness.upstream import MOCK_MODEL_ID
 from harness.workspace_search import create_note
 from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, send
+from utils.page_tabs import page_tab
 from utils.sidebar_folders import folder_link
 from utils.user_menu import user_menu_trigger
 
@@ -66,6 +78,77 @@ def _expect_selected(page: Page, name: str, path: str) -> None:
     expect(page).to_have_url(re.compile(rf"{re.escape(path)}(?:/[a-z]+)?$"))
 
 
+@contextmanager
+def _calendar_automations_and_playground(account):
+    """Each of the three pages with something of the account's own to show: an event today, an
+    automation and the playground's message box. Yields (label, path, content) rows.
+    """
+    event_title = f"Harbour tour {uuid.uuid4().hex[:8]}"
+    noon = dt.datetime.combine(dt.date.today(), dt.time(12)).astimezone()
+    automation_name = f"Tide report {uuid.uuid4().hex[:8]}"
+    with account.client() as client:
+        event = create_event(
+            client,
+            default_calendar_id(client),
+            title=event_title,
+            start_at=to_ns(noon),
+            end_at=to_ns(noon) + HOUR_NS,
+            meta=NO_REMINDER,
+        )
+        assert event.status_code == 200, event.text
+        automation = client.post(
+            "/api/v1/automations/create",
+            json={
+                "name": automation_name,
+                "is_active": False,
+                "data": {
+                    "prompt": "Write the tide report.",
+                    "model_id": MOCK_MODEL_ID,
+                    "rrule": "DTSTART:20990101T090000\nRRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+                    "target": {"type": "chat"},
+                },
+            },
+        )
+        assert automation.status_code == 200, automation.text
+    try:
+        yield [
+            ("Calendar", "/calendar", lambda panel: panel.get_by_role("button", name=event_title)),
+            ("Automations", "/automations", lambda panel: panel.get_by_text(automation_name)),
+            (
+                "Playground",
+                "/playground",
+                lambda panel: panel.get_by_role("textbox", name="Enter a user message here"),
+            ),
+        ]
+    finally:
+        with account.client() as client:
+            client.delete(f"/api/v1/automations/{automation.json()['id']}/delete")
+
+
+def _expect_page_content(page: Page, label: str, content) -> None:
+    expect(
+        content(page_tab(page, label)).first, f"the {label} tab opened without its page in it"
+    ).to_be_visible()
+
+
+def _drag_to(page: Page, source: Locator, x: float, y: float) -> None:
+    """Drag `source` by the mouse to the point, in steps as a hand moves."""
+    start = source.bounding_box()
+    page.mouse.move(start["x"] + start["width"] / 2, start["y"] + start["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(start["x"] + start["width"] / 2 + 10, start["y"] + start["height"] / 2, steps=5)
+    page.mouse.move(x, y, steps=20)
+    page.mouse.up()
+
+
+def _empty_part_of_tab_bar(page: Page) -> tuple[float, float]:
+    """A point on the tab bar past its tabs and New tab button, where a dropped page joins it."""
+    strip = _tabs(page)
+    bar = strip.locator("xpath=ancestor::div[@data-panel-tab-bar]").bounding_box()
+    tabs = strip.bounding_box()
+    return (tabs["x"] + tabs["width"] + bar["x"] + bar["width"]) / 2, bar["y"] + bar["height"] / 2
+
+
 def _back_to_the_chat(page: Page, chat_id: str, title: str) -> None:
     chat_tab = _tab(page, title)
     expect(chat_tab, "the chat's tab is gone once a page opened").to_be_visible()
@@ -97,7 +180,86 @@ def test_a_page_from_the_sidebar_or_the_user_menu_opens_in_a_tab_beside_the_chat
     expect(_tabs(page).get_by_role("tab")).to_have_count(3)
 
 
-def test_a_note_linked_in_a_reply_opens_in_a_tab_beside_the_chat(page_for, make_user, upstream):
+def test_calendar_automations_and_the_playground_open_from_the_user_menu_in_tabs_beside_the_chat(
+    page_for, make_user
+):
+    # the playground is offered to admins only
+    account = make_user(role="admin")
+    with _calendar_automations_and_playground(account) as pages:
+        page, chat_id, title = _open_chat(page_for, account)
+        for label, path, content in pages:
+            user_menu_trigger(page).click()
+            page.get_by_role("menu").get_by_role("menuitem", name=label, exact=True).click()
+            _expect_selected(page, label, path)
+            _expect_page_content(page, label, content)
+            _back_to_the_chat(page, chat_id, title)
+        # the chat and the three pages
+        expect(_tabs(page).get_by_role("tab")).to_have_count(4)
+
+
+def test_a_page_from_the_sidebar_opens_in_a_tab_or_dragged_beside_the_chat(page_for, make_user):
+    account = make_user(role="admin")
+    with account.client() as client:
+        pinned = client.post(
+            "/api/v1/users/user/settings/update",
+            json={
+                "ui": {
+                    "showChangelog": False,
+                    "pinnedMenuItems": ["calendar", "automations", "playground"],
+                }
+            },
+        )
+    assert pinned.status_code == 200, pinned.text
+    with _calendar_automations_and_playground(account) as pages:
+        (calendar, calendar_path, calendar_content), automations, playground = pages
+        page, chat_id, title = _open_chat(page_for, account)
+
+        label, path, content = playground
+        page.get_by_role("link", name=label, exact=True).click()
+        _expect_selected(page, label, path)
+        _expect_page_content(page, label, content)
+        _back_to_the_chat(page, chat_id, title)
+
+        _drag_to(
+            page,
+            page.get_by_role("link", name=calendar, exact=True),
+            *_empty_part_of_tab_bar(page),
+        )
+        expect(
+            _tab(page, calendar), "Calendar dropped on the tab bar opened no tab"
+        ).to_be_visible()
+        expect(page.get_by_role("tablist", name="Tabs")).to_have_count(1)
+        _tab(page, calendar).click()
+        _expect_selected(page, calendar, calendar_path)
+        _expect_page_content(page, calendar, calendar_content)
+        _back_to_the_chat(page, chat_id, title)
+
+        label, path, content = automations
+        chat_area = page.get_by_role("tabpanel", name=title, exact=True).bounding_box()
+        _drag_to(
+            page,
+            page.get_by_role("link", name=label, exact=True),
+            chat_area["x"] + chat_area["width"] - 20,
+            chat_area["y"] + chat_area["height"] / 2,
+        )
+        # dropped on the chat's right edge it opens in a pane of its own beside the chat
+        panes = page.get_by_role("tablist", name="Tabs")
+        expect(panes, "the page dropped on the chat's edge opened no pane").to_have_count(2)
+        expect(panes.last.get_by_role("tab")).to_have_count(1)
+        expect(panes.last.get_by_role("tab", name=label, exact=True)).to_have_attribute(
+            "aria-selected", "true"
+        )
+        expect(_tab(page, title)).to_have_attribute("aria-selected", "true")
+        _expect_page_content(page, label, content)
+        expect(
+            page.get_by_role("log").get_by_text(CHAT[1]["content"]),
+            "the chat is no longer shown beside the dropped page",
+        ).to_be_visible()
+
+
+def test_a_note_or_the_home_page_linked_in_a_reply_opens_in_a_tab_beside_the_chat(
+    page_for, make_user, upstream
+):
     account = make_user()
     note_title = f"Packing list {uuid.uuid4().hex[:8]}"
     with account.client() as client:
@@ -106,7 +268,8 @@ def test_a_note_linked_in_a_reply_opens_in_a_tab_beside_the_chat(page_for, make_
     question = f"Where is my packing list? ({uuid.uuid4().hex[:8]})"
     upstream.queue(
         reply.text(
-            f"It is in your note [packing list](/notes/{note_id}).",
+            f"It is in your note [packing list](/notes/{note_id}), or start from the "
+            "[home page](/home).",
             match=reply.answering(question),
         )
     )
@@ -116,6 +279,10 @@ def test_a_note_linked_in_a_reply_opens_in_a_tab_beside_the_chat(page_for, make_
     page.get_by_role("log").get_by_role("button", name=re.compile(re.escape(note_title))).click()
 
     _expect_selected(page, note_title, f"/notes/{note_id}")
+    _back_to_the_chat(page, chat_id, title)
+
+    page.get_by_role("log").get_by_role("link", name="home page", exact=True).click()
+    _expect_selected(page, "Home", "/home")
     _back_to_the_chat(page, chat_id, title)
 
 
