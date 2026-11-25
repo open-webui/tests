@@ -43,6 +43,15 @@ other way of deleting the chat removed them. Red on dev f80a4f782 until the fix 
 Regression open-webui/open-webui#35057: deleting a note, on its own or with the folder holding it,
 left the chat of its chat panel behind, still counted, listed and returned in the admin
 analytics. Red on dev 893584700 in both cases until the fix merges.
+
+With 2000 chats of 20 messages and every stored long chat, the sidebar's chat list search and the
+workspace search find exactly the chats holding a word of an early message, a word of a late
+message or the long chats' term, link each result to the message holding it, find nothing for a
+word no chat holds, and answer each first page within a second, as both search while a person
+types. Discriminates: passes on dev 893584700 on SQLite and Postgres (about 0.25s a page); in a
+backend copy, the workspace search reading only the chat's JSON copy turns it red (every chat
+missed), and the chat list search reading every chat's messages before answering turns it red
+(about 1.5s a page).
 """
 
 from __future__ import annotations
@@ -57,6 +66,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask
+from harness.fat_chats import FAT_CHATS
 from harness.model_presets import preset_with_capabilities
 from harness.subagents import delegated, report_of
 from harness.tool_calls import without_hidden_calls
@@ -358,6 +368,138 @@ def test_the_admin_database_export_holds_every_accounts_chats(admin, owner, stra
 
     assert refused.status_code == 401
     assert {owner_chat_id, stranger_chat_id} <= exported
+
+
+# --------------------------------------------------------------------------- search
+
+SEARCH_CHATS = 2000
+SEARCH_TURNS = 10
+# both searches answer as a person types, so each page has to come back well within a second
+SEARCH_SECONDS = 1.0
+LAST_PAGE = 200
+
+
+def worded_conversations(count: int, early: str, late: str) -> tuple[list[dict], dict]:
+    """Import forms of `count` chats, every 25th with `early` in its first message and every
+    50th, offset by 7, with `late` in its last; and by word, each chat's title and message."""
+    forms, holders = [], {early: {}, late: {}}
+    for index in range(count):
+        form = conversation(f"Searched {index}", SEARCH_TURNS, None)
+        history = form["chat"]["history"]
+        messages = history["messages"]
+        first = next(message for message in messages.values() if message["parentId"] is None)
+        last = messages[history["currentId"]]
+        placed = ((early, first, index % 25 == 0), (late, last, index % 50 == 7))
+        for word, message, holds in placed:
+            if holds:
+                message["content"] += f" about {word}"
+                holders[word][form["chat"]["title"]] = message["id"]
+        forms.append(form)
+    return forms, holders
+
+
+def import_forms(client: httpx.Client, forms: list[dict]) -> dict[str, str]:
+    """Chat id by title."""
+    ids = {}
+    for start in range(0, len(forms), 100):
+        imported = client.post("/api/v1/chats/import", json={"chats": forms[start : start + 100]})
+        assert imported.status_code == 200, imported.text[:500]
+        ids |= {chat["title"]: chat["id"] for chat in imported.json()}
+    return ids
+
+
+def chat_list_search(client: httpx.Client, word: str) -> tuple[float, list[dict]]:
+    """The sidebar's search: how long its first page takes, and every chat of all its pages."""
+
+    def page(number: int) -> list[dict]:
+        found = client.get("/api/v1/chats/search", params={"text": word, "page": number})
+        assert found.status_code == 200, found.text[:500]
+        return found.json()
+
+    seconds, first = timed(lambda: page(1))
+    chats, number, current = list(first), 1, first
+    while current and number < LAST_PAGE:
+        number += 1
+        current = page(number)
+        chats += current
+    return seconds, chats
+
+
+def workspace_search(client: httpx.Client, word: str) -> tuple[float, list[dict]]:
+    """The search dialog: how long its first page takes, and every result of all its pages."""
+
+    def page(number: int) -> dict:
+        found = client.get("/api/v1/search", params={"q": word, "page": number})
+        assert found.status_code == 200, found.text[:500]
+        return found.json()
+
+    seconds, first = timed(lambda: page(1))
+    items, number, current = list(first["items"]), 1, first
+    while current["has_more"] and number < LAST_PAGE:
+        number += 1
+        current = page(number)
+        items += current["items"]
+    return seconds, items
+
+
+def wrong_results(word: str, expected: dict[str, str | None], chats: list, items: list) -> list:
+    """What each search got wrong for `word`, given the message of each chat that holds it."""
+    wrong = []
+    chat_ids = [chat["id"] for chat in chats]
+    if sorted(chat_ids) != sorted(expected):
+        missing, extra = set(expected) - set(chat_ids), set(chat_ids) - set(expected)
+        wrong.append(f"the chat list search for {word!r} missed {missing}, added {extra}")
+    found = {item["id"].removeprefix("chat:"): item for item in items}
+    if len(found) != len(items) or set(found) != set(expected):
+        missing, extra = set(expected) - set(found), set(found) - set(expected)
+        wrong.append(f"the workspace search for {word!r} missed {missing}, added {extra}")
+    for chat_id, message_id in expected.items():
+        item = found.get(chat_id)
+        if item is None:
+            continue
+        if word not in item["snippet"].lower():
+            wrong.append(f"{word!r} in chat {chat_id} showed the excerpt {item['snippet'][:80]!r}")
+        if message_id and item["url"] != f"/c/{chat_id}?message={message_id}":
+            wrong.append(f"{word!r} in chat {chat_id} linked to {item['url']}, not its message")
+    return wrong
+
+
+@pytest.mark.slow
+def test_both_searches_find_words_in_many_long_chats_quickly(make_user, fat_chat):
+    """The sidebar and the search dialog find a word of an early message, one of a late message
+    and nothing for a word no chat holds, among 2000 chats of 20 messages and every stored long
+    chat, each first page well within a second."""
+    owner, tag = make_user(), uuid.uuid4().hex[:8]
+    early, late, nowhere = f"bryony{tag}", f"sedgeling{tag}", f"nowhere{tag}"
+    fats = [fat_chat(owner, name) for name in FAT_CHATS]
+    forms, holders = worded_conversations(SEARCH_CHATS, early, late)
+    with owner.client() as client:
+        ids = import_forms(client, forms)
+        assert len(ids) == SEARCH_CHATS
+        # the stored long chats hold their term in one early message only
+        fat_term = fats[0].manifest["search_term"]
+        expected = {
+            early: {ids[title]: message for title, message in holders[early].items()},
+            late: {ids[title]: message for title, message in holders[late].items()},
+            fat_term: {fat.chat_id: None for fat in fats},
+            nowhere: {},
+        }
+        assert all(fat.manifest["search_term"] == fat_term for fat in fats)
+        timings, wrong = {}, []
+        for word, holding in expected.items():
+            list_seconds, chats = chat_list_search(client, word)
+            dialog_seconds, items = workspace_search(client, word)
+            timings[f"the chat list search for {word!r}"] = list_seconds
+            timings[f"the workspace search for {word!r}"] = dialog_seconds
+            wrong += wrong_results(word, holding, chats, items)
+
+    assert wrong == [], "\n".join(wrong)
+    slow = [where for where, seconds in timings.items() if seconds > SEARCH_SECONDS]
+    assert not slow, (
+        f"among {SEARCH_CHATS} chats of {2 * SEARCH_TURNS} messages and the stored long chats, "
+        f"{slow} took longer than {SEARCH_SECONDS}s for their first page; every first page took "
+        f"{ {where: round(seconds, 2) for where, seconds in timings.items()} }"
+    )
 
 
 # --------------------------------------------------------------------------- folders
