@@ -169,6 +169,8 @@ def add_group(page: Page, dialog: Locator, group_name: str) -> None:
     picker.get_by_role("button", name=group_name).last.click()
     picker.get_by_role("button", name="Add", exact=True).click()
     expect(dialog.get_by_text(group_name)).to_be_visible()
+    # the list takes no input until the added group is saved
+    expect(dialog.locator("[aria-busy=true]")).to_have_count(0)
 
 
 def test_a_group_shared_to_read_lists_the_folder_and_opens_its_chats_read_only(page_for, crew):
