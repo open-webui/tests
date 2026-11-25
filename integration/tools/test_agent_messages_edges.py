@@ -28,6 +28,7 @@ import pytest
 
 from harness import upstream as reply
 from harness.chat import ask, send_message, wait_for_reply
+from harness.subagents import REPORT_MARK
 from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
@@ -389,3 +390,41 @@ def test_without_sub_agents_a_message_call_reaches_nothing_and_starts_no_thread(
     assert user_texts_mentioning(upstream, text) == []
     assert not any(reply.answering(task)(b) for b in upstream.chat_requests())
     assert threads.status_code == 200 and threads.json() == [], threads.text
+
+
+def test_a_deleted_chat_gets_no_report_from_its_stopped_sub_agent(sub_agents, make_user, upstream):
+    # the stopped sub-agent's report still started a reply in the chat being deleted
+    sub_agents(True)
+    prompt, task = unique("hand this over"), unique("weigh the crates")
+    release = threading.Event()
+    upstream.queue(
+        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
+        reply.text("never reported", hold=release, match=reply.answering(task)),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+    )
+    try:
+        with make_user().client() as client:
+            turn, stored = ask(client, prompt)
+            [handle] = [json.loads(text) for text in tool_results(stored)]
+            sub_id = handle["subagent_chat_id"]
+            wait_for(
+                lambda: any(reply.answering(task)(b) for b in upstream.chat_requests()),
+                "the sub-agent to start",
+            )
+            assert client.delete(f"/api/v1/chats/{turn.chat_id}").status_code == 200
+            wait_for(
+                lambda: client.get(f"/api/tasks/chat/{sub_id}").json()["task_ids"] == [],
+                "the deleted chat's sub-agent to stop",
+                timeout=20.0,
+            )
+            # a report would reach the model within moments of the stop
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not user_texts_mentioning(upstream, REPORT_MARK):
+                time.sleep(0.1)
+            listed = [chat["id"] for chat in client.get("/api/v1/chats/").json()]
+    finally:
+        release.set()
+
+    assert listed == [], f"chats are left after deleting the only one: {listed}"
+    sent = user_texts_mentioning(upstream, REPORT_MARK)
+    assert sent == [], f"the deleted chat's model was sent {len(sent)} report(s) after the delete: {sent}"
