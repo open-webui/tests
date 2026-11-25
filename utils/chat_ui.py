@@ -45,7 +45,14 @@ def chat_input(chat: Chat) -> Locator:
 
 def send(chat: Chat, text: str) -> None:
     page = _page(chat)
-    expect(chat_input(chat)).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    box = chat_input(chat)
+    expect(box).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+    # a chat drops a message sent before it shows the model that answers; a channel has none
+    if not (box.get_attribute("id") or "").startswith("channel-input-"):
+        picker = box.locator("xpath=ancestor::form[1]").get_by_role(
+            "button", name=re.compile("^Selected model")
+        )
+        expect(picker.first).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     chat_input(chat).click()
     page.keyboard.type(text)
     page.keyboard.press("Enter")
