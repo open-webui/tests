@@ -7,6 +7,8 @@ JSON-RPC message it receives goes to the JSON-lines file named by `FAKE_AGENT_LO
 by a marker in the prompt text:
 
 - `[tool]` reports a tool call that reads a file, then answers.
+- `[work]` runs two commands (the second fails), reads three files and edits one, then
+  answers; `COMMANDS`, `READS` and `EDITED` say what each step does.
 - `[permission]` asks the client to allow a command and answers with the option it got back.
 - `[ask]` asks the user a form question and answers with the value it got back.
 - `[refuse]` answers the prompt with a JSON-RPC error.
@@ -32,6 +34,25 @@ MODELS = [
 EFFORTS = {"fake-fast": ("low", "medium", "high"), "fake-deep": ("low", "medium", "high", "max")}
 REFUSAL = "The fake agent refused the prompt"
 CRASH_NOTE = "fake agent crashed on purpose"
+# what `[work]` does, also for `harness/fake_native_agent.py`: (command, output, exit code)
+COMMANDS = [
+    ("echo $((6 * 7)) boats", "42 boats\n", 0),
+    (
+        "ls /no-such-harbour",
+        "ls: cannot access '/no-such-harbour': No such file or directory\n",
+        2,
+    ),
+]
+READS = {
+    "tides.txt": "high water at noon\n",
+    "ferries.txt": "first ferry at six\n",
+    "moorings.txt": "berth 4 is free\n",
+}
+EDITED = "log.txt"
+EDITED_BEFORE = "harbour log\nferry at nine\nend of log\n"
+EDITED_AFTER = "harbour log\nferry at ten\nend of log\n"
+EDITED_DIFF = "@@ -1,3 +1,3 @@\n harbour log\n-ferry at nine\n+ferry at ten\n end of log\n"
+WORK_DONE = "The harbour work is done."
 
 state = {"model": "fake-fast", "session": None, "next_id": 1000}
 
@@ -107,6 +128,48 @@ def prompt_text(params: dict) -> str:
     return "\n".join(texts)
 
 
+def tool(call_id: str, kind: str, title: str, outcome: str = "completed", **fields) -> None:
+    """Report a tool call as started, then as finished with `outcome` and the `rawOutput`."""
+    raw_output = fields.pop("rawOutput", None)
+    update("tool_call", toolCallId=call_id, title=title, kind=kind, status="in_progress", **fields)
+    update("tool_call_update", toolCallId=call_id, status=outcome, rawOutput=raw_output)
+
+
+def work() -> None:
+    folder = os.getcwd()
+    for number, (command, output, exit_code) in enumerate(COMMANDS):
+        outcome = "failed" if exit_code else "completed"
+        tool(
+            f"run-{number}",
+            "execute",
+            command,
+            outcome,
+            rawInput={"command": command},
+            rawOutput=output,
+        )
+    for number, (name, content) in enumerate(READS.items()):
+        path = f"{folder}/{name}"
+        tool(
+            f"read-{number}",
+            "read",
+            f"Read {name}",
+            rawInput={"path": path},
+            locations=[{"path": path}],
+            rawOutput=content,
+        )
+    path = f"{folder}/{EDITED}"
+    diff = {"type": "diff", "path": path, "oldText": EDITED_BEFORE, "newText": EDITED_AFTER}
+    tool(
+        "edit-0",
+        "edit",
+        f"Edit {EDITED}",
+        rawInput={"path": path},
+        locations=[{"path": path}],
+        content=[diff],
+    )
+    say(WORK_DONE)
+
+
 def run_turn(request_id, params: dict) -> None:
     text = prompt_text(params)
     if "[refuse]" in text:
@@ -137,6 +200,8 @@ def run_turn(request_id, params: dict) -> None:
             rawOutput="first line of notes",
         )
         say("The notes start with: first line of notes")
+    elif "[work]" in text:
+        work()
     elif "[permission]" in text:
         answer = ask_client(
             "session/request_permission",

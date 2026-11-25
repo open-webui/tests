@@ -10,6 +10,8 @@ each turn adds a `conversation` line with the id of the agent's own conversation
 What a turn does is chosen by a marker in the prompt, as in `harness/fake_acp_agent.py`:
 
 - `[tool]` runs one tool that reads a file, then answers.
+- `[work]` (Codex) runs two commands (the second fails), reads three files and edits one,
+  then answers, with the steps of `harness/fake_acp_agent.py`.
 - `[permission]` asks to be allowed a command and answers with the decision it got back.
 - `[ask]` asks the person which colour and answers with the value it got back.
 - `[refuse]` fails the turn the way that agent reports a failed turn.
@@ -25,6 +27,11 @@ import os
 import sys
 import time
 import uuid
+
+try:
+    from harness.fake_acp_agent import COMMANDS, EDITED, EDITED_DIFF, READS, WORK_DONE
+except ImportError:  # run as a script by Open Terminal, from inside harness/
+    from fake_acp_agent import COMMANDS, EDITED, EDITED_DIFF, READS, WORK_DONE
 
 REFUSAL = "The fake agent refused the prompt"
 QUESTION = "Which colour should the button be?"
@@ -211,6 +218,40 @@ def codex() -> None:
             if answer.get("id") == state["next"] and "method" not in answer:
                 return answer.get("result") or {}
 
+    def run_item(outcome: str = "completed", **fields) -> None:
+        """Report an item as started, then as finished with its output and exit code."""
+        started = {k: v for k, v in fields.items() if k not in ("aggregatedOutput", "exitCode")}
+        notify("item/started", item={**started, "status": "inProgress"})
+        notify("item/completed", item={**fields, "status": outcome})
+
+    def work() -> None:
+        for number, (command, output, exit_code) in enumerate(COMMANDS):
+            action = {"type": "unknown", "command": command}
+            run_item(
+                "failed" if exit_code else "completed",
+                id=f"run_{number}",
+                type="commandExecution",
+                command=command,
+                commandActions=[action],
+                aggregatedOutput=output,
+                exitCode=exit_code,
+            )
+        for number, (name, content) in enumerate(READS.items()):
+            command = f"cat {name}"
+            action = {"type": "read", "command": command, "name": name, "path": name}
+            run_item(
+                id=f"read_{number}",
+                type="commandExecution",
+                command=command,
+                commandActions=[action],
+                aggregatedOutput=content,
+                exitCode=0,
+            )
+        update = {"type": "update", "move_path": None}
+        change = {"path": EDITED, "kind": update, "diff": EDITED_DIFF}
+        run_item(id="edit_0", type="fileChange", changes=[change])
+        say(WORK_DONE)
+
     def turn(text: str) -> None:
         log({"conversation": state["thread"]})
         if "[refuse]" in text:
@@ -229,6 +270,8 @@ def codex() -> None:
             notify("item/started", item=item)
             notify("item/completed", item={**item, "aggregatedOutput": NOTES})
             say(f"The notes start with: {NOTES}")
+        elif "[work]" in text:
+            work()
         elif "[permission]" in text:
             answer = ask("item/commandExecution/requestApproval", itemId="cmd_2", command=COMMAND)
             say(f"Permission outcome: {answer.get('decision')}")
