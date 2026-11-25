@@ -3,7 +3,8 @@
 Each data set under `upgrade_data/` was made by booting a release (the last patch of v0.9,
 v0.10, v0.11 and v0.13) and filling it through its own API: four accounts, a group with a
 permission of its own, a chat with a regenerated reply, a tool call and an attached file, a chat
-the server streamed itself, one it answered from a knowledge base with its citation, folders,
+the server streamed itself, one it answered from a knowledge base with its citation, one of
+bob's with a rated reply that kept its usage and follow-ups and a reply the provider failed, folders,
 a shared chat, a note, a knowledge base with a file, a model preset, prompts, a tool, a filter
 function with valves, memories, a channel with a thread and a reaction, feedback and settings
 changed from their defaults, a default model among them, and skills, one of them owned by a

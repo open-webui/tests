@@ -1,39 +1,39 @@
 {
   "release": "v0.13.4",
   "engine": "postgres",
-  "data_dir": "/home/tmp/seed0134-tmp/seed-v0.13.4-8_eb__1t/data",
+  "data_dir": "/home/tmp/seed-v0.13.4-zx92pbk7/data",
   "accounts": {
     "admin": {
       "name": "Ada Admin",
       "email": "admin@example.com",
       "password": "admin-pass-1",
-      "id": "b6eefad0-3d9a-4207-8db1-ab436466c206",
+      "id": "41fa65e2-730a-4451-be4a-29363294205f",
       "role": "admin"
     },
     "alice": {
       "name": "Alice Author",
       "email": "alice@example.com",
       "password": "alice-pass-1",
-      "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+      "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
       "role": "user"
     },
     "bob": {
       "name": "Bob Reader",
       "email": "bob@example.com",
       "password": "bob-pass-1",
-      "id": "00b0add8-dc69-4860-a112-13e304932661",
+      "id": "1636581a-57a9-49a3-abd9-7079db647896",
       "role": "user"
     },
     "carol": {
       "name": "Carol Outsider",
       "email": "carol@example.com",
       "password": "carol-pass-1",
-      "id": "2a252931-2f6c-45f3-9f7d-fb47c6b5eda1",
+      "id": "6fc344c0-d10a-4731-80c1-4719e317424d",
       "role": "user"
     }
   },
   "group": {
-    "id": "445127d3-a506-4ee4-a2a9-618f26834f44",
+    "id": "1a9e8b27-82cc-4624-942c-1f93b14acc08",
     "name": "Research",
     "members": [
       "alice",
@@ -121,7 +121,7 @@
   "skills": {
     "trip-planner": {
       "id": "trip-planner",
-      "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+      "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
       "name": "Trip planner",
       "description": "Plans multi-city trips by train.",
       "content": "---\nname: trip-planner\ndescription: Plans multi-city trips by train.\n---\n\n# Trip planner\n\n1. Ask for the cities and the dates.\n2. Prefer night trains over flights.\n3. Keep every transfer above 40 minutes.\n4. Name the platform for every departure.\n",
@@ -132,17 +132,17 @@
         ]
       },
       "is_active": true,
-      "created_at": 1795594919,
-      "updated_at": 1795594920,
+      "created_at": 1795595630,
+      "updated_at": 1795595631,
       "grants": [
         {
           "principal_type": "group",
-          "principal_id": "445127d3-a506-4ee4-a2a9-618f26834f44",
+          "principal_id": "1a9e8b27-82cc-4624-942c-1f93b14acc08",
           "permission": "read"
         },
         {
           "principal_type": "user",
-          "principal_id": "00b0add8-dc69-4860-a112-13e304932661",
+          "principal_id": "1636581a-57a9-49a3-abd9-7079db647896",
           "permission": "write"
         }
       ],
@@ -158,7 +158,7 @@
     },
     "uebersetzer": {
       "id": "uebersetzer",
-      "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+      "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
       "name": "\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80",
       "description": "",
       "content": "# \u00dcbersetzer \ud83c\udf0d\r\n\r\n\u00dcbersetze h\u00f6flich: \u00abGr\u00fc\u00df Gott\u00bb \u2192 \u300c\u3053\u3093\u306b\u3061\u306f\u300d, \u4f60\u597d, \u041f\u0440\u0438\u0432\u0435\u0442, \u0645\u0631\u062d\u0628\u0627, \u05e9\u05dc\u05d5\u05dd.\r\n\tKeep combining marks (e\u0301, n\u0303) and emoji with modifiers (\ud83d\udc4b\ud83c\udffd).  \r\nMath stays: \u2211 x\u00b2 \u2264 \u221e; quotes stay: \u2018single\u2019 \u201cdouble\u201d `<$PATH>`.\r\n",
@@ -167,8 +167,8 @@
         "tags": []
       },
       "is_active": true,
-      "created_at": 1795594920,
-      "updated_at": 1795594920,
+      "created_at": 1795595632,
+      "updated_at": 1795595632,
       "grants": [],
       "owner": "alice",
       "readers": [
@@ -180,7 +180,7 @@
     },
     "old-habits": {
       "id": "old-habits",
-      "user_id": "00b0add8-dc69-4860-a112-13e304932661",
+      "user_id": "1636581a-57a9-49a3-abd9-7079db647896",
       "name": "Old habits",
       "description": null,
       "content": "Answer in Latin.",
@@ -189,8 +189,8 @@
         "tags": []
       },
       "is_active": false,
-      "created_at": 1795594920,
-      "updated_at": 1795594920,
+      "created_at": 1795595632,
+      "updated_at": 1795595632,
       "grants": [],
       "owner": "bob",
       "readers": [
@@ -202,7 +202,7 @@
     },
     "house-style": {
       "id": "house-style",
-      "user_id": "b6eefad0-3d9a-4207-8db1-ab436466c206",
+      "user_id": "41fa65e2-730a-4451-be4a-29363294205f",
       "name": "House style",
       "description": "How every answer is formatted.",
       "content": "Use sentence case headings and no exclamation marks.",
@@ -211,8 +211,8 @@
         "tags": []
       },
       "is_active": true,
-      "created_at": 1795594920,
-      "updated_at": 1795594920,
+      "created_at": 1795595632,
+      "updated_at": 1795595632,
       "grants": [
         {
           "principal_type": "user",
@@ -230,7 +230,7 @@
     },
     "dave-notes": {
       "id": "dave-notes",
-      "user_id": "d57b689e-5c86-4274-b616-1bdc96f762fd",
+      "user_id": "00a86e93-e16b-4046-a008-22ad76484b34",
       "name": "Dave's notes",
       "description": "Left behind.",
       "content": "Hand over to the next shift at six.",
@@ -239,12 +239,12 @@
         "tags": []
       },
       "is_active": true,
-      "created_at": 1795594920,
-      "updated_at": 1795594920,
+      "created_at": 1795595632,
+      "updated_at": 1795595632,
       "grants": [
         {
           "principal_type": "group",
-          "principal_id": "445127d3-a506-4ee4-a2a9-618f26834f44",
+          "principal_id": "1a9e8b27-82cc-4624-942c-1f93b14acc08",
           "permission": "read"
         }
       ],
@@ -260,12 +260,12 @@
     "name": "Dave Departed",
     "email": "dave@example.com",
     "password": "dave-pass-1",
-    "id": "d57b689e-5c86-4274-b616-1bdc96f762fd"
+    "id": "00a86e93-e16b-4046-a008-22ad76484b34"
   },
   "knowledge": {
-    "id": "9f4537ad-8839-428e-8262-1510a4254caf",
+    "id": "2e700ced-9c11-4e00-b64f-719db7f4e9e6",
     "name": "Handbook",
-    "file_id": "2db66796-5178-4156-ab6c-7d550999c66f",
+    "file_id": "8a88c64c-6825-475c-9d18-53791115fb4a",
     "filename": "handbook.txt",
     "text": "The upgrade handbook says the lighthouse key hangs behind the blue door.",
     "readers": [
@@ -275,17 +275,17 @@
   },
   "folders": {
     "parent": {
-      "id": "32e65f0a-b3e9-4109-a2ec-19d3d264eac6",
+      "id": "1f5b88e7-32d5-4409-aa68-1300e3051170",
       "name": "Trips"
     },
     "child": {
-      "id": "06ea4d6d-f53e-4076-ad16-8d3a81a340a4",
+      "id": "2dcd5fd8-dcbb-4100-bf78-2aef31256c9c",
       "name": "Vienna"
     }
   },
   "chats": {
     "branched": {
-      "id": "5b8d58ea-c644-4061-af7e-b77a67f60e0a",
+      "id": "0d09fe46-67bd-406b-b955-4779a6a6c2ef",
       "title": "Packing for Vienna",
       "current_id": "a2-0000-4000-8000-000000000000",
       "messages": {
@@ -327,62 +327,62 @@
           "content": "A light jacket."
         }
       },
-      "folder_id": "06ea4d6d-f53e-4076-ad16-8d3a81a340a4",
-      "share_id": "9c83a7b5-31a5-425c-9257-fa0761a585b8"
+      "folder_id": "2dcd5fd8-dcbb-4100-bf78-2aef31256c9c",
+      "share_id": "44bac9fb-44c6-49c5-bd68-940ffc80020a"
     },
     "live": {
-      "id": "4bb0e1b1-3e82-401c-ae64-f5cbeba56ee6",
+      "id": "a312cac5-d61d-4460-b514-d21f986c5c63",
       "title": "Schnitzel questions",
-      "current_id": "7269c001-f08f-42ec-9081-67d0f2de3874",
+      "current_id": "e1f82a33-729b-4b7d-b65d-67cad33ff88d",
       "messages": {
-        "29770218-bb04-4c86-89a9-fb1ae83b3211": {
+        "d392e665-e66e-40e7-9d3e-bd1d64891f0f": {
           "parent": null,
           "children": [
-            "bed89f31-1737-4581-b28f-078bc65d6274"
+            "036bbd5b-1f44-4ed7-8720-8cd91b0df331"
           ],
           "role": "user",
           "content": "What is a Schnitzel?"
         },
-        "bed89f31-1737-4581-b28f-078bc65d6274": {
-          "parent": "29770218-bb04-4c86-89a9-fb1ae83b3211",
+        "036bbd5b-1f44-4ed7-8720-8cd91b0df331": {
+          "parent": "d392e665-e66e-40e7-9d3e-bd1d64891f0f",
           "children": [
-            "a1e94ea8-7873-431a-af85-7168608fb483"
+            "73ab61a0-b601-4288-b51e-425e91d1bb5b"
           ],
           "role": "assistant",
           "content": "Schnitzel is a breaded cutlet."
         },
-        "a1e94ea8-7873-431a-af85-7168608fb483": {
-          "parent": "bed89f31-1737-4581-b28f-078bc65d6274",
+        "73ab61a0-b601-4288-b51e-425e91d1bb5b": {
+          "parent": "036bbd5b-1f44-4ed7-8720-8cd91b0df331",
           "children": [
-            "7269c001-f08f-42ec-9081-67d0f2de3874"
+            "e1f82a33-729b-4b7d-b65d-67cad33ff88d"
           ],
           "role": "user",
           "content": "How do I eat it?"
         },
-        "7269c001-f08f-42ec-9081-67d0f2de3874": {
-          "parent": "a1e94ea8-7873-431a-af85-7168608fb483",
+        "e1f82a33-729b-4b7d-b65d-67cad33ff88d": {
+          "parent": "73ab61a0-b601-4288-b51e-425e91d1bb5b",
           "children": [],
           "role": "assistant",
           "content": "Try it with lemon."
         }
       },
-      "reply_id": "bed89f31-1737-4581-b28f-078bc65d6274"
+      "reply_id": "036bbd5b-1f44-4ed7-8720-8cd91b0df331"
     },
     "cited": {
-      "id": "05d048e4-5195-4cbd-b474-5dee9a7250e0",
+      "id": "32b8ab93-497c-4574-b6fb-7501e3236e1f",
       "title": "Lighthouse key",
-      "current_id": "bc25e157-4028-4025-a0ea-3b7989eb5f56",
+      "current_id": "51d75adb-4ffa-4e09-8545-a4b760b5624b",
       "messages": {
-        "22c500f0-3d71-4b51-a3f8-bfc045e58ef0": {
+        "f5b9a4fd-fdd0-4bc6-8e13-2332ea4f45f5": {
           "parent": null,
           "children": [
-            "bc25e157-4028-4025-a0ea-3b7989eb5f56"
+            "51d75adb-4ffa-4e09-8545-a4b760b5624b"
           ],
           "role": "user",
           "content": "Where does the lighthouse key hang?"
         },
-        "bc25e157-4028-4025-a0ea-3b7989eb5f56": {
-          "parent": "22c500f0-3d71-4b51-a3f8-bfc045e58ef0",
+        "51d75adb-4ffa-4e09-8545-a4b760b5624b": {
+          "parent": "f5b9a4fd-fdd0-4bc6-8e13-2332ea4f45f5",
           "children": [],
           "role": "assistant",
           "content": "Behind the blue door [1]."
@@ -395,24 +395,68 @@
       ]
     },
     "archived": {
-      "id": "f50accd6-64f3-462a-b149-dc69a09a6f55",
+      "id": "781d9d1b-1f81-4c07-b81b-7187ca557c14",
       "title": "Old plans"
     },
-    "tooled": {
-      "id": "8960f128-d8dc-4e34-84b7-2d2c7dfa8472",
-      "title": "Weather in Graz",
-      "current_id": "8d83861a-d4f2-4ae2-b9fb-dfc15158f172",
+    "rated": {
+      "id": "d7625e57-13d2-4843-a4b0-ca2cee321c5f",
+      "title": "Getting to the Prater",
+      "current_id": "81c81420-f84f-4c3c-aeee-b0509192b78d",
       "messages": {
-        "627a5423-0b58-4cad-a7ac-4a2b440c7201": {
+        "5aefcf40-9b52-4a91-b328-438527397d17": {
           "parent": null,
           "children": [
-            "8d83861a-d4f2-4ae2-b9fb-dfc15158f172"
+            "4d2b80db-43e7-43c2-8fa8-5f766ea110ab"
+          ],
+          "role": "user",
+          "content": "How do I get to the Prater?"
+        },
+        "4d2b80db-43e7-43c2-8fa8-5f766ea110ab": {
+          "parent": "5aefcf40-9b52-4a91-b328-438527397d17",
+          "children": [
+            "c8035ec4-4eb2-41d9-a024-08c43aca7ad0"
+          ],
+          "role": "assistant",
+          "content": "Take the U-Bahn."
+        },
+        "c8035ec4-4eb2-41d9-a024-08c43aca7ad0": {
+          "parent": "4d2b80db-43e7-43c2-8fa8-5f766ea110ab",
+          "children": [
+            "81c81420-f84f-4c3c-aeee-b0509192b78d"
+          ],
+          "role": "user",
+          "content": "And back?"
+        },
+        "81c81420-f84f-4c3c-aeee-b0509192b78d": {
+          "parent": "c8035ec4-4eb2-41d9-a024-08c43aca7ad0",
+          "children": [],
+          "role": "assistant",
+          "content": ""
+        }
+      },
+      "rated_id": "4d2b80db-43e7-43c2-8fa8-5f766ea110ab",
+      "failed": {
+        "id": "81c81420-f84f-4c3c-aeee-b0509192b78d",
+        "error": {
+          "content": "the provider is down"
+        }
+      }
+    },
+    "tooled": {
+      "id": "0f1f89a1-ad51-4992-9007-d27279807d50",
+      "title": "Weather in Graz",
+      "current_id": "0921fb70-ef05-434b-8327-fc7ea6b67fad",
+      "messages": {
+        "3b7ad9c2-266a-4557-bee6-04dd1e252355": {
+          "parent": null,
+          "children": [
+            "0921fb70-ef05-434b-8327-fc7ea6b67fad"
           ],
           "role": "user",
           "content": "What is the weather in Graz?"
         },
-        "8d83861a-d4f2-4ae2-b9fb-dfc15158f172": {
-          "parent": "627a5423-0b58-4cad-a7ac-4a2b440c7201",
+        "0921fb70-ef05-434b-8327-fc7ea6b67fad": {
+          "parent": "3b7ad9c2-266a-4557-bee6-04dd1e252355",
           "children": [],
           "role": "assistant",
           "content": "It is sunny in Graz, so leave the umbrella at home."
@@ -420,45 +464,45 @@
       },
       "folder_id": null,
       "stored": {
-        "627a5423-0b58-4cad-a7ac-4a2b440c7201": {
-          "id": "627a5423-0b58-4cad-a7ac-4a2b440c7201",
+        "3b7ad9c2-266a-4557-bee6-04dd1e252355": {
+          "id": "3b7ad9c2-266a-4557-bee6-04dd1e252355",
           "parentId": null,
           "childrenIds": [
-            "8d83861a-d4f2-4ae2-b9fb-dfc15158f172"
+            "0921fb70-ef05-434b-8327-fc7ea6b67fad"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "What is the weather in Graz?",
           "models": [
             "mock-model"
           ],
-          "timestamp": 1795594923,
+          "timestamp": 1795595636,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "8d83861a-d4f2-4ae2-b9fb-dfc15158f172": {
-          "id": "8d83861a-d4f2-4ae2-b9fb-dfc15158f172",
-          "parentId": "627a5423-0b58-4cad-a7ac-4a2b440c7201",
+        "0921fb70-ef05-434b-8327-fc7ea6b67fad": {
+          "id": "0921fb70-ef05-434b-8327-fc7ea6b67fad",
+          "parentId": "3b7ad9c2-266a-4557-bee6-04dd1e252355",
           "childrenIds": [],
           "role": "assistant",
           "content": "It is sunny in Graz, so leave the umbrella at home.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594923,
+          "timestamp": 1795595636,
           "modelIdx": 0,
           "meta": {
-            "task_id": "ddb1bbd3-60d1-4dae-aafa-ba766ea662ff",
-            "response_started_at": 1795594923.251919,
-            "response_ended_at": 1795594924.0969543
+            "task_id": "d44b445b-1d9d-4dec-8e1a-b1ed6c10d899",
+            "response_started_at": 1795595636.3402812,
+            "response_ended_at": 1795595637.1931596
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_64f116a1c96e47c9be3c3044",
-              "call_id": "fc_64f116a1c96e47c9be3c3044",
+              "id": "fc_c33573d258cc4ab3afc123f4",
+              "call_id": "fc_c33573d258cc4ab3afc123f4",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -466,8 +510,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_67b2ff718b404205b205158b",
-              "call_id": "fc_64f116a1c96e47c9be3c3044",
+              "id": "fco_74885fa12f604f1cb4d09cc3",
+              "call_id": "fc_c33573d258cc4ab3afc123f4",
               "output": [
                 {
                   "type": "input_text",
@@ -483,14 +527,14 @@
               "name": "get_weather",
               "arguments": "{\"city\": \"Graz\"}",
               "status": "completed",
-              "started_at": 1795594923.6778452,
-              "ended_at": 1795594923.679571,
-              "duration": 0.0017249950033146888,
+              "started_at": 1795595636.7800179,
+              "ended_at": 1795595636.7812085,
+              "duration": 0.0011906449944945052,
               "tool_id": "weather_tool"
             },
             {
               "type": "function_call_output",
-              "id": "fco_1bde288db1e649a5bf12acdd",
+              "id": "fco_e5bc45b29d624c378b94ee5c",
               "call_id": "call_1",
               "output": [
                 {
@@ -502,7 +546,7 @@
             },
             {
               "type": "reasoning",
-              "id": "r_47d5cc30be8c4d13bb54abcb",
+              "id": "r_90ac9ca9d7d34f72b2af171f",
               "status": "completed",
               "start_tag": "<think>",
               "end_tag": "</think>",
@@ -516,13 +560,13 @@
                 }
               ],
               "summary": null,
-              "started_at": 1795594924.0948687,
-              "ended_at": 1795594924.0949998,
+              "started_at": 1795595637.1908998,
+              "ended_at": 1795595637.191013,
               "duration": 0
             },
             {
               "type": "message",
-              "id": "msg_67c8d74b0a1b47c28107bb74",
+              "id": "msg_aca895b6e0a64da88804fdb4",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -543,30 +587,30 @@
           }
         }
       },
-      "reply_id": "8d83861a-d4f2-4ae2-b9fb-dfc15158f172",
+      "reply_id": "0921fb70-ef05-434b-8327-fc7ea6b67fad",
       "answer": "It is sunny in Graz, so leave the umbrella at home.",
       "reasoning": "The weather tool says sunny, so no umbrella is needed.",
-      "share_id": "5209511f-72ab-45d2-a966-acb2b73fcb23",
+      "share_id": "b813eeb6-95f6-45f3-ae21-4ace825b337a",
       "share_mode": "continue",
       "shared_with": [
         "bob"
       ]
     },
     "edited": {
-      "id": "24ae07f9-213e-4baa-ab2b-d7113f640427",
+      "id": "af9bc9d8-ca74-46db-b7d2-7a8aa44f6629",
       "title": "Castle near Vienna",
-      "current_id": "4563d519-f69c-49d2-8370-6efba662c350",
+      "current_id": "6c85000b-060a-4ede-b87e-fc451b7d8a6c",
       "messages": {
-        "76c0dd61-1ab6-4d52-9fea-1c5911a1112f": {
+        "618721b6-5c8c-42ca-8d68-9ed36cac8c27": {
           "parent": null,
           "children": [
-            "4563d519-f69c-49d2-8370-6efba662c350"
+            "6c85000b-060a-4ede-b87e-fc451b7d8a6c"
           ],
           "role": "user",
           "content": "Name a castle near Vienna."
         },
-        "4563d519-f69c-49d2-8370-6efba662c350": {
-          "parent": "76c0dd61-1ab6-4d52-9fea-1c5911a1112f",
+        "6c85000b-060a-4ede-b87e-fc451b7d8a6c": {
+          "parent": "618721b6-5c8c-42ca-8d68-9ed36cac8c27",
           "children": [],
           "role": "assistant",
           "content": "Burg Kreuzenstein, north of Vienna."
@@ -574,45 +618,45 @@
       },
       "folder_id": null,
       "stored": {
-        "76c0dd61-1ab6-4d52-9fea-1c5911a1112f": {
-          "id": "76c0dd61-1ab6-4d52-9fea-1c5911a1112f",
+        "618721b6-5c8c-42ca-8d68-9ed36cac8c27": {
+          "id": "618721b6-5c8c-42ca-8d68-9ed36cac8c27",
           "parentId": null,
           "childrenIds": [
-            "4563d519-f69c-49d2-8370-6efba662c350"
+            "6c85000b-060a-4ede-b87e-fc451b7d8a6c"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "Name a castle near Vienna.",
           "models": [
             "mock-model"
           ],
-          "timestamp": 1795594924,
+          "timestamp": 1795595637,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "4563d519-f69c-49d2-8370-6efba662c350": {
-          "id": "4563d519-f69c-49d2-8370-6efba662c350",
-          "parentId": "76c0dd61-1ab6-4d52-9fea-1c5911a1112f",
+        "6c85000b-060a-4ede-b87e-fc451b7d8a6c": {
+          "id": "6c85000b-060a-4ede-b87e-fc451b7d8a6c",
+          "parentId": "618721b6-5c8c-42ca-8d68-9ed36cac8c27",
           "childrenIds": [],
           "role": "assistant",
           "content": "Burg Kreuzenstein, north of Vienna.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594924,
+          "timestamp": 1795595637,
           "modelIdx": 0,
           "meta": {
-            "task_id": "adb42d72-d4d2-4e07-9f29-45002e2aadd3",
-            "response_started_at": 1795594924.21403,
-            "response_ended_at": 1795594924.645215
+            "task_id": "a299d60d-b266-4373-b9da-a6e6e738c471",
+            "response_started_at": 1795595637.3194683,
+            "response_ended_at": 1795595637.7526093
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_8fc33863eda14396bcd802a5",
-              "call_id": "fc_8fc33863eda14396bcd802a5",
+              "id": "fc_7493a0b5512949e9ba980f00",
+              "call_id": "fc_7493a0b5512949e9ba980f00",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -620,8 +664,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_8c3ba69168da41869c93b125",
-              "call_id": "fc_8fc33863eda14396bcd802a5",
+              "id": "fco_a48c4d099fc44576b3757e9d",
+              "call_id": "fc_7493a0b5512949e9ba980f00",
               "output": [
                 {
                   "type": "input_text",
@@ -632,7 +676,7 @@
             },
             {
               "type": "message",
-              "id": "msg_0241e614b53640078ae648ed",
+              "id": "msg_f0cc4e7e678b48ccad3e8a57",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -648,31 +692,31 @@
           }
         }
       },
-      "reply_id": "4563d519-f69c-49d2-8370-6efba662c350",
+      "reply_id": "6c85000b-060a-4ede-b87e-fc451b7d8a6c",
       "edited_text": "Burg Kreuzenstein, north of Vienna."
     },
     "regenerated": {
-      "id": "7442e35e-8d99-4cad-b3cf-4bbcc5d544b2",
+      "id": "e8c5d683-8933-4b4b-b5be-a155c5719123",
       "title": "Day trip",
-      "current_id": "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac",
+      "current_id": "521b3df0-77a8-4347-9682-6563d1b908aa",
       "messages": {
-        "771ff1b5-6d6f-428b-871c-afa865db6129": {
+        "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc": {
           "parent": null,
           "children": [
-            "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f",
-            "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac"
+            "a980c506-f90a-4381-9c56-824443eebfc1",
+            "521b3df0-77a8-4347-9682-6563d1b908aa"
           ],
           "role": "user",
           "content": "Suggest a day trip from Vienna."
         },
-        "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f": {
-          "parent": "771ff1b5-6d6f-428b-871c-afa865db6129",
+        "a980c506-f90a-4381-9c56-824443eebfc1": {
+          "parent": "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc",
           "children": [],
           "role": "assistant",
           "content": "Bratislava by boat."
         },
-        "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac": {
-          "parent": "771ff1b5-6d6f-428b-871c-afa865db6129",
+        "521b3df0-77a8-4347-9682-6563d1b908aa": {
+          "parent": "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc",
           "children": [],
           "role": "assistant",
           "content": "The Wachau by bike."
@@ -680,46 +724,46 @@
       },
       "folder_id": null,
       "stored": {
-        "771ff1b5-6d6f-428b-871c-afa865db6129": {
-          "id": "771ff1b5-6d6f-428b-871c-afa865db6129",
+        "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc": {
+          "id": "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc",
           "parentId": null,
           "childrenIds": [
-            "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f",
-            "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac"
+            "a980c506-f90a-4381-9c56-824443eebfc1",
+            "521b3df0-77a8-4347-9682-6563d1b908aa"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "Suggest a day trip from Vienna.",
           "models": [
             "mock-model"
           ],
-          "timestamp": 1795594924,
+          "timestamp": 1795595637,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f": {
-          "id": "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f",
-          "parentId": "771ff1b5-6d6f-428b-871c-afa865db6129",
+        "a980c506-f90a-4381-9c56-824443eebfc1": {
+          "id": "a980c506-f90a-4381-9c56-824443eebfc1",
+          "parentId": "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc",
           "childrenIds": [],
           "role": "assistant",
           "content": "Bratislava by boat.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594924,
+          "timestamp": 1795595637,
           "modelIdx": 0,
           "meta": {
-            "task_id": "fdbd4059-2943-4083-a98d-7baebd37d184",
-            "response_started_at": 1795594924.7716377,
-            "response_ended_at": 1795594925.205372
+            "task_id": "d1e9dbe5-af38-4427-ad3a-cc43e91e14fd",
+            "response_started_at": 1795595637.8520074,
+            "response_ended_at": 1795595638.28059
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_d0642f25a4044916b63a09f1",
-              "call_id": "fc_d0642f25a4044916b63a09f1",
+              "id": "fc_fd3b337c8e95408c9a9bff04",
+              "call_id": "fc_fd3b337c8e95408c9a9bff04",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -727,8 +771,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_11ff6524894c4e7782e857f8",
-              "call_id": "fc_d0642f25a4044916b63a09f1",
+              "id": "fco_4e5c52aeded14a8092536488",
+              "call_id": "fc_fd3b337c8e95408c9a9bff04",
               "output": [
                 {
                   "type": "input_text",
@@ -739,7 +783,7 @@
             },
             {
               "type": "message",
-              "id": "msg_e9ba2ffa4a1f448b93c4972b",
+              "id": "msg_2088c538bda1438c9aa199bb",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -754,27 +798,27 @@
             "incomplete": true
           }
         },
-        "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac": {
-          "id": "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac",
-          "parentId": "771ff1b5-6d6f-428b-871c-afa865db6129",
+        "521b3df0-77a8-4347-9682-6563d1b908aa": {
+          "id": "521b3df0-77a8-4347-9682-6563d1b908aa",
+          "parentId": "e92dcd22-ff76-4ae3-b06e-105f7eee5cdc",
           "childrenIds": [],
           "role": "assistant",
           "content": "The Wachau by bike.",
           "done": true,
           "model": "mock-model",
           "modelIdx": 0,
-          "timestamp": 1795594925,
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "timestamp": 1795595638,
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "meta": {
-            "task_id": "0855bee8-88df-425c-a3a3-8f304af0bd4c",
-            "response_started_at": 1795594925.8106313,
-            "response_ended_at": 1795594926.2462916
+            "task_id": "e6e72636-5d7a-44cf-ae95-346225501e64",
+            "response_started_at": 1795595638.8350713,
+            "response_ended_at": 1795595639.2543952
           },
           "output": [
             {
               "type": "function_call",
-              "id": "fc_b090c2279a7841ccbcff9313",
-              "call_id": "fc_b090c2279a7841ccbcff9313",
+              "id": "fc_abd40f73d8a4485b858ca0bc",
+              "call_id": "fc_abd40f73d8a4485b858ca0bc",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -782,8 +826,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_73b4c780616b4f32b798a217",
-              "call_id": "fc_b090c2279a7841ccbcff9313",
+              "id": "fco_2f3e81652c1249159465f278",
+              "call_id": "fc_abd40f73d8a4485b858ca0bc",
               "output": [
                 {
                   "type": "input_text",
@@ -794,7 +838,7 @@
             },
             {
               "type": "message",
-              "id": "msg_71038f35d7c8442f8fcbe15b",
+              "id": "msg_913c8c23533642b4957ab3c1",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -811,37 +855,37 @@
         }
       },
       "versions": [
-        "6451f00a-ad42-415e-a5ee-d6f0b92a3f2f",
-        "9e5de77d-f0b7-48d0-bdc3-e53a4a6b6aac"
+        "a980c506-f90a-4381-9c56-824443eebfc1",
+        "521b3df0-77a8-4347-9682-6563d1b908aa"
       ],
-      "deleted_id": "3a065966-76b7-43e3-93a7-59d49fbba851",
+      "deleted_id": "94fd4d0b-2a8f-49fc-9fe4-b6cb92d90e8f",
       "texts": [
         "Bratislava by boat.",
         "The Wachau by bike."
       ]
     },
     "side_by_side": {
-      "id": "7db6453f-04cb-414f-a7e7-ee68ab4a30d6",
+      "id": "13d0c2da-c6ca-42e1-be99-3f11df8611a9",
       "title": "Museum order",
-      "current_id": "e797aec9-375f-486f-9138-33da8fb8b2d3",
+      "current_id": "1e788a35-3cf8-4367-b7a6-4b93de167426",
       "messages": {
-        "19a27e66-81ce-4aec-b6db-e6597d571db0": {
+        "465bbde2-a457-4028-8753-381015542878": {
           "parent": null,
           "children": [
-            "e797aec9-375f-486f-9138-33da8fb8b2d3",
-            "0d568127-6841-4d8b-8c8f-d95db4049f54"
+            "1e788a35-3cf8-4367-b7a6-4b93de167426",
+            "80e1e238-4049-449d-b57f-10899f7b948e"
           ],
           "role": "user",
           "content": "Which museum first?"
         },
-        "e797aec9-375f-486f-9138-33da8fb8b2d3": {
-          "parent": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+        "1e788a35-3cf8-4367-b7a6-4b93de167426": {
+          "parent": "465bbde2-a457-4028-8753-381015542878",
           "children": [],
           "role": "assistant",
           "content": "The Albertina."
         },
-        "0d568127-6841-4d8b-8c8f-d95db4049f54": {
-          "parent": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+        "80e1e238-4049-449d-b57f-10899f7b948e": {
+          "parent": "465bbde2-a457-4028-8753-381015542878",
           "children": [],
           "role": "assistant",
           "content": "The handbook says the Leopold."
@@ -849,47 +893,47 @@
       },
       "folder_id": null,
       "stored": {
-        "19a27e66-81ce-4aec-b6db-e6597d571db0": {
-          "id": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+        "465bbde2-a457-4028-8753-381015542878": {
+          "id": "465bbde2-a457-4028-8753-381015542878",
           "parentId": null,
           "childrenIds": [
-            "e797aec9-375f-486f-9138-33da8fb8b2d3",
-            "0d568127-6841-4d8b-8c8f-d95db4049f54"
+            "1e788a35-3cf8-4367-b7a6-4b93de167426",
+            "80e1e238-4049-449d-b57f-10899f7b948e"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "Which museum first?",
           "models": [
             "mock-model",
             "research-assistant"
           ],
-          "timestamp": 1795594926,
+          "timestamp": 1795595639,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "e797aec9-375f-486f-9138-33da8fb8b2d3": {
-          "id": "e797aec9-375f-486f-9138-33da8fb8b2d3",
-          "parentId": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+        "1e788a35-3cf8-4367-b7a6-4b93de167426": {
+          "id": "1e788a35-3cf8-4367-b7a6-4b93de167426",
+          "parentId": "465bbde2-a457-4028-8753-381015542878",
           "childrenIds": [],
           "role": "assistant",
           "content": "The Albertina.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594926,
+          "timestamp": 1795595639,
           "modelIdx": 0,
           "meta": {
-            "task_id": "614759c6-c4ae-4973-8e66-ca0e300ebdf5",
-            "response_started_at": 1795594926.3853204,
-            "response_ended_at": 1795594926.8510582
+            "task_id": "1bdb394e-5ccc-4955-9cfd-bc51e8ef0399",
+            "response_started_at": 1795595639.3454106,
+            "response_ended_at": 1795595639.7808566
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_32d13cd2616e45c0b263fc29",
-              "call_id": "fc_32d13cd2616e45c0b263fc29",
+              "id": "fc_77e97cc524d543e9bf21739d",
+              "call_id": "fc_77e97cc524d543e9bf21739d",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -897,8 +941,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_4206f0d219044720955f2677",
-              "call_id": "fc_32d13cd2616e45c0b263fc29",
+              "id": "fco_aa3ef153c2e94bdc98352731",
+              "call_id": "fc_77e97cc524d543e9bf21739d",
               "output": [
                 {
                   "type": "input_text",
@@ -909,7 +953,7 @@
             },
             {
               "type": "message",
-              "id": "msg_ffd4ddf56c6d4081aa2a9e23",
+              "id": "msg_1b0e05c1b9a24bbaaf81ee29",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -924,27 +968,27 @@
             "incomplete": true
           }
         },
-        "0d568127-6841-4d8b-8c8f-d95db4049f54": {
-          "id": "0d568127-6841-4d8b-8c8f-d95db4049f54",
-          "parentId": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+        "80e1e238-4049-449d-b57f-10899f7b948e": {
+          "id": "80e1e238-4049-449d-b57f-10899f7b948e",
+          "parentId": "465bbde2-a457-4028-8753-381015542878",
           "childrenIds": [],
           "role": "assistant",
           "content": "The handbook says the Leopold.",
           "done": true,
           "model": "research-assistant",
-          "timestamp": 1795594926,
+          "timestamp": 1795595639,
           "modelIdx": 1,
           "meta": {
-            "task_id": "7d1e7262-0b37-4eb5-81ee-788a72c22d2e",
-            "response_started_at": 1795594926.3882744,
-            "response_ended_at": 1795594926.8569703
+            "task_id": "310b2a18-1f2d-4337-83aa-1e4971bdf582",
+            "response_started_at": 1795595639.3483715,
+            "response_ended_at": 1795595639.780631
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_89c876f383f04739839bcfb1",
-              "call_id": "fc_89c876f383f04739839bcfb1",
+              "id": "fc_c482545fc0ad474e9cf78470",
+              "call_id": "fc_c482545fc0ad474e9cf78470",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -952,8 +996,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_50c17d78c4694762966befc0",
-              "call_id": "fc_89c876f383f04739839bcfb1",
+              "id": "fco_5e14a06699f64ef1bf747199",
+              "call_id": "fc_c482545fc0ad474e9cf78470",
               "output": [
                 {
                   "type": "input_text",
@@ -964,7 +1008,7 @@
             },
             {
               "type": "message",
-              "id": "msg_273e5249b8024096a6a15ba5",
+              "id": "msg_3f4b0a008be34b6588eb95ac",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -980,27 +1024,27 @@
           }
         }
       },
-      "user_id": "19a27e66-81ce-4aec-b6db-e6597d571db0",
+      "user_id": "465bbde2-a457-4028-8753-381015542878",
       "columns": {
-        "mock-model": "e797aec9-375f-486f-9138-33da8fb8b2d3",
-        "research-assistant": "0d568127-6841-4d8b-8c8f-d95db4049f54"
+        "mock-model": "1e788a35-3cf8-4367-b7a6-4b93de167426",
+        "research-assistant": "80e1e238-4049-449d-b57f-10899f7b948e"
       }
     },
     "delegating": {
-      "id": "0bb2790f-5d41-48e8-bbe6-1dde157936ed",
+      "id": "ae10e2c0-b336-4289-b502-dc5cb5108256",
       "title": "Museum day",
-      "current_id": "f3ce40f4-e5f8-4446-bc11-c6474638a8b7",
+      "current_id": "c3728031-2348-4d90-9555-0a2d779eb9fc",
       "messages": {
-        "ccd9e9f4-c3bf-4bc9-9fa3-9df0d4a6bbde": {
+        "7d1aa0ac-f189-4b9d-a107-5592cf9f21d8": {
           "parent": null,
           "children": [
-            "f3ce40f4-e5f8-4446-bc11-c6474638a8b7"
+            "c3728031-2348-4d90-9555-0a2d779eb9fc"
           ],
           "role": "user",
           "content": "Plan my museum day."
         },
-        "f3ce40f4-e5f8-4446-bc11-c6474638a8b7": {
-          "parent": "ccd9e9f4-c3bf-4bc9-9fa3-9df0d4a6bbde",
+        "c3728031-2348-4d90-9555-0a2d779eb9fc": {
+          "parent": "7d1aa0ac-f189-4b9d-a107-5592cf9f21d8",
           "children": [],
           "role": "assistant",
           "content": "Start at the Albertina, then walk to the Leopold Museum."
@@ -1008,45 +1052,45 @@
       },
       "folder_id": null,
       "stored": {
-        "ccd9e9f4-c3bf-4bc9-9fa3-9df0d4a6bbde": {
-          "id": "ccd9e9f4-c3bf-4bc9-9fa3-9df0d4a6bbde",
+        "7d1aa0ac-f189-4b9d-a107-5592cf9f21d8": {
+          "id": "7d1aa0ac-f189-4b9d-a107-5592cf9f21d8",
           "parentId": null,
           "childrenIds": [
-            "f3ce40f4-e5f8-4446-bc11-c6474638a8b7"
+            "c3728031-2348-4d90-9555-0a2d779eb9fc"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "Plan my museum day.",
           "models": [
             "mock-model"
           ],
-          "timestamp": 1795594927,
+          "timestamp": 1795595639,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "f3ce40f4-e5f8-4446-bc11-c6474638a8b7": {
-          "id": "f3ce40f4-e5f8-4446-bc11-c6474638a8b7",
-          "parentId": "ccd9e9f4-c3bf-4bc9-9fa3-9df0d4a6bbde",
+        "c3728031-2348-4d90-9555-0a2d779eb9fc": {
+          "id": "c3728031-2348-4d90-9555-0a2d779eb9fc",
+          "parentId": "7d1aa0ac-f189-4b9d-a107-5592cf9f21d8",
           "childrenIds": [],
           "role": "assistant",
           "content": "Start at the Albertina, then walk to the Leopold Museum.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594927,
+          "timestamp": 1795595639,
           "modelIdx": 0,
           "meta": {
-            "task_id": "edcdb049-97c4-4b45-87fb-645e14dbdd50",
-            "response_started_at": 1795594927.0537064,
-            "response_ended_at": 1795594928.3448665
+            "task_id": "fbf42286-f1f8-4ea2-88ba-120bc935b56c",
+            "response_started_at": 1795595639.8697567,
+            "response_ended_at": 1795595641.1249862
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_80d0e6bdfcdd4e8cb54833a1",
-              "call_id": "fc_80d0e6bdfcdd4e8cb54833a1",
+              "id": "fc_7bbfa97e5a2747d287d39365",
+              "call_id": "fc_7bbfa97e5a2747d287d39365",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -1054,8 +1098,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_33f039f83a164773aae40774",
-              "call_id": "fc_80d0e6bdfcdd4e8cb54833a1",
+              "id": "fco_685ba586d3a34eeb8ebafbbb",
+              "call_id": "fc_7bbfa97e5a2747d287d39365",
               "output": [
                 {
                   "type": "input_text",
@@ -1071,15 +1115,15 @@
               "name": "delegate_task",
               "arguments": "{\"task\": \"List three museums near the Ring.\"}",
               "status": "completed",
-              "started_at": 1795594927.4827056,
-              "ended_at": 1795594927.9757168,
-              "duration": 0.4930113719892688,
+              "started_at": 1795595640.2839806,
+              "ended_at": 1795595640.7540677,
+              "duration": 0.47008743599872105,
               "tool_id": "builtin:delegate_task",
               "tool_type": "builtin"
             },
             {
               "type": "function_call_output",
-              "id": "fco_80a131d067044ee58bf16828",
+              "id": "fco_9614ecf0a0344b7fa13f8445",
               "call_id": "call_1",
               "output": [
                 {
@@ -1091,7 +1135,7 @@
             },
             {
               "type": "message",
-              "id": "msg_7fa8cd13a02e4de2b5b5a5c7",
+              "id": "msg_383fb51c69dc48e9a5093456",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -1107,25 +1151,25 @@
           }
         }
       },
-      "reply_id": "f3ce40f4-e5f8-4446-bc11-c6474638a8b7",
+      "reply_id": "c3728031-2348-4d90-9555-0a2d779eb9fc",
       "task": "List three museums near the Ring.",
-      "subagent_id": "455bbbc5-fff6-4976-a070-1027fa375e86"
+      "subagent_id": "8faa427a-c740-422a-b204-b49e0b8ff2f5"
     },
     "subagent": {
-      "id": "455bbbc5-fff6-4976-a070-1027fa375e86",
+      "id": "8faa427a-c740-422a-b204-b49e0b8ff2f5",
       "title": "Sub-agent: List three museums near the Ring.",
-      "current_id": "7c7d7632-92ca-4996-b35a-5893dbe725ac",
+      "current_id": "8ad944df-daed-467d-8a91-e0d4d06441d9",
       "messages": {
-        "e73657ba-8b59-49ca-814d-b4af23dcb2f1": {
+        "d0844676-ea97-4a49-bc2c-cb78dac5e77d": {
           "parent": null,
           "children": [
-            "7c7d7632-92ca-4996-b35a-5893dbe725ac"
+            "8ad944df-daed-467d-8a91-e0d4d06441d9"
           ],
           "role": "user",
           "content": "List three museums near the Ring."
         },
-        "7c7d7632-92ca-4996-b35a-5893dbe725ac": {
-          "parent": "e73657ba-8b59-49ca-814d-b4af23dcb2f1",
+        "8ad944df-daed-467d-8a91-e0d4d06441d9": {
+          "parent": "d0844676-ea97-4a49-bc2c-cb78dac5e77d",
           "children": [],
           "role": "assistant",
           "content": "Albertina, Leopold Museum and Kunsthistorisches Museum."
@@ -1133,45 +1177,45 @@
       },
       "folder_id": null,
       "stored": {
-        "e73657ba-8b59-49ca-814d-b4af23dcb2f1": {
-          "id": "e73657ba-8b59-49ca-814d-b4af23dcb2f1",
+        "d0844676-ea97-4a49-bc2c-cb78dac5e77d": {
+          "id": "d0844676-ea97-4a49-bc2c-cb78dac5e77d",
           "parentId": null,
           "childrenIds": [
-            "7c7d7632-92ca-4996-b35a-5893dbe725ac"
+            "8ad944df-daed-467d-8a91-e0d4d06441d9"
           ],
           "role": "user",
           "content": "List three museums near the Ring.",
-          "timestamp": 1795594927,
+          "timestamp": 1795595640,
           "models": [
             "mock-model"
           ],
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "7c7d7632-92ca-4996-b35a-5893dbe725ac": {
-          "id": "7c7d7632-92ca-4996-b35a-5893dbe725ac",
-          "parentId": "e73657ba-8b59-49ca-814d-b4af23dcb2f1",
+        "8ad944df-daed-467d-8a91-e0d4d06441d9": {
+          "id": "8ad944df-daed-467d-8a91-e0d4d06441d9",
+          "parentId": "d0844676-ea97-4a49-bc2c-cb78dac5e77d",
           "childrenIds": [],
           "role": "assistant",
           "content": "Albertina, Leopold Museum and Kunsthistorisches Museum.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594927,
+          "timestamp": 1795595640,
           "modelIdx": null,
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "meta": {
-            "task_id": "4966bead-9b31-4e39-8e91-9a271f7bace9",
-            "response_started_at": 1795594927.5091376,
-            "response_ended_at": 1795594927.9644809
+            "task_id": "9c4ec77e-b68a-4e4f-9fe0-e0ff0fe4fda6",
+            "response_started_at": 1795595640.3195531,
+            "response_ended_at": 1795595640.7406678
           },
           "output": [
             {
               "type": "function_call",
-              "id": "fc_a5746140f02b4feda91d5a17",
-              "call_id": "fc_a5746140f02b4feda91d5a17",
+              "id": "fc_83fb518620ae4cc4b0e0ac01",
+              "call_id": "fc_83fb518620ae4cc4b0e0ac01",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -1179,8 +1223,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_605d87d5566d4e45a4c43e57",
-              "call_id": "fc_a5746140f02b4feda91d5a17",
+              "id": "fco_93d597bf53d54e3f9e2b23e6",
+              "call_id": "fc_83fb518620ae4cc4b0e0ac01",
               "output": [
                 {
                   "type": "input_text",
@@ -1191,7 +1235,7 @@
             },
             {
               "type": "message",
-              "id": "msg_0e95c117d9b346759ea0ca9e",
+              "id": "msg_15c46d6903054d0f9e9ccd12",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -1207,70 +1251,70 @@
           }
         }
       },
-      "parent_chat_id": "0bb2790f-5d41-48e8-bbe6-1dde157936ed",
+      "parent_chat_id": "ae10e2c0-b336-4289-b502-dc5cb5108256",
       "answer": "Albertina, Leopold Museum and Kunsthistorisches Museum."
     },
     "foldered": {
-      "id": "e8a5f02b-c3da-4b1b-918c-1944c1626984",
+      "id": "f12a4157-568d-4064-b3b9-862ad4ad9f2e",
       "title": "Trains to Graz",
-      "current_id": "0bb415e7-f2e0-4246-97b2-dbbabd2b8760",
+      "current_id": "f9f4f144-743b-41fa-94b6-dd05713c7b98",
       "messages": {
-        "e0badce3-3f56-4ef1-927a-b624573520b4": {
+        "7e268e4a-b1c3-491d-a91b-d1f9df93ca3c": {
           "parent": null,
           "children": [
-            "0bb415e7-f2e0-4246-97b2-dbbabd2b8760"
+            "f9f4f144-743b-41fa-94b6-dd05713c7b98"
           ],
           "role": "user",
           "content": "Where do trains to Graz leave from?"
         },
-        "0bb415e7-f2e0-4246-97b2-dbbabd2b8760": {
-          "parent": "e0badce3-3f56-4ef1-927a-b624573520b4",
+        "f9f4f144-743b-41fa-94b6-dd05713c7b98": {
+          "parent": "7e268e4a-b1c3-491d-a91b-d1f9df93ca3c",
           "children": [],
           "role": "assistant",
           "content": "From Wien Hauptbahnhof."
         }
       },
-      "folder_id": "32e65f0a-b3e9-4109-a2ec-19d3d264eac6",
+      "folder_id": "1f5b88e7-32d5-4409-aa68-1300e3051170",
       "stored": {
-        "e0badce3-3f56-4ef1-927a-b624573520b4": {
-          "id": "e0badce3-3f56-4ef1-927a-b624573520b4",
+        "7e268e4a-b1c3-491d-a91b-d1f9df93ca3c": {
+          "id": "7e268e4a-b1c3-491d-a91b-d1f9df93ca3c",
           "parentId": null,
           "childrenIds": [
-            "0bb415e7-f2e0-4246-97b2-dbbabd2b8760"
+            "f9f4f144-743b-41fa-94b6-dd05713c7b98"
           ],
           "role": "user",
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "content": "Where do trains to Graz leave from?",
           "models": [
             "mock-model"
           ],
-          "timestamp": 1795594928,
+          "timestamp": 1795595641,
           "user": {
-            "id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+            "id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
             "name": "Alice Author"
           }
         },
-        "0bb415e7-f2e0-4246-97b2-dbbabd2b8760": {
-          "id": "0bb415e7-f2e0-4246-97b2-dbbabd2b8760",
-          "parentId": "e0badce3-3f56-4ef1-927a-b624573520b4",
+        "f9f4f144-743b-41fa-94b6-dd05713c7b98": {
+          "id": "f9f4f144-743b-41fa-94b6-dd05713c7b98",
+          "parentId": "7e268e4a-b1c3-491d-a91b-d1f9df93ca3c",
           "childrenIds": [],
           "role": "assistant",
           "content": "From Wien Hauptbahnhof.",
           "done": true,
           "model": "mock-model",
-          "timestamp": 1795594928,
+          "timestamp": 1795595641,
           "modelIdx": 0,
           "meta": {
-            "task_id": "f525a50b-1fac-46e0-a426-b012d41a5679",
-            "response_started_at": 1795594928.503035,
-            "response_ended_at": 1795594928.9323218
+            "task_id": "1b691382-8780-4397-a3f4-ca7827e59b7d",
+            "response_started_at": 1795595641.330068,
+            "response_ended_at": 1795595641.7534466
           },
-          "user_id": "2799a0e6-c7b3-480c-9bb0-1d6f2c3d9d55",
+          "user_id": "9e5a97c6-283b-4584-a48b-35f1b16fe74f",
           "output": [
             {
               "type": "function_call",
-              "id": "fc_671faabdfc5143e591270069",
-              "call_id": "fc_671faabdfc5143e591270069",
+              "id": "fc_b3579317e9d144a78fccd8bf",
+              "call_id": "fc_b3579317e9d144a78fccd8bf",
               "name": "list_available_skills",
               "hidden": true,
               "arguments": "{}",
@@ -1278,8 +1322,8 @@
             },
             {
               "type": "function_call_output",
-              "id": "fco_9217affb10cf4a3a85b5f4e1",
-              "call_id": "fc_671faabdfc5143e591270069",
+              "id": "fco_3bf3b944395b4db88e9a1edb",
+              "call_id": "fc_b3579317e9d144a78fccd8bf",
               "output": [
                 {
                   "type": "input_text",
@@ -1290,7 +1334,7 @@
             },
             {
               "type": "message",
-              "id": "msg_91acf84c71fe47989f658d88",
+              "id": "msg_a65b8ccffd06414ebe7a80e1",
               "status": "completed",
               "role": "assistant",
               "content": [
@@ -1309,17 +1353,17 @@
     }
   },
   "chat_file": {
-    "id": "4a55665b-dfff-4b79-aab1-b5670dd76e3d",
+    "id": "ccdbdb1f-d5d2-464e-b417-fcfd34542acd",
     "filename": "packing.txt",
     "text": "Packing list: umbrella, passport, a very old map of Vienna."
   },
   "feedback": {
-    "id": "da1b27e6-5462-40aa-a75c-706001e73912",
+    "id": "25b5e6bb-1f24-41d4-bc07-1c7ed2e22a89",
     "reason": "Accurate",
     "rating": 1
   },
   "note": {
-    "id": "02b90ebe-de12-4af8-9413-e175e0eb74c2",
+    "id": "a907d19c-5d38-4877-b9eb-e9af71935f26",
     "title": "Groceries",
     "md": "# Groceries\n\n- apples\n- *dark* chocolate",
     "writers": [
@@ -1334,18 +1378,18 @@
     ]
   },
   "channel": {
-    "id": "2ca23e36-692b-43af-9884-50096fb1e2b7",
+    "id": "c88311b7-4e54-4203-bfe4-927b32a3aa98",
     "name": "lighthouse",
     "readers": [
       "alice",
       "bob"
     ],
     "message": {
-      "id": "71c7a169-2347-4e47-b5e1-a4ce6389e663",
+      "id": "a856248c-1eb1-44d5-9544-8043b03d652b",
       "content": "Who has the lighthouse key?"
     },
     "reply": {
-      "id": "7ea701c0-8530-440d-8646-efd2b8f316d2",
+      "id": "da84879b-a74a-405e-838c-a8fd60bfd7cb",
       "content": "Behind the blue door."
     },
     "reaction": "thumbsup"

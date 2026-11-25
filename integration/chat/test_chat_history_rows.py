@@ -7,13 +7,18 @@ turns in order with their text and models, a regenerated reply keeps both versio
 picked, an edited question keeps both branches, a deleted message stays gone, a reply keeps its
 citations, steps and files, a clone, fork, share, export and import carry the conversation, search
 finds a chat by the words of any message, a long chat keeps answering, and a chat written by an
-earlier release opens with every message, its order and its times after the upgrade.
+earlier release opens with every message, its order and its times after the upgrade, each message
+with every field the release stored on it (its steps, usage, sources, files, status, error,
+embeds, rating and follow-ups) unchanged, in every data set and on both databases.
 Every check reads the chat back from the server, as a reload does.
 
 Discriminates: passes on dev b6aac5dee (before the PR) and on dev 414340682 (the PR merged), the
 upgrade test on the three SQLite data sets. In a backend copy of 414340682 whose message delete
 deletes nothing and whose clone keeps only the shown versions, the delete and the clone tests fail.
 The Postgres data sets run only where Postgres is available; they were not run locally.
+The every-field test passes on dev f80a4f782 for all eight data sets, SQLite and Postgres; in a
+copy of it whose migration drops a reply's rating, follow-ups, feedback id and usage, it fails on
+every set while the order-and-time test still passes.
 """
 
 from __future__ import annotations
@@ -595,3 +600,61 @@ def test_chats_stored_by_an_earlier_release_keep_every_message_order_and_time(up
     assert live["id"] in found, "search no longer finds the upgraded chat by a question's words"
     times = [message["timestamp"] for message in _path(continued)]
     assert times == sorted(times), f"the messages' times run backwards after the upgrade: {times}"
+
+
+def _reopened_histories(release: Upgraded, owners: set[str]) -> dict[str, dict]:
+    """Every chat as its owner opens it; chats of accounts gone since come from the admin export."""
+    who_by_id = {account["id"]: who for who, account in release.manifest["accounts"].items()}
+    histories = {}
+    for chat_id, owner_id in owners:
+        if owner_id in who_by_id:
+            with release.client(who_by_id[owner_id]) as client:
+                histories[chat_id] = _history(client, chat_id)
+    if len(histories) < len(owners):
+        exported = release.get("admin", "/api/v1/chats/all/db")
+        assert exported.status_code == 200, f"the admin export failed: {exported.text}"
+        for chat in exported.json():
+            histories.setdefault(chat["id"], chat["chat"]["history"])
+    return histories
+
+
+@pytest.fixture(params=data_set_params())
+def untouched_upgrade(request, tmp_path_factory) -> Iterator[tuple[Upgraded, dict]]:
+    """An upgrade of its own, as other tests here add turns to the shared one."""
+    before: dict[str, dict] = {}
+    name = request.param
+    with upgraded_release(
+        name,
+        tmp_path_factory.mktemp(name),
+        prepare=lambda release: before.update(_old_chats(release)),
+    ) as release:
+        yield release, before
+
+
+@pytest.mark.slow
+def test_every_field_an_earlier_release_stored_on_a_message_is_kept(untouched_upgrade):
+    release, before = untouched_upgrade
+    owners = {(chat_id, old["user_id"]) for chat_id, old in before.items()}
+    histories = _reopened_histories(release, owners)
+    fields_seen = set()
+    for chat_id, old in before.items():
+        assert chat_id in histories, f"chat {chat_id} is gone after the upgrade"
+        reopened = histories[chat_id]["messages"]
+        for message_id, message in old["history"]["messages"].items():
+            assert message_id in reopened, f"message {message_id} of chat {chat_id} is gone"
+            kept = reopened[message_id]
+            fields_seen.update(message)
+            # a field stored as null reads the same as one left out
+            changed = {
+                key: {"before": value, "after": kept.get(key, "<missing>")}
+                for key, value in message.items()
+                if kept.get(key) != value
+            }
+            assert not changed, (
+                f"the upgrade changed or dropped fields of message {message_id} "
+                f"of chat {chat_id}: {json.dumps(changed, indent=1, default=str)[:3000]}"
+            )
+    stored_by_use = {"output", "usage", "sources", "files", "error", "embeds"}
+    assert {*stored_by_use, "annotation", "feedbackId", "followUps"} <= fields_seen, (
+        f"the data set stores too few kinds of message fields to check: {sorted(fields_seen)}"
+    )

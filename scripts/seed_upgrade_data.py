@@ -51,6 +51,8 @@ OUTPUT_DIR = REPO_ROOT / "integration" / "migrations" / "upgrade_data"
 
 # only what a release imports at boot; the rest of its requirements load lazily
 BOOT_PACKAGES = ("fpdf2", "fonttools")
+# newer releases of these drop what an older Open WebUI imports, so the release's pin wins
+PINNED_BOOT_PACKAGES = ("mcp",)
 
 ACCOUNTS = {
     "admin": {"name": "Ada Admin", "email": "admin@example.com", "password": "admin-pass-1"},
@@ -174,14 +176,15 @@ def archived_backend(clone: Path, release: str, into: Path) -> Path:
 
 
 def boot_overlay(backend: Path, into: Path) -> Path:
-    """A directory with the release's pins of `BOOT_PACKAGES` this environment lacks."""
+    """A directory with the release's pins of `BOOT_PACKAGES` this environment lacks and of
+    `PINNED_BOOT_PACKAGES`."""
     pins = {}
     for line in (backend / "requirements.txt").read_text().splitlines():
         requirement = line.split("#")[0].strip()
         name = requirement.split("=")[0].split("~")[0].split(">")[0].strip()
-        if name in BOOT_PACKAGES:
+        if name in (*BOOT_PACKAGES, *PINNED_BOOT_PACKAGES):
             pins[name] = requirement
-    missing = []
+    missing = [pins[name] for name in PINNED_BOOT_PACKAGES if name in pins]
     for name in BOOT_PACKAGES:
         try:
             version(name)
@@ -737,6 +740,8 @@ class Seeder:
             "text": CHAT_FILE_TEXT,
         }
         self.manifest["feedback"] = {"id": feedback["id"], "reason": "Accurate", "rating": 1}
+        with self.client("bob") as client:
+            self.manifest["chats"]["rated"] = self._rated_chat(client)
 
     def _branched_chat(self, client: httpx.Client, file_id: str) -> dict:
         """A chat as the web client saves it: a regenerated reply and a tool call."""
@@ -873,6 +878,71 @@ class Seeder:
             raise SystemExit(f"the reply cites nothing from the knowledge base: {reply}")
         stored = self._titled(client, turn.chat_id, "Lighthouse key")
         return {**stored, "question": question, "answer": answer, "cited": sorted(cited)}
+
+    def _rated_chat(self, client: httpx.Client) -> dict:
+        """A reply with its token usage, rated with follow-ups shown, and a reply that failed."""
+        _ensure(client.get("/api/models", params={"refresh": "true"}), "listing models")
+        usage = {"prompt_tokens": 12, "completion_tokens": 7, "total_tokens": 19}
+        self.provider.queue(upstream_module.text("Take the U-Bahn.", usage=usage))
+        first = send_message(client, "How do I get to the Prater?")
+        first_reply = wait_for_reply(client, first)
+        self.provider.queue(upstream_module.error(500, "the provider is down"))
+        second = send_message(
+            client,
+            "And back?",
+            chat_id=first.chat_id,
+            parent_id=first.assistant_message_id,
+            history=[
+                {"role": "user", "content": "How do I get to the Prater?"},
+                {"role": "assistant", "content": first_reply["content"]},
+            ],
+        )
+        failed = self._failed_reply(client, second)
+        feedback = _ensure(
+            client.post(
+                "/api/v1/evaluations/feedback",
+                json={
+                    "type": "rating",
+                    "data": {"rating": 1, "model_id": MOCK_MODEL_ID, "reason": "Accurate"},
+                    "meta": {"chat_id": first.chat_id, "message_id": first.assistant_message_id},
+                    "snapshot": {"chat": {}},
+                },
+            ),
+            "rating the reply",
+        )
+        # the web client keeps the rating, follow-ups and embeds on the message and saves the chat
+        stored = _ensure(client.get(f"/api/v1/chats/{first.chat_id}"), "reading the rated chat")
+        history = stored["chat"]["history"]
+        history["messages"][first.assistant_message_id].update(
+            {
+                "annotation": {
+                    "rating": 1,
+                    "reason": "Accurate",
+                    "comment": "Exactly the line I needed.",
+                    "tags": ["transport"],
+                },
+                "feedbackId": feedback["id"],
+                "followUps": ["How long does it take?", "Is there a night line?"],
+                "embeds": ["<p>U2 to Praterstern</p>"],
+            }
+        )
+        _ensure(
+            client.post(f"/api/v1/chats/{first.chat_id}", json={"chat": {"history": history}}),
+            "saving the rating",
+        )
+        rated = self._titled(client, first.chat_id, "Getting to the Prater")
+        return {**rated, "rated_id": first.assistant_message_id, "failed": failed}
+
+    def _failed_reply(self, client: httpx.Client, turn) -> dict:
+        """The reply the server stored for a provider that failed."""
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            stored = _ensure(client.get(f"/api/v1/chats/{turn.chat_id}"), "reading the chat")
+            message = stored["chat"]["history"]["messages"].get(turn.assistant_message_id, {})
+            if message.get("error"):
+                return {"id": turn.assistant_message_id, "error": message["error"]}
+            time.sleep(0.2)
+        raise SystemExit(f"the failed reply never stored its error: {message}")
 
     def _titled(self, client: httpx.Client, chat_id: str, title: str | None) -> dict:
         """Name a chat the server wrote and record it as stored; `None` keeps its title."""
