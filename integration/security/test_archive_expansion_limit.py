@@ -15,9 +15,8 @@ real PDF still reaches its reader.
 Issue #34944: a valid workbook whose pivot table covers whole columns stores about a million
 mostly empty pivot cache records, so a 4 MB file declared about 100 MB unpacked and was refused
 for every extraction engine. The pivot cache records are not sheet text, so Open WebUI now
-empties them in a copy before extraction and leaves them out of the size check: the built-in
-loaders read the workbook, a remote engine gets the small copy, and the stored file stays as
-uploaded. An archive whose other parts are over the limit is still refused.
+leaves them out of the size check: the built-in loaders read the workbook, a remote engine gets
+it as uploaded, and the stored file stays as uploaded. An archive whose other parts are over the limit is still refused.
 
 Twin of unit/security/test_archive_expansion_limit.py. Bounded by construction: every archive
 declares at most 16 MiB, so the pre-fix run inflates no more than that. The pivot workbook only
@@ -358,10 +357,9 @@ def test_the_built_in_loaders_read_a_workbook_with_a_large_pivot_cache(
     assert downloaded.content == workbook, "the stored workbook no longer matches the upload"
 
 
-def test_the_external_engine_gets_the_workbook_without_its_pivot_cache_records(
+def test_the_external_engine_gets_a_workbook_with_a_large_pivot_cache(
     document_settings, listener, make_user
 ):
-    openpyxl = pytest.importorskip("openpyxl")
     workbook = _pivot_workbook()
     listener.route(
         "PUT",
@@ -383,16 +381,7 @@ def test_the_external_engine_gets_the_workbook_without_its_pivot_cache_records(
     )
     assert len(received) == 1, f"the external engine was called {len(received)} times"
     assert received[0].headers["X-Filename"].endswith("sightings.xlsx"), received[0].headers
-    sent = zipfile.ZipFile(io.BytesIO(received[0].body))
-    original = zipfile.ZipFile(io.BytesIO(workbook))
-    assert sent.namelist() == original.namelist(), "the sent workbook lost or gained parts"
-    changed = [name for name in original.namelist() if sent.read(name) != original.read(name)]
-    assert changed == [PIVOT_RECORDS], (
-        f"parts other than the pivot cache records changed: {changed}"
-    )
-    assert _unpacked_size(received[0].body) < MIB, "the pivot cache records were sent in full"
-    sent_sheets = openpyxl.load_workbook(io.BytesIO(received[0].body))
-    assert [list(row) for row in sent_sheets["Sightings"].iter_rows(values_only=True)] == SIGHTINGS
+    assert received[0].body == workbook, "the external engine did not get the workbook as uploaded"
     assert data.get("content") == "Herons by harbour.", (
         f"the text the external engine extracted was not stored: {data}"
     )
