@@ -35,12 +35,13 @@ def make_automation() -> Callable[..., dict]:
         model_id: str = MOCK_MODEL_ID,
         is_active: bool = True,
         rrule: str = FUTURE_DAILY,
+        prompt: str | None = None,
     ) -> dict:
         form = {
             "name": f"Weekly report {uuid.uuid4().hex[:6]}",
             "is_active": is_active,
             "data": {
-                "prompt": f"Write the weekly report, batch {uuid.uuid4().hex[:6]}.",
+                "prompt": prompt or f"Write the weekly report, batch {uuid.uuid4().hex[:6]}.",
                 "model_id": model_id,
                 "rrule": rrule,
                 "target": {"type": "chat"},
