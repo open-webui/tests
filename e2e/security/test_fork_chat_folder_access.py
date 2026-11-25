@@ -50,9 +50,13 @@ def shared_folder(make_user):
         created = client.post("/api/v1/folders/", json={"name": name})
         assert created.status_code == 200, created.text
         folder_id = created.json()["id"]
-        grant = {"principal_type": "user", "principal_id": member.id, "permission": "write"}
+        # what the share dialog saves for Write: a read and a write grant
+        grants = [
+            {"principal_type": "user", "principal_id": member.id, "permission": permission}
+            for permission in ("read", "write")
+        ]
         shared = client.post(
-            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": [grant]}
+            f"/api/v1/folders/{folder_id}/access/update", json={"access_grants": grants}
         )
         assert shared.status_code == 200, shared.text
     with member.client() as client:
