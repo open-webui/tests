@@ -1,18 +1,18 @@
-"""Regression: a tool result over the Tool Output Limit is saved in full to the chat's terminal.
+"""Regression: a tool result over the Tool Output Limit is saved in full to the chat's machine.
 
 open-webui/open-webui#34619. With the admin's Tool Output Limit set, a longer tool result reaches
 the model cut off with a `[Truncated: N characters, limit M]` note. When the chat has an Open
-Terminal connected, the full result of a tool that is not the terminal's own is now written to
-`.tool_outputs/<id>.txt` on the machine and the note names that path, so the model can read the
-rest. Without a terminal the note stays plain and nothing is written.
+Terminal connected, the full result of a tool that is not the terminal's own is written to a file
+in the machine's home and the note names that path, so the model can read the rest. Without a
+terminal the note stays plain and nothing is written.
 
 An admin's Python tool, readable by everyone, returns a long report; the scripted model calls it
 and the test reads the tool result Open WebUI sent back to the provider, the stored chat and the
-terminal's home. The test that saves the report is red on dev until the fix merges.
+terminal's home. Where in the home the file goes is the product's choice; the test only needs the
+note to name it and the file to hold the whole report.
 
-Discriminates: passes on the fix 991bf3989 (open-webui dev 58fb2453b plus the change), fails on
-dev 58fb2453b (the note names no path and the terminal holds no file). The test without a
-terminal passes on both.
+The PR was closed in favour of the maintainer's own version (bd7d9fbd8), which saves the file under
+`.open-webui/users/<user id>/outputs/` and says "full result saved to"; the test follows it.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ REPORT = "".join(
 PLAIN_NOTE = f"[Truncated: {len(REPORT)} characters, limit {LIMIT}]"
 SAVED_NOTE = re.compile(
     rf"\[Truncated: {len(REPORT)} characters, limit {LIMIT}, "
-    r"full output saved to (?P<path>\S+) on the machine\]$"
+    r"full (?:result|output) saved to (?P<path>\S+) on the machine\]$"
 )
 REPORT_TOOL = f'''
 class Tools:
@@ -100,7 +100,8 @@ def _run_report(actor, upstream, tool_id: str, **options) -> tuple[str, str]:
 
 
 def _saved_outputs(home: Path) -> set[Path]:
-    return set((home / ".tool_outputs").glob("*.txt"))
+    """Every text file anywhere in the terminal's home, hidden folders included."""
+    return {path for path in home.rglob("*.txt") if path.is_file()}
 
 
 def test_a_cut_tool_result_is_saved_in_full_to_the_chats_terminal(
