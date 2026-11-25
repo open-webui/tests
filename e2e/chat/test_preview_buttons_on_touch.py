@@ -4,7 +4,8 @@ open-webui/open-webui#34942. On a 390 by 844 touch screen a tap on Download in t
 image preview saves the image, and Download as SVG and Copy to clipboard on a Mermaid diagram save
 the SVG and copy its code. After zooming into an image, Close and Download stay on top, can be
 seen against the image and still work: the person who reported open-webui/open-webui#34939 on an
-iPhone lost them over a light image. Taps are Chromium touch points sent through CDP
+iPhone lost them over a light image, and open-webui/open-webui#35016 tracks that they still vanish
+over one. Taps are Chromium touch points sent through CDP
 (`utils/image_preview.py`); WebKit's iPhone emulation gave the same results by hand.
 
 A pinch whose second finger lands on a button still zooms the image.
@@ -45,6 +46,7 @@ pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.
 
 # off-white, as many generated images are where the preview's buttons sit
 LIGHT_DATA_URI = data_uri(grid_png(b"\xf5\xf5\xf0"))
+WHITE_DATA_URI = data_uri(grid_png(b"\xff\xff\xff"))
 DIAGRAM = "graph TD\n  A[Start] --> B[Middle]\n  B --> C[End]"
 
 
@@ -54,8 +56,9 @@ def tap_button(fingers: Fingers, button: Locator) -> None:
 
 
 def icon_contrast(button: Locator) -> float:
-    """Contrast between the button's brightest pixel (its white icon) and what most of the button
-    shows behind it, as WCAG measures it."""
+    """Contrast at which the button's icon, with any outline around it, stands out from what most
+    of the button shows behind it, as WCAG measures it: the weakest of the 1% of pixels that stand
+    out most, about the area of the icon itself."""
 
     def luminance(pixel: tuple[int, int, int]) -> float:
         def linear(value: int) -> float:
@@ -65,14 +68,19 @@ def icon_contrast(button: Locator) -> float:
         red, green, blue = pixel[:3]
         return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
 
+    def contrast(first: float, second: float) -> float:
+        return (max(first, second) + 0.05) / (min(first, second) + 0.05)
+
     shot = Image.open(io.BytesIO(button.screenshot())).convert("RGB")
     levels = sorted(luminance(pixel) for pixel in shot.getdata())
-    icon, behind = levels[-1], levels[len(levels) // 2]
-    return (max(icon, behind) + 0.05) / (min(icon, behind) + 0.05)
+    behind = levels[len(levels) // 2]
+    contrasts = sorted(contrast(level, behind) for level in levels)
+    return contrasts[len(contrasts) * 99 // 100]
 
 
-def test_close_and_download_stay_usable_after_zooming_in(page_for, make_user):
-    page = open_image_reply(page_for, make_user, source=LIGHT_DATA_URI)
+@pytest.mark.parametrize("source", [LIGHT_DATA_URI, WHITE_DATA_URI], ids=["off-white", "white"])
+def test_close_and_download_stay_usable_after_zooming_in(page_for, make_user, source):
+    page = open_image_reply(page_for, make_user, source=source)
     fingers = Fingers(page)
     fitted = open_preview(page, fingers)
 
