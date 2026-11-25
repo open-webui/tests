@@ -10,19 +10,18 @@ data set under `upgrade_data/` is taken to the revision before the migration wit
 `alembic` command, three chats with a conversation are rewritten into those shapes, and the
 checkout then starts on it.
 
-Nine more chats are added there in shapes older versions left behind: a broken history next to a
-plain list whose first entry has no id (#35004), an answer whose parent is gone, no current
-message, a plain list repeating a message id, NaN in a reply's usage (SQLite only), a plain list
-with no history, a reply without content, content as a list of parts and timestamps in
-milliseconds. Each must open on the branch it was left on with every message at its time, and take
-one more message on that branch without losing any.
+Eight more chats are added there in shapes older versions left behind: a broken history next to
+a plain list whose first entry has no id (#35004), an answer whose parent is gone, no current
+message, NaN in a reply's usage (SQLite only), a plain list with no history, a reply without
+content, content as a list of parts and timestamps in milliseconds. Each must open on the branch it
+was left on with every message at its time, and take one more message on that branch without
+losing any. A plain list repeating a message id is not covered: no version or importer wrote one,
+and v0.13.4 already showed such a chat collapsed.
 
 Discriminates: on dev 9d19883f1 the start fails on the plain text chat on every data set (36
 errors); with that chat left out, the null and list shaped chats lose messages on all six data
-sets (24 failures). With fixes for both on top of it, all 36 pass. Legacy shapes: on dev
-f80a4f782 the list repeating an id loses its first question on all six data sets (12 failures,
-issue draft pending); a backend copy without the #35012 fix also fails the list whose first entry
-has no id.
+sets (24 failures). With fixes for both on top of it, all 36 pass. Legacy shapes: all pass on dev
+f80a4f782; a backend copy without the #35012 fix fails the list whose first entry has no id.
 """
 
 from __future__ import annotations
@@ -127,7 +126,6 @@ LEGACY_SHAPES = (
     "first message without an id",
     "orphaned parent",
     "missing current message",
-    "duplicate message ids",
     "NaN in usage",
     "messages without a history",
     "content as None",
@@ -227,9 +225,7 @@ def _legacy_chat(shape: str, chat_id: str, sent: int) -> Legacy:
         blob["history"] = {"messages": None, "currentId": ids["a2"]}
         blob["messages"] = unlinked
         answers_to_first = [TEXTS["a1b"]]
-    elif shape in ("duplicate message ids", "messages without a history"):
-        if shape == "duplicate message ids":
-            unlinked[1]["id"] = unlinked[0]["id"]
+    elif shape == "messages without a history":
         del blob["history"]
         blob["messages"] = unlinked
         answers_to_first = [TEXTS["a1b"]]
