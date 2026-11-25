@@ -38,6 +38,7 @@ from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, send
 from utils.clipboard import read_text
 from utils.member_picker import pick_member
+from utils.sidebar_channels import channels_section
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -61,11 +62,9 @@ def _sidebar(page: Page) -> Locator:
 
 
 def _entry(page: Page, name: str) -> Locator:
-    toggle = _sidebar(page).get_by_role("button", name="Channels", exact=True)
-    if toggle.get_attribute("aria-expanded") == "false":
-        toggle.click()
+    _sidebar(page)
     return (
-        _sidebar(page)
+        channels_section(page)
         .locator("#sidebar-channels-content #sidebar-channel-item")
         .filter(has_text=name)
     )

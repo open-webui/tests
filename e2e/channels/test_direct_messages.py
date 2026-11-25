@@ -33,6 +33,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.chat_ui import chat_input, send
 from utils.member_picker import pick_member
+from utils.sidebar_channels import channels_section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -64,14 +65,7 @@ def _start_from_profile_card(page: Page, channel_id: str, author, text: str) -> 
 def _channels_section(page: Page) -> Locator:
     """The sidebar, opened with its Channels section expanded."""
     expect(chat_input(page)).to_be_visible()
-    sidebar = page.get_by_role("navigation", name="Chat history")
-    open_sidebar = page.get_by_role("button", name="Open Sidebar", exact=True)
-    if open_sidebar.is_visible():
-        open_sidebar.click()
-    section = sidebar.get_by_role("button", name="Channels")
-    if section.get_attribute("aria-expanded") == "false":
-        section.click()
-    return sidebar
+    return channels_section(page)
 
 
 def _entry(page: Page, other_name: str) -> Locator:

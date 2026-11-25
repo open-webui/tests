@@ -31,6 +31,7 @@ from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.channel_messages import message_action, message_tooltips
 from utils.chat_ui import chat_input, send
 from utils.menus import late_menu_entry
+from utils.sidebar_channels import channels_section
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -76,14 +77,7 @@ def _message(page: Page, text: str) -> Locator:
 
 
 def _sidebar_entry(page: Page, channel_name: str) -> Locator:
-    sidebar = page.get_by_role("navigation", name="Chat history")
-    open_sidebar = page.get_by_role("button", name="Open Sidebar", exact=True)
-    if open_sidebar.is_visible():
-        open_sidebar.click()
-    section = sidebar.get_by_role("button", name="Channels")
-    if section.get_attribute("aria-expanded") == "false":
-        section.click()
-    return sidebar.get_by_role("link", name=channel_name)
+    return channels_section(page).get_by_role("link", name=channel_name)
 
 
 def test_a_read_only_member_reads_live_but_cannot_post_reply_or_react(

@@ -22,6 +22,7 @@ from playwright.sync_api import Locator, Page, expect
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from utils.channel_messages import message_action
 from utils.chat_ui import chat_input
+from utils.sidebar_channels import channels_section
 
 pytestmark = [pytest.mark.regression, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -44,19 +45,7 @@ def channel_name(account, channel_id: str) -> str:
 
 
 def sidebar_entry(page: Page, name: str) -> Locator:
-    sidebar = page.get_by_role("navigation", name="Chat history")
-    open_sidebar = page.get_by_role("button", name="Open Sidebar", exact=True)
-    if open_sidebar.is_visible():
-        open_sidebar.click()
-    section = sidebar.get_by_role("button", name="Channels")
-    if section.get_attribute("aria-expanded") == "false":
-        section.click()
-    # the section slides open, and a click while it moves lands on the row that slid under it
-    sidebar.locator("#sidebar-channels-content").evaluate(
-        "content => Promise.allSettled("
-        "content.parentElement.getAnimations().map((animation) => animation.finished))"
-    )
-    return sidebar.get_by_role("link", name=name)
+    return channels_section(page).get_by_role("link", name=name)
 
 
 def stored(account, channel_id: str) -> list[str]:
