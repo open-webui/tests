@@ -10,6 +10,8 @@ with None, and offers the Terminal capability and the default only where a termi
 Changing the terminal drops the skills picked from the one before, and a file of another
 terminal cannot be attached beside one already attached. The terminal list is read again when
 the page reconnects and when the person's access changes (a group they were added to).
+The admin's Default machine in Model Defaults (v0.13.4) starts a new chat on it for every model
+without a terminal of its own, and the command runs there; a model's own terminal wins over it.
 
 Two fake terminals stand in for two connections of the admin; each names itself in the answer of
 its `run_command`, which the test reads from what the model was sent. The skills and attachments
@@ -42,6 +44,9 @@ Retargeted for 0ba0a4d7e (#34433), which renames the editor's Capabilities secti
 The opened-chat test is red on dev dc9886799 (#34928): opening a saved chat without a terminal
 dropped the pick for the next new chat and a reload. Fix: Classic298/open-webui branch
 fix/terminal-saved-chat-leak (8db3a2a9b), green there in five runs and two in parallel.
+The admin default test passes on dev f80a4f782; a backend copy that leaves the default machine
+out of the models' settings fails it at the connection model (no machine picked), and one where
+the default replaces a model's own machine fails it at that model (Quay picked).
 """
 
 from __future__ import annotations
@@ -61,6 +66,7 @@ from harness import upstream as reply
 from harness.access import grant, make_group
 from harness.actors import admin_of, create_user
 from harness.chat_history import seed_chat
+from harness.file_context import MODELS_CONFIG
 from harness.listener import json_answer
 from harness.terminal_server import (
     TERMINAL_SERVERS_CONFIG,
@@ -513,6 +519,39 @@ def test_a_models_default_terminal_is_picked_only_for_a_person_who_may_use_it(
     open_terminal_menu(page)
     expect(listed_terminal(page, SLIP)).to_be_visible()
     expect(listed_terminal(page, QUAY)).to_have_count(0)
+
+
+def set_admin_default_terminal(admin, terminal_id: str) -> None:
+    """The admin picks `terminal_id` as Default machine in Model Defaults."""
+    with admin.client() as client:
+        current = client.get(MODELS_CONFIG[0]).json()
+        metadata = dict(current.get("DEFAULT_MODEL_METADATA") or {})
+        metadata.pop("terminalId", None)
+        metadata["machineId"] = terminal_id
+        saved = client.post(MODELS_CONFIG[1], json={**current, "DEFAULT_MODEL_METADATA": metadata})
+    assert saved.status_code == 200, saved.text
+
+
+def test_a_new_chat_starts_on_the_admins_default_terminal_unless_its_model_has_its_own(
+    page_for, make_user, admin, terminals, make_model, upstream, preserve
+):
+    preserve(MODELS_CONFIG)
+    set_admin_default_terminal(admin, terminals[QUAY]["id"])
+    without_its_own = make_model()
+    on_slip = make_model(terminals[SLIP]["id"])
+    person = make_user()
+
+    connection_model = {"id": MOCK_MODEL_ID, "name": MOCK_MODEL_ID}
+    for model in (connection_model, without_its_own):
+        page = open_chat_on(person, page_for, model)
+        expect_terminal(page, QUAY)
+        ran_on = where_the_command_ran(page, upstream)
+        assert ran_on == QUAY, f"a chat on {model['id']} ran the command on {ran_on}"
+
+    page = open_chat_on(person, page_for, on_slip)
+    expect_terminal(page, SLIP)
+    ran_on = where_the_command_ran(page, upstream)
+    assert ran_on == SLIP, f"the model's own terminal lost to the admin default: ran on {ran_on}"
 
 
 def open_model_editor(person, page_for, model: dict) -> Locator:
