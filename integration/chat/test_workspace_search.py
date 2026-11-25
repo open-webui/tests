@@ -31,10 +31,11 @@ continued with a null byte in a message kept it in the message's row. PostgreSQL
 JSON holding one, so one such row made the search and the chat list search answer 500. Since
 10be890bc every JSON value is cleaned when it is saved, and the first search on PostgreSQL that
 meets a null byte stored earlier removes them from every JSON column once and answers, leaving a
-message that quotes the six characters of the escape alone. The cleanup tests store such data in
-message rows, chat records and shared copies on an instance of their own, search once as a person
-would after the upgrade and then use every reader: the search, the chat list search, the inbox
-and a message update. The chat list search should also stop hiding chats that quote the escape's
+message that quotes the six characters of the escape alone. The cleanup tests step an instance of
+their own down to the version before #34689, store such data in message rows, chat records and
+shared copies as a release from then did, start it again as the upgrade, search once as a person
+would and then use every reader: the search, the chat list search, the inbox and a message
+update. The chat list search should also stop hiding chats that quote the escape's
 text or carry "x00" in their title, which a 2025 workaround for the same bug filtered out on
 PostgreSQL. Discriminates: all pass on PostgreSQL on dev 10be890bc except the quoting and "x00"
 tests, which stay red there as the workaround is still in place. On dev b6e71d4d7 the three save
@@ -70,6 +71,7 @@ from harness.actors import Actor, admin_of, create_user
 from harness.backends import on_postgres, read_rows, write_rows
 from harness.channel_quotes import enable_channels, group_channel, post_message
 from harness.chat import ask
+from harness.prepared_data import manual_alembic
 from harness.workspace_search import (
     PAGE_SIZE,
     SEARCH_PATH,
@@ -464,6 +466,8 @@ def test_a_null_byte_in_a_message_is_dropped_and_the_chat_is_still_found(
 
 
 NULL_BYTE_ENV = {"REGRESSION_THROWAWAY_INSTANCE": "null-byte-cleanup"}
+# the migration that keeps chat messages only in their rows (#34689)
+ROWS_ONLY_REVISION = "5e7a2c9d4b13"
 
 
 @dataclass
@@ -519,18 +523,31 @@ def cleaned(instance_with) -> Cleaned:
         share_id = _share(client, chats["snapshot"], account, None)
         _share(client, chats["replies"], account, "continue")
 
-    _store_json(instance, "chat_message", "content", "id", stored, f"{chats['row']}-q")
+    # The data as a version from before #34689 stored it, which kept a copy in the chat record.
+    instance.stop()
+    stepped_down = manual_alembic(
+        instance.data_dir,
+        "downgrade",
+        f"{ROWS_ONLY_REVISION}-1",
+        database_url=instance.database_url,
+    )
+    assert stepped_down.returncode == 0, stepped_down.stderr[-3000:]
+    quoted = f"{word} prints \\u0000"
+    for name, question in (("row", stored), ("quoted", quoted)):
+        _store_json(instance, "chat_message", "content", "id", question, f"{chats[name]}-q")
+        record = {"title": name, "models": [], "history": conversation(question, "hi there")}
+        _store_json(instance, "chat", "chat", "id", record, chats[name])
     usage = {"input_tokens": 3, "output_tokens": 5, "model": "tiny\x00model"}
     _store_json(instance, "chat_message", "usage", "id", usage, f"{chats['row']}-a")
-    _store_json(
-        instance, "chat_message", "content", "id", f"{word} prints \\u0000", f"{chats['quoted']}-q"
-    )
+    # a chat from before messages had rows of their own
     write_rows(instance, "DELETE FROM chat_message WHERE chat_id = :id", [{"id": chats["record"]}])
     record = {"title": "record", "models": [], "history": conversation(stored, "hi there")}
     _store_json(instance, "chat", "chat", "id", record, chats["record"])
     for name, share_mode in (("snapshot", None), ("replies", "continue")):
         snapshot = {"title": name, "share_mode": share_mode, "history": conversation(stored, "hi")}
         _store_json(instance, "shared_chat", "chat", "chat_id", snapshot, chats[name])
+    # the upgrade: the start migrates the database to the current version
+    instance.start()
 
     # The first search after the upgrade meets the stored bytes and cleans them up once.
     with account.client() as client:
@@ -547,7 +564,6 @@ def _stored_text(instance, statement: str, key: str) -> str:
 def test_the_cleanup_removes_only_the_null_bytes(cleaned):
     instance, chats, word = cleaned.instance, cleaned.chats, cleaned.word
     message = "SELECT content #>> '{}' AS text FROM chat_message WHERE id = :key"
-    in_chat = "SELECT chat #>> '{history,messages,q,content}' AS text FROM chat WHERE id = :key"
     in_share = (
         "SELECT chat #>> '{history,messages,q,content}' AS text "
         "FROM shared_chat WHERE chat_id = :key"
@@ -556,7 +572,9 @@ def test_the_cleanup_removes_only_the_null_bytes(cleaned):
     assert _stored_text(instance, message, f"{chats['row']}-q") == f"{word} ab"
     usage = "SELECT usage ->> 'model' AS text FROM chat_message WHERE id = :key"
     assert _stored_text(instance, usage, f"{chats['row']}-a") == "tinymodel"
-    assert _stored_text(instance, in_chat, chats["record"]) == f"{word} ab"
+    assert _stored_text(instance, message, f"{chats['record']}-q") == f"{word} ab", (
+        "the upgrade did not keep the old chat record's message in its row"
+    )
     assert _stored_text(instance, in_share, chats["snapshot"]) == f"{word} ab"
     assert _stored_text(instance, message, f"{chats['quoted']}-q") == f"{word} prints \\u0000", (
         "the cleanup changed a message that only quotes the text of the escape"
