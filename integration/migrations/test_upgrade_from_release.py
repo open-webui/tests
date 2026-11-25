@@ -1,7 +1,7 @@
 """Journey: data written by earlier releases survives starting the checkout on it.
 
-Each data set under `upgrade_data/` was made by booting a release (the last patch of the three
-most recent minor lines) and filling it through its own API: four accounts, a group with a
+Each data set under `upgrade_data/` was made by booting a release (the last patch of v0.9,
+v0.10, v0.11 and v0.13) and filling it through its own API: four accounts, a group with a
 permission of its own, a chat with a regenerated reply, a tool call and an attached file, a chat
 the server streamed itself, one it answered from a knowledge base with its citation, folders,
 a shared chat, a note, a knowledge base with a file, a model preset, prompts, a tool, a filter
@@ -15,7 +15,8 @@ data sets restore a `pg_dump` into an embedded server first. `scripts/seed_upgra
 regenerates the data sets; the browser twin, `e2e/migrations/test_upgrade_from_release.py`,
 opens the same data in the app.
 
-Discriminates: passes on dev ac00d40e3 for all six data sets; with the copy step of
+Discriminates: passes on dev ac00d40e3 for the six older data sets and on dev f80a4f782 for
+the two v0.13.4 ones; with the copy step of
 `3ff2c63645b8` (config reshape) skipping the `ui.` keys in a copy of it, both v0.9.6 sets fail
 the settings test (default user role back to `pending`); with `b0018471bbbe` no longer adding
 `user.variables`, the v0.9.6 and v0.10.2 sets fail to boot (`no such column`) while the v0.11.4

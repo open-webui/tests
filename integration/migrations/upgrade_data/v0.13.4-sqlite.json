@@ -1,0 +1,1353 @@
+{
+  "release": "v0.13.4",
+  "engine": "sqlite",
+  "data_dir": "/home/tmp/seed0134-tmp/seed-v0.13.4-iasuolj4/data",
+  "accounts": {
+    "admin": {
+      "name": "Ada Admin",
+      "email": "admin@example.com",
+      "password": "admin-pass-1",
+      "id": "b5b67933-4b2a-434f-9771-e9714ebb7e8a",
+      "role": "admin"
+    },
+    "alice": {
+      "name": "Alice Author",
+      "email": "alice@example.com",
+      "password": "alice-pass-1",
+      "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+      "role": "user"
+    },
+    "bob": {
+      "name": "Bob Reader",
+      "email": "bob@example.com",
+      "password": "bob-pass-1",
+      "id": "689fb254-c75a-43f1-980e-ac964fa50416",
+      "role": "user"
+    },
+    "carol": {
+      "name": "Carol Outsider",
+      "email": "carol@example.com",
+      "password": "carol-pass-1",
+      "id": "05780c4e-b9f0-4224-94a4-cbf7cfb313a5",
+      "role": "user"
+    }
+  },
+  "group": {
+    "id": "fc50bfe1-4306-49f7-8158-5c54804d7c95",
+    "name": "Research",
+    "members": [
+      "alice",
+      "bob"
+    ],
+    "permissions": {
+      "workspace": {
+        "models": true
+      }
+    }
+  },
+  "settings": {
+    "admin": {
+      "DEFAULT_USER_ROLE": "user",
+      "ENABLE_COMMUNITY_SHARING": false,
+      "ENABLE_CHANNELS": true,
+      "WEBUI_URL": "https://chat.example.com"
+    },
+    "permissions": {
+      "chat.delete": false,
+      "workspace.prompts": true,
+      "workspace.skills": true,
+      "sharing.skills": true,
+      "sharing.notes": true
+    },
+    "banner": {
+      "id": "upgrade-banner",
+      "type": "info",
+      "title": "Maintenance",
+      "content": "Maintenance on Sunday",
+      "dismissible": true,
+      "timestamp": 1700000000
+    },
+    "alice_ui": {
+      "theme": "dark",
+      "chatBubble": false,
+      "notesSeen": 3
+    },
+    "bob_ui": {
+      "models": [
+        "research-assistant"
+      ]
+    }
+  },
+  "prompts": {
+    "summarize": {
+      "owner": "admin",
+      "name": "Summarize",
+      "content": "Summarize the following text in three bullet points.",
+      "readers": [
+        "alice",
+        "bob"
+      ]
+    },
+    "alice-draft": {
+      "owner": "alice",
+      "name": "Alice's draft",
+      "content": "Draft a polite reply to this email.",
+      "readers": []
+    }
+  },
+  "tool": {
+    "id": "weather_tool",
+    "name": "Weather",
+    "readers": [
+      "alice",
+      "bob"
+    ]
+  },
+  "function": {
+    "id": "shout_filter",
+    "name": "Shout filter",
+    "valves": {
+      "suffix": "!!!"
+    }
+  },
+  "model": {
+    "id": "research-assistant",
+    "name": "Research assistant",
+    "system": "You answer from the handbook.",
+    "readers": [
+      "bob"
+    ]
+  },
+  "skills": {
+    "trip-planner": {
+      "id": "trip-planner",
+      "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+      "name": "Trip planner",
+      "description": "Plans multi-city trips by train.",
+      "content": "---\nname: trip-planner\ndescription: Plans multi-city trips by train.\n---\n\n# Trip planner\n\n1. Ask for the cities and the dates.\n2. Prefer night trains over flights.\n3. Keep every transfer above 40 minutes.\n4. Name the platform for every departure.\n",
+      "meta": {
+        "i18n": null,
+        "tags": [
+          "travel"
+        ]
+      },
+      "is_active": true,
+      "created_at": 1795594896,
+      "updated_at": 1795594897,
+      "grants": [
+        {
+          "principal_type": "group",
+          "principal_id": "fc50bfe1-4306-49f7-8158-5c54804d7c95",
+          "permission": "read"
+        },
+        {
+          "principal_type": "user",
+          "principal_id": "689fb254-c75a-43f1-980e-ac964fa50416",
+          "permission": "write"
+        }
+      ],
+      "owner": "alice",
+      "readers": [
+        "alice",
+        "bob"
+      ],
+      "writers": [
+        "alice",
+        "bob"
+      ]
+    },
+    "uebersetzer": {
+      "id": "uebersetzer",
+      "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+      "name": "\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80",
+      "description": "",
+      "content": "# \u00dcbersetzer \ud83c\udf0d\r\n\r\n\u00dcbersetze h\u00f6flich: \u00abGr\u00fc\u00df Gott\u00bb \u2192 \u300c\u3053\u3093\u306b\u3061\u306f\u300d, \u4f60\u597d, \u041f\u0440\u0438\u0432\u0435\u0442, \u0645\u0631\u062d\u0628\u0627, \u05e9\u05dc\u05d5\u05dd.\r\n\tKeep combining marks (e\u0301, n\u0303) and emoji with modifiers (\ud83d\udc4b\ud83c\udffd).  \r\nMath stays: \u2211 x\u00b2 \u2264 \u221e; quotes stay: \u2018single\u2019 \u201cdouble\u201d `<$PATH>`.\r\n",
+      "meta": {
+        "i18n": null,
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1795594897,
+      "updated_at": 1795594897,
+      "grants": [],
+      "owner": "alice",
+      "readers": [
+        "alice"
+      ],
+      "writers": [
+        "alice"
+      ]
+    },
+    "old-habits": {
+      "id": "old-habits",
+      "user_id": "689fb254-c75a-43f1-980e-ac964fa50416",
+      "name": "Old habits",
+      "description": null,
+      "content": "Answer in Latin.",
+      "meta": {
+        "i18n": null,
+        "tags": []
+      },
+      "is_active": false,
+      "created_at": 1795594897,
+      "updated_at": 1795594897,
+      "grants": [],
+      "owner": "bob",
+      "readers": [
+        "bob"
+      ],
+      "writers": [
+        "bob"
+      ]
+    },
+    "house-style": {
+      "id": "house-style",
+      "user_id": "b5b67933-4b2a-434f-9771-e9714ebb7e8a",
+      "name": "House style",
+      "description": "How every answer is formatted.",
+      "content": "Use sentence case headings and no exclamation marks.",
+      "meta": {
+        "i18n": null,
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1795594897,
+      "updated_at": 1795594897,
+      "grants": [
+        {
+          "principal_type": "user",
+          "principal_id": "*",
+          "permission": "read"
+        }
+      ],
+      "owner": "admin",
+      "readers": [
+        "alice",
+        "bob",
+        "carol"
+      ],
+      "writers": []
+    },
+    "dave-notes": {
+      "id": "dave-notes",
+      "user_id": "fede42ff-d0ae-4404-8751-568d704c3232",
+      "name": "Dave's notes",
+      "description": "Left behind.",
+      "content": "Hand over to the next shift at six.",
+      "meta": {
+        "i18n": null,
+        "tags": []
+      },
+      "is_active": true,
+      "created_at": 1795594898,
+      "updated_at": 1795594898,
+      "grants": [
+        {
+          "principal_type": "group",
+          "principal_id": "fc50bfe1-4306-49f7-8158-5c54804d7c95",
+          "permission": "read"
+        }
+      ],
+      "owner": null,
+      "readers": [
+        "alice",
+        "bob"
+      ],
+      "writers": []
+    }
+  },
+  "deleted_account": {
+    "name": "Dave Departed",
+    "email": "dave@example.com",
+    "password": "dave-pass-1",
+    "id": "fede42ff-d0ae-4404-8751-568d704c3232"
+  },
+  "knowledge": {
+    "id": "6976b918-f800-4636-a21c-c11f41fc6574",
+    "name": "Handbook",
+    "file_id": "d334a16f-fb9f-49e7-b52d-d956cfb572d5",
+    "filename": "handbook.txt",
+    "text": "The upgrade handbook says the lighthouse key hangs behind the blue door.",
+    "readers": [
+      "alice",
+      "bob"
+    ]
+  },
+  "folders": {
+    "parent": {
+      "id": "783ad6a7-4080-43d3-bc0b-4b5960e8d651",
+      "name": "Trips"
+    },
+    "child": {
+      "id": "a23b22db-153f-4d65-b695-7a5685859dd2",
+      "name": "Vienna"
+    }
+  },
+  "chats": {
+    "branched": {
+      "id": "c9da2d77-2f0a-4e38-b5ce-de03eaab494e",
+      "title": "Packing for Vienna",
+      "current_id": "a2-0000-4000-8000-000000000000",
+      "messages": {
+        "u1-0000-4000-8000-000000000000": {
+          "parent": null,
+          "children": [
+            "a1-0000-4000-8000-000000000000",
+            "a1b-0000-4000-8000-000000000000"
+          ],
+          "role": "user",
+          "content": "What should I pack for Vienna?"
+        },
+        "a1-0000-4000-8000-000000000000": {
+          "parent": "u1-0000-4000-8000-000000000000",
+          "children": [],
+          "role": "assistant",
+          "content": "Pack an umbrella."
+        },
+        "a1b-0000-4000-8000-000000000000": {
+          "parent": "u1-0000-4000-8000-000000000000",
+          "children": [
+            "u2-0000-4000-8000-000000000000"
+          ],
+          "role": "assistant",
+          "content": "<details type=\"tool_calls\" done=\"true\" id=\"call_1\" name=\"get_weather\" arguments=\"{&quot;city&quot;: &quot;Vienna&quot;}\" result=\"&quot;Sunny in Vienna&quot;\">\n<summary>Tool Executed</summary>\n</details>\nIt is sunny, so pack sunglasses."
+        },
+        "u2-0000-4000-8000-000000000000": {
+          "parent": "a1b-0000-4000-8000-000000000000",
+          "children": [
+            "a2-0000-4000-8000-000000000000"
+          ],
+          "role": "user",
+          "content": "And for the evening?"
+        },
+        "a2-0000-4000-8000-000000000000": {
+          "parent": "u2-0000-4000-8000-000000000000",
+          "children": [],
+          "role": "assistant",
+          "content": "A light jacket."
+        }
+      },
+      "folder_id": "a23b22db-153f-4d65-b695-7a5685859dd2",
+      "share_id": "8287f32a-c9b2-4dd1-b636-7d3d02101aac"
+    },
+    "live": {
+      "id": "851b1a6b-d9d7-438d-821a-a54077ca213a",
+      "title": "Schnitzel questions",
+      "current_id": "929769a2-0a1c-4ac6-96f1-f0089c61755c",
+      "messages": {
+        "866455aa-b1f6-4675-a57e-c71bfb912600": {
+          "parent": null,
+          "children": [
+            "0fde0408-f35b-4f39-a86d-64a12076acdc"
+          ],
+          "role": "user",
+          "content": "What is a Schnitzel?"
+        },
+        "0fde0408-f35b-4f39-a86d-64a12076acdc": {
+          "parent": "866455aa-b1f6-4675-a57e-c71bfb912600",
+          "children": [
+            "c0d4d579-062d-4f42-9177-d8f0f3378207"
+          ],
+          "role": "assistant",
+          "content": "Schnitzel is a breaded cutlet."
+        },
+        "c0d4d579-062d-4f42-9177-d8f0f3378207": {
+          "parent": "0fde0408-f35b-4f39-a86d-64a12076acdc",
+          "children": [
+            "929769a2-0a1c-4ac6-96f1-f0089c61755c"
+          ],
+          "role": "user",
+          "content": "How do I eat it?"
+        },
+        "929769a2-0a1c-4ac6-96f1-f0089c61755c": {
+          "parent": "c0d4d579-062d-4f42-9177-d8f0f3378207",
+          "children": [],
+          "role": "assistant",
+          "content": "Try it with lemon."
+        }
+      },
+      "reply_id": "0fde0408-f35b-4f39-a86d-64a12076acdc"
+    },
+    "cited": {
+      "id": "d8ed6759-40b7-45b0-a7ec-c80500ebfd23",
+      "title": "Lighthouse key",
+      "current_id": "d16a0e51-ed31-4ecb-8b4d-6f8a86581a25",
+      "messages": {
+        "7e1bf2dc-c729-43d9-b403-3386fa9d6e73": {
+          "parent": null,
+          "children": [
+            "d16a0e51-ed31-4ecb-8b4d-6f8a86581a25"
+          ],
+          "role": "user",
+          "content": "Where does the lighthouse key hang?"
+        },
+        "d16a0e51-ed31-4ecb-8b4d-6f8a86581a25": {
+          "parent": "7e1bf2dc-c729-43d9-b403-3386fa9d6e73",
+          "children": [],
+          "role": "assistant",
+          "content": "Behind the blue door [1]."
+        }
+      },
+      "question": "Where does the lighthouse key hang?",
+      "answer": "Behind the blue door [1].",
+      "cited": [
+        "handbook.txt"
+      ]
+    },
+    "archived": {
+      "id": "294681a1-6f45-4b2c-a949-4016e1f1bdb3",
+      "title": "Old plans"
+    },
+    "tooled": {
+      "id": "2b329458-d5fb-49f7-9006-9bee0a1e7773",
+      "title": "Weather in Graz",
+      "current_id": "26163c1a-72e0-4f59-9ee9-d9790087342b",
+      "messages": {
+        "68a9a3b5-040c-4f0d-a4cd-2d5c2cb395ef": {
+          "parent": null,
+          "children": [
+            "26163c1a-72e0-4f59-9ee9-d9790087342b"
+          ],
+          "role": "user",
+          "content": "What is the weather in Graz?"
+        },
+        "26163c1a-72e0-4f59-9ee9-d9790087342b": {
+          "parent": "68a9a3b5-040c-4f0d-a4cd-2d5c2cb395ef",
+          "children": [],
+          "role": "assistant",
+          "content": "It is sunny in Graz, so leave the umbrella at home."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "68a9a3b5-040c-4f0d-a4cd-2d5c2cb395ef": {
+          "id": "68a9a3b5-040c-4f0d-a4cd-2d5c2cb395ef",
+          "parentId": null,
+          "childrenIds": [
+            "26163c1a-72e0-4f59-9ee9-d9790087342b"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "What is the weather in Graz?",
+          "models": [
+            "mock-model"
+          ],
+          "timestamp": 1795594900,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "26163c1a-72e0-4f59-9ee9-d9790087342b": {
+          "id": "26163c1a-72e0-4f59-9ee9-d9790087342b",
+          "parentId": "68a9a3b5-040c-4f0d-a4cd-2d5c2cb395ef",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "It is sunny in Graz, so leave the umbrella at home.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594900,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "df9747ff-8a82-4446-893f-8dbf88a0ee00",
+            "response_started_at": 1795594900.534791,
+            "response_ended_at": 1795594901.3602412
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_e5b95ccf4f9a4711a7b1ea3d",
+              "call_id": "fc_e5b95ccf4f9a4711a7b1ea3d",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_cc19f3c5ef494163870e855b",
+              "call_id": "fc_e5b95ccf4f9a4711a7b1ea3d",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "function_call",
+              "id": "call_1",
+              "call_id": "call_1",
+              "name": "get_weather",
+              "arguments": "{\"city\": \"Graz\"}",
+              "status": "completed",
+              "started_at": 1795594900.949302,
+              "ended_at": 1795594900.950683,
+              "duration": 0.0013807759969495237,
+              "tool_id": "weather_tool"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_69bb9288b1ff4953a018001b",
+              "call_id": "call_1",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "Sunny in Graz"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "reasoning",
+              "id": "r_e2ed1af70fae4e5a8777d8fa",
+              "status": "completed",
+              "start_tag": "<think>",
+              "end_tag": "</think>",
+              "attributes": {
+                "type": "reasoning_content"
+              },
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "The weather tool says sunny, so no umbrella is needed."
+                }
+              ],
+              "summary": null,
+              "started_at": 1795594901.3588185,
+              "ended_at": 1795594901.358886,
+              "duration": 0
+            },
+            {
+              "type": "message",
+              "id": "msg_97021c4b3c264de6a92066f7",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "It is sunny in Graz, so leave the umbrella at home."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true,
+            "input_tokens": 42,
+            "output_tokens": 7,
+            "total_tokens": 49,
+            "prompt_tokens": 42,
+            "completion_tokens": 7
+          }
+        }
+      },
+      "reply_id": "26163c1a-72e0-4f59-9ee9-d9790087342b",
+      "answer": "It is sunny in Graz, so leave the umbrella at home.",
+      "reasoning": "The weather tool says sunny, so no umbrella is needed.",
+      "share_id": "8167d494-6333-46b2-a23f-a72e00e75296",
+      "share_mode": "continue",
+      "shared_with": [
+        "bob"
+      ]
+    },
+    "edited": {
+      "id": "2c1de4ca-f707-432d-8e75-995c379785d8",
+      "title": "Castle near Vienna",
+      "current_id": "03167c97-33b5-4b08-8fef-967dacd24ad5",
+      "messages": {
+        "77cd83f2-3e76-4336-9b77-7304a70f64be": {
+          "parent": null,
+          "children": [
+            "03167c97-33b5-4b08-8fef-967dacd24ad5"
+          ],
+          "role": "user",
+          "content": "Name a castle near Vienna."
+        },
+        "03167c97-33b5-4b08-8fef-967dacd24ad5": {
+          "parent": "77cd83f2-3e76-4336-9b77-7304a70f64be",
+          "children": [],
+          "role": "assistant",
+          "content": "Burg Kreuzenstein, north of Vienna."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "77cd83f2-3e76-4336-9b77-7304a70f64be": {
+          "id": "77cd83f2-3e76-4336-9b77-7304a70f64be",
+          "parentId": null,
+          "childrenIds": [
+            "03167c97-33b5-4b08-8fef-967dacd24ad5"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "Name a castle near Vienna.",
+          "models": [
+            "mock-model"
+          ],
+          "timestamp": 1795594901,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "03167c97-33b5-4b08-8fef-967dacd24ad5": {
+          "id": "03167c97-33b5-4b08-8fef-967dacd24ad5",
+          "parentId": "77cd83f2-3e76-4336-9b77-7304a70f64be",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "Burg Kreuzenstein, north of Vienna.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594901,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "2c4ef74a-a566-4ecc-979a-418ae3d4ab2d",
+            "response_started_at": 1795594901.4580972,
+            "response_ended_at": 1795594901.8783
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_9efcb30f259644d4a0afd2dc",
+              "call_id": "fc_9efcb30f259644d4a0afd2dc",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_65d953038cde42508abfc235",
+              "call_id": "fc_9efcb30f259644d4a0afd2dc",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_dbf2a79c849d41ee9b8ee269",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Burg Kreuzenstein, north of Vienna."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      },
+      "reply_id": "03167c97-33b5-4b08-8fef-967dacd24ad5",
+      "edited_text": "Burg Kreuzenstein, north of Vienna."
+    },
+    "regenerated": {
+      "id": "bbff9f89-47ce-43dd-9586-2d7591774f48",
+      "title": "Day trip",
+      "current_id": "ff1f87cd-4131-4357-8121-d57edb79fed7",
+      "messages": {
+        "ef1d40b2-2341-4410-ab51-434b85712c58": {
+          "parent": null,
+          "children": [
+            "fbb74c83-69e9-43e9-8340-ca4f58b479b6",
+            "ff1f87cd-4131-4357-8121-d57edb79fed7"
+          ],
+          "role": "user",
+          "content": "Suggest a day trip from Vienna."
+        },
+        "fbb74c83-69e9-43e9-8340-ca4f58b479b6": {
+          "parent": "ef1d40b2-2341-4410-ab51-434b85712c58",
+          "children": [],
+          "role": "assistant",
+          "content": "Bratislava by boat."
+        },
+        "ff1f87cd-4131-4357-8121-d57edb79fed7": {
+          "parent": "ef1d40b2-2341-4410-ab51-434b85712c58",
+          "children": [],
+          "role": "assistant",
+          "content": "The Wachau by bike."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "ef1d40b2-2341-4410-ab51-434b85712c58": {
+          "id": "ef1d40b2-2341-4410-ab51-434b85712c58",
+          "parentId": null,
+          "childrenIds": [
+            "fbb74c83-69e9-43e9-8340-ca4f58b479b6",
+            "ff1f87cd-4131-4357-8121-d57edb79fed7"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "Suggest a day trip from Vienna.",
+          "models": [
+            "mock-model"
+          ],
+          "timestamp": 1795594901,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "fbb74c83-69e9-43e9-8340-ca4f58b479b6": {
+          "id": "fbb74c83-69e9-43e9-8340-ca4f58b479b6",
+          "parentId": "ef1d40b2-2341-4410-ab51-434b85712c58",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "Bratislava by boat.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594901,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "3cdb2bae-59f7-4507-b916-7dfba410a3fa",
+            "response_started_at": 1795594901.9675937,
+            "response_ended_at": 1795594902.3687508
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_a912d13c05e64f29a3f0c903",
+              "call_id": "fc_a912d13c05e64f29a3f0c903",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_e8b2a99044da413c99324505",
+              "call_id": "fc_a912d13c05e64f29a3f0c903",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_f8d73a497eca4f0580de5d23",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Bratislava by boat."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        },
+        "ff1f87cd-4131-4357-8121-d57edb79fed7": {
+          "id": "ff1f87cd-4131-4357-8121-d57edb79fed7",
+          "parentId": "ef1d40b2-2341-4410-ab51-434b85712c58",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "The Wachau by bike.",
+          "done": true,
+          "model": "mock-model",
+          "modelIdx": 0,
+          "timestamp": 1795594902,
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "meta": {
+            "task_id": "6c390eec-2073-4686-b35e-3b14ded15c43",
+            "response_started_at": 1795594902.895319,
+            "response_ended_at": 1795594903.3011541
+          },
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_ae63b1b604174ad6aba10fec",
+              "call_id": "fc_ae63b1b604174ad6aba10fec",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_df8bb5a839624d52bcd2571a",
+              "call_id": "fc_ae63b1b604174ad6aba10fec",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_f01a33c169604e9494652ff7",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "The Wachau by bike."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      },
+      "versions": [
+        "fbb74c83-69e9-43e9-8340-ca4f58b479b6",
+        "ff1f87cd-4131-4357-8121-d57edb79fed7"
+      ],
+      "deleted_id": "c99d8ca8-ccfd-4f24-9c5e-366b970edd94",
+      "texts": [
+        "Bratislava by boat.",
+        "The Wachau by bike."
+      ]
+    },
+    "side_by_side": {
+      "id": "5355ccac-fde2-4659-ba09-51152175f88c",
+      "title": "Museum order",
+      "current_id": "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59",
+      "messages": {
+        "dff52b72-0957-4d64-ba1c-38cf47652189": {
+          "parent": null,
+          "children": [
+            "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59",
+            "7dc166ed-beef-40ef-a224-1afe513863b3"
+          ],
+          "role": "user",
+          "content": "Which museum first?"
+        },
+        "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59": {
+          "parent": "dff52b72-0957-4d64-ba1c-38cf47652189",
+          "children": [],
+          "role": "assistant",
+          "content": "The Albertina."
+        },
+        "7dc166ed-beef-40ef-a224-1afe513863b3": {
+          "parent": "dff52b72-0957-4d64-ba1c-38cf47652189",
+          "children": [],
+          "role": "assistant",
+          "content": "The handbook says the Leopold."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "dff52b72-0957-4d64-ba1c-38cf47652189": {
+          "id": "dff52b72-0957-4d64-ba1c-38cf47652189",
+          "parentId": null,
+          "childrenIds": [
+            "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59",
+            "7dc166ed-beef-40ef-a224-1afe513863b3"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "Which museum first?",
+          "models": [
+            "mock-model",
+            "research-assistant"
+          ],
+          "timestamp": 1795594903,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59": {
+          "id": "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59",
+          "parentId": "dff52b72-0957-4d64-ba1c-38cf47652189",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "The Albertina.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594903,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "24755dd0-e144-4dd9-ac39-ecff3c8b30a7",
+            "response_started_at": 1795594903.376783,
+            "response_ended_at": 1795594903.7904851
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_c5b98c117b3f45d9be10e865",
+              "call_id": "fc_c5b98c117b3f45d9be10e865",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_97ff8f026aca4d869ab9cced",
+              "call_id": "fc_c5b98c117b3f45d9be10e865",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_7c12338036a2424295c7e612",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "The Albertina."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        },
+        "7dc166ed-beef-40ef-a224-1afe513863b3": {
+          "id": "7dc166ed-beef-40ef-a224-1afe513863b3",
+          "parentId": "dff52b72-0957-4d64-ba1c-38cf47652189",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "The handbook says the Leopold.",
+          "done": true,
+          "model": "research-assistant",
+          "timestamp": 1795594903,
+          "modelIdx": 1,
+          "meta": {
+            "task_id": "92a41746-93e4-49c0-98ed-7da1a2505846",
+            "response_started_at": 1795594903.3842447,
+            "response_ended_at": 1795594903.8016775
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_84ce735f1dda48ad8dcb67d6",
+              "call_id": "fc_84ce735f1dda48ad8dcb67d6",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_d45b5673f1124f8bb146e323",
+              "call_id": "fc_84ce735f1dda48ad8dcb67d6",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_71fe2ede59eb4844908a4084",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "The handbook says the Leopold."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      },
+      "user_id": "dff52b72-0957-4d64-ba1c-38cf47652189",
+      "columns": {
+        "mock-model": "85861a0f-9a7b-46b0-9b2c-6842cb3f3e59",
+        "research-assistant": "7dc166ed-beef-40ef-a224-1afe513863b3"
+      }
+    },
+    "delegating": {
+      "id": "d5ca5483-25e1-4195-b98a-826b57584037",
+      "title": "Museum day",
+      "current_id": "58828efd-ab69-4ce2-b8fd-84c6951bda08",
+      "messages": {
+        "f6294d4b-7a24-4f18-bd6b-516da1902734": {
+          "parent": null,
+          "children": [
+            "58828efd-ab69-4ce2-b8fd-84c6951bda08"
+          ],
+          "role": "user",
+          "content": "Plan my museum day."
+        },
+        "58828efd-ab69-4ce2-b8fd-84c6951bda08": {
+          "parent": "f6294d4b-7a24-4f18-bd6b-516da1902734",
+          "children": [],
+          "role": "assistant",
+          "content": "Start at the Albertina, then walk to the Leopold Museum."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "f6294d4b-7a24-4f18-bd6b-516da1902734": {
+          "id": "f6294d4b-7a24-4f18-bd6b-516da1902734",
+          "parentId": null,
+          "childrenIds": [
+            "58828efd-ab69-4ce2-b8fd-84c6951bda08"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "Plan my museum day.",
+          "models": [
+            "mock-model"
+          ],
+          "timestamp": 1795594903,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "58828efd-ab69-4ce2-b8fd-84c6951bda08": {
+          "id": "58828efd-ab69-4ce2-b8fd-84c6951bda08",
+          "parentId": "f6294d4b-7a24-4f18-bd6b-516da1902734",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "Start at the Albertina, then walk to the Leopold Museum.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594903,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "e29bb4c2-a744-48c9-86cb-9cb95a2c4612",
+            "response_started_at": 1795594903.885312,
+            "response_ended_at": 1795594905.0616894
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_1082df282d894e0688ffb8ee",
+              "call_id": "fc_1082df282d894e0688ffb8ee",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_deeb300c4c994f478866c27b",
+              "call_id": "fc_1082df282d894e0688ffb8ee",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "function_call",
+              "id": "call_1",
+              "call_id": "call_1",
+              "name": "delegate_task",
+              "arguments": "{\"task\": \"List three museums near the Ring.\"}",
+              "status": "completed",
+              "started_at": 1795594904.2798166,
+              "ended_at": 1795594904.6955378,
+              "duration": 0.4157217800093349,
+              "tool_id": "builtin:delegate_task",
+              "tool_type": "builtin"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_510731ffa7244661acf87166",
+              "call_id": "call_1",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "Albertina, Leopold Museum and Kunsthistorisches Museum."
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_2172e7d1ffe141adaf33b6f2",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Start at the Albertina, then walk to the Leopold Museum."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      },
+      "reply_id": "58828efd-ab69-4ce2-b8fd-84c6951bda08",
+      "task": "List three museums near the Ring.",
+      "subagent_id": "2873f1bd-c49e-44e0-b4e6-11c6eb1c6d71"
+    },
+    "subagent": {
+      "id": "2873f1bd-c49e-44e0-b4e6-11c6eb1c6d71",
+      "title": "Sub-agent: List three museums near the Ring.",
+      "current_id": "32d9174c-23cd-4435-8f64-65ffd8e795df",
+      "messages": {
+        "55c2e69e-e0f3-4a29-858f-71054acf7bc0": {
+          "parent": null,
+          "children": [
+            "32d9174c-23cd-4435-8f64-65ffd8e795df"
+          ],
+          "role": "user",
+          "content": "List three museums near the Ring."
+        },
+        "32d9174c-23cd-4435-8f64-65ffd8e795df": {
+          "parent": "55c2e69e-e0f3-4a29-858f-71054acf7bc0",
+          "children": [],
+          "role": "assistant",
+          "content": "Albertina, Leopold Museum and Kunsthistorisches Museum."
+        }
+      },
+      "folder_id": null,
+      "stored": {
+        "55c2e69e-e0f3-4a29-858f-71054acf7bc0": {
+          "id": "55c2e69e-e0f3-4a29-858f-71054acf7bc0",
+          "parentId": null,
+          "childrenIds": [
+            "32d9174c-23cd-4435-8f64-65ffd8e795df"
+          ],
+          "role": "user",
+          "content": "List three museums near the Ring.",
+          "timestamp": 1795594904,
+          "models": [
+            "mock-model"
+          ],
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "32d9174c-23cd-4435-8f64-65ffd8e795df": {
+          "id": "32d9174c-23cd-4435-8f64-65ffd8e795df",
+          "parentId": "55c2e69e-e0f3-4a29-858f-71054acf7bc0",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "Albertina, Leopold Museum and Kunsthistorisches Museum.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594904,
+          "modelIdx": null,
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "meta": {
+            "task_id": "76d1f57c-4b3b-47c5-ac55-3ea8a6c02f04",
+            "response_started_at": 1795594904.2963138,
+            "response_ended_at": 1795594904.6913483
+          },
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_5d7ec1b1cc2443dbaa9d99c5",
+              "call_id": "fc_5d7ec1b1cc2443dbaa9d99c5",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_960b0993aca14e1785f16de3",
+              "call_id": "fc_5d7ec1b1cc2443dbaa9d99c5",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_c7a337fe42f84aca9c7b53d0",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Albertina, Leopold Museum and Kunsthistorisches Museum."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      },
+      "parent_chat_id": "d5ca5483-25e1-4195-b98a-826b57584037",
+      "answer": "Albertina, Leopold Museum and Kunsthistorisches Museum."
+    },
+    "foldered": {
+      "id": "b09f659e-feda-4cc1-8244-015320f18030",
+      "title": "Trains to Graz",
+      "current_id": "0fd1070b-bbe3-4246-a96d-925c81a18c9a",
+      "messages": {
+        "dc0fe519-1bb7-49ee-8ac4-a17678ce350c": {
+          "parent": null,
+          "children": [
+            "0fd1070b-bbe3-4246-a96d-925c81a18c9a"
+          ],
+          "role": "user",
+          "content": "Where do trains to Graz leave from?"
+        },
+        "0fd1070b-bbe3-4246-a96d-925c81a18c9a": {
+          "parent": "dc0fe519-1bb7-49ee-8ac4-a17678ce350c",
+          "children": [],
+          "role": "assistant",
+          "content": "From Wien Hauptbahnhof."
+        }
+      },
+      "folder_id": "783ad6a7-4080-43d3-bc0b-4b5960e8d651",
+      "stored": {
+        "dc0fe519-1bb7-49ee-8ac4-a17678ce350c": {
+          "id": "dc0fe519-1bb7-49ee-8ac4-a17678ce350c",
+          "parentId": null,
+          "childrenIds": [
+            "0fd1070b-bbe3-4246-a96d-925c81a18c9a"
+          ],
+          "role": "user",
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "content": "Where do trains to Graz leave from?",
+          "models": [
+            "mock-model"
+          ],
+          "timestamp": 1795594905,
+          "user": {
+            "id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+            "name": "Alice Author"
+          }
+        },
+        "0fd1070b-bbe3-4246-a96d-925c81a18c9a": {
+          "id": "0fd1070b-bbe3-4246-a96d-925c81a18c9a",
+          "parentId": "dc0fe519-1bb7-49ee-8ac4-a17678ce350c",
+          "childrenIds": [],
+          "role": "assistant",
+          "content": "From Wien Hauptbahnhof.",
+          "done": true,
+          "model": "mock-model",
+          "timestamp": 1795594905,
+          "modelIdx": 0,
+          "meta": {
+            "task_id": "1f0c9fb5-13a3-4e0a-a811-bb420fb8f9dc",
+            "response_started_at": 1795594905.1566868,
+            "response_ended_at": 1795594905.5666182
+          },
+          "user_id": "a3290047-3db7-4149-9c5a-7796382a43bf",
+          "output": [
+            {
+              "type": "function_call",
+              "id": "fc_10272151b47842948db53bd0",
+              "call_id": "fc_10272151b47842948db53bd0",
+              "name": "list_available_skills",
+              "hidden": true,
+              "arguments": "{}",
+              "status": "completed"
+            },
+            {
+              "type": "function_call_output",
+              "id": "fco_142c208668ae4bd491ec3aa1",
+              "call_id": "fc_10272151b47842948db53bd0",
+              "output": [
+                {
+                  "type": "input_text",
+                  "text": "<available_skills>\n<skill>\n<id>dave-notes</id>\n<name>Dave's notes</name>\n<description>Left behind.</description>\n</skill>\n<skill>\n<id>house-style</id>\n<name>House style</name>\n<description>How every answer is formatted.</description>\n</skill>\n<skill>\n<id>trip-planner</id>\n<name>Trip planner</name>\n<description>Plans multi-city trips by train.</description>\n</skill>\n<skill>\n<id>uebersetzer</id>\n<name>\u00dcbersetzer \u65e5\u672c\u8a9e \ud83d\ude80</name>\n<description></description>\n</skill>\n</available_skills>"
+                }
+              ],
+              "status": "completed"
+            },
+            {
+              "type": "message",
+              "id": "msg_8025b34e7a824c22b7a0e659",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "From Wien Hauptbahnhof."
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "incomplete": true
+          }
+        }
+      }
+    }
+  },
+  "chat_file": {
+    "id": "7fb246c5-86c4-447b-98c1-6ab3b831971e",
+    "filename": "packing.txt",
+    "text": "Packing list: umbrella, passport, a very old map of Vienna."
+  },
+  "feedback": {
+    "id": "8f19881c-17fe-4820-ae9d-77584553f719",
+    "reason": "Accurate",
+    "rating": 1
+  },
+  "note": {
+    "id": "c95e80f1-1818-44fa-ba8d-5544d9ba9b26",
+    "title": "Groceries",
+    "md": "# Groceries\n\n- apples\n- *dark* chocolate",
+    "writers": [
+      "bob"
+    ]
+  },
+  "memories": {
+    "owner": "alice",
+    "contents": [
+      "Alice is allergic to peanuts.",
+      "Alice prefers window seats."
+    ]
+  },
+  "channel": {
+    "id": "dbc845fe-e0ad-4935-ba91-94bf19f51a55",
+    "name": "lighthouse",
+    "readers": [
+      "alice",
+      "bob"
+    ],
+    "message": {
+      "id": "e5b693a2-05aa-4c2d-a9a1-3725c99e4dcb",
+      "content": "Who has the lighthouse key?"
+    },
+    "reply": {
+      "id": "3cbef2f5-8f31-4493-b02e-fe076cf7bd01",
+      "content": "Behind the blue door."
+    },
+    "reaction": "thumbsup"
+  }
+}

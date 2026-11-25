@@ -7,15 +7,20 @@ and on an embedded Postgres when `pgserver` is installed), creates accounts, gro
 notes, a knowledge base, workspace items, memories, a channel, feedback and changed settings,
 then stops it and writes `<release>-<engine>.tar.gz` with a `<release>-<engine>.json` manifest
 of what was created. Pinned packages an old release needs and this environment lacks go into a
-scratch directory on that release's `PYTHONPATH`, never into the environment itself.
+scratch directory on that release's `PYTHONPATH`, never into the environment itself. From v0.13
+on it also sends chats the way that release's web client does and records every stored message
+whole: a tool call with its output, reasoning and usage, a reply edited and saved, three
+answers to one question with the middle one deleted, two models side by side, a delegation with
+the sub-agent's own chat, a chat started inside a folder and a share others may continue.
 
-    python scripts/seed_upgrade_data.py --clone ../open-webui v0.9.6 v0.10.2 v0.11.4
+    python scripts/seed_upgrade_data.py --clone ../open-webui v0.9.6 v0.10.2 v0.11.4 v0.13.4
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -26,17 +31,19 @@ import sys
 import tarfile
 import tempfile
 import time
+import uuid
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Iterator
 
 import httpx
+import sqlalchemy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from harness import upstream as upstream_module  # noqa: E402
-from harness.chat import send_message, wait_for_reply  # noqa: E402
+from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, send_message, wait_for_reply  # noqa: E402
 from harness.prepared_data import serving  # noqa: E402
 from harness.upstream import MOCK_MODEL_ID  # noqa: E402
 
@@ -119,6 +126,25 @@ TRANSLATOR_SKILL = (
 CHAT_FILE_TEXT = "Packing list: umbrella, passport, a very old map of Vienna."
 
 
+# what alice shares the moment she creates it
+SHARED_ON_CREATE = ("skills", "notes")
+USAGE = {"prompt_tokens": 42, "completion_tokens": 7, "total_tokens": 49}
+
+
+def writes_output_items(release: str) -> bool:
+    """From v0.13 on replies are stored as typed output items; sub-agents and share modes exist."""
+    major, minor = (int(part) for part in release.lstrip("v").split(".")[:2])
+    return (major, minor) >= (0, 13)
+
+
+def _message_path(messages: dict, leaf_id: str) -> list[dict]:
+    path = []
+    while leaf_id:
+        path.insert(0, messages[leaf_id])
+        leaf_id = messages[leaf_id].get("parentId")
+    return path
+
+
 def _ensure(response: httpx.Response, what: str) -> dict | list:
     if response.status_code != 200:
         raise SystemExit(f"{what} failed: HTTP {response.status_code} {response.text[:500]}")
@@ -136,7 +162,8 @@ def _grant(principal_type: str, principal_id: str, permission: str = "read") -> 
 def archived_backend(clone: Path, release: str, into: Path) -> Path:
     """The release's backend, with the changelog its version module reads at import."""
     archive = subprocess.run(
-        ["git", "-C", str(clone), "archive", release, "backend", "CHANGELOG.md", "package.json"],
+        ["git", "-C", str(clone), "archive", release, "backend", "static", "CHANGELOG.md"]
+        + ["package.json"],
         check=True,
         capture_output=True,
     ).stdout
@@ -186,9 +213,17 @@ def postgres(root: Path) -> Iterator[tuple[str, Path]]:
 class Seeder:
     """Creates the data set on a running release and records it for the manifest."""
 
-    def __init__(self, base_url: str, provider: upstream_module.MockUpstream):
+    def __init__(
+        self,
+        base_url: str,
+        provider: upstream_module.MockUpstream,
+        release: str,
+        database_url: str,
+    ):
         self.base_url = base_url
+        self.database_url = database_url
         self.provider = provider
+        self.release = release
         self.tokens: dict[str, str] = {}
         self.manifest: dict = {"accounts": {}}
 
@@ -207,6 +242,8 @@ class Seeder:
         self.skills()
         self.knowledge()
         self.chats()
+        if writes_output_items(self.release):
+            self.output_item_chats()
         self.notes_and_memories()
         self.channel()
         return self.manifest
@@ -281,6 +318,9 @@ class Seeder:
             permissions["chat"]["delete"] = False
             permissions["workspace"]["prompts"] = True
             permissions["workspace"]["skills"] = True
+            # since v0.13 sharing on creation needs these; earlier releases share without them
+            shares = SHARED_ON_CREATE if writes_output_items(self.release) else ()
+            permissions.setdefault("sharing", {}).update(dict.fromkeys(shares, True))
             _ensure(
                 client.post("/api/v1/users/default/permissions", json=permissions),
                 "saving default permissions",
@@ -317,6 +357,7 @@ class Seeder:
                 "chat.delete": False,
                 "workspace.prompts": True,
                 "workspace.skills": True,
+                **{f"sharing.{key}": True for key in shares},
             },
             "banner": banner,
             "alice_ui": user_settings["ui"],
@@ -812,12 +853,18 @@ class Seeder:
         question = "Where does the lighthouse key hang?"
         answer = "Behind the blue door [1]."
         answers_the_chat = upstream_module.answering(question)
+        knowledge = self.manifest["knowledge"]
+        if writes_output_items(self.release):
+            # attached knowledge is searched by the model's own tool call since v0.13
+            search = {"query": "lighthouse key", "knowledge_ids": [knowledge["id"]]}
+            self.provider.queue(
+                upstream_module.tool_call("query_knowledge_files", search, match=answers_the_chat)
+            )
         self.provider.queue(
             upstream_module.text(
                 answer, match=lambda body: bool(body.get("stream")) and answers_the_chat(body)
             )
         )
-        knowledge = self.manifest["knowledge"]
         attached = {"type": "collection", "id": knowledge["id"], "name": knowledge["name"]}
         turn = send_message(client, question, chat_files=[attached])
         reply = wait_for_reply(client, turn)
@@ -827,9 +874,10 @@ class Seeder:
         stored = self._titled(client, turn.chat_id, "Lighthouse key")
         return {**stored, "question": question, "answer": answer, "cited": sorted(cited)}
 
-    def _titled(self, client: httpx.Client, chat_id: str, title: str) -> dict:
-        """Name a chat the server wrote and record it as stored."""
-        client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"title": title}})
+    def _titled(self, client: httpx.Client, chat_id: str, title: str | None) -> dict:
+        """Name a chat the server wrote and record it as stored; `None` keeps its title."""
+        if title is not None:
+            client.post(f"/api/v1/chats/{chat_id}", json={"chat": {"title": title}})
         stored = _ensure(client.get(f"/api/v1/chats/{chat_id}"), f"reading the chat {title}")
         messages = stored["chat"]["history"]["messages"]
         return {
@@ -846,6 +894,265 @@ class Seeder:
                 for message_id, message in messages.items()
             },
         }
+
+    def output_item_chats(self) -> None:
+        """Chats as v0.13 writes them, each sent and changed the way its web client does."""
+        with self.client("alice") as client:
+            _ensure(client.get("/api/models", params={"refresh": "true"}), "listing models")
+            tooled = self._tooled_chat(client)
+            edited = self._edited_chat(client)
+            regenerated = self._regenerated_chat(client)
+            side_by_side = self._side_by_side_chat(client)
+            delegating, subagent = self._subagent_chats(client)
+            foldered = self._folder_started_chat(client)
+            shared = _ensure(
+                client.post(f"/api/v1/chats/{tooled['id']}/share", json={"share_mode": "continue"}),
+                "sharing the tool chat to continue",
+            )
+            _ensure(
+                client.post(
+                    f"/api/v1/chats/shared/{tooled['id']}/access/update",
+                    json={
+                        "access_grants": [_grant("user", self._id("bob"))],
+                        "share_mode": "continue",
+                    },
+                ),
+                "granting bob the chat to continue",
+            )
+        tooled.update(share_id=shared["share_id"], share_mode="continue", shared_with=["bob"])
+        self.manifest["chats"].update(
+            {
+                "tooled": tooled,
+                "edited": edited,
+                "regenerated": regenerated,
+                "side_by_side": side_by_side,
+                "delegating": delegating,
+                "subagent": subagent,
+                "foldered": foldered,
+            }
+        )
+
+    def _send(
+        self,
+        client: httpx.Client,
+        content: str = "",
+        *,
+        chat_id: str | None = None,
+        user_message: dict | None = None,
+        models: tuple[str, ...] = (MOCK_MODEL_ID,),
+        **extra,
+    ) -> tuple[str, str, list[str]]:
+        """One send as the v0.13 web client makes it: no message list, one reply id per model.
+
+        A given `user_message` is answered again, as Regenerate does.
+        """
+        replies = [
+            {"model_id": model, "message_id": str(uuid.uuid4()), "modelIdx": index}
+            for index, model in enumerate(models)
+        ]
+        reply_ids = [entry["message_id"] for entry in replies]
+        if user_message is None:
+            user_message = {
+                "id": str(uuid.uuid4()),
+                "parentId": None,
+                "childrenIds": [],
+                "role": "user",
+                "user_id": self._id("alice"),
+                "content": content,
+                "models": list(models),
+                "timestamp": int(time.time()),
+            }
+        user_message = {
+            **user_message,
+            "childrenIds": [*user_message.get("childrenIds", []), *reply_ids],
+        }
+        payload = {
+            "stream": True,
+            "model": models[0],
+            "params": {},
+            "features": {},
+            "variables": {},
+            "session_id": f"seed-{uuid.uuid4().hex[:8]}",
+            "id": reply_ids[0],
+            "message_ids": replies,
+            "parent_id": user_message["parentId"],
+            "user_message": user_message,
+            "background_tasks": NO_BACKGROUND_TASKS,
+            **extra,
+        }
+        if chat_id:
+            payload["chat_id"] = chat_id
+        accepted = _ensure(client.post("/api/chat/completions", json=payload), f"sending {content}")
+        chat_id = accepted["chat_id"]
+        for reply_id in reply_ids:
+            wait_for_reply(client, ChatTurn(chat_id, user_message["id"], reply_id))
+        return chat_id, user_message["id"], reply_ids
+
+    def _recorded(self, client: httpx.Client, chat_id: str, title: str | None) -> dict:
+        """The chat as `_titled` records it, plus every stored message whole and its folder."""
+        recorded = self._titled(client, chat_id, title)
+        stored = _ensure(client.get(f"/api/v1/chats/{chat_id}"), f"reading the chat {title}")
+        return {
+            **recorded,
+            "folder_id": stored.get("folder_id"),
+            "stored": stored["chat"]["history"]["messages"],
+        }
+
+    def _tooled_chat(self, client: httpx.Client) -> dict:
+        """A tool call with its output, the model's reasoning and the token usage."""
+        prompt = "What is the weather in Graz?"
+        answer = "It is sunny in Graz, so leave the umbrella at home."
+        reasoning = "The weather tool says sunny, so no umbrella is needed."
+        answers = upstream_module.answering(prompt)
+        self.provider.queue(
+            upstream_module.tool_call("get_weather", {"city": "Graz"}, match=answers),
+            upstream_module.text(answer, reasoning=reasoning, usage=USAGE, match=answers),
+        )
+        chat_id, _, (reply_id,) = self._send(client, prompt, tool_ids=["weather_tool"])
+        recorded = self._recorded(client, chat_id, "Weather in Graz")
+        reply = recorded["stored"][reply_id]
+        written = json.dumps(reply.get("output"))
+        if "Sunny in Graz" not in written or reasoning not in written or not reply.get("usage"):
+            raise SystemExit(f"the tool reply lacks its output, reasoning or usage: {reply}")
+        return {**recorded, "reply_id": reply_id, "answer": answer, "reasoning": reasoning}
+
+    def _edited_chat(self, client: httpx.Client) -> dict:
+        """A reply whose text the user changed in the editor and saved."""
+        prompt = "Name a castle near Vienna."
+        edited_text = "Burg Kreuzenstein, north of Vienna."
+        self.provider.queue(
+            upstream_module.text("Burg Kreuzenstein.", match=upstream_module.answering(prompt))
+        )
+        chat_id, _, (reply_id,) = self._send(client, prompt)
+        opened = _ensure(client.get(f"/api/v1/chats/{chat_id}"), "opening the chat to edit")
+        history = opened["chat"]["history"]
+        reply = history["messages"][reply_id]
+        if not reply.get("output"):
+            raise SystemExit(f"the reply was stored without output items: {reply}")
+        output = copy.deepcopy(reply["output"])
+        [text_item] = [
+            part
+            for item in output
+            if item.get("type") == "message"
+            for part in item.get("content", [])
+            if part.get("type") == "output_text"
+        ]
+        text_item["text"] = edited_text
+        reply.update(output=output, content=edited_text)
+        path = _message_path(history["messages"], history["currentId"])
+        _ensure(
+            client.post(
+                f"/api/v1/chats/{chat_id}",
+                json={
+                    "chat": {
+                        "models": [MOCK_MODEL_ID],
+                        "history": history,
+                        "messages": path,
+                        "files": [],
+                    }
+                },
+            ),
+            "saving the edited reply",
+        )
+        recorded = self._recorded(client, chat_id, "Castle near Vienna")
+        if recorded["messages"][reply_id]["content"] != edited_text:
+            raise SystemExit(f"the edit was not kept: {recorded['stored'][reply_id]}")
+        return {**recorded, "reply_id": reply_id, "edited_text": edited_text}
+
+    def _regenerated_chat(self, client: httpx.Client) -> dict:
+        """Three answers to one question, the middle one deleted again."""
+        prompt = "Suggest a day trip from Vienna."
+        answers = upstream_module.answering(prompt)
+        texts = ["Bratislava by boat.", "Melk Abbey by train.", "The Wachau by bike."]
+        self.provider.queue(upstream_module.text(texts[0], match=answers))
+        chat_id, user_id, (first,) = self._send(client, prompt)
+        reply_ids = [first]
+        for text in texts[1:]:
+            self.provider.queue(upstream_module.text(text, match=answers))
+            opened = _ensure(client.get(f"/api/v1/chats/{chat_id}"), "opening the chat")
+            question = opened["chat"]["history"]["messages"][user_id]
+            _, _, (again,) = self._send(client, chat_id=chat_id, user_message=question)
+            reply_ids.append(again)
+        deleted = reply_ids[1]
+        _ensure(client.delete(f"/api/v1/chats/{chat_id}/messages/{deleted}"), "deleting a version")
+        recorded = self._recorded(client, chat_id, "Day trip")
+        kept = [reply_ids[0], reply_ids[2]]
+        if recorded["messages"][user_id]["children"] != kept or deleted in recorded["messages"]:
+            raise SystemExit(f"the versions are not as left: {recorded['messages']}")
+        return {**recorded, "versions": kept, "deleted_id": deleted, "texts": [texts[0], texts[2]]}
+
+    def _side_by_side_chat(self, client: httpx.Client) -> dict:
+        """One question answered by two models next to each other."""
+        prompt = "Which museum first?"
+        answers = upstream_module.answering(prompt)
+
+        def from_handbook(body: dict) -> bool:
+            return "You answer from the handbook." in json.dumps(body.get("messages"))
+
+        self.provider.queue(
+            upstream_module.text(
+                "The Albertina.", match=lambda body: answers(body) and not from_handbook(body)
+            ),
+            upstream_module.text(
+                "The handbook says the Leopold.",
+                match=lambda body: answers(body) and from_handbook(body),
+            ),
+        )
+        models = (MOCK_MODEL_ID, self.manifest["model"]["id"])
+        chat_id, user_id, reply_ids = self._send(client, prompt, models=models)
+        recorded = self._recorded(client, chat_id, "Museum order")
+        answered_by = [recorded["stored"][reply_id].get("model") for reply_id in reply_ids]
+        if answered_by != list(models):
+            raise SystemExit(f"the columns were answered by {answered_by}")
+        return {**recorded, "user_id": user_id, "columns": dict(zip(models, reply_ids))}
+
+    def _subagent_chats(self, client: httpx.Client) -> tuple[dict, dict]:
+        """A reply that delegated a task, and the sub-agent's own chat."""
+        prompt = "Plan my museum day."
+        task = "List three museums near the Ring."
+        found = "Albertina, Leopold Museum and Kunsthistorisches Museum."
+        answer = "Start at the Albertina, then walk to the Leopold Museum."
+        answers = upstream_module.answering(prompt)
+        self.provider.queue(
+            upstream_module.text(found, match=upstream_module.answering(task)),
+            upstream_module.tool_call("delegate_task", {"task": task}, match=answers),
+            upstream_module.text(answer, match=answers),
+        )
+        chat_id, _, (reply_id,) = self._send(client, prompt)
+        delegating = self._recorded(client, chat_id, "Museum day")
+        if found not in json.dumps(delegating["stored"][reply_id].get("output")):
+            raise SystemExit(f"the sub-agent's result is missing: {delegating['stored'][reply_id]}")
+        # v0.13 offers no route that lists a chat's sub-agents, so the database names it
+        engine = sqlalchemy.create_engine(self.database_url)
+        try:
+            with engine.connect() as connection:
+                rows = connection.execute(sqlalchemy.text("SELECT id, meta FROM chat")).all()
+        finally:
+            engine.dispose()
+        [subagent_id] = [
+            row.id
+            for row in rows
+            for meta in [json.loads(row.meta) if isinstance(row.meta, str) else row.meta or {}]
+            if meta.get("type") == "subagent" and meta.get("parent_chat_id") == chat_id
+        ]
+        subagent = self._recorded(client, subagent_id, None)
+        return (
+            {**delegating, "reply_id": reply_id, "task": task, "subagent_id": subagent_id},
+            {**subagent, "parent_chat_id": chat_id, "answer": found},
+        )
+
+    def _folder_started_chat(self, client: httpx.Client) -> dict:
+        """A chat started from inside a folder, which the server files there itself."""
+        prompt = "Where do trains to Graz leave from?"
+        self.provider.queue(
+            upstream_module.text("From Wien Hauptbahnhof.", match=upstream_module.answering(prompt))
+        )
+        folder_id = self.manifest["folders"]["parent"]["id"]
+        chat_id, _, _ = self._send(client, prompt, folder_id=folder_id)
+        recorded = self._recorded(client, chat_id, "Trains to Graz")
+        if recorded["folder_id"] != folder_id:
+            raise SystemExit(f"the chat did not land in its folder: {recorded['folder_id']}")
+        return recorded
 
     def notes_and_memories(self) -> None:
         body = "# Groceries\n\n- apples\n- *dark* chocolate"
@@ -955,14 +1262,16 @@ def seed(clone: Path, release: str, engine: str, work: Path) -> None:
             "ENABLE_TITLE_GENERATION": "false",
             "ENABLE_TAGS_GENERATION": "false",
             "ENABLE_FOLLOW_UP_GENERATION": "false",
+            "ENABLE_SUBAGENTS": "true",
         }
         dump_with = None
         if engine == "postgres":
             url, binaries = stack.enter_context(postgres(work))
             settings["DATABASE_URL"] = url
             dump_with = (binaries / "pg_dump", url.replace("+psycopg2", ""))
+        database_url = settings.get("DATABASE_URL", f"sqlite:///{data_dir / 'webui.db'}")
         with serving(data_dir, settings, backend=backend) as running:
-            manifest = Seeder(running.base_url, provider).run()
+            manifest = Seeder(running.base_url, provider, release, database_url).run()
         if dump_with:
             pg_dump, url = dump_with
             dump = subprocess.run(
