@@ -18,7 +18,11 @@ gets a colour with `PATCH /api/v1/chats/{id}/tags`, only through a chat that car
 6a0223a88 a new folder has no statuses (the ready-made ones are only suggested when adding some),
 so it refuses every status until it saves its own. Discriminates: the new folder test passes on
 dev c82ceaf1f and fails in a backend copy of it that gives a folder without statuses the five
-ready-made ones again (each is taken with 200).
+ready-made ones again (each is taken with 200). Since 0.13.4 a folder's badge
+(`unread_count` in the folder list) also counts a chat waiting for a tool approval, once and even
+after it was read, on its folder and every folder above, and the `waiting_for_approval` activity
+filter lists it; once answered and read it leaves both. Discriminates: passes on dev f80a4f782 and
+fails in a backend copy of it whose badge count skips waiting chats (both badges read 0).
 
 Discriminates: journey, no fix. All pass on dev 06491f013 on SQLite and on PostgreSQL with Redis.
 In one backend copy of it holding these eight edits, each turns its test red and the other four
@@ -40,8 +44,10 @@ import uuid
 import httpx
 import pytest
 
+from harness import upstream as reply
 from harness.access import grant
 from harness.actors import Actor
+from harness.chat import ChatTurn, send_message, wait_for_reply
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -414,3 +420,88 @@ def test_the_people_list_counts_chats_and_filters_by_person(make_user):
         (member.id, 1),
     ], people.json()
     assert _titles(members_chats) == ["Member one"], members_chats
+
+
+CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
+APPROVAL_WAIT = 20.0
+
+
+@pytest.fixture
+def tool_approval_on(admin, preserve) -> None:
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True})
+    assert saved.status_code == 200, saved.text
+
+
+def _badges(client: httpx.Client) -> dict[str, int]:
+    """Each folder's sidebar badge: its unread and waiting chats, subfolders included."""
+    folders = client.get("/api/v1/folders/")
+    assert folders.status_code == 200, folders.text
+    return {folder["id"]: folder["unread_count"] for folder in folders.json()}
+
+
+def _wait_until_waiting(client: httpx.Client, turn: ChatTurn) -> None:
+    deadline = time.monotonic() + APPROVAL_WAIT
+    output: list = []
+    while time.monotonic() < deadline:
+        stored = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]["history"]
+        output = stored["messages"].get(turn.assistant_message_id, {}).get("output") or []
+        if any(item.get("status") == "pending" for item in output):
+            return
+        time.sleep(0.2)
+    raise AssertionError(f"the tool call never waited for approval: {output}")
+
+
+def test_a_chat_waiting_for_approval_counts_on_the_folder_badge_until_answered(
+    tool_approval_on, make_user, upstream
+):
+    question = f"what time is it at the quay? {uuid.uuid4().hex[:6]}"
+    upstream.queue(
+        reply.tool_call("get_current_timestamp", {}, match=reply.answering(question)),
+        reply.text("Half past four.", match=reply.answering(question)),
+    )
+    with make_user().client() as client:
+        parent_id = _folder(client)
+        created = client.post(
+            "/api/v1/folders/",
+            json={"name": f"Quay {uuid.uuid4().hex[:6]}", "parent_id": parent_id},
+        )
+        assert created.status_code == 200, created.text
+        folder_id = created.json()["id"]
+        _chat(client, folder_id, "Already read")
+        turn = send_message(
+            client, question, folder_id=folder_id, params={"tool_approval_mode": "ask"}
+        )
+        _wait_until_waiting(client, turn)
+        # read, as opening the chat does: only the waiting call keeps it on the badge
+        assert client.post("/api/v1/chats/read").status_code == 200
+        waiting_badges = _badges(client)
+        waiting = _listed(client, folder_id, activity="waiting_for_approval")
+        unread = _listed(client, folder_id, activity="unread")
+
+        resolved = client.post(
+            f"/api/v1/chats/{turn.chat_id}/messages/{turn.assistant_message_id}/resolve",
+            json={"call_id": "call_1", "action": "approve"},
+        )
+        assert resolved.status_code == 200, resolved.text
+        wait_for_reply(client, turn)
+        assert client.post("/api/v1/chats/read").status_code == 200
+        answered_badges = _badges(client)
+        still_waiting = _listed(client, folder_id, activity="waiting_for_approval")
+
+    assert (waiting_badges[folder_id], waiting_badges[parent_id]) == (1, 1), (
+        f"a chat waiting for approval should count once on its folder and the folder above: "
+        f"{waiting_badges}"
+    )
+    assert [(chat["id"], chat["pending_approval"]) for chat in waiting["chats"]] == [
+        (turn.chat_id, True)
+    ], f"the waiting filter should list exactly the waiting chat: {waiting}"
+    assert unread["chats"] == [], f"a read chat that waits was listed as unread: {unread}"
+    assert (answered_badges[folder_id], answered_badges[parent_id]) == (0, 0), (
+        f"the answered and read chat still counts on the badge: {answered_badges}"
+    )
+    assert still_waiting["chats"] == [], (
+        f"the answered chat still lists as waiting: {still_waiting}"
+    )

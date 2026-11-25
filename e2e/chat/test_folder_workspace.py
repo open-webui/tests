@@ -23,6 +23,24 @@ and no longer reaches the folder's chats, and a reading member sees the list wit
 Remove buttons. Chats, which the 0.13.4 changelog also names, cannot be folder knowledge: the docs
 list only knowledge bases, notes and files, and the folder refuses any other entry.
 
+0.13.4 coverage of the board, the badge, tag colours and folder automations: on a board with
+statuses as columns and tags as rows each card sits in its status column and in its tag's lane (an
+untagged one under Untagged), a card dragged to another column takes that status and keeps its
+tags, and the arrangement is kept after a reload. With activity as columns a chat waiting for a
+tool approval sits under Waiting for approval, an unread one under Unread and a read one under
+Read, and the folder's badge in the sidebar counts the unread chat and the waiting one. The chat
+menu archives a chat from its list row and from its board card. A tag made with Create in the Tags
+submenu of the chat actions menu and given a colour there shows that colour on every chat of the
+folder carrying it. A member who may write to a shared folder creates an automation with New
+automation on the folder's page, which lands in the folder and lists there for the owner too, and
+runs the owner's automation from the page the section opens; a reading member sees that run on the
+same page, without Run now.
+
+The board card menu test is red on dev f80a4f782 and on v0.13.4: board cards have no chat menu,
+though the 0.13.4 changelog and the docs give every chat on the board the sidebar's menu (board
+added without it in 06491f013; issue draft cov-board-card-menu, fix branch
+fix-board-card-chat-menu).
+
 Discriminates: journey, no fix. All pass on the dev 941bf3674 build. With the dev build on a
 backend copy of it whose status route stores nothing the status pick and board drag tests go red,
 whose tag filter is ignored the tag test goes red, whose folder search matches nothing the search
@@ -35,6 +53,12 @@ status menu still offers the ready-made statuses). The Knowledge tests pass on t
 build (5 of 5); with it on a backend copy whose chat requests carry no attached knowledge list the
 adding and removing tests go red, whose note route finds no note the opening test, and whose
 folders all read as writable the reading member test.
+The 0.13.4 coverage tests pass on the dev f80a4f782 build (5 of 5), the board card menu test
+aside. With that build on backend copies of it: the folder badge no longer counting waiting chats
+turns the badge test red (the badge reads 1); a new automation always filed outside any folder
+turns the creating test red; the runs of an automation readable only with write access turn the
+run test red (the reader sees no run); and the listed tags carrying no colour together with a
+status route that stores nothing turn the tag colour and tag rows tests red.
 """
 
 from __future__ import annotations
@@ -50,12 +74,17 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.actors import Actor
+from harness.backends import wait_until
+from harness.chat import send_message
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.upstream import MOCK_MODEL_ID
-from utils.chat_surface import start_on_folder_page
+from utils.automations_page import automation_page, run_entries, wait_until_loaded
+from utils.chat_surface import open_sidebar, start_on_folder_page
 from utils.chat_ui import expect_reply
 from utils.folder_page import folder_chat, folder_page
 from utils.menus import late_menu_entry
+from utils.sidebar_folders import folder_row
+from utils.tag_picker import open_tag_picker, tag_entry
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -678,3 +707,353 @@ def test_a_reading_member_sees_the_folders_knowledge_but_cannot_change_it(
         expect(_knowledge_row(section, base_name)).to_be_visible()
         expect(folder_page(page).get_by_role("button", name="Add knowledge")).to_have_count(0)
         expect(section.get_by_role("button", name="Remove File")).to_have_count(0)
+
+
+# Board layouts, the chat menu on cards, the waiting badge, tag colours and folder automations.
+
+CHAT_CONFIG = ("/api/v1/chats/config", "/api/v1/chats/config")
+APPROVAL_WAIT = 20.0
+
+
+def _tag(owner: Actor, chat_id: str, name: str) -> None:
+    with owner.client() as client:
+        added = client.post(f"/api/v1/chats/{chat_id}/tags", json={"name": name})
+    assert added.status_code == 200, added.text
+
+
+def _arrange(page: Page, menu: str, choice: str) -> None:
+    """Pick `choice` under `menu` (Columns, Rows or Grouping) in Display options."""
+    options = folder_page(page).get_by_role("button", name="Display options")
+    options.click()
+    trigger = page.get_by_role("menu").get_by_role("menuitem", name=re.compile(f"^{menu}"))
+    trigger.hover()
+    page.get_by_role("menuitemradio", name=choice, exact=True).click()
+    expect(trigger).to_contain_text(choice)
+    # a pick closes only its submenu; the button closes Display options
+    options.click()
+    expect(page.get_by_role("menu")).to_have_count(0)
+
+
+def _show_board(page: Page) -> Locator:
+    folder_page(page).get_by_role("button", name="Display options").click()
+    page.get_by_role("menuitemradio", name="Board").click()
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("menu")).to_have_count(0)
+    return page.get_by_label("Conversation board")
+
+
+def _lane(board: Locator, column: str, row: str) -> Locator:
+    return board.get_by_role("group", name=f"{column} · {row}", exact=True)
+
+
+def test_a_board_with_tag_rows_files_each_card_by_status_and_tag(page_for, make_user):
+    owner = make_user()
+    rigging, canvas = f"rigging{uuid.uuid4().hex[:4]}", f"canvas{uuid.uuid4().hex[:4]}"
+    folder_id = _folder(owner, [TODO, DONE])
+    rope = _chat(owner, folder_id, "Splice the rope")
+    sail = _chat(owner, folder_id, "Patch the sail")
+    oar = _chat(owner, folder_id, "Varnish the oar")
+    for chat_id, status in ((rope, TODO), (sail, DONE), (oar, TODO)):
+        _file(owner, folder_id, chat_id, status["id"])
+    _tag(owner, rope, rigging)
+    _tag(owner, sail, canvas)
+    page = page_for(owner, path=f"/folders/{folder_id}")
+    expect(folder_chat(page, "Varnish the oar")).to_be_visible()
+
+    board = _show_board(page)
+    _arrange(page, "Columns", "Status")
+    _arrange(page, "Rows", "Tags")
+
+    expect(folder_chat(_lane(board, "To do", rigging), "Splice the rope")).to_be_visible()
+    expect(folder_chat(_lane(board, "Done", canvas), "Patch the sail")).to_be_visible()
+    expect(folder_chat(_lane(board, "To do", "Untagged"), "Varnish the oar")).to_be_visible()
+    for column, row in (("Done", rigging), ("To do", canvas), ("Done", "Untagged")):
+        expect(_lane(board, column, row).get_by_role("article")).to_have_count(0)
+
+    card = _lane(board, "To do", rigging).get_by_role("article")
+    with _status_saved(page) as saved:
+        card.drag_to(_lane(board, "Done", rigging))
+    assert saved.value.status == 200, saved.value.text()
+    expect(folder_chat(_lane(board, "Done", rigging), "Splice the rope")).to_be_visible()
+    assert _stored_status(owner, folder_id, rope) == DONE["id"]
+    with owner.client() as client:
+        kept = [tag["name"] for tag in client.get(f"/api/v1/chats/{rope}/tags").json()]
+    assert kept == [rigging], f"a drop between status columns changed the chat's tags: {kept}"
+
+    page.reload()
+    board = page.get_by_label("Conversation board")
+    expect(folder_chat(_lane(board, "Done", rigging), "Splice the rope")).to_be_visible()
+    expect(folder_chat(_lane(board, "To do", "Untagged"), "Varnish the oar")).to_be_visible()
+
+
+@pytest.fixture
+def tool_approval_on(admin, preserve) -> None:
+    preserve(CHAT_CONFIG)
+    with admin.client() as client:
+        current = client.get(CHAT_CONFIG[0]).json()
+        saved = client.post(CHAT_CONFIG[1], json={**current, "ENABLE_TOOL_PERMISSIONS": True})
+    assert saved.status_code == 200, saved.text
+
+
+def _waiting_chat(owner: Actor, folder_id: str, upstream) -> str:
+    """A chat in the folder whose tool call waits for the owner's approval; returns its title."""
+    question = f"what time is high tide? {uuid.uuid4().hex[:6]}"
+    upstream.queue(reply.tool_call("get_current_timestamp", {}, match=reply.answering(question)))
+    with owner.client() as client:
+        turn = send_message(
+            client, question, folder_id=folder_id, params={"tool_approval_mode": "ask"}
+        )
+
+        def waiting() -> bool:
+            stored = client.get(f"/api/v1/chats/{turn.chat_id}").json()["chat"]
+            output = stored["history"]["messages"][turn.assistant_message_id].get("output") or []
+            return any(item.get("status") == "pending" for item in output)
+
+        assert wait_until(waiting, timeout=APPROVAL_WAIT), "the tool call never waited"
+        return client.get(f"/api/v1/chats/{turn.chat_id}").json()["title"]
+
+
+def test_a_chat_waiting_for_approval_shows_on_the_sidebar_badge_and_in_its_board_column(
+    page_for, make_user, upstream, tool_approval_on
+):
+    owner = make_user()
+    folder_id = _folder(owner)
+    with owner.client() as client:
+        name = client.get(f"/api/v1/folders/{folder_id}").json()["name"]
+    _chat(owner, folder_id, "Logged catch")
+    waiting_title = _waiting_chat(owner, folder_id, upstream)
+    with owner.client() as client:
+        assert client.post("/api/v1/chats/read").status_code == 200
+        fresh = _chat(owner, folder_id, "Fresh catch")
+        assert client.post(f"/api/v1/chats/{fresh}/unread").status_code == 200
+    page = page_for(owner, path=f"/folders/{folder_id}")
+
+    sidebar = open_sidebar(page)
+    section = sidebar.get_by_role("button", name="Folders", exact=True)
+    if section.get_attribute("aria-expanded") != "true":
+        section.click()
+    badge = folder_row(sidebar, name).get_by_title("Unread or waiting for approval")
+    expect(badge, "the badge should count the unread chat and the waiting one").to_have_text("2")
+
+    board = _show_board(page)
+    _arrange(page, "Columns", "Activity")
+    columns = {
+        label: board.get_by_role("region", name=label, exact=True)
+        for label in ("Waiting for approval", "Unread", "Read")
+    }
+    expect(folder_chat(columns["Waiting for approval"], waiting_title)).to_be_visible()
+    expect(columns["Waiting for approval"].get_by_role("article")).to_have_count(1)
+    expect(
+        columns["Waiting for approval"].get_by_role("status", name="Waiting for approval")
+    ).to_be_visible()
+    expect(folder_chat(columns["Unread"], "Fresh catch")).to_be_visible()
+    expect(columns["Unread"].get_by_role("article")).to_have_count(1)
+    expect(folder_chat(columns["Read"], "Logged catch")).to_be_visible()
+    expect(columns["Read"].get_by_role("article")).to_have_count(1)
+
+
+def _archive_from_menu(page: Page, scope: Locator, chat_id: str) -> None:
+    menu_button = scope.get_by_role("button", name="Chat Menu")
+    expect(menu_button, "the chat has no chat menu here").to_be_visible()
+    menu_button.click()
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith(f"/chats/{chat_id}/archive")
+        )
+    ) as archived:
+        page.get_by_role("menuitem", name="Archive", exact=True).click()
+    assert archived.value.status == 200, archived.value.text()
+
+
+def test_the_sidebars_chat_menu_archives_a_chat_from_its_row_and_from_its_board_card(
+    page_for, make_user
+):
+    owner = make_user()
+    folder_id = _folder(owner, [TODO, DONE])
+    row_chat = _chat(owner, folder_id, "Old ferry timetable")
+    card_chat = _chat(owner, folder_id, "Old harbour map")
+    _chat(owner, folder_id, "Current charts")
+    page = page_for(owner, path=f"/folders/{folder_id}")
+    expect(folder_chat(page, "Current charts")).to_be_visible()
+
+    row = (
+        folder_page(page)
+        .get_by_role("listitem")
+        .filter(has=page.get_by_role("button", name="Old ferry timetable", exact=True))
+    )
+    row.hover()
+    _archive_from_menu(page, row, row_chat)
+    expect(folder_chat(page, "Old ferry timetable")).to_have_count(0)
+
+    board = _show_board(page)
+    expect(folder_chat(board, "Current charts")).to_be_visible()
+    card = board.get_by_role("article").filter(
+        has=page.get_by_role("button", name="Old harbour map", exact=True)
+    )
+    card.hover()
+    _archive_from_menu(page, card, card_chat)
+    expect(folder_chat(board, "Old harbour map")).to_have_count(0)
+    expect(folder_chat(board, "Current charts")).to_be_visible()
+    with owner.client() as client:
+        archived = {chat["id"] for chat in client.get("/api/v1/chats/archived").json()}
+    assert {row_chat, card_chat} <= archived, f"archived chats on the server: {archived}"
+
+
+def _answered_chat(owner: Actor, folder_id: str, title: str) -> str:
+    """A chat with a question and its answer, which the chat page gives its Chat actions menu."""
+    question = {"id": "q1", "parentId": None, "childrenIds": ["a1"], "role": "user"}
+    answer = {"id": "a1", "parentId": "q1", "childrenIds": [], "role": "assistant", "done": True}
+    history = {
+        "currentId": "a1",
+        "messages": {
+            "q1": {**question, "content": "How much ballast?"},
+            "a1": {**answer, "content": "Two sacks forward."},
+        },
+    }
+    with owner.client() as client:
+        created = client.post(
+            "/api/v1/chats/new",
+            json={"chat": {"title": title, "history": history}, "folder_id": folder_id},
+        )
+    assert created.status_code == 200, created.text
+    return created.json()["id"]
+
+
+def _dot_colour(dot: Locator) -> str:
+    return dot.evaluate("element => getComputedStyle(element).backgroundColor")
+
+
+def test_a_tag_made_and_coloured_in_the_chat_menu_shows_its_colour_on_the_folder_page(
+    page_for, make_user
+):
+    owner = make_user()
+    tag = f"ballast{uuid.uuid4().hex[:4]}"
+    folder_id = _folder(owner)
+    first = _answered_chat(owner, folder_id, "Trim the boat")
+    second = _chat(owner, folder_id, "Load the hold")
+    page = page_for(owner, path=f"/c/{first}")
+
+    picker = open_tag_picker(page)
+    picker.get_by_label("Find or create a tag").fill(tag)
+    late_menu_entry(picker, f"Create “{tag}”").click()
+    expect(tag_entry(picker, tag)).to_have_attribute("aria-checked", "true")
+    late_menu_entry(picker, f"Color for {tag}", exact=True).click()
+    colours = picker.get_by_role("radiogroup", name=f"Color for {tag}")
+    current = colours.get_by_role("radio", checked=True)
+    expect(current).to_have_count(1)
+    choice = "teal" if current.get_attribute("aria-label") != "teal" else "red"
+    swatch = colours.get_by_role("radio", name=choice, exact=True)
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH" and response.url.endswith("/tags")
+    ) as coloured:
+        swatch.click()
+    assert coloured.value.status == 200, coloured.value.text()
+    expect(swatch).to_have_attribute("aria-checked", "true")
+    # the swatch's own dot, the colour the tag should show everywhere
+    expected = _dot_colour(swatch.locator("span"))
+    _tag(owner, second, tag)
+
+    with owner.client() as client:
+        listed = _stored_tags(client, folder_id)
+    assert listed == {"Trim the boat": choice, "Load the hold": choice}, listed
+    folder = page_for(owner, path=f"/folders/{folder_id}")
+    # the folder brings back the chat tab left open above it
+    with owner.client() as client:
+        folder_name = client.get(f"/api/v1/folders/{folder_id}").json()["name"]
+    folder.get_by_role("tab", name=folder_name, exact=True).click()
+    for title in ("Trim the boat", "Load the hold"):
+        pill = folder.get_by_role("button", name=f"Edit tags for {title}").get_by_title(tag)
+        expect(pill).to_be_visible()
+        # the colour dot has no text or name of its own
+        assert _dot_colour(pill.locator("span").first) == expected, (
+            f"{title}'s {tag} tag does not show its {choice} colour"
+        )
+
+
+def _stored_tags(client, folder_id: str) -> dict[str, str | None]:
+    listed = client.get(
+        f"/api/v1/folders/{folder_id}/shared/chats", params={"workspace": "true", "page": 1}
+    )
+    assert listed.status_code == 200, listed.text
+    return {
+        chat["title"]: (chat["tags"][0].get("color") if chat["tags"] else None)
+        for chat in listed.json()["chats"]
+    }
+
+
+def _open_from_section(page: Page, name: str) -> Locator:
+    """Open the automation from the folder's Automations section; returns its page."""
+    _show_automations(page).get_by_role("listitem").filter(has_text=name).click()
+    opened = automation_page(page)
+    expect(opened.get_by_role("textbox", name="Name", exact=True)).to_have_value(name)
+    return opened
+
+
+def test_a_writing_member_creates_an_automation_from_the_shared_folders_page(
+    page_for, make_user, automations_allowed
+):
+    owner, writer, reader = make_user(), make_user(), make_user()
+    folder_id = _folder(owner)
+    _share(owner, folder_id, writer, reader)
+    name = f"Harbour watch {uuid.uuid4().hex[:4]}"
+    prompt = f"List the boats that came in, batch {uuid.uuid4().hex[:6]}."
+    page = page_for(writer, path=f"/folders/{folder_id}")
+    _show_automations(page)
+
+    folder_page(page).get_by_role("button", name="New automation").first.click()
+    creating = page.get_by_role("dialog")
+    wait_until_loaded(creating)
+    creating.get_by_role("button", name="Select model").first.click()
+    picker = page.get_by_role("menu")
+    picker.get_by_role("textbox", name="Search a model").fill(MOCK_MODEL_ID)
+    picker.get_by_role("menuitem", name=MOCK_MODEL_ID).click()
+    creating.get_by_role("textbox", name="Instructions").fill(prompt)
+    creating.get_by_role("textbox", name="Automation title").fill(name)
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith("/automations/create")
+        )
+    ) as created:
+        creating.get_by_role("button", name="Create", exact=True).click()
+    assert created.value.status == 200, created.value.text()
+    expect(creating).to_be_hidden()
+
+    row = folder_page(page).get_by_role("list", name="Automations").get_by_role("listitem")
+    expect(row.filter(has_text=name)).to_contain_text("Not run yet")
+    stored = created.value.json()
+    assert (stored["folder_id"], stored["data"]["prompt"]) == (folder_id, prompt), (
+        f"the automation made on the folder page did not land in the folder: {stored}"
+    )
+    owners_page = page_for(owner, path=f"/folders/{folder_id}")
+    expect(
+        _show_automations(owners_page).get_by_role("listitem").filter(has_text=name)
+    ).to_be_visible()
+
+
+def test_a_writing_member_runs_the_folders_automation_and_a_reader_sees_the_run(
+    page_for, make_user, upstream, automations_allowed
+):
+    owner, writer, reader = make_user(), make_user(), make_user()
+    folder_id = _folder(owner)
+    _share(owner, folder_id, writer, reader)
+    name = f"Ferry count {uuid.uuid4().hex[:4]}"
+
+    with _automation(owner, folder_id, name) as automation:
+        upstream.queue(
+            reply.text("Four ferries.", match=reply.answering(automation["data"]["prompt"]))
+        )
+        page = page_for(writer, path=f"/folders/{folder_id}")
+        opened = _open_from_section(page, name)
+        expect(run_entries(page)).to_have_count(0)
+        opened.get_by_role("button", name="Run now", exact=True).click()
+        expect(page.get_by_text("Automation triggered")).to_be_visible()
+        _wait_for_run(writer, automation["id"])
+        page.reload()
+        expect(run_entries(page)).to_have_count(1)
+        expect(run_entries(page)).to_contain_text("Ran")
+
+        readers_page = page_for(reader, path=f"/folders/{folder_id}")
+        readers_view = _open_from_section(readers_page, name)
+        expect(run_entries(readers_page)).to_have_count(1)
+        expect(run_entries(readers_page)).to_contain_text("Ran")
+        expect(readers_view.get_by_role("button", name="Run now")).to_have_count(0)
