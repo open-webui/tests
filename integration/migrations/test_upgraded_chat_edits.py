@@ -12,10 +12,21 @@ times in milliseconds, a question stored as a list of parts, a reply version wit
 a reply rated with feedback. Each step saves the chat as the web client does and reads it back
 from the server, as a reload does.
 
+Share links made on the old release keep working: the link shared with one account shows it the
+conversation as it was when shared, on its branch and with its tool call, and so does a visitor
+who is not signed in once the owner opens the link to anyone. After the owner adds a turn and
+updates the link, it shows the whole current conversation. The v0.13.4 share that lets the
+grantee reply opens the live chat with its tool output, reasoning and usage, still does after an
+update, and the grantee's turn is sent with the conversation before it and shows for the owner.
+A link made after the upgrade for an old chat answered from a knowledge base keeps its citation.
+
 Discriminates: passes on dev f80a4f782 for all six data sets. In a backend copy whose message
-save keeps the old message copy the migration stored instead of replacing it, both tests fail on
-every data set: the new rating is gone after a reload, and the changed rating of the rated reply
-reads its old value again.
+save keeps the old message copy the migration stored instead of replacing it, both edit tests
+fail on every data set: the new rating is gone after a reload, and the changed rating of the
+rated reply reads its old value again. The share tests pass on dev 893584700 for all eight data
+sets; with "Update link" keeping the old snapshot the update test fails, with a reply-allowed
+share always served as a snapshot the continue test fails, and with sources dropped from a shared
+chat the citation test fails.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ import pytest
 import sqlalchemy
 
 from harness import upstream as reply
+from harness.access import grant, make_group
 from harness.chat import NO_BACKGROUND_TASKS, ChatTurn, send_message, wait_for_reply
 from harness.prepared_data import ReleaseData, run_sql
 from harness.python_tools import EVERYONE_READS
@@ -445,3 +457,210 @@ def test_an_upgraded_reply_edited_rated_continued_and_regenerated_keeps_each_cha
     )
     assert old_reply not in json.dumps(kept), "the text before the edit came back"
     assert (final["messages"][rated_id].get("annotation") or {}).get("rating") == -1
+
+
+# --- share links made before the upgrade ------------------------------------------------------
+
+
+def _open_share(upgraded: Upgraded, who: str | None, share_id: str) -> httpx.Response:
+    """The share link opened as `who`, or signed out when `who` is None."""
+    path = f"/api/v1/chats/share/{share_id}"
+    if who is None:
+        return httpx.get(f"{upgraded.backend.base_url}{path}", timeout=60.0)
+    return upgraded.get(who, path)
+
+
+def _shown_share(upgraded: Upgraded, who: str | None, share_id: str) -> dict:
+    opened = _open_share(upgraded, who, share_id)
+    assert opened.status_code == 200, f"{who or 'a signed-out visitor'}: {opened.text}"
+    return opened.json()
+
+
+def _shape(history: dict) -> dict:
+    return {
+        message_id: {
+            "parent": message.get("parentId"),
+            "children": message.get("childrenIds", []),
+            "role": message["role"],
+            "content": message["content"],
+        }
+        for message_id, message in history["messages"].items()
+    }
+
+
+def _refused(response: httpx.Response) -> bool:
+    return response.status_code in (401, 403, 404)
+
+
+def _save_share_access(upgraded: Upgraded, chat_id: str, grants: list[dict], mode) -> None:
+    """Save the share dialog: who may open the link and whether they may reply."""
+    with upgraded.client("alice") as client:
+        saved = client.post(
+            f"/api/v1/chats/shared/{chat_id}/access/update",
+            json={"access_grants": grants, "share_mode": mode},
+        )
+    assert saved.status_code == 200, f"saving the share's access failed: {saved.text}"
+
+
+def _update_link(upgraded: Upgraded, chat_id: str, share_id: str, mode) -> None:
+    """Click "Update link" in the share dialog, which sends the mode the share has."""
+    with upgraded.client("alice") as client:
+        updated = client.post(f"/api/v1/chats/{chat_id}/share", json={"share_mode": mode})
+    assert updated.status_code == 200, f"updating the link failed: {updated.text}"
+    assert updated.json()["share_id"] == share_id, "updating the link made a new link"
+
+
+def _add_turn(upgraded: Upgraded, who: str, chat_id: str, parent_id: str) -> tuple[str, str]:
+    """`who` asks one more question after `parent_id`; returns the question and the reply."""
+    tag = _tag()
+    question, answer = f"One more stop? {tag}", f"The Prater. {tag}"
+    upgraded.provider.queue(reply.text(answer, match=reply.answering(question)))
+    with upgraded.client(who) as client:
+        turn = send_message(client, question, chat_id=chat_id, parent_id=parent_id)
+        stored = wait_for_reply(client, turn, timeout=90)
+    assert stored["content"] == answer, f"the new turn was answered with {stored['content']!r}"
+    return question, answer
+
+
+def _owner_history(upgraded: Upgraded, chat_id: str) -> dict:
+    with upgraded.client("alice") as client:
+        return _history(client, chat_id)
+
+
+def test_an_old_share_link_shows_the_chat_as_shared_and_updating_it_shows_the_whole_chat(upgraded):
+    branched = upgraded.manifest["chats"]["branched"]
+    chat_id, share_id, ids = branched["id"], branched["share_id"], _ids(branched)
+    accounts = upgraded.manifest["accounts"]
+
+    for who in ("carol", None):
+        assert _refused(_open_share(upgraded, who, share_id)), (
+            f"{who or 'a signed-out visitor'} opens a link shared with bob only"
+        )
+    make_group(
+        upgraded.actor("admin"), [upgraded.actor("alice")], {"sharing": {"open_chats": True}}
+    )
+    _save_share_access(
+        upgraded,
+        chat_id,
+        [grant("user", accounts["bob"]["id"], "read"), grant("anyone", "*", "read")],
+        None,
+    )
+
+    for who in ("bob", None):
+        shown = _shown_share(upgraded, who, share_id)
+        viewer = who or "a signed-out visitor"
+        assert shown["title"] == branched["title"], f"{viewer} sees the title {shown['title']!r}"
+        assert shown["write_access"] is False, f"{viewer} may write to a clone only share"
+        history = shown["chat"]["history"]
+        assert _shape(history) == branched["messages"], (
+            f"{viewer} does not see the conversation as it was shared: {_shape(history)}"
+        )
+        assert history["currentId"] == branched["current_id"], (
+            f"{viewer} sees the branch ending at {history['currentId']}"
+        )
+        path = [message["id"] for message in _path(history)]
+        assert path == [ids["first"], ids["picked"], ids["question"], ids["answer"]], (
+            f"{viewer} sees the messages {path} on the shown branch"
+        )
+        tool_reply = history["messages"][ids["picked"]]["content"]
+        assert "get_weather" in tool_reply and "Sunny in Vienna" in tool_reply, (
+            f"{viewer} sees the tool reply without its call and output: {tool_reply!r}"
+        )
+
+    current_id = _owner_history(upgraded, chat_id)["currentId"]
+    question, answer = _add_turn(upgraded, "alice", chat_id, current_id)
+    frozen = _shown_share(upgraded, None, share_id)["chat"]["history"]
+    assert _shape(frozen) == branched["messages"], "the link changed before it was updated"
+
+    _update_link(upgraded, chat_id, share_id, None)
+    owner_sees = _owner_history(upgraded, chat_id)
+    for who in ("bob", None):
+        viewer = who or "a signed-out visitor"
+        history = _shown_share(upgraded, who, share_id)["chat"]["history"]
+        assert _shape(history) == _shape(owner_sees), (
+            f"after the update {viewer} sees {_shape(history)}, the owner {_shape(owner_sees)}"
+        )
+        assert history["currentId"] == owner_sees["currentId"]
+        shown = [(message["role"], message["content"]) for message in _path(history)]
+        assert shown[-2:] == [("user", question), ("assistant", answer)], (
+            f"after the update {viewer} sees the branch {shown}"
+        )
+
+
+def test_an_old_continue_share_shows_the_live_chat_and_lets_the_grantee_continue(upgraded):
+    if "tooled" not in upgraded.manifest["chats"]:
+        pytest.skip("releases before v0.13 had no share others may continue")
+    tooled = upgraded.manifest["chats"]["tooled"]
+    chat_id, share_id, reply_id = tooled["id"], tooled["share_id"], tooled["reply_id"]
+    stored_reply = tooled["stored"][reply_id]
+
+    for who in ("carol", None):
+        assert _refused(_open_share(upgraded, who, share_id)), (
+            f"{who or 'a signed-out visitor'} opens a link shared with bob only"
+        )
+    shown = _shown_share(upgraded, "bob", share_id)
+    assert (shown["id"], shown["write_access"], shown["chat"]["share_mode"]) == (
+        chat_id,
+        True,
+        "continue",
+    ), "bob does not get the chat to continue"
+    history = shown["chat"]["history"]
+    assert _shape(history) == tooled["messages"], f"bob sees {_shape(history)}"
+    assert history["currentId"] == tooled["current_id"]
+    shown_reply = history["messages"][reply_id]
+    for key in ("output", "usage", "model"):
+        assert shown_reply.get(key) == stored_reply.get(key), (
+            f"bob sees the reply's {key} as {shown_reply.get(key)!r}"
+        )
+    written = json.dumps(shown_reply["output"])
+    assert "Sunny in Graz" in written and tooled["reasoning"] in written
+
+    question, answer = _add_turn(upgraded, "alice", chat_id, tooled["current_id"])
+    _update_link(upgraded, chat_id, share_id, "continue")
+    owner_sees = _owner_history(upgraded, chat_id)
+    shown = _shown_share(upgraded, "bob", share_id)
+    assert (shown["write_access"], shown["chat"]["share_mode"]) == (True, "continue"), (
+        "updating the link took away bob's replies"
+    )
+    history = shown["chat"]["history"]
+    assert _shape(history) == _shape(owner_sees), f"after the update bob sees {_shape(history)}"
+    shown_path = [(message["role"], message["content"]) for message in _path(history)]
+    assert shown_path[-2:] == [("user", question), ("assistant", answer)], (
+        f"after the update bob sees the branch {shown_path}"
+    )
+
+    bobs_question, bobs_answer = _add_turn(upgraded, "bob", chat_id, owner_sees["currentId"])
+    request = next(filter(reply.answering(bobs_question), upgraded.provider.chat_requests()))
+    sent = [text for text in _sent_texts(request) if text]
+    earlier = [tooled["messages"][key]["content"] for key in tooled["stored"]]
+    assert sent == [*earlier, question, answer, bobs_question], f"bob's turn sent the model {sent}"
+    assert "Sunny in Graz" in json.dumps(request["messages"]), (
+        "bob's turn did not send the model the earlier tool output"
+    )
+    owner_sees = _owner_history(upgraded, chat_id)
+    owner_path = _path(owner_sees)
+    assert [(message["role"], message["content"]) for message in owner_path[-2:]] == [
+        ("user", bobs_question),
+        ("assistant", bobs_answer),
+    ], "alice does not see bob's turn"
+    bob = upgraded.manifest["accounts"]["bob"]
+    assert owner_path[-2]["user_id"] == bob["id"], "bob's question is not shown as his"
+    assert owner_path[-2]["user"]["name"] == bob["name"]
+    seen_by_bob = _shown_share(upgraded, "bob", share_id)["chat"]["history"]
+    assert _shape(seen_by_bob) == _shape(owner_sees)
+
+
+def test_a_link_made_after_the_upgrade_for_an_old_cited_chat_keeps_its_sources(upgraded):
+    cited = upgraded.manifest["chats"]["cited"]
+    accounts = upgraded.manifest["accounts"]
+    with upgraded.client("alice") as client:
+        shared = client.post(f"/api/v1/chats/{cited['id']}/share", json={"share_mode": None})
+        assert shared.status_code == 200, shared.text
+    share_id = shared.json()["share_id"]
+    _save_share_access(upgraded, cited["id"], [grant("user", accounts["bob"]["id"], "read")], None)
+
+    history = _shown_share(upgraded, "bob", share_id)["chat"]["history"]
+    assert _shape(history) == cited["messages"], f"bob sees {_shape(history)}"
+    sources = history["messages"][cited["current_id"]].get("sources") or []
+    names = {source.get("source", {}).get("name") for source in sources}
+    assert set(cited["cited"]) <= names, f"bob sees the reply citing {names}"
