@@ -269,9 +269,8 @@ def open_add_context(chat: Chat) -> Locator:
 def _get(page: Page, path: str):
     """What `path` answers the page's account."""
     token = page.evaluate("localStorage.token")
-    # a kept connection can be closed by the server's keep-alive timeout just as this goes out on it
     answered = page.request.get(
-        loopback_url(page.url, path), headers={"Authorization": f"Bearer {token}"}, max_retries=1
+        loopback_url(page.url, path), headers={"Authorization": f"Bearer {token}"}
     )
     assert answered.ok, f"{path} answered {answered.status}: {answered.text()}"
     return answered.json()

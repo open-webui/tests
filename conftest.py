@@ -23,12 +23,13 @@ load_dotenv()
 
 pytest_plugins = ["harness.fixtures"]
 
-from harness import coverage_run, plain_http, slow_machine  # noqa: E402
+from harness import coverage_run, fresh_connections, plain_http, slow_machine  # noqa: E402
 
 # before anything imports open_webui, so module-level lines count too
 coverage_run.start()
 slow_machine.install()
 plain_http.install()
+fresh_connections.install()
 
 # The venv ships a .pth that puts a fixed open-webui checkout on sys.path at
 # interpreter startup. It otherwise wins over OPEN_WEBUI_SOURCE_DIR, and once

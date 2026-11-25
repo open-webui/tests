@@ -139,11 +139,9 @@ def _wait_until_the_server_asks(page: Page) -> None:
     token = page.evaluate("localStorage.token")
 
     def waiting() -> bool:
-        # the server's keep-alive timeout can close a kept connection just as this goes out on it
         stored = page.request.get(
             loopback_url(page.url, f"/api/v1/chats/{chat_id}"),
             headers={"Authorization": f"Bearer {token}"},
-            max_retries=1,
         ).json()["chat"]["history"]
         output = stored["messages"][stored["currentId"]].get("output") or []
         return any(
