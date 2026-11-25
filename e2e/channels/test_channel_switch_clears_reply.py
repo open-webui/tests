@@ -51,6 +51,11 @@ def sidebar_entry(page: Page, name: str) -> Locator:
     section = sidebar.get_by_role("button", name="Channels")
     if section.get_attribute("aria-expanded") == "false":
         section.click()
+    # the section slides open, and a click while it moves lands on the row that slid under it
+    sidebar.locator("#sidebar-channels-content").evaluate(
+        "content => Promise.allSettled("
+        "content.parentElement.getAnimations().map((animation) => animation.finished))"
+    )
     return sidebar.get_by_role("link", name=name)
 
 
