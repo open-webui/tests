@@ -128,6 +128,25 @@ def test_the_owners_delete_still_stops_their_reply(delete, admin, make_user, ups
         )
 
 
+def test_deleting_a_user_stops_their_reply(admin, make_user, upstream):
+    """Regression open-webui/open-webui#35060: deleting a user left their streaming reply running."""
+    owner = make_user()
+    with owner.client() as owner_client, admin.client() as admin_client:
+        # streams for six seconds, so a reply left running is still listed after the delete
+        turn = start_slow_reply(owner_client, upstream, chunk_delay=0.3)
+        running = owner_client.get(f"/api/tasks/chat/{turn.chat_id}").json()["task_ids"]
+        assert running, "the slow reply has no task to stop"
+
+        deleted = admin_client.delete(f"/api/v1/users/{owner.id}")
+        assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+        assert admin_client.get(f"/api/v1/chats/{turn.chat_id}").status_code != 200
+
+        still_running = set(admin_client.get("/api/tasks").json()["tasks"]) & set(running)
+        assert not still_running, (
+            f"the deleted user's reply kept running: tasks {sorted(still_running)} still listed"
+        )
+
+
 def test_an_admin_can_delete_another_users_chat(admin, make_user, upstream):
     with make_user().client() as owner_client, admin.client() as admin_client:
         turn, _ = ask(owner_client, "hello")

@@ -482,6 +482,55 @@ def test_deleting_the_chat_stops_its_subagent_and_frees_the_background_slot(
         never_answered.set()
 
 
+def test_deleting_a_user_stops_their_subagent_and_frees_the_background_slot(
+    background_on, admin, make_user, upstream
+):
+    """Regression open-webui/open-webui#35060: deleting a user left their sub-agent running."""
+    background_on(SUBAGENTS_MAX_ASYNC=1)
+    prompt, task = unique("hand this over"), unique("watch the queue")
+    later, next_task = unique("one more thing"), unique("second errand")
+    never_answered = threading.Event()
+    upstream.queue(
+        dispatch(task, prompt),
+        reply.text("never used", hold=never_answered, match=delegated(task)),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+        dispatch(next_task, later),
+        reply.text("done", match=delegated(next_task)),
+        reply.text("Sent off.", match=reply.answering(later)),
+        reply.text("It came back.", match=report_of(next_task)),
+    )
+    leaving = make_user()
+    try:
+        with (
+            leaving.client() as client,
+            make_user().client() as other_client,
+            admin.client() as admin_client,
+        ):
+            turn, stored = ask(client, prompt)
+            [handle] = dispatch_handles(stored)
+            wait_for_request(upstream, delegated(task))
+            running = client.get(f"/api/tasks/chat/{handle['subagent_chat_id']}").json()
+            assert running["task_ids"], "the sub-agent has no task to stop"
+
+            deleted = admin_client.delete(f"/api/v1/users/{leaving.id}")
+            assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+            assert admin_client.get(f"/api/v1/chats/{turn.chat_id}").status_code != 200
+
+            listed = set(admin_client.get("/api/tasks").json()["tasks"])
+            still_running = listed & set(running["task_ids"])
+            assert not still_running, (
+                f"the deleted user's sub-agent kept running: tasks {sorted(still_running)} listed"
+            )
+            next_turn, next_stored = ask(other_client, later)
+            assert tool_outputs(next_stored)[0].startswith("{"), (
+                "the deleted user's sub-agent still held the only background slot: "
+                f"{tool_outputs(next_stored)}"
+            )
+            wait_for_message(other_client, next_turn.chat_id, finished_reply("It came back."))
+    finally:
+        never_answered.set()
+
+
 def test_an_unlimited_background_setting_lets_every_delegation_through(
     background_on, make_user, upstream
 ):
