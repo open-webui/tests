@@ -25,6 +25,20 @@ unarchive all took several times longer for 1500 short chats than for one chat h
 3000 messages. Discriminates: passes with the fix on branch Classic298:fix/rows-list-slowdown
 (each step at most about three times the one-chat time), fails on dev b9e9857b1 (four to nine
 times), on SQLite.
+
+Deleting chats leaves none of their words behind. Once a user deletes one chat, an archived chat
+from Archived Chats, all chats or a folder with its chats, or the admin deletes the account, the
+chat's words are gone from the workspace search, the chat list search, the owner's export and
+stats export, the admin's database export and the admin's list of the account's chats, and
+analytics no longer counts its messages and tokens per model and per user nor lists its session.
+The same holds for the conversation of a sub-agent the chat handed a task to. Discriminates: all
+pass on dev f80a4f782 on SQLite and Postgres except the sub-agent case of the folder deletion, and
+in a backend copy that keeps the messages of deleted chats every case fails (analytics still counts
+and returns them).
+
+Regression open-webui/open-webui#35053: deleting a folder with its chats left the sub-agent
+conversations of those chats behind, still counted and listed in the admin analytics, while every
+other way of deleting the chat removed them. Red on dev f80a4f782 until the fix merges.
 """
 
 from __future__ import annotations
@@ -36,6 +50,12 @@ import uuid
 
 import httpx
 import pytest
+
+from harness import upstream as reply
+from harness.chat import ask
+from harness.model_presets import preset_with_capabilities
+from harness.subagents import delegated, report_of
+from harness.tool_calls import without_hidden_calls
 
 pytestmark = [pytest.mark.journey, pytest.mark.api, pytest.mark.requires_source]
 
@@ -445,3 +465,272 @@ def test_marking_a_folder_read_leaves_the_other_folders_unread(owner):
         assert marked.status_code == 200, marked.text
         assert marked.json()["folder_unread_counts"] == {read_folder: 0, other_folder: 1}
         assert last_read_at(client, other_chat_id) == 0
+
+
+# --------------------------------------------------------------------------- deletion
+
+USAGE = {"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12}
+SUBAGENTS = ("/api/v1/configs/subagents", "/api/v1/configs/subagents")
+DELETIONS = pytest.mark.parametrize(
+    "delete",
+    ["delete_one_chat", "delete_an_archived_chat", "delete_all_chats", "delete_the_folder"],
+    ids=["one chat", "an archived chat", "all chats", "a folder with its chats"],
+)
+
+
+def unique_word() -> str:
+    """A word no other chat holds, so any place still showing it shows the deleted chat."""
+    return f"quillwort{uuid.uuid4().hex[:10]}"
+
+
+def talk(client: httpx.Client, upstream, model: str, word: str) -> str:
+    """A chat whose question and answer both hold `word`, answered with token usage."""
+    question = f"Tell me about {word}"
+    upstream.queue(reply.text(f"{word} is a fern", usage=USAGE, match=reply.answering(question)))
+    turn, stored = ask(client, question, model=model)
+    assert stored["content"] == f"{word} is a fern", stored
+    return turn.chat_id
+
+
+def talk_with_a_subagent(client: httpx.Client, upstream, model: str, word: str) -> list[str]:
+    """A chat that hands `word` to a sub-agent; its id and the sub-agent's, once reported."""
+    prompt, task = f"Hand {word} over", f"Look into {word}"
+    report = f"The report on {word} is in."
+    upstream.queue(
+        reply.tool_call("delegate_task", {"task": task}, match=reply.answering(prompt)),
+        reply.text(f"{word} grows in ponds", usage=USAGE, match=delegated(task)),
+        reply.text("Handed over.", match=reply.answering(prompt)),
+        reply.text(report, match=report_of(task)),
+    )
+    turn, stored = ask(client, prompt, model=model)
+    [handle] = [
+        json.loads(item["output"][0]["text"])
+        for item in without_hidden_calls(stored["output"])
+        if item["type"] == "function_call_output"
+    ]
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        messages = read_chat(client, turn.chat_id)["chat"]["history"]["messages"].values()
+        if any(message.get("done") and message["content"] == report for message in messages):
+            return [turn.chat_id, handle["subagent_chat_id"]]
+        time.sleep(0.1)
+    raise AssertionError("the sub-agent's report never came back into the chat")
+
+
+def into_folder(client: httpx.Client, chat_id: str, folder_id: str) -> None:
+    moved = client.post(f"/api/v1/chats/{chat_id}/folder", json={"folder_id": folder_id})
+    assert moved.status_code == 200, moved.text
+
+
+def owner_sees(client: httpx.Client, word: str, chat_ids: list[str]) -> dict[str, bool]:
+    """Where the owner still finds `word`: both searches, the export and the stats export."""
+    found = client.get("/api/v1/search", params={"q": word})
+    listed = client.get("/api/v1/chats/search", params={"text": word})
+    exported = client.get("/api/v1/chats/all")
+    stats = client.get("/api/v1/chats/stats/export")
+    for answer in (found, listed, exported, stats):
+        assert answer.status_code == 200, f"{answer.request.url}: {answer.text[:300]}"
+    return {
+        "the workspace search": word in json.dumps(found.json()["items"]),
+        "the chat list search": listed.json() != [],
+        "the owner's export": word in exported.text,
+        # the stats export carries no message text, only each chat's numbers
+        "the owner's stats export": names_any(stats.json(), chat_ids),
+    }
+
+
+def admin_sees(
+    client: httpx.Client, owner_id: str, model: str, word: str, chat_ids: list[str]
+) -> dict[str, bool]:
+    """Where the admin still finds the owner's words, messages or token counts."""
+    answers = {
+        "the admin's database export": client.get("/api/v1/chats/all/db"),
+        "the owner's chats in the admin's user list": client.get(
+            f"/api/v1/chats/list/user/{owner_id}"
+        ),
+        "the analytics messages of the owner": client.get(
+            "/api/v1/analytics/messages", params={"user_id": owner_id}
+        ),
+        "the analytics messages of the model": client.get(
+            "/api/v1/analytics/messages", params={"model_id": model}
+        ),
+        "the analytics message counts per model": client.get("/api/v1/analytics/models"),
+        "the analytics token counts per model": client.get("/api/v1/analytics/tokens"),
+        "the analytics counts per user": client.get(
+            "/api/v1/analytics/users", params={"limit": 10_000}
+        ),
+        "the analytics chats of the model": client.get(f"/api/v1/analytics/models/{model}/chats"),
+        "the analytics sessions of the model": client.get(
+            "/api/v1/analytics/sessions", params={"model_id": model}
+        ),
+    }
+    for answer in answers.values():
+        assert answer.status_code == 200, f"{answer.request.url}: {answer.text[:300]}"
+    body = {where: answer.json() for where, answer in answers.items()}
+    return {
+        "the admin's database export": word in json.dumps(body["the admin's database export"]),
+        "the owner's chats in the admin's user list": names_any(
+            body["the owner's chats in the admin's user list"], chat_ids
+        ),
+        "the analytics messages of the owner": word
+        in json.dumps(body["the analytics messages of the owner"]),
+        "the analytics messages of the model": word
+        in json.dumps(body["the analytics messages of the model"]),
+        "the analytics message counts per model": any(
+            entry["model_id"] == model and entry["count"] > 0
+            for entry in body["the analytics message counts per model"]["models"]
+        ),
+        "the analytics token counts per model": any(
+            entry["model_id"] == model and entry["total_tokens"] > 0
+            for entry in body["the analytics token counts per model"]["models"]
+        ),
+        "the analytics counts per user": any(
+            entry["user_id"] == owner_id and entry["count"] > 0
+            for entry in body["the analytics counts per user"]["users"]
+        ),
+        "the analytics chats of the model": names_any(
+            body["the analytics chats of the model"], chat_ids
+        ),
+        "the analytics sessions of the model": names_any(
+            body["the analytics sessions of the model"], chat_ids
+        ),
+    }
+
+
+def names_any(body, chat_ids: list[str]) -> bool:
+    text = json.dumps(body)
+    return any(chat_id in text for chat_id in chat_ids)
+
+
+def still_showing(seen: dict[str, bool]) -> list[str]:
+    return [where for where, shows in seen.items() if shows]
+
+
+@pytest.fixture
+def community_sharing(admin, preserve):
+    """The stats export is open to users only with community sharing on."""
+    preserve("admin_config")
+    with admin.client() as client:
+        config = client.get("/api/v1/auths/admin/config").json()
+        saved = client.post(
+            "/api/v1/auths/admin/config", json={**config, "ENABLE_COMMUNITY_SHARING": True}
+        )
+    assert saved.status_code == 200, saved.text
+
+
+@pytest.fixture
+def subagents_on(admin, preserve):
+    preserve(SUBAGENTS)
+    with admin.client() as client:
+        current = client.get(SUBAGENTS[0]).json()
+        saved = client.post(SUBAGENTS[1], json={**current, "ENABLE_SUBAGENTS": True})
+    assert saved.status_code == 200, saved.text
+
+
+@pytest.fixture
+def deletion_model(admin):
+    with preset_with_capabilities(admin, {}) as model:
+        yield model
+
+
+def delete_one_chat(client: httpx.Client, chat_id: str) -> httpx.Response:
+    return client.delete(f"/api/v1/chats/{chat_id}")
+
+
+def delete_an_archived_chat(client: httpx.Client, chat_id: str) -> httpx.Response:
+    archived = client.post(f"/api/v1/chats/{chat_id}/archive")
+    assert archived.status_code == 200 and archived.json()["archived"], archived.text
+    return client.delete(f"/api/v1/chats/{chat_id}")
+
+
+def delete_all_chats(client: httpx.Client, chat_id: str) -> httpx.Response:
+    return client.delete("/api/v1/chats/")
+
+
+def delete_the_folder(client: httpx.Client, chat_id: str) -> httpx.Response:
+    folder_id = create_folder(client)
+    into_folder(client, chat_id, create_folder(client, parent_id=folder_id))
+    return client.delete(f"/api/v1/folders/{folder_id}", params={"delete_contents": True})
+
+
+@DELETIONS
+def test_a_deleted_chats_words_are_gone_from_every_search_export_and_report(
+    delete, admin, make_user, upstream, deletion_model, community_sharing
+):
+    owner, word = make_user(), unique_word()
+    with owner.client() as client, admin.client() as admin_client:
+        chat_id = talk(client, upstream, deletion_model, word)
+
+        def everywhere() -> dict[str, bool]:
+            return {
+                **owner_sees(client, word, [chat_id]),
+                **admin_sees(admin_client, owner.id, deletion_model, word, [chat_id]),
+            }
+
+        before = everywhere()
+        deleted = globals()[delete](client, chat_id)
+
+        assert deleted.status_code == 200, deleted.text
+        assert client.get(f"/api/v1/chats/{chat_id}").status_code != 200
+        after = everywhere()
+    missing = [where for where, shows in before.items() if not shows]
+    assert missing == [], f"before the deletion the chat was already missing from {missing}"
+    assert still_showing(after) == [], f"the deleted chat still shows in {still_showing(after)}"
+
+
+@DELETIONS
+def test_a_deleted_chat_takes_its_subagents_words_with_it(
+    delete,
+    admin,
+    make_user,
+    upstream,
+    deletion_model,
+    community_sharing,
+    subagents_on,
+):
+    """The folder case is open-webui/open-webui#35053."""
+    owner, word = make_user(), unique_word()
+    with owner.client() as client, admin.client() as admin_client:
+        chat_ids = talk_with_a_subagent(client, upstream, deletion_model, word)
+
+        def everywhere() -> dict[str, bool]:
+            return {
+                **owner_sees(client, word, chat_ids),
+                **admin_sees(admin_client, owner.id, deletion_model, word, chat_ids),
+            }
+
+        before = everywhere()
+        deleted = globals()[delete](client, chat_ids[0])
+
+        assert deleted.status_code == 200, deleted.text
+        after = everywhere()
+    missing = [where for where, shows in before.items() if not shows]
+    assert missing == [], f"before the deletion the chat was already missing from {missing}"
+    assert still_showing(after) == [], (
+        f"the deleted chat's sub-agent still shows in {still_showing(after)}"
+    )
+
+
+def test_an_account_deleted_by_the_admin_leaves_none_of_its_words_behind(
+    admin, make_user, upstream, deletion_model
+):
+    owner, word = make_user(), unique_word()
+    with owner.client() as client:
+        chat_id = talk(client, upstream, deletion_model, word)
+        archived_id = talk(client, upstream, deletion_model, word)
+        assert client.post(f"/api/v1/chats/{archived_id}/archive").is_success
+        folder_id = create_folder(client)
+        into_folder(client, chat_id, folder_id)
+    with admin.client() as admin_client:
+        chat_ids = [chat_id, archived_id]
+        before = admin_sees(admin_client, owner.id, deletion_model, word, chat_ids)
+
+        deleted = admin_client.delete(f"/api/v1/users/{owner.id}")
+
+        assert deleted.status_code == 200 and deleted.json() is True, deleted.text
+        after = admin_sees(admin_client, owner.id, deletion_model, word, chat_ids)
+    missing = [where for where, shows in before.items() if not shows]
+    assert missing == [], f"before the deletion the chats were already missing from {missing}"
+    assert still_showing(after) == [], (
+        f"the deleted account's chats still show in {still_showing(after)}"
+    )
