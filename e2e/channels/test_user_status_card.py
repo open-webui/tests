@@ -1,19 +1,22 @@
 """Journey: a person's profile card in a channel shows their local time and last seen.
 
-The card opens from an author's picture or from an @mention of the person in a message. It shows
-the person's status, a "Local time" row with the time now in the timezone stored on their account
-(the zone name beside it, the timezone as the row's title) and a "Last seen" row with how long ago
-they were last active, whose tooltip gives the medium date and long time in the viewer's browser
-zone. A card opened a second time shows the status the person has by then and not the one it
-showed before.
+The card opens when pointing at an author's picture or at an @mention of the person in a message.
+It shows the person's status, a "Local time" row with the time now in the timezone stored on their
+account (the zone name beside it, the timezone as the row's title) and a "Last seen" row with how
+long ago they were last active, whose tooltip gives the medium date and long time in the viewer's
+browser zone. A card opened a second time shows the status the person has by then and not the one
+it showed before. Clicking the picture opens the person's full profile in a dialog with their
+name, status, a Message button and the local time in their timezone.
 
 Discriminates: passes on dev 538f9c909; in a frontend copy, dropping the local time row turns the
 local time test red, dropping the last seen row turns the last seen test red, the mention not
 handing its open state to the card turns the mention test red and removing the reset of the
-requested person when the card closes turns the reopened card test red.
+requested person when the card closes turns the reopened card test red. The full profile test
+passes on dev 4dc058bbb and fails on 9c9a3ca0d, where a click opened no profile dialog.
 
 Retargeted for dev b1da0e8e8: the last seen row shows a relative time and moved the date and time
-into its tooltip (a70e96525).
+into its tooltip (a70e96525). Retargeted for dev 4dc058bbb: a click on a picture opens the full
+profile dialog in place of the card (4b648ec4e), so the card tests point at the picture.
 """
 
 from __future__ import annotations
@@ -90,7 +93,7 @@ def test_the_card_shows_the_local_time_in_the_persons_timezone(people, page_for)
     picture = _author_picture(page, channel_id, person, "anchoring at the bay")
 
     before = dt.datetime.now(dt.timezone.utc)
-    picture.click()
+    picture.hover()
 
     local_time = page.get_by_title(PERSON_ZONE)
     expect(local_time).to_be_visible()
@@ -107,7 +110,7 @@ def test_the_card_shows_when_the_person_was_last_seen_in_the_viewers_zone(people
     page = page_for(viewer, timezone_id=VIEWER_ZONE)
     picture = _author_picture(page, channel_id, person, "anchoring at the bay")
 
-    picture.click()
+    picture.hover()
 
     expect(page.get_by_text("Last seen", exact=True).first).to_be_attached()
     last_seen = page.get_by_role("definition").filter(has_text="ago")
@@ -124,6 +127,26 @@ def test_the_card_shows_when_the_person_was_last_seen_in_the_viewers_zone(people
     expect(page.get_by_role("tooltip")).to_have_text(
         re.compile(rf"^{date}, {clock} {re.escape(zone)}$")
     )
+
+
+def test_clicking_a_persons_picture_opens_their_full_profile(people, page_for):
+    person, viewer, channel_id = people
+    post_message(person, channel_id, "anchoring at the bay")
+    page = page_for(viewer, timezone_id=VIEWER_ZONE)
+    picture = _author_picture(page, channel_id, person, "anchoring at the bay")
+
+    before = dt.datetime.now(dt.timezone.utc)
+    picture.click()
+
+    profile = page.get_by_role("dialog", name="Profile")
+    expect(profile.get_by_text(person.name, exact=True)).to_be_visible()
+    expect(profile.get_by_text(OLD_STATUS)).to_be_visible()
+    expect(profile.get_by_role("button", name="Message")).to_be_visible()
+    local_time = profile.get_by_role("definition").filter(has_text=PERSON_ZONE_LABEL)
+    expect(local_time).to_be_visible()
+    after = dt.datetime.now(dt.timezone.utc)
+    wanted = "|".join(sorted({_clock_text(PERSON_ZONE, before), _clock_text(PERSON_ZONE, after)}))
+    expect(local_time).to_have_text(re.compile(rf"^({wanted})\s{re.escape(PERSON_ZONE_LABEL)}$"))
 
 
 def test_hovering_a_mention_of_a_person_shows_their_card(people, page_for):
