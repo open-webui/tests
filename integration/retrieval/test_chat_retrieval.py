@@ -3,10 +3,12 @@
 A file attached to a chat is cut into chunks when it is uploaded; each question then embeds the
 question, takes the `TOP_K` nearest chunks and wraps them in the RAG template ahead of the
 question, and the reply keeps them as citations. Full context sends every chunk, and bypassing
-embedding sends the whole text without embedding the question at all. Hybrid search reranks the
-candidates and drops those under the relevance threshold; an external reranker, when set, is the
-one that scores them, and `TOP_K_RERANKER` keeps its best. Chunk overlap repeats text between
-neighbouring chunks, and a minimum chunk size merges small markdown sections.
+embedding sends the whole text without embedding the question at all. A file sent whole arrives
+as every paragraph in order, each after the `[N#P]` marker the model cites it by (376e77cee),
+with nothing else added. Hybrid search reranks the candidates and drops those under the relevance
+threshold; an external reranker, when set, is the one that scores them, and `TOP_K_RERANKER`
+keeps its best. Chunk overlap repeats text between neighbouring chunks, and a minimum chunk size
+merges small markdown sections.
 
 The instance embeds through a local service whose vectors follow a few keywords, so a question
 about herons is nearest the chunks about herons and nothing else; a local service also plays the
@@ -26,7 +28,8 @@ test red; the character splitter built without `chunk_overlap` turned the overla
 `merge_docs_to_target_size` returning its input turned the minimum size test red. On dev
 f659c0d12: the file threshold ignored turned the at-the-threshold case red, counted in bytes or
 compared with `<` turned it red as well, and every knowledge base sent whole turned the knowledge
-base test red.
+base test red. On dev 4dc058bbb: the marked paragraphs dropping the last one, or joined by a
+single line break, turned the full, bypass and at-the-threshold tests red.
 
 The failing reranker test pins fix 8d7b71f6c (PR open-webui/open-webui#33701): the default server
 log held every question sent to an external reranker and, when it failed, its address. It passes
@@ -38,6 +41,8 @@ log does not name the file a search found (open-webui/open-webui#34129). They fa
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -147,6 +152,18 @@ def paragraphs_in(sent: str) -> set[str]:
     return {paragraph for paragraph in PARAGRAPHS if paragraph in sent}
 
 
+SOURCE_RE = re.compile(r"<source\s(?P<attributes>[^>]*)>(?P<body>.*?)</source>", re.DOTALL)
+
+
+def source_text(sent: str, filename: str) -> str:
+    """The text the context holds for `filename`, without the `[N#P] ` paragraph markers."""
+    name = f' name="{filename}"'
+    sources = [match for match in SOURCE_RE.finditer(sent) if name in match["attributes"]]
+    assert len(sources) == 1, f"expected {filename} as one source in the context: {sent}"
+    source_id = re.search(r'\bid="([^"]+)"', sources[0]["attributes"])[1]
+    return re.sub(rf"(?m)^\[{re.escape(source_id)}#\d+\] ", "", sources[0]["body"])
+
+
 def assert_found_files_kept_out_of(logged: str) -> None:
     assert "field-notes.txt" not in logged, (
         "the default server log names the file the search found (#34129)"
@@ -191,7 +208,9 @@ def test_a_file_attached_in_full_sends_its_whole_text(ranked, settings, reader):
 
     sent, _ = ask_about(ranked, reader, "Tell me about the heron.", [notes])
 
-    assert FIELD_NOTES in sent
+    assert source_text(sent, "field-notes.txt") == FIELD_NOTES, (
+        f"the file was not sent whole: {sent}"
+    )
 
 
 def test_bypassing_embedding_sends_the_text_without_embedding_the_question(
@@ -203,7 +222,9 @@ def test_bypassing_embedding_sends_the_text_without_embedding_the_question(
 
     sent, _ = ask_about(ranked, reader, "Anything about otters?", [notes])
 
-    assert FIELD_NOTES in sent
+    assert source_text(sent, "field-notes.txt") == FIELD_NOTES, (
+        f"the file was not sent whole: {sent}"
+    )
     assert embedded_texts(embedder)[embedded_before:] == [], "the question was embedded"
 
 
@@ -251,7 +272,9 @@ def test_a_file_up_to_the_full_text_threshold_is_sent_whole(ranked, settings, re
     sent, _ = ask_about(ranked, reader, "Where does the heron hunt?", [notes])
 
     if whole:
-        assert NOTES_WITH_CAFE in sent, f"a file at the threshold was not sent whole: {sent}"
+        assert source_text(sent, "cafe-notes.txt") == NOTES_WITH_CAFE, (
+            f"a file at the threshold was not sent whole: {sent}"
+        )
     else:
         assert CAFE not in sent and paragraphs_in(sent) == HERON_PARAGRAPHS, (
             f"a file over the threshold was not searched by its chunks: {sent}"
