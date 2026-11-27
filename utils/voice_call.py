@@ -6,6 +6,8 @@ import time
 
 from playwright.sync_api import Page, expect
 
+from conftest import AppConfig
+from e2e.conftest import APP_LOADED
 from harness.audio_engine import AudioEngine
 from utils.chat_ui import chat_input
 
@@ -19,6 +21,8 @@ def end_call_button(page: Page):
 
 def start_call(page: Page) -> None:
     expect(chat_input(page)).to_be_visible()
+    # a call started before the model list is in is dropped once the list arrives
+    page.wait_for_function(APP_LOADED, timeout=AppConfig().navigation_timeout)
     page.get_by_role("button", name="Voice mode").click()
     expect(end_call_button(page)).to_be_visible()
 
