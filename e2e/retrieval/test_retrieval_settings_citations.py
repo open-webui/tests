@@ -28,6 +28,9 @@ Every test runs in the main chat and in a side chat (`utils/chat_surface.py`), t
 every way a side chat starts and every state it can be in but temporary: a side chat answer listed
 no sources from an attached file until a reload (open-webui/open-webui#34017, fix PR
 open-webui/open-webui#34064).
+
+Red on dev 4dc058bbb: a file opened from the source list shows no marked passage once its
+source has paragraph citations (open-webui/open-webui#35165).
 """
 
 from __future__ import annotations

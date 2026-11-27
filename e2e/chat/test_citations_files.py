@@ -372,7 +372,7 @@ def _attached_report(page_for, make_user, upstream) -> Page:
 def test_the_source_list_opens_a_cited_word_document_as_its_marker_does(
     page_for, make_user, upstream
 ):
-    """Red on dev c1f3b6fd1: open-webui/open-webui#34831."""
+    """Red on dev c1f3b6fd1: open-webui/open-webui#34831; red on dev 4dc058bbb: #35165."""
     page = _attached_report(page_for, make_user, upstream)
     last_reply(page).get_by_role("button", name="View source: report.docx").click()
     line = file_panel(page, "report.docx").get_by_text(REPORT[0], exact=True)
