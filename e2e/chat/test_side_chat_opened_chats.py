@@ -129,7 +129,12 @@ def test_a_new_chat_opened_from_a_pinned_model_starts_like_any_new_chat(
     sent = _system_prompts_for(tab, upstream, f"hello ({uuid.uuid4().hex[:8]})")
 
     assert sent == [], f"the new chat in a tab was sent the system prompts {sent}"
-    expect(page).not_to_have_url(re.compile(neighbour_id))
-    new_chat_id = page.url.rsplit("/", 1)[-1]
+    # the address stays on the saved chat while the tab beside it is in front (#35137)
+    expect(page).to_have_url(re.compile(neighbour_id))
+    with account.client() as client:
+        listed = client.get("/api/v1/chats/", params={"page": 1}).json()
+    others = [chat["id"] for chat in listed if chat["id"] != neighbour_id]
+    assert len(others) == 1, f"expected the new chat in the chat list beside the saved one: {listed}"
+    new_chat_id = others[0]
     stored = _stored_system_prompt(account, new_chat_id)
     assert not stored, f"the new chat in a tab kept the system prompt {stored!r}"
