@@ -266,7 +266,7 @@ def drop_chat_beside(page: Page, title: str, place: str = SIDE_CHAT) -> ChatSurf
 
 
 def open_pinned_model_tab(page: Page, model_name: str, place: str = SIDE_CHAT) -> ChatSurface:
-    """Click a model pinned to the sidebar, which opens a new chat on it in a tab."""
+    """Click a model pinned to the sidebar, which opens a new chat on it in a tab, in front (#35160)."""
     sidebar = open_sidebar(page)
     before = _panel_ids(page)
     sidebar.get_by_role("link", name=re.compile(rf"\b{re.escape(model_name)}$")).click()
