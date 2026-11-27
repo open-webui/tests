@@ -49,6 +49,10 @@ def _personalization(page: Page) -> Locator:
     return settings
 
 
+def _memory_row(settings: Locator, memory: str) -> Locator:
+    return settings.get_by_role("listitem").filter(has_text=memory)
+
+
 def test_a_memory_is_added_edited_used_and_deleted(page_for, make_user, upstream):
     page = page_for(make_user())
     settings = _personalization(page)
@@ -59,7 +63,7 @@ def test_a_memory_is_added_edited_used_and_deleted(page_for, make_user, upstream
     adding.get_by_role("button", name="Add", exact=True).click()
     expect(settings.get_by_text(FIRST)).to_be_visible()
 
-    settings.get_by_role("button", name="Edit").click()
+    _memory_row(settings, FIRST).get_by_role("button", name="Edit", exact=True).click()
     editing = page.get_by_role("dialog").filter(has_text="Edit Memory")
     expect(editing.get_by_role("textbox", name=MEMORY_FIELD, exact=True)).to_have_value(FIRST)
     editing.get_by_role("textbox", name=MEMORY_FIELD, exact=True).fill(EDITED)
@@ -79,7 +83,7 @@ def test_a_memory_is_added_edited_used_and_deleted(page_for, make_user, upstream
     assert EDITED in sent, "the chat was not sent the edited memory"
 
     settings = _personalization(page)
-    settings.get_by_role("button", name="Remove").click()
+    _memory_row(settings, EDITED).get_by_role("button", name="Delete", exact=True).click()
     page.get_by_role("dialog", name="Delete Memory?").get_by_role("button", name="Confirm").click()
     expect(settings.get_by_text(EDITED)).to_have_count(0)
 
