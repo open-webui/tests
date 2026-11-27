@@ -229,7 +229,7 @@ def test_saving_an_edited_block_rewrites_the_reply(chat_for, make_user, upstream
     chat = chat_for(account)
     box = ask_for(chat, upstream, fenced("python", "total = 1"))
 
-    chat_id = chat.page.url.rsplit("/", 1)[-1]
+    chat_id = chat.chat_id
     editor_lines(box).first.click()
     chat.page.keyboard.press("End")
     chat.page.keyboard.type(" + 41")
@@ -271,7 +271,7 @@ def test_a_saved_block_keeps_its_dollar_signs(chat_for, make_user, upstream):
     account = make_user()
     chat = chat_for(account)
     box = ask_for(chat, upstream, fenced("python", "total = 1"))
-    chat_id = chat.page.url.rsplit("/", 1)[-1]
+    chat_id = chat.chat_id
 
     save_an_edit(chat, box, chat_id, DOLLAR_EDIT)
 

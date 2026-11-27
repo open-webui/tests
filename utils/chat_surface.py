@@ -10,18 +10,19 @@ place and every difference between the two stays in this module.
 What is not part of a chat's panel belongs to the page and is reached through `surface.page`:
 dialogs, menus, tooltips and notifications, the sidebar, the address and the keyboard.
 
-The address follows the selected tab, except that a chat tab beside a saved chat leaves the
-address on that saved chat (c63565927), so a test finds such a tab's chat with
-`stored_chat_holding`. Reloading the page with a side tab selected opens that tab's chat as the
-page's own chat. `surface.reload()` therefore hands back the surface the chat is on after the
-reload, and `reload_beside_the_chat` reloads with the main tab selected, which brings a saved side
-tab back beside the chat it was opened from.
+Beside a saved chat the address stays on that chat while a side tab is selected (c63565927,
+open-webui/open-webui#34304), so a reload brings the side tab back beside it. Beside a new chat,
+which has no address yet, the address follows the selected side tab, and a reload opens that
+tab's chat as the page's own chat. `surface.reload()` therefore hands back the surface the chat is
+on after the reload, and a side tab's chat is found by `surface.chat_id` or, by what was said in
+it, `stored_chat_holding`.
 """
 
 from __future__ import annotations
 
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Callable
@@ -30,6 +31,7 @@ from playwright.sync_api import Locator, Page, expect
 
 from harness import upstream as reply
 from harness.chat_history import seed_chat
+from harness.plain_http import loopback_url
 from harness.upstream import MOCK_MODEL_ID
 
 REPLY_TIMEOUT_MS = 30_000
@@ -37,6 +39,7 @@ MAIN_CHAT = "main chat"
 SIDE_CHAT = "side chat"
 MAIN_PANEL_ID = "chat-panel-main-chat-view"
 NEW_TAB = re.compile(r"^New Chat \d+$")
+_CHAT_ADDRESS = re.compile(r"/c/([^/?#]+)(?:[?#].*)?$")
 
 
 @dataclass
@@ -44,6 +47,8 @@ class ChatSurface:
     page: Page
     panel: Locator
     place: str
+    # the saved chat a side tab was opened beside, whose address the page keeps
+    beside_chat_id: str | None = None
 
     @property
     def is_side(self) -> bool:
@@ -88,6 +93,35 @@ class ChatSurface:
         return self.page.locator(f"[id='{label}']")
 
     @property
+    def title(self) -> str:
+        """The title of the chat in a side tab, which the tab is named after."""
+        expect(self.tab).not_to_have_attribute("title", NEW_TAB, timeout=REPLY_TIMEOUT_MS)
+        title = self.tab.get_attribute("title")
+        assert title, "the side tab names no chat"
+        return title
+
+    @property
+    def chat_id(self) -> str:
+        """The id of the saved chat on this surface."""
+        if not self.beside_chat_id:
+            expect(self.page).to_have_url(_CHAT_ADDRESS, timeout=REPLY_TIMEOUT_MS)
+            return _CHAT_ADDRESS.search(self.page.url).group(1)
+        title = self.title
+        deadline = time.monotonic() + REPLY_TIMEOUT_MS / 1000
+        while True:
+            found = [
+                chat["id"]
+                for chat in _account_chats(self.page)
+                if chat["title"] == title and chat["id"] != self.beside_chat_id
+            ]
+            if len(found) == 1:
+                return found[0]
+            assert time.monotonic() < deadline, (
+                f"the account holds {len(found)} chats titled {title!r} beside the main chat"
+            )
+            time.sleep(0.2)
+
+    @property
     def tab_bar(self) -> Locator:
         """The bar holding the chat's tab, with the "Chat actions" menu of the chat it shows."""
         return self.page.locator("[data-panel-tab-bar]").filter(has=self.tab)
@@ -108,17 +142,32 @@ class ChatSurface:
         expect(self.last_reply).to_contain_text(text, timeout=REPLY_TIMEOUT_MS)
 
     def reload(self) -> ChatSurface:
-        """Reload the page; returns the surface the chat is on afterwards.
+        """Reload the page with this chat selected; returns the surface it is on afterwards.
 
-        A side tab is the selected one while a person works in it, so the reload opens its chat
-        as the page's chat."""
-        if self.is_side and self.panel.is_visible():
+        A side tab beside a saved chat comes back beside it, and one beside a new chat opens as
+        the page's chat."""
+        if not self.is_side:
+            self.page.reload()
+            return main_chat(self.page)
+        if self.panel.is_visible():
             # pressing on the panel focuses its chat as a click into it does, also under a dialog
             self.panel.dispatch_event("pointerdown")
-        elif self.is_side:
+        else:
             self.show()
+        if not self.beside_chat_id:
+            self.page.reload()
+            return main_chat(self.page)
+        title = self.title
         self.page.reload()
-        return main_chat(self.page)
+        expect(self.page, "the reload left the chat the side tab is beside").to_have_url(
+            re.compile(rf"/c/{re.escape(self.beside_chat_id)}(?:[?#].*)?$")
+        )
+        tab = self.page.get_by_role("tab", name=side_tab_name(title))
+        expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
+        # a tab sharing the main chat's bar comes back behind it, unlike a tab split beside it
+        if tab.get_attribute("aria-selected") != "true":
+            tab.click()
+        return side_chat_titled(self.page, title, self.place, self.beside_chat_id)
 
 
 def stored_chat_holding(actor, text: str) -> dict:
@@ -151,13 +200,21 @@ def surface_of(chat: Page | ChatSurface) -> ChatSurface:
     return chat if isinstance(chat, ChatSurface) else main_chat(chat)
 
 
-def _held(page: Page, panel: Locator, place: str = SIDE_CHAT) -> ChatSurface:
+def _page_chat_id(page: Page) -> str | None:
+    """The saved chat the page's address names, if any."""
+    found = _CHAT_ADDRESS.search(page.url)
+    return found.group(1) if found else None
+
+
+def _held(
+    page: Page, panel: Locator, place: str = SIDE_CHAT, beside: str | None = None
+) -> ChatSurface:
     """The surface on `panel`, held by its id: the panel's name changes with the chat's title."""
     expect(panel).to_have_count(1, timeout=REPLY_TIMEOUT_MS)
     panel_id = panel.get_attribute("id")
     assert panel_id, "the tab's panel has no id to hold on to it by"
     assert panel_id != MAIN_PANEL_ID, f"the {place} opened as the page's own chat, not in a tab"
-    surface = ChatSurface(page, page.locator(f"[id='{panel_id}']"), place)
+    surface = ChatSurface(page, page.locator(f"[id='{panel_id}']"), place, beside)
     expect(surface.input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     return surface
 
@@ -168,9 +225,12 @@ def side_tab_name(title: str) -> re.Pattern:
     return re.compile(rf"^(?:Generating\.\.\. )?{re.escape(title)}$")
 
 
-def side_chat_titled(page: Page, title: str, place: str = SIDE_CHAT) -> ChatSurface:
-    """The side tab whose chat is titled `title`: a side chat takes its first question as title."""
-    return _held(page, page.get_by_role("tabpanel", name=side_tab_name(title)), place)
+def side_chat_titled(
+    page: Page, title: str, place: str = SIDE_CHAT, beside: str | None = None
+) -> ChatSurface:
+    """The side tab whose chat is titled `title`: a side chat takes its first question as title.
+    `beside` is the saved chat the tab sits beside."""
+    return _held(page, page.get_by_role("tabpanel", name=side_tab_name(title)), place, beside)
 
 
 def _panels(page: Page) -> Locator:
@@ -188,25 +248,28 @@ def _panel_ids_once_ready(page: Page) -> set[str]:
     return _panel_ids(page)
 
 
-def _new_panel(page: Page, before: set[str], place: str) -> ChatSurface:
-    """The tab panel that was not on the page `before`, once it shows a message box."""
+def _new_panel(page: Page, before: set[str], place: str, beside: str | None) -> ChatSurface:
+    """The tab panel that was not on the page `before`, once it shows a message box; `beside` is
+    the saved chat the page showed before the tab opened."""
     expect(_panels(page)).to_have_count(len(before) + 1, timeout=REPLY_TIMEOUT_MS)
     (panel_id,) = _panel_ids(page) - before
-    return _held(page, page.locator(f"[id='{panel_id}']"), place)
+    return _held(page, page.locator(f"[id='{panel_id}']"), place, beside)
 
 
 def open_new_chat_tab(page: Page, place: str = SIDE_CHAT) -> ChatSurface:
     """Open an empty side chat with the New Chat tab shortcut."""
     before = _panel_ids_once_ready(page)
+    beside = _page_chat_id(page)
     page.keyboard.press("Control+Alt+O")
-    return _new_panel(page, before, place)
+    return _new_panel(page, before, place, beside)
 
 
 def open_side_chat(page: Page, command: str = "side", place: str = SIDE_CHAT) -> ChatSurface:
     """Open an empty side chat by sending `/side` (or `/btw`) alone in the main chat."""
     before = _panel_ids_once_ready(page)
+    beside = _page_chat_id(page)
     main_chat(page).send(f"/{command}")
-    return _new_panel(page, before, place)
+    return _new_panel(page, before, place, beside)
 
 
 def ask_aside(
@@ -215,8 +278,9 @@ def ask_aside(
     """Send `/side <question>` in the main chat; the side chat it opens takes the question as its
     title once it is saved."""
     before = _panel_ids_once_ready(page)
+    beside = _page_chat_id(page)
     main_chat(page).send(f"/{command} {question}")
-    return _new_panel(page, before, place)
+    return _new_panel(page, before, place, beside)
 
 
 def show_the_folders_chat(page: Page, folder_name: str, directory: str | None = None) -> None:
@@ -246,8 +310,9 @@ def start_on_folder_page(page: Page, question: str, place: str = "folder chat") 
     """Send `question` from a folder page's box; the chat it starts opens in a tab beside the
     folder (since 06b47d455)."""
     before = _panel_ids_once_ready(page)
+    beside = _page_chat_id(page)
     main_chat(page).send(question)
-    return _new_panel(page, before, place)
+    return _new_panel(page, before, place, beside)
 
 
 def open_sidebar(page: Page) -> Locator:
@@ -288,9 +353,10 @@ def drop_chat_beside(page: Page, title: str, place: str = SIDE_CHAT) -> ChatSurf
     row = open_sidebar(page).get_by_role("button", name=re.compile(rf"^{re.escape(title)}(?: |$)"))
     expect(row).to_be_visible()
     before = _panel_ids(page)
+    beside = _page_chat_id(page)
     expect(drag_beside_the_chat(page, row)).to_be_visible()
     page.mouse.up()
-    surface = _new_panel(page, before, place)
+    surface = _new_panel(page, before, place, beside)
     close_sidebar(page)
     return surface
 
@@ -299,8 +365,9 @@ def open_pinned_model_tab(page: Page, model_name: str, place: str = SIDE_CHAT) -
     """Click a model pinned to the sidebar, which opens a new chat on it in a tab, in front (#35160)."""
     sidebar = open_sidebar(page)
     before = _panel_ids(page)
+    beside = _page_chat_id(page)
     sidebar.get_by_role("link", name=re.compile(rf"\b{re.escape(model_name)}$")).click()
-    surface = _new_panel(page, before, place)
+    surface = _new_panel(page, before, place, beside)
     close_sidebar(page)
     return surface
 
@@ -308,8 +375,9 @@ def open_pinned_model_tab(page: Page, model_name: str, place: str = SIDE_CHAT) -
 def open_chat_tab_from(page: Page, link: Locator, place: str = SIDE_CHAT) -> ChatSurface:
     """Click `link`, which opens a new chat in a tab (a `/?model=` link since da850248d)."""
     before = _panel_ids(page)
+    beside = _page_chat_id(page)
     link.click()
-    return _new_panel(page, before, place)
+    return _new_panel(page, before, place, beside)
 
 
 def reload_beside_the_chat(side: ChatSurface, title: str) -> ChatSurface:
@@ -320,7 +388,7 @@ def reload_beside_the_chat(side: ChatSurface, title: str) -> ChatSurface:
     tab = page.get_by_role("tab", name=side_tab_name(title))
     expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     tab.click()
-    return side_chat_titled(page, title, side.place)
+    return side_chat_titled(page, title, side.place, side.beside_chat_id)
 
 
 # --- the places a test body can run in ----------------------------------------------------------
@@ -432,6 +500,17 @@ class ChatOpener:
         return side, question
 
 
+def _account_chats(page: Page) -> list[dict]:
+    """The chats of the page's account, as its sidebar lists them."""
+    token = page.evaluate("localStorage.token")
+    listed = page.request.get(
+        loopback_url(page.url, "/api/v1/chats/?include_pinned=true&include_folders=true"),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.ok, f"the chat list answered {listed.status}: {listed.text()}"
+    return listed.json()
+
+
 def _title_of(actor, chat_id: str) -> str:
     with actor.client() as client:
         found = client.get(f"/api/v1/chats/{chat_id}")
@@ -503,7 +582,7 @@ def _after_switching(opener: ChatOpener, actor, chat_id, context_options) -> Cha
     tab = page.get_by_role("tab", name=side_tab_name(title))
     expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
     tab.click()
-    return side_chat_titled(page, title, opener.place)
+    return side_chat_titled(page, title, opener.place, side.beside_chat_id)
 
 
 def _admin_side(opener: ChatOpener, actor, chat_id, context_options) -> ChatSurface:

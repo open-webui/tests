@@ -100,13 +100,12 @@ def test_a_fork_from_the_first_reply_holds_only_the_first_turn(two_turns, upstre
     made but never opened (open-webui/open-webui#34182)."""
     chat = two_turns
     page = chat.page
-    original_url = page.url
+    original_id = chat.chat_id
     first_reply = _shown(_whole_reply(_turns_of_this_chat(chat).first))
     first_reply.get_by_role("button", name="Fork chat").click()
 
-    expect(page, "the fork did not open").not_to_have_url(original_url)
+    expect(_turns_of_this_chat(chat), "the fork did not open").to_have_count(1)
     expect_reply(chat, "Lisbon is the capital.")
-    expect(_turns_of_this_chat(chat)).to_have_count(1)
     expect(conversation(chat).get_by_text("About ten million people.")).to_have_count(0)
 
     upstream.queue(reply.text("Porto is the second city.", match=reply.answering("second city")))
@@ -116,7 +115,7 @@ def test_a_fork_from_the_first_reply_holds_only_the_first_turn(two_turns, upstre
     assert ("assistant", "Lisbon is the capital.") in sent
     assert not any("ten million" in content for _, content in sent), sent
 
-    page.goto(original_url)
+    page.goto(f"/c/{original_id}")
     original = main_chat(page)
     expect_reply(original, "About ten million people.")
     expect(_turns_of_this_chat(original)).to_have_count(2)

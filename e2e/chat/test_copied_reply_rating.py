@@ -96,8 +96,7 @@ def test_a_copy_of_a_rated_reply_starts_unrated(rated_reply):
     """In a side chat: open-webui/open-webui#34014."""
     account, chat = rated_reply
     save_as_copy(chat, COPY)
-    # the address follows the selected tab, which is the chat's own
-    chat_id = chat.page.url.rsplit("/", 1)[-1]
+    chat_id = chat.chat_id
 
     with account.client() as client:
         copy = stored_message(client, chat_id, COPY)
@@ -113,8 +112,7 @@ def test_rating_the_copy_leaves_the_originals_feedback_alone(rated_reply):
     """In a side chat: open-webui/open-webui#34014."""
     account, chat = rated_reply
     save_as_copy(chat, COPY)
-    # the address follows the selected tab, which is the chat's own
-    chat_id = chat.page.url.rsplit("/", 1)[-1]
+    chat_id = chat.chat_id
 
     written = rate(chat, "Bad Response")
 
