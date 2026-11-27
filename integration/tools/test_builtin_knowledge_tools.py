@@ -38,7 +38,12 @@ import pytest
 
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.python_tools import EVERYONE_READS
-from harness.tool_calls import offered_tools, run_tool, without_citation_context
+from harness.tool_calls import (
+    offered_tools,
+    run_tool,
+    without_citation_context,
+    without_paragraph_markers,
+)
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG
 
@@ -415,7 +420,8 @@ LONG_LINES = [f"line {number}: {'heron ' * 9}" for number in range(1, 2501)]
 
 def test_a_line_range_read_stops_at_the_read_size_limit(admin, file_reader, preserve, upstream):
     # a whole-file line range once returned every line and overflowed the context (#33607),
-    # and citation markers added after the cap pushed it over again (#35159)
+    # and citation markers added after the cap pushed it over again (#35161); the limit is
+    # on the file's own text, so the `[N#P] ` markers are not counted
     tag = uuid.uuid4().hex[:8]
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client, knowledge_base(client, f"Long {tag}") as knowledge_id:
@@ -438,12 +444,13 @@ def test_a_line_range_read_stops_at_the_read_size_limit(admin, file_reader, pres
 
     assert len("\n".join(LONG_LINES)) > READ_LIMIT
     for tool, read in reads.items():
-        assert len(read["content"]) <= READ_LIMIT, (
-            f"{tool} returned {len(read['content'])} characters for a line range"
+        text = without_paragraph_markers(read["content"], "1")
+        assert len(text) <= READ_LIMIT, (
+            f"{tool} returned {len(text)} characters of the file for a line range"
         )
         last_shown = read["next_start_line"] - 1
         assert read["truncated"] and read["showing_lines"] == f"1-{last_shown}", read.keys()
-        assert read["content"].endswith(f"\n{last_shown}: {LONG_LINES[last_shown - 1]}"), (
+        assert text.endswith(f"\n{last_shown}: {LONG_LINES[last_shown - 1]}"), (
             f"{tool} did not end on whole line {last_shown}"
         )
 

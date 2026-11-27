@@ -13,6 +13,8 @@ memories, preloaded skills) as hidden tool calls of its own at the start of a re
 `upstream.conversation` does for a provider payload. A citing tool's result (knowledge, file and
 web tools) carries its source list in the citations template after it (since dev 8e2ba2937,
 template reworded in cc2e033b0); `without_citation_context(result)` gives the tool's own result.
+Cited text carries an `[N#P] ` marker in front of each paragraph (since dev 376e77cee);
+`without_paragraph_markers(text, source_id)` drops exactly those of one source.
 With the Skills tool on, the skill list comes as a `list_available_skills` result and a selected
 or mentioned skill as a preloaded `view_skill` result (since dev 6e8a6c446); `skill_list` and
 `viewed_skills` read them.
@@ -21,6 +23,7 @@ or mentioned skill as a preloaded `view_skill` result (since dev 6e8a6c446); `sk
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 import httpx
@@ -73,6 +76,11 @@ def viewed_skills(body: dict) -> dict[str, dict]:
     """The skills `view_skill` returned in a provider payload, preloaded or called, by id."""
     results = [json.loads(result) for result in reply.context_results(body, "view_skill")]
     return {skill["id"]: skill for skill in results if "id" in skill}
+
+
+def without_paragraph_markers(text: str, source_id: str) -> str:
+    """`text` without the `[source_id#P] ` marker at the start of each of its paragraphs."""
+    return re.sub(rf"(?m)^\[{re.escape(source_id)}#\d+\] ", "", text)
 
 
 def without_citation_context(result: str) -> str:

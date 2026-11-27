@@ -57,6 +57,7 @@ from harness.keyword_embeddings import (
 )
 from harness.knowledge_bases import add_text_file, knowledge_base
 from harness.listener import ReceivedRequest, json_answer, listening
+from harness.tool_calls import without_paragraph_markers
 from harness.web_retrieval import RETRIEVAL_CONFIG
 
 pytestmark = [
@@ -161,7 +162,7 @@ def source_text(sent: str, filename: str) -> str:
     sources = [match for match in SOURCE_RE.finditer(sent) if name in match["attributes"]]
     assert len(sources) == 1, f"expected {filename} as one source in the context: {sent}"
     source_id = re.search(r'\bid="([^"]+)"', sources[0]["attributes"])[1]
-    return re.sub(rf"(?m)^\[{re.escape(source_id)}#\d+\] ", "", sources[0]["body"])
+    return without_paragraph_markers(sources[0]["body"], source_id)
 
 
 def assert_found_files_kept_out_of(logged: str) -> None:
