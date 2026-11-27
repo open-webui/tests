@@ -148,7 +148,7 @@ def open_sidebar(page: Page) -> Locator:
 
 def open_editor(page: Page, menu: Locator, name: str) -> Locator:
     menu.get_by_role("menuitem", name="Edit").click()
-    editor = page.get_by_role("dialog").filter(has_text="Edit Folder")
+    editor = page.get_by_role("dialog", name="Edit Folder")
     # the folder loads after the dialog opens, and with it the Access button
     expect(editor.get_by_placeholder("Enter folder name")).to_have_value(name)
     return editor

@@ -14,10 +14,11 @@ Access in its folder editor. Since
 a call they left open in a chat of their own closes when they go back to the shared chat.
 
 The people with the chat open see each other's
-picture in the top bar (never their own), a picture opens that person's profile card, past three
-people the rest sit in a Collaborators list whose entries open the card too, and the picture goes
-once the other person leaves the chat. Since dev 98f94057b a model someone replying picks is saved
-to the chat and still picked when they reopen it, where it used to be dropped.
+picture in the top bar (never their own), a picture opens that person's profile card (the Profile
+dialog since dev 4b648ec4e), past three people the rest sit in a Collaborators list whose entries
+open the card too, and the picture goes once the other person leaves the chat. Since dev 98f94057b
+a model someone replying picks is saved to the chat and still picked when they reopen it, where it
+used to be dropped.
 
 Two tests are red on dev b5a20423e and name the bug. Opening an Allow replies link sends the
 account to the home page, or leaves an empty new chat on the chat's address: the shared page
@@ -368,7 +369,7 @@ def _present(page: Page, person) -> Locator:
 
 
 def _profile_card(page: Page) -> Locator:
-    return page.locator("[data-link-preview-content]")
+    return page.get_by_role("dialog", name="Profile")
 
 
 def test_people_with_the_chat_open_see_each_others_picture_until_one_leaves(
@@ -387,7 +388,7 @@ def test_people_with_the_chat_open_see_each_others_picture_until_one_leaves(
     expect(_present(member_page, member)).to_have_count(0)
 
     _present(owner_page, member).click()
-    expect(_profile_card(owner_page).get_by_title(member.name)).to_be_visible()
+    expect(_profile_card(owner_page).get_by_text(member.name, exact=True)).to_be_visible()
 
     member_page.get_by_role("link", name="New Chat").first.click()
     expect(chat_input(member_page)).to_be_visible()
@@ -423,7 +424,7 @@ def test_the_collaborators_list_names_everyone_past_three_and_opens_their_card(
         expect(collaborators.get_by_role("button", name=owner.name, exact=True)).to_have_count(0)
 
         collaborators.get_by_role("button", name=crew[-1].name, exact=True).click()
-        expect(_profile_card(owner_page).get_by_title(crew[-1].name)).to_be_visible()
+        expect(_profile_card(owner_page).get_by_text(crew[-1].name, exact=True)).to_be_visible()
 
 
 # ------------------------------------------------------------------ folders shared with replies
@@ -499,7 +500,7 @@ def _folder_page_menu(page: Page, folder_id: str) -> Locator:
 
 def _folder_editor(page: Page, menu: Locator, name: str) -> Locator:
     menu.get_by_role("menuitem", name="Edit").click()
-    editor = page.get_by_role("dialog").filter(has_text="Edit Folder")
+    editor = page.get_by_role("dialog", name="Edit Folder")
     # the folder loads after the dialog opens, and with it the Access button
     expect(editor.get_by_placeholder("Enter folder name")).to_have_value(name)
     return editor
