@@ -86,11 +86,12 @@ terminal turning the chat's off (the kept-before test). With the Files tab and t
 one working folder, as before, the browsing test fails as well.
 
 Since dev 1fbb42be9 a folder's machine is where its chats run: the folder dialog names it Machine,
-a folder page on a machine opens its directory in a Files tab in front of the folder's own tab,
-and in a folder chat the Machine menu is disabled, so a model with another default terminal
-leaves the chat on the folder's terminal and directory (the turned-off-or-changed test this
-replaced pinned open-webui/open-webui#33973). The retargeted folder tests pass on the dev
-9d19883f1 build.
+a folder page on a machine opens its directory in a Files tab in front of the folder's own tab
+(in the Files section of the folder page, with the chat input below it, since 24f49bf46), and in
+a folder chat the Machine menu is disabled (since 8103755d4 it opens for looking only, with no
+terminal in it to pick), so a model with another default terminal leaves the chat on the folder's
+terminal and directory (the turned-off-or-changed test this replaced pinned
+open-webui/open-webui#33973). The retargeted folder tests pass on the dev 9d19883f1 build.
 
 Instant first message (0.13.4, c26c928ce): a new chat in a picked folder is created and opened in
 that folder when its first message is sent, and the message shows at once meanwhile; before, it
@@ -126,7 +127,7 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID, conversation
 from utils.cached_chat import ask, calling, choose_terminal
 from utils.chat_surface import show_the_folders_chat, start_on_folder_page
-from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, expect_reply, send
+from utils.chat_ui import REPLY_TIMEOUT_MS, chat_input, close_menu, expect_reply, send
 from utils.chat_ui import conversation as shown_conversation
 from utils.model_editor import choose_model_default_terminal, save
 from utils.model_selector import SELECTOR_BUTTON, select_model
@@ -137,6 +138,7 @@ from utils.sidebar_folders import (
     open_advanced,
 )
 from utils.tooltips import tooltip_button
+from utils.user_terminals import listed_terminal, open_terminal_menu
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -575,10 +577,18 @@ def spare_model(admin, spare_terminal):
         client.post("/api/v1/models/model/delete", json={"id": model_id})
 
 
+def expect_no_other_terminal_to_pick(page: Page) -> None:
+    """The folder chat's Machine menu reads the folder's terminal and offers no terminal to pick."""
+    open_terminal_menu(page, picked=TERMINAL)
+    expect(listed_terminal(page, TERMINAL)).to_be_disabled()
+    expect(listed_terminal(page, SPARE)).to_be_disabled()
+    close_menu(page)
+
+
 def test_a_folder_chat_stays_on_the_folders_terminal_when_the_model_changes(
     page_for, make_user, terminal, spare_model, open_terminal, upstream
 ):
-    """1fbb42be9: a folder's chats run on its machine, so the Machine menu cannot change it.
+    """1fbb42be9: a folder's chats run on its machine, so no other terminal can be picked.
 
     Before, a terminal turned off or changed in a folder chat had to stay so when the model
     changed (open-webui/open-webui#33973; the folder's terminal came back).
@@ -590,12 +600,12 @@ def test_a_folder_chat_stays_on_the_folders_terminal_when_the_model_changes(
     )
     page = open_folder_page(person, page_for, folder_id, name, folder)
     composer = page.get_by_role("main")
-    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_disabled()
+    expect_no_other_terminal_to_pick(page)
 
     select_model(page, spare_model["name"])
 
     expect(page.get_by_role("button", name=SELECTOR_BUTTON)).to_contain_text(spare_model["name"])
-    expect(composer.get_by_role("button", name=TERMINAL, exact=True)).to_be_disabled()
+    expect_no_other_terminal_to_pick(page)
     expect(composer.get_by_role("button", name=SPARE, exact=True)).to_have_count(0)
     assert where_pwd_ran(page, upstream) == str(folder), (
         "the folder chat on a model with another default terminal left the folder's terminal"

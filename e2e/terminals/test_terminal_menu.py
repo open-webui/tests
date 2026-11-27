@@ -15,9 +15,11 @@ another is picked (#34651; before, it was unpicked).
 When the input is too narrow for the menu's button to show the terminal's name, the button keeps
 only its icon and the chat input's More menu offers the menu as well (e4b969f60; before, the
 button left the input).
-While a reply is being written, the Machine button and the working directory button beside it
-cannot be used; once it is written both can be changed again, also in a chat that already has
-messages (a518ff163, 0.13.3; before, both stayed locked after the first message).
+While a reply is being written, no other terminal can be picked and the working directory
+button beside the Machine button cannot be used; the Machine menu still opens, for looking only
+(7b37a6224; before, its button could not be clicked). Once the reply is written both can be
+changed again, also in a chat that already has messages (a518ff163, 0.13.3; before, both stayed
+locked after the first message).
 
 A local fake terminal stands for the admin's connection; the deleted terminal is one on the
 real Terminals service on Docker (`harness.terminals`), and its test skips without the images or
@@ -304,8 +306,8 @@ def test_the_terminal_and_its_folder_cannot_be_changed_while_a_reply_is_written(
     page_for, make_user, connect, upstream
 ):
     person = make_user()
-    harbour, _ = _names()
-    connect([harbour], person)
+    harbour, quarry = _names()
+    connect([harbour, quarry], person)
     page = page_for(person)
     open_terminal_menu(page)
     _pick(page, harbour, shown=harbour)
@@ -325,15 +327,20 @@ def test_the_terminal_and_its_folder_cannot_be_changed_while_a_reply_is_written(
     try:
         send(page, question)
         expect(last_reply(page)).to_contain_text("Still writing")
-        expect(_terminal_button(page, harbour)).to_be_disabled()
+        # since 7b37a6224 the menu opens for looking only
+        open_terminal_menu(page, picked=harbour)
+        expect(listed_terminal(page, harbour)).to_be_disabled()
+        expect(listed_terminal(page, quarry)).to_be_disabled()
+        close_menu(page)
         expect(folder).to_be_disabled()
     finally:
         released.set()
 
     expect_reply(page, "and done now.")
     # a518ff163: once the reply is written both can be changed again
-    expect(_terminal_button(page, harbour)).to_be_enabled()
     expect(folder).to_be_enabled()
+    open_terminal_menu(page, picked=harbour)
+    _pick(page, quarry, shown=quarry)
 
 
 def test_a_picked_terminal_that_is_deleted_reads_unavailable_terminal_until_another_is_picked(

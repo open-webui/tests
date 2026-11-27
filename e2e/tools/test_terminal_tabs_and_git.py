@@ -106,7 +106,8 @@ worktree opened in the Files tab, Fetch then Pull from the sync button, the Hist
 commit's changes, its unpushed mark and Copy commit hash, the link to the repository's page
 without credentials, Git unavailable with Retry, live updates followed and their loss shown, and
 the diff of an open changed file from its toolbar. The New tab menu and the panel offer only
-what the picked terminal says it has; a file opened again keeps its one tab, the arrow keys,
+what the picked terminal says it has, the menu's Git (since 2d4a3f622) only on a terminal with
+Git whose folder is in a repository; a file opened again keeps its one tab, the arrow keys,
 Home and End step through the tabs and Alt+Shift+Arrow moves one and a phone opens the tabs from
 the Tabs button. A person's own terminal, let go when they lost the permission to use one, was
 removed from Open WebUI in 44d55bd0f and 4720ff19e, and its test with it.
@@ -1514,7 +1515,16 @@ def test_the_new_tab_menu_and_the_git_panel_offer_what_the_picked_terminal_can_d
     expect(files.get_by_text("workstation-notes.md", exact=True)).to_be_visible()
     _expect_new_tab_entries(
         page,
-        ["Files", "New File", "New Terminal", "Voice Note", "Browser", "Desktop", "New Chat"],
+        [
+            "Files",
+            "Git",
+            "New File",
+            "New Terminal",
+            "Voice Note",
+            "Browser",
+            "Desktop",
+            "New Chat",
+        ],
     )
     expect(git.get_by_role("button", name="Switch branch")).to_have_text("main")
     _wait_until(lambda: _watched(workstation))

@@ -3,16 +3,17 @@
 New on dev after 0.13.3 (f4cf2ca0c, titled `refac`). Every terminal in the Terminal menu has a More
 options button. For a terminal the person only uses (a plain Open Terminal behind an admin
 connection, a terminal on a Terminals connection that is only shared with them) it offers System
-info and View files. View files opens "Files on <name>", a file browser of that terminal, and
-leaves the chat without a terminal picked. For a
+info, View files and Sessions (since f0acd8e77). View files opens "Files on <name>", a file browser
+of that terminal, and leaves the chat without a terminal picked; Sessions opens "Sessions on
+<name>", the shells and commands running on that terminal. For a
 terminal the person manages (on a Terminals connection they may write to) the menu first reads the
 machine the open chat would use: without a running machine it offers Start and Terminal settings;
-with one it offers Restart and Stop, which ask first, System info, View files and Terminal
-settings. Each action says in a toast what it does and that it is done. When the machine's state
-cannot be read the menu offers what it offers for a machine that is not running. A terminal with a
-machine per chat has no machine before the chat is saved, so a new chat offers Terminal settings
-alone, and in a saved chat the entries are about that chat's machine. An open System info window
-closes when the person loses the terminal.
+with one it offers Restart and Stop, which ask first, System info, View files, Sessions and
+Terminal settings. Each action says in a toast what it does and that it is done. When the
+machine's state cannot be read the menu offers what it offers for a machine that is not running.
+A terminal with a machine per chat has no machine before the chat is saved, so a new chat offers
+Terminal settings alone, and in a saved chat the entries are about that chat's machine. An open
+System info window closes when the person loses the terminal.
 
 A local fake terminal stands for the plain terminal. The real Terminals service
 runs on Docker (`harness.terminals`); without its images or Docker those tests skip. What a
@@ -72,13 +73,21 @@ LISTINGS = {
     LOGS: [{"name": "tide.txt", "type": "file", "size": 16}],
 }
 SPEC = {"openapi": "3.0.0", "info": {"title": "Open Terminal", "version": "1"}, "paths": {}}
-USES = ["System info", "View files"]
+USES = ["System info", "View files", "Sessions"]
 NOT_RUNNING = ["Start", "Machine settings"]
-RUNNING = ["Restart", "Stop", "System info", "View files", "Machine settings"]
+RUNNING = ["Restart", "Stop", "System info", "View files", "Sessions", "Machine settings"]
 STOP_MESSAGE = (
     "Running work stops. Files are kept, and the instance starts again when it is next used."
 )
 RESTART_MESSAGE = "Running work stops and the instance starts again. Files are kept."
+TIDE_WATCH = {
+    "kind": "command",
+    "id": "tide-watch",
+    "chat_id": "",
+    "command": "tail -f logs/tide.txt",
+    "pid": 4242,
+    "created_at": "2026-01-01T06:00:00Z",
+}
 
 
 def _listing(request):
@@ -122,6 +131,7 @@ def fake_terminal():
         server.route("GET", "/files/list", _listing)
         server.route("GET", "/files/read", json_answer({"content": "high at six"}))
         server.route("GET", "/skills", json_answer([]))
+        server.route("GET", "/sessions", json_answer([TIDE_WATCH]))
         yield server
 
 
@@ -226,7 +236,13 @@ def test_a_plain_terminal_offers_its_system_info_and_files_and_nothing_to_manage
     expect(composer.get_by_role("button", name=name, exact=True)).to_have_count(0)
 
     _choose(page, name, "System info", offered=USES)
-    expect(_system_info_dialog(page, name)).to_contain_text(fake_terminal.hostname)
+    info = _system_info_dialog(page, name)
+    expect(info).to_contain_text(fake_terminal.hostname)
+    _close(info)
+
+    _choose(page, name, "Sessions", offered=USES)
+    sessions = page.get_by_role("dialog", name=f"Sessions on {name}")
+    expect(sessions.get_by_role("listitem")).to_have_text([re.compile(r"tail -f logs/tide\.txt")])
 
 
 def test_an_open_system_info_closes_when_the_person_loses_the_terminal(

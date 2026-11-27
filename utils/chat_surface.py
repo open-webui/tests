@@ -222,16 +222,23 @@ def ask_aside(
 def show_the_folders_chat(page: Page, folder_name: str, directory: str | None = None) -> None:
     """Show the chat input of a folder page that just opened.
 
-    A folder on a machine opens on its `directory` (or the machine's home) in a Files tab in
-    front (1fbb42be9); the folder's own tab, named after it, holds the chat input."""
+    A folder on a machine opens its page on the Files section, browsing its `directory` (or the
+    machine's home), with the chat input below it (24f49bf46; a Files tab in front of the folder's
+    own tab before, 1fbb42be9)."""
+    folder = page.get_by_role("main").get_by_role("region", name="Folder")
+    expect(folder.get_by_role("button", name=folder_name, exact=True)).to_be_visible(
+        timeout=REPLY_TIMEOUT_MS
+    )
     if directory is not None:
-        strip = page.get_by_role("tablist", name="Tabs")
-        files = strip.get_by_role(
-            "tab", name=directory.rstrip("/").rsplit("/", 1)[-1] or "Home", exact=True
+        # the folder page reads the folder and its machine before it shows Files, a cold load
+        expect(folder.get_by_role("button", name="Switch section")).to_have_text(
+            "Files", timeout=REPLY_TIMEOUT_MS
         )
-        # the folder page reads the folder and its machine before it opens Files, a cold load
-        expect(files).to_have_attribute("aria-selected", "true", timeout=REPLY_TIMEOUT_MS)
-        strip.get_by_role("tab", name=folder_name, exact=True).click()
+        path = folder.get_by_role("region", name="File browser").get_by_role("textbox", name="Path")
+        shown = directory.rstrip("/").rsplit("/", 1)[-1] or "Home"
+        expect(path.get_by_role("button", name=shown, exact=True)).to_be_visible(
+            timeout=REPLY_TIMEOUT_MS
+        )
     expect(main_chat(page).input).to_be_visible(timeout=REPLY_TIMEOUT_MS)
 
 
