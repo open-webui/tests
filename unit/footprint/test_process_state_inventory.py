@@ -15,9 +15,9 @@ caches such as aiocache's `@cached`.
 The ratchet is one-directional: a new name fails, a name upstream removes passes. Names are
 recorded without their file, so moving a container to another module is not a new one.
 
-Unpinned: bounds as read on upstream dev at v0.11.3 (a253bf0c3), updated for #29983. The task
-registry, the warned-URL set and the plugin source caches have behavioural tests in
-`integration/footprint/`, which also finds the per-chat lock map growing (red); the timer lock
+Unpinned: bounds as read on upstream dev at v0.11.3 (a253bf0c3), updated for #29983 and
+#35119. The task registry, the warned-URL set and the plugin source caches have behavioural tests
+in `integration/footprint/`, which also finds the per-chat lock map growing (red); the timer lock
 map has none.
 Discriminates: a module-level `{}` or a new lazily created `app.state` cache added to a copy of
 dev bbfa876af fails; deleting a recorded container from the copy passes.
@@ -46,6 +46,8 @@ KNOWN = {
     "_ssh_tasks": "routers/machines.py, SSH machine set-ups in flight, discarded when done",
     "_temporary_chat_owners": "utils/chat.py, one per temporary chat, expired (24 h) swept on add",
     "MODELS": "socket/main.py, never written after import; app.state.MODELS is rebound",
+    "OPENAI_MODELS": "socket/main.py, only cleared; app.state.OPENAI_MODELS replaced per refresh",
+    "OLLAMA_MODELS": "socket/main.py, only cleared; app.state.OLLAMA_MODELS replaced per refresh",
     "EVENT_QUEUES": "socket/main.py, one queue per active stream channel, popped on its end",
     "LOCAL_AUTHENTICATED_SIDS": "socket/main.py, sockets on this worker, discarded on disconnect",
     "_CONNECTION_POOL": "utils/redis.py, one entry per distinct connection parameter tuple",
