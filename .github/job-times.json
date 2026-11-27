@@ -1,7 +1,7 @@
 {
     "regression": {
         "durations": 25,
-        "e2e": 1948,
+        "e2e": 2220,
         "e2e-build": 320,
         "frontend": 85,
         "integration": 2366,
