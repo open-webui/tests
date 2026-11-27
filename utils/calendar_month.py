@@ -14,7 +14,7 @@ DAY_NAME = re.compile(r"^\w+, \w+ \d{1,2}, \d{4}$")
 
 
 def day_button(page: Page, day: dt.date) -> Locator:
-    """The button that fills the day's square and starts an event on that day."""
+    """The button that fills the day's square and opens that day in the day view."""
     return page.get_by_role("button", name=f"{day:%A}, {day:%B} {day.day}, {day.year}", exact=True)
 
 

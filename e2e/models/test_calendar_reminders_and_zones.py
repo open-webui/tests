@@ -9,14 +9,17 @@
 * Turning a repeating event back to No Repeat leaves only its first day; deleting a repeating event
   from one of its occurrences removes the whole series.
 * An event put on a calendar made in the sidebar, picked in the editor's Calendar field, wears
-  that calendar's colour; the week view puts an event in the column of the day it starts.
+  that calendar's colour; the week view puts an event in the column and hour of the day it
+  starts, and draws one that runs past midnight on both days.
 
 Discriminates: in a backend copy that dropped the reminder choice on save the reopened editor went
 back to 10 minutes before and the None event raised a toast; with the reminder alert never sent
 the toast test went red; with the update ignoring a removed repeat the event kept repeating, and
 with delete leaving the event in place the series test went red. In a frontend copy with the
 event chip's time written in UTC, the chip coloured without its calendar's colour and the week
-view's hours taken from the following day, the zone, colour and week-view tests went red.
+view's hours taken from the following day, the zone, colour and week-view tests went red. The
+week-view test is also red on dev c63565927, whose week view drew an event running past midnight
+on its first day only.
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ from harness.actors import Actor
 from harness.backends import wait_until
 from harness.calendar_api import (
     DAY_NS,
-    HOUR_NS,
     NO_REMINDER,
     create_event,
     default_calendar_id,
@@ -41,6 +43,7 @@ from harness.calendar_api import (
     to_ns,
 )
 from utils.calendar_month import days_showing
+from utils.calendar_time_grid import hour_slot
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
 
@@ -113,19 +116,42 @@ def _make_in_editor(
     _save(editor, "Create")
 
 
-def _event(owner: Actor, title: str, start: dt.datetime, calendar_id: str | None = None, **fields):
+def _event(
+    owner: Actor,
+    title: str,
+    start: dt.datetime,
+    calendar_id: str | None = None,
+    length: dt.timedelta = dt.timedelta(hours=1),
+    **fields,
+):
     with owner.client() as client:
         created = create_event(
             client,
             calendar_id or default_calendar_id(client),
             title=title,
             start_at=to_ns(start),
-            end_at=to_ns(start) + HOUR_NS,
+            end_at=to_ns(start + length),
             meta=NO_REMINDER,
             **fields,
         )
     assert created.status_code == 200, created.text
     return created.json()["id"]
+
+
+def _at(day: dt.date, hour: int, minute: int) -> dt.datetime:
+    return dt.datetime.combine(day, dt.time(hour, minute)).astimezone()
+
+
+def _expect_in_slot(chip: Locator, slot: Locator, what: str) -> None:
+    """The chip's top left corner lies in the slot: the slot's day column and its hour row."""
+    chip_box, slot_box = chip.bounding_box(), slot.bounding_box()
+    assert chip_box and slot_box, f"{what} or its hour slot is not drawn"
+    in_column = slot_box["x"] <= chip_box["x"] < slot_box["x"] + slot_box["width"]
+    in_hour = slot_box["y"] <= chip_box["y"] < slot_box["y"] + slot_box["height"]
+    assert in_column and in_hour, (
+        f"{what} is drawn at {chip_box}, outside the {slot.get_attribute('aria-label')} slot "
+        f"at {slot_box}"
+    )
 
 
 def _default_calendar(owner: Actor) -> str:
@@ -309,28 +335,27 @@ def test_an_event_put_on_a_new_calendar_in_the_editor_wears_its_colour(page_for,
 
 def test_the_week_view_puts_an_event_in_the_column_of_the_day_it_starts(page_for, make_user):
     owner = make_user()
-    late, early = _title("Late film"), _title("Early run")
+    late, early, night = _title("Late film"), _title("Early run"), _title("Night shift")
     today = dt.date.today()
     sunday = today - dt.timedelta(days=(today.weekday() + 1) % 7)
     tuesday = sunday + dt.timedelta(days=2)
-    _event(owner, late, dt.datetime.combine(tuesday, dt.time(23, 30)).astimezone())
-    _event(
-        owner,
-        early,
-        dt.datetime.combine(tuesday + dt.timedelta(days=1), dt.time(0, 30)).astimezone(),
-    )
+    wednesday = tuesday + dt.timedelta(days=1)
+    quarter_hour = dt.timedelta(minutes=15)
+    _event(owner, late, _at(tuesday, 23, 30), length=quarter_hour)
+    _event(owner, early, _at(wednesday, 0, 30), length=quarter_hour)
+    _event(owner, night, _at(tuesday, 22, 15), length=dt.timedelta(hours=2, minutes=30))
     page = page_for(owner, path="/calendar")
     expect(page.get_by_role("button", name="Month", exact=True)).to_be_visible()
     page.get_by_role("button", name="Month", exact=True).click()
     page.get_by_role("button", name="Week", exact=True).click()
-    expect(page.get_by_text("1 AM", exact=True)).to_be_visible()
+    expect(hour_slot(page, tuesday, 1)).to_be_visible()
 
-    expect(_chip(page, late)).to_be_visible()
-    expect(_chip(page, early)).to_be_visible()
-    late_box, early_box = _chip(page, late).bounding_box(), _chip(page, early).bounding_box()
-    tuesday_box = page.get_by_text("Tue", exact=True).bounding_box()
-    wednesday_box = page.get_by_text("Wed", exact=True).bounding_box()
-    assert late_box and early_box and tuesday_box and wednesday_box
-    assert tuesday_box["x"] <= late_box["x"] < wednesday_box["x"]
-    assert early_box["x"] >= wednesday_box["x"] - tuesday_box["width"]
-    assert late_box["y"] > early_box["y"]
+    expect(_chip(page, late)).to_have_count(1)
+    expect(_chip(page, early)).to_have_count(1)
+    _expect_in_slot(_chip(page, late), hour_slot(page, tuesday, 23), "the late film")
+    _expect_in_slot(_chip(page, early), hour_slot(page, wednesday, 0), "the early run")
+
+    # an event running past midnight is drawn on the day it starts and the day it ends
+    expect(_chip(page, night)).to_have_count(2)
+    _expect_in_slot(_chip(page, night).first, hour_slot(page, tuesday, 22), "the night shift")
+    _expect_in_slot(_chip(page, night).last, hour_slot(page, wednesday, 0), "the night shift")

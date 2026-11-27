@@ -2,7 +2,8 @@
 
 * The header's Create opens the event editor; the title, day, times, location and description
   are saved as typed, in the browser's local time. An all-day event runs from midnight to the end
-  of the day, and clicking an empty day starts an event at nine that day.
+  of the day. Clicking an empty day in the month view opens that day, where clicking its nine
+  o'clock slot starts an event at nine that day.
 * Opening an event lets its owner change it or delete it, and the page shows the result.
 * The month, week and day views each show the events of the days they cover, and the arrows
   step the day view to the next day.
@@ -28,16 +29,17 @@
   home before.
 
 Discriminates: in a frontend build with the editor dropping the location on create, the all-day
-start taken from the time field, the edit saving the old title, the delete never sent, a clicked
-day starting at eight, the week view placing events by hour alone, "Weekly" saved as every other
-week, the page no longer sending the browser's zone and the sidebar toggle ignored, the matching
-test went red and the rest stayed green; in a backend copy with the calendar tool reading times
-as UTC the model's event test went red, and with calendars listed to their owners only the
-sharing test went red at the reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
+start taken from the time field, the edit saving the old title, the delete never sent, the week
+view placing events by hour alone, "Weekly" saved as every other week, the page no longer sending
+the browser's zone and the sidebar toggle ignored, the matching test went red and the rest
+stayed green; in a backend copy with the calendar tool reading times as UTC the model's event
+test went red, and with calendars listed to their owners only the sharing test went red at the
+reader. The occurrence test fails on dev 176d31d1d, before PR #30971.
 The late evening test is red on dev ebc6add67 (open-webui/open-webui#31994, fixed by 69a1c5732).
 Both refusal tests are red on dev ca8f451cc, whose page shows the calendar
 (open-webui/open-webui#32834). The rename test passes on dev 485103cde and fails in a frontend build
-whose edit dialog creates a new calendar instead of saving the one it opened.
+whose edit dialog creates a new calendar instead of saving the one it opened. The empty day test
+is red on dev c63565927, whose month view opened the editor on a clicked day instead of the day.
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ from harness.calendar_api import (
 )
 from harness.tool_calls import run_tool
 from utils.calendar_month import day_button, days_showing
+from utils.calendar_time_grid import hour_slot
 from utils.page_tabs import expect_no_permission
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -230,12 +233,17 @@ def test_an_event_created_late_in_the_evening_ends_on_its_own_day(page_for, make
     assert _days_showing(page, title) == [21]
 
 
-def test_clicking_an_empty_day_starts_an_event_at_nine_that_day(page_for, make_user):
+def test_clicking_an_empty_day_opens_it_and_its_nine_oclock_slot_starts_an_event(
+    page_for, make_user
+):
     owner = make_user()
     title = _title("Call")
+    day = _this_month(20, 9).date()
     page = page_for(owner, path="/calendar")
 
-    day_button(page, _this_month(20, 9).date()).click()
+    day_button(page, day).click()
+    expect(page.get_by_text(day.strftime("%a, %B %-d, %Y"), exact=True)).to_be_visible()
+    hour_slot(page, day, 9).click()
     editor = page.get_by_role("dialog")
     editor.get_by_placeholder("Event title").fill(title)
     _no_reminder(editor)
@@ -303,7 +311,7 @@ def test_the_week_and_day_views_show_only_their_own_days(page_for, make_user):
     expect(_chip(page, today_title)).to_be_visible()
 
     _switch_view(page, "Month", "Week")
-    expect(page.get_by_text("1 AM", exact=True)).to_be_visible()
+    expect(hour_slot(page, today.date(), 1)).to_be_visible()
     expect(_chip(page, today_title)).to_have_count(1)
 
     _switch_view(page, "Week", "Day")
