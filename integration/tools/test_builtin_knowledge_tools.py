@@ -414,7 +414,8 @@ LONG_LINES = [f"line {number}: {'heron ' * 9}" for number in range(1, 2501)]
 
 
 def test_a_line_range_read_stops_at_the_read_size_limit(admin, file_reader, preserve, upstream):
-    # a whole-file line range once returned every line and overflowed the context (#33607)
+    # a whole-file line range once returned every line and overflowed the context (#33607),
+    # and citation markers added after the cap pushed it over again (#35159)
     tag = uuid.uuid4().hex[:8]
     preserve(RETRIEVAL_CONFIG)
     with admin.client() as client, knowledge_base(client, f"Long {tag}") as knowledge_id:
