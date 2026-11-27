@@ -67,7 +67,13 @@ from harness.terminal_server import TERMINAL_SERVERS_CONFIG, configure_terminals
 from harness.upstream import MOCK_MODEL_ID
 from harness.web_retrieval import RETRIEVAL_CONFIG, save_web_settings, serve_search_results
 from utils.cached_chat import calling, choose_terminal, offered_tools
-from utils.chat_surface import EVERYWHERE, TEMPORARY_SIDE, main_chat
+from utils.chat_surface import (
+    EVERYWHERE,
+    TEMPORARY_SIDE,
+    main_chat,
+    side_tab_name,
+    stored_chat_holding,
+)
 from utils.chat_surface import open_sidebar as open_sidebar_once
 from utils.chat_ui import (
     REPLY_TIMEOUT_MS,
@@ -728,13 +734,8 @@ def test_a_chat_renamed_in_the_sidebar_shows_its_new_name_on_its_tab(chat_for, m
     upstream.queue(reply.text(SIDE_ANSWER, match=reply.answering(question)))
     chat.send(question)
     chat.expect_reply(SIDE_ANSWER)
-    # the address follows the selected tab
-    chat.show()
-    expect(page).to_have_url(re.compile(r"/c/[^/?#]+$"))
-    with account.client() as client:
-        stored = client.get(f"/api/v1/chats/{page.url.rsplit('/', 1)[-1]}")
-    assert stored.status_code == 200, stored.text
-    title = stored.json()["title"]
+    title = stored_chat_holding(account, question)["title"]
+    expect(chat.tab).to_have_accessible_name(side_tab_name(title))
     sidebar = open_sidebar_once(page)
     renamed = tagged("Tunnel length")
 

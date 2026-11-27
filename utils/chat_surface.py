@@ -10,10 +10,12 @@ place and every difference between the two stays in this module.
 What is not part of a chat's panel belongs to the page and is reached through `surface.page`:
 dialogs, menus, tooltips and notifications, the sidebar, the address and the keyboard.
 
-The address follows the selected tab, so reloading the page with a side tab selected opens that
-tab's chat as the page's own chat. `surface.reload()` therefore hands back the surface the chat
-is on after the reload, and `reload_beside_the_chat` reloads with the main tab selected, which
-brings a saved side tab back beside the chat it was opened from.
+The address follows the selected tab, except that a chat tab beside a saved chat leaves the
+address on that saved chat (c63565927), so a test finds such a tab's chat with
+`stored_chat_holding`. Reloading the page with a side tab selected opens that tab's chat as the
+page's own chat. `surface.reload()` therefore hands back the surface the chat is on after the
+reload, and `reload_beside_the_chat` reloads with the main tab selected, which brings a saved side
+tab back beside the chat it was opened from.
 """
 
 from __future__ import annotations
@@ -117,6 +119,27 @@ class ChatSurface:
             self.show()
         self.page.reload()
         return main_chat(self.page)
+
+
+def stored_chat_holding(actor, text: str) -> dict:
+    """The one stored chat of `actor` with a message reading `text`.
+
+    A tab beside a saved chat leaves the address on that chat (c63565927), so a test finds the
+    chat a tab shows by what was said in it."""
+    holding = []
+    with actor.client() as client:
+        listed = client.get("/api/v1/chats/", params={"page": 1})
+        assert listed.status_code == 200, listed.text
+        for entry in listed.json():
+            stored = client.get(f"/api/v1/chats/{entry['id']}")
+            assert stored.status_code == 200, stored.text
+            messages = stored.json()["chat"].get("history", {}).get("messages", {})
+            if any(message.get("content") == text for message in messages.values()):
+                holding.append(stored.json())
+    assert len(holding) == 1, (
+        f"expected one stored chat saying {text!r}, found {[chat['title'] for chat in holding]}"
+    )
+    return holding[0]
 
 
 def main_chat(page: Page) -> ChatSurface:

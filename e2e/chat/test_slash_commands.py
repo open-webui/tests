@@ -43,6 +43,8 @@ from utils.chat_surface import (
     SIDE_CHAT,
     TEMPORARY_SIDE,
     ChatSurface,
+    side_tab_name,
+    stored_chat_holding,
 )
 from utils.chat_ui import chat_input, expect_reply, replies, send
 from utils.model_selector import model_search
@@ -110,27 +112,49 @@ def pilot_model(make_user):
 @pytest.mark.chat_surfaces(*SAVED_CHAT_PLACES)
 def test_fork_copies_the_conversation_into_a_new_chat(chat_for, make_user, upstream):
     """In a side chat: open-webui/open-webui#34018; on dev e791cbdde and 782f4b705 the fork is
-    made but never opened (open-webui/open-webui#34182)."""
-    chat = chat_for(make_user())
+    made but never opened (open-webui/open-webui#34182). Since c63565927 a tab beside a saved
+    chat leaves the address on that chat, so a side tab shows the fork by its title."""
+    account = make_user()
+    chat = chat_for(account)
     page = chat.page
-    upstream.queue(reply.text("The ferry left at nine.", match=reply.answering("ferry")))
-    send(chat, "When did the ferry leave?")
+    question = f"When did the ferry leave? ({uuid.uuid4().hex[:6]})"
+    upstream.queue(reply.text("The ferry left at nine.", match=reply.answering(question)))
+    send(chat, question)
     expect_reply(chat, "The ferry left at nine.")
     expect(page).to_have_url(re.compile(r"/c/"))
-    original_url = page.url
+    original_id = stored_chat_holding(account, question)["id"]
 
-    _command_menu(chat, "fork").get_by_role("button", name=re.compile(r"^Fork:")).click()
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST"
+            and response.url.endswith(f"/api/v1/chats/{original_id}/fork")
+        )
+    ) as answer:
+        _command_menu(chat, "fork").get_by_role("button", name=re.compile(r"^Fork:")).click()
+    assert answer.value.status == 200, f"forking the chat got {answer.value.status}"
+    fork = answer.value.json()
+    assert fork["id"] != original_id, "the fork kept the original chat's id"
 
-    expect(page).not_to_have_url(original_url)
-    expect(page).to_have_url(re.compile(r"/c/"))
+    if chat.is_side:
+        # a tab beside a saved chat leaves the address on that chat (c63565927)
+        expect(chat.tab, f"the {chat.place} did not open the fork").to_have_accessible_name(
+            side_tab_name(fork["title"])
+        )
+    else:
+        expect(page).to_have_url(re.compile(rf"/c/{fork['id']}$"))
     expect_reply(chat, "The ferry left at nine.")
-    upstream.queue(reply.text("Back at five.", match=reply.answering("come back")))
-    send(chat, "When does it come back?")
+    follow_up = f"When does it come back? ({uuid.uuid4().hex[:6]})"
+    upstream.queue(reply.text("Back at five.", match=reply.answering(follow_up)))
+    send(chat, follow_up)
     expect_reply(chat, "Back at five.")
     sent = upstream.chat_requests()[-1]["messages"]
     assert ("assistant", "The ferry left at nine.") in [
         (entry["role"], entry["content"]) for entry in sent
     ]
+    answered_in = stored_chat_holding(account, follow_up)
+    assert answered_in["id"] == fork["id"], (
+        f"the next message went to {answered_in['title']!r}, not to the fork {fork['title']!r}"
+    )
 
 
 # one model picked: the command replaces the chat's pick, whether it held one model or several

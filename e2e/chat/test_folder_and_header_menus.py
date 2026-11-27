@@ -62,6 +62,7 @@ from utils.chat_surface import (
     TEMPORARY_SIDE,
     ChatSurface,
     side_tab_name,
+    stored_chat_holding,
     surface_of,
 )
 from utils.chat_ui import artifacts_pane, conversation
@@ -361,11 +362,8 @@ def test_header_menu_rename_of_a_chat_started_on_the_page_saves_its_new_title(
     upstream.queue(reply.text("From the old pier.", match=reply.answering(question)))
     chat.send(question)
     chat.expect_reply("From the old pier.")
-    # the address follows the selected tab
-    chat.show()
-    expect(page).to_have_url(re.compile(r"/c/[^/?#]+$"))
-    chat_id = page.url.rsplit("/", 1)[-1]
-    title = _stored_title(account, chat_id)
+    stored = stored_chat_holding(account, question)
+    chat_id, title = stored["id"], stored["title"]
     renamed = f"Ferry {uuid.uuid4().hex[:6]}"
 
     box = _start_rename(chat, title)
