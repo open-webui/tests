@@ -6,8 +6,8 @@ loads those on start, so a moved shortcut answers to its new chord and no longer
 In Settings > Keyboard a chord is recorded by clicking the shortcut's keys and pressing the new
 ones, Reset Defaults brings every default chord back, and Enable Keyboard Shortcuts switched off
 leaves every chord inert, after a reload too. The Tabs section lists the workspace shortcuts
-(80ddf8e3b) with their default chords, and a rebound one (Toggle Split) answers to its new chord
-and no longer to Ctrl+Backslash.
+(80ddf8e3b, Git since 2d4a3f622) with their default chords, and a rebound one (Toggle Split)
+answers to its new chord and no longer to Ctrl+Backslash.
 
 Browser twin of frontend/shortcuts.test.ts, which drives `loadKeybindings` and
 `matchKeybinding` directly.
@@ -146,6 +146,7 @@ WORKSPACE_SHORTCUTS = {
     "Voice Note": "Ctrl+Alt+M",
     "Files": "Ctrl+Shift+E",
     "Desktop": "Ctrl+Alt+D",
+    "Git": "Ctrl+Shift+G",
     "New Chat Tab": "Ctrl+Alt+O",
     "Comments": "Ctrl+Shift+Y",
     "New File": "Ctrl+Alt+N",
@@ -163,12 +164,19 @@ def test_the_keyboard_settings_list_the_workspace_shortcuts_under_tabs(page_for,
     tab = page.locator("#tab-shortcuts")
     shortcuts = tab.get_by_role("list", name="Tabs", exact=True).get_by_role("listitem")
 
-    expect(shortcuts).to_have_count(len(WORKSPACE_SHORTCUTS))
+    # the section renders all its rows at once, so the first one shows the list has loaded
+    expect(shortcuts.first).to_be_visible()
     listed = {}
     for item in shortcuts.all():
         name = item.inner_text().split("\n")[0].strip()
         listed[name] = item.get_by_title("Click to rebind").inner_text().strip()
-    assert listed == WORKSPACE_SHORTCUTS, f"the Tabs section lists {listed}"
+    missing = WORKSPACE_SHORTCUTS.keys() - listed.keys()
+    unexpected = listed.keys() - WORKSPACE_SHORTCUTS.keys()
+    assert not missing and not unexpected, (
+        f"the Tabs section misses {sorted(missing)} and adds {sorted(unexpected)}: {listed}"
+    )
+    assert len(listed) == shortcuts.count(), f"the Tabs section lists a shortcut twice: {listed}"
+    assert listed == WORKSPACE_SHORTCUTS, f"the Tabs section shows other default chords: {listed}"
 
 
 def test_a_rebound_workspace_shortcut_answers_to_its_new_chord(page_for, make_user, admin):
