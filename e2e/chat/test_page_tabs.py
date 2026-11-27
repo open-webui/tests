@@ -7,7 +7,8 @@ user menu and, once pinned, from the sidebar, each showing its own content in it
 dragged from the sidebar into the tab bar opens as a tab there, and onto the edge of the chat it
 opens in a pane beside it. A note or the home page linked in a reply opens the same way. Starting
 a new chat, from New Chat or by opening a folder in the sidebar, swaps the chat in its tab and
-leaves the page tabs beside it.
+leaves the page tabs beside it. A folder keeps tabs of its own and, reopened from the sidebar
+after leaving it, comes back as it was left, with the tab last in front still in front.
 
 Discriminates: passes on dev 485103cde. In a frontend copy of it whose sidebar, user menu and note
 links navigate in place of opening a tab, all three fail (the chat's tab is gone, no Notes tab
@@ -18,6 +19,8 @@ link pass on dev f80a4f782; in a frontend copy of it whose user menu Calendar lo
 place of the app the user menu test fails (the chat's tab is gone), whose Automations tab has no
 page the sidebar test fails, whose sidebar pages cannot be dragged the sidebar test fails (no tab
 from the drop) and whose reply links to the home page are no page tab the link test fails.
+The new chat test passes on dev f725d5c75 and fails on dev 5fc1b1b59, before ee7846286 made a
+folder reopened from outside come back as it was left (the folder's own tab was in front).
 """
 
 from __future__ import annotations
@@ -346,6 +349,10 @@ def test_a_new_chat_keeps_the_page_tabs_open_beside_the_chat(page_for, make_user
     _expect_selected(page, "Notes", "/notes")
     page.get_by_role("link", name="New Chat").first.click()
     expect(page).to_have_url(re.compile(r"/$"))
+    # since ee7846286 a folder reopened from outside comes back as it was left, Notes in front
     folder_link(sidebar, folder_name).click()
-    expect(page).to_have_url(re.compile(rf"/folders/{folder_id}$"))
     expect(_tab(page, "Notes"), "the folder lost the Notes tab opened in it").to_be_visible()
+    _expect_selected(page, "Notes", "/notes")
+    expect(_tabs(page).get_by_role("tab")).to_have_count(2)
+    _tab(page, folder_name).click()
+    _expect_selected(page, folder_name, f"/folders/{folder_id}")
