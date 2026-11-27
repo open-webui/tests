@@ -9,7 +9,9 @@ chat, and the Filter menu's Tags entry then narrows the list to the chats carryi
 search narrows the list to chats whose title or messages match. A member who may only read the
 shared folder sees the owner's chats with neither a status menu nor a tag control. Since 6a0223a88
 a new folder has no statuses, and its Statuses dialog suggests five ready-made ones (Backlog, To
-do, In progress, Waiting, Done); a picked one is saved as the folder's own. Since 6378f94a6 the
+do, In progress, Waiting, Done); a picked one is saved as the folder's own. Since 871159e7d the
+dialog also saves where "No status" sits, as a nameless `{"id": "none"}` entry among them.
+Since 6378f94a6 the
 page's section switch shows the folder's automations: a member who may write pauses one with its
 Active switch, which a reading member finds disabled, and a chat an automation made carries the
 "Made by an automation" mark.
@@ -140,6 +142,18 @@ def _stored_status(owner: Actor, folder_id: str, chat_id: str) -> str | None:
     return chat["status"]
 
 
+def _saved_statuses(owner: Actor, folder_id: str) -> list[dict]:
+    """The folder's own statuses as stored, without the entry marking where "No status" sits."""
+    with owner.client() as client:
+        folder = client.get(f"/api/v1/folders/{folder_id}")
+    assert folder.status_code == 200, folder.text
+    entries = folder.json()["meta"]["statuses"]
+    markers = [entry for entry in entries if entry.get("id") == "none"]
+    assert all(entry == {"id": "none"} for entry in markers), entries
+    assert len(markers) <= 1, entries
+    return [entry for entry in entries if entry.get("id") != "none"]
+
+
 def _status_button(page: Page, title: str) -> Locator:
     return page.get_by_role("button", name=re.compile(f"^Status for {re.escape(title)}: "))
 
@@ -169,9 +183,8 @@ def test_a_status_added_in_the_dialog_is_picked_for_a_chat_and_kept(page_for, ma
         page.get_by_role("menuitemradio", name="Underway").click()
     assert saved.value.status == 200, saved.value.text()
 
-    with owner.client() as client:
-        statuses = client.get(f"/api/v1/folders/{folder_id}").json()["meta"]["statuses"]
-    assert [status["name"] for status in statuses] == ["Underway"], statuses
+    statuses = _saved_statuses(owner, folder_id)
+    assert [status.get("name") for status in statuses] == ["Underway"], statuses
     assert _stored_status(owner, folder_id, chat_id) == statuses[0]["id"]
     page.reload()
     expect(_status_button(page, "Hull survey")).to_have_attribute(
@@ -308,9 +321,8 @@ def test_a_new_folders_statuses_dialog_suggests_the_ready_made_statuses(page_for
         page.get_by_role("menuitemradio", name="In progress", exact=True).click()
 
     assert saved.value.status == 200, saved.value.text()
-    with owner.client() as client:
-        statuses = client.get(f"/api/v1/folders/{folder_id}").json()["meta"]["statuses"]
-    assert [status["name"] for status in statuses] == ["In progress"], statuses
+    statuses = _saved_statuses(owner, folder_id)
+    assert [status.get("name") for status in statuses] == ["In progress"], statuses
     assert _stored_status(owner, folder_id, chat_id) == statuses[0]["id"]
     expect(_status_button(page, "Net mending")).to_have_attribute(
         "aria-label", re.compile(r": In progress")
