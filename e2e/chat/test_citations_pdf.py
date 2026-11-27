@@ -4,6 +4,9 @@ A person attaches a PDF in the chat, or asks a knowledge base that holds one, an
 it inline as `[1]`. The marker shows as a chip with the file's name, right where the model put it.
 Clicking it opens the PDF in a tab named after the file beside the reply, scrolled to the page the
 cited passage was read from, with that passage highlighted and the page current in the page strip.
+Since e0eb2297d the chip marks only the passages the answer text before it rests on, so a passage
+the reply cites but that sentence does not draw on stays unmarked; the source list marks every
+cited passage.
 Resting the pointer on the highlight shows the passage and its page in a card at the cited text.
 The highlight covers the cited text at any width of the tab. Closing the tab gives the chat
 its room back, and the chip opens the PDF again at the same page, also after a reload. A passage
@@ -26,7 +29,8 @@ branch of the citation click removed (the dialog opens instead), every test that
 fails; the source list and shared link tests pass there. In a backend copy whose MinerU local
 loader returns the text as one piece again (9b6241e54 undone), the MinerU test fails: the PDF
 opens at page 1. In a copy of the dev d599f7a08 build that draws the highlights 150 pixels left of
-the text, the two PDFs test fails at its first tab width.
+the text, the two PDFs test fails at its first tab width. On the dev d331f062e build, before the
+chip marked only what its sentence rests on, the two PDFs test fails at its first highlight.
 
 The several pages test was red on dev c1f3b6fd1: clicking the chip again after moving to another
 page left the PDF where it was (open-webui/open-webui#34834, fixed by 83e1d38d8), and in a side
@@ -204,8 +208,11 @@ def tides_chat(account: Actor) -> tuple[str, str]:
     with account.client() as client:
         file_id = upload_pdf(client, name, TIDES)
     source = pdf_source(file_id, name, [(TIDES[2], 3, 0.9), (TIDES[0], 1, 0.6)])
+    # each clause of the answer rests on one of the passages, so the chip marks both
     return seed_cited_chat(
-        account, "Spring tides cover the quay [1]. End of notes.", [source]
+        account,
+        "High tide reaches the slipway, and spring tides cover the quay [1]. End of notes.",
+        [source],
     ), name
 
 
@@ -312,7 +319,8 @@ def test_each_of_two_cited_pdfs_opens_on_its_own_page(page_for, make_user):
         tides_id = upload_pdf(client, tides, TIDES)
         birds_id = upload_pdf(client, birds, BIRDS)
     sources = [
-        pdf_source(tides_id, tides, [(TIDES[1], 2, 0.8)]),
+        # the ferry passage alone is what "The ferry waits" rests on, so only it is marked
+        pdf_source(tides_id, tides, [(TIDES[1], 2, 0.8), (TIDES[0], 1, 0.5)]),
         pdf_source(birds_id, birds, [(BIRDS[2], 3, 0.7)]),
     ]
     chat_id = seed_cited_chat(

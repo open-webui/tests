@@ -1,9 +1,9 @@
 """An OpenAI-shaped model provider that records every request and answers from a script.
 
 `reset(mode)` sets the fallback every reply uses (`ok`, `stream` or `error`). `queue(...)` lines
-up scripted replies (text, reasoning, tool calls, usage or llama.cpp timings, a finish reason, an
-HTTP error, a slow stream, a late start, a start held until the test releases it, a stream the
-provider drops halfway) that the next chat
+up scripted replies (text, or text written from the request it answers, reasoning, tool calls,
+usage or llama.cpp timings, a finish reason, an HTTP error, a slow stream, a late start, a start
+held until the test releases it, a stream the provider drops halfway) that the next chat
 completions consume in order; a reply with `match` only answers a request it accepts, so a title
 or follow-up task cannot eat the reply meant for the chat.
 `requests` holds what Open WebUI actually sent, which is how a test sees the payload it built.
@@ -18,7 +18,7 @@ import json
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterator
 
@@ -35,7 +35,8 @@ FINAL_ANSWER_PROMPT = "Tool use has stopped for this response."
 
 @dataclass
 class Reply:
-    content: str | list[str] = ""  # a list streams one delta per piece
+    # a list streams one delta per piece; a function writes the reply from the request it answers
+    content: str | list[str] | Callable[[dict], str] = ""
     reasoning: str | None = None
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict | None = None
@@ -55,7 +56,7 @@ class Reply:
         return self.finish_reason or ("tool_calls" if self.tool_calls else "stop")
 
 
-def text(content: str | list[str], **options) -> Reply:
+def text(content: str | list[str] | Callable[[dict], str], **options) -> Reply:
     return Reply(content=content, **options)
 
 
@@ -270,6 +271,8 @@ def _handler(upstream: MockUpstream):
             behaviour = dict(upstream.behaviour)
             time.sleep(slow_machine.scaled(REPLY_START_DELAY))
             if reply is not None:
+                if callable(reply.content):
+                    reply = replace(reply, content=reply.content(body or {}))
                 self._answer(reply, bool((body or {}).get("stream")))
                 return
             mode = behaviour["mode"]

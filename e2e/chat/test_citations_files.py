@@ -5,7 +5,9 @@ marker shows as a chip named after the source it points to, at the place it was 
 it, or pressing Enter on it, opens that source with the cited passage on screen and marked. Every
 cited file opens in a tab beside the chat, so the answer stays readable: a text file (Markdown,
 CSV, HTML) shows its whole text rendered, and a Word document opens scrolled to the cited
-passage, with only that passage highlighted; resting the pointer on the highlight shows
+passage, with only that passage highlighted. Since e0eb2297d a marker highlights only the lines of
+the passage that the answer text before it draws on, and the whole passage when it draws on none
+of them; resting the pointer on the highlight shows
 the retrieved passage, in a card at the cited text. The highlights stay on the cited text when the
 window is widened or narrowed. The same holds after a reload and on a phone. A picture sent to the
 model is no source, and a marker pointing past the sources shows nothing.
@@ -30,7 +32,9 @@ Discriminates: the text file and knowledge base tests pass on dev c1f3b6fd1. In 
 build: a Word file left out of the marker's open-beside-the-chat check turned the knowledge base
 test red at the tab; no cited line kept for marking turned it red at the first highlight, with the
 text file test green there as the control; a marker opening the wrong source turned the text file
-test red at its first dialog.
+test red at its first dialog. On the dev d331f062e build, before a marker marked only the lines
+its sentence draws on, the Word document test fails at its second marker and the long text file
+test at its second cited line.
 """
 
 from __future__ import annotations
@@ -40,6 +44,7 @@ import io
 import re
 import time
 import uuid
+from typing import Callable
 from urllib.parse import urlsplit
 
 import pytest
@@ -96,7 +101,7 @@ def one_passage_retrieval(admin, preserve):
     assert saved.status_code == 200, f"setting retrieval to one chunk failed: {saved.text}"
 
 
-def _ask(page: Page, upstream, answer: str, last_words: str) -> str:
+def _ask(page: Page, upstream, answer: str | Callable[[dict], str], last_words: str) -> str:
     question = f"what do my files say? {uuid.uuid4().hex[:6]}"
     upstream.queue(reply.text(answer, match=reply.answering(question)))
     send(page, question)
@@ -244,9 +249,7 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         chat_input(page).click()
         page.keyboard.type("#Ledger")
         page.get_by_role("tooltip").get_by_role("button", name="Ledger", exact=True).click()
-        question = _ask(
-            page, upstream, "Apples were shipped [1]. They went north [1]. End.", "End."
-        )
+        question = _ask(page, upstream, _ledger_answer, "End.")
         passage = _cited_passage(account, page, "ledger.docx")
         sent = "\n".join(
             str(message.get("content"))
@@ -258,10 +261,14 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         cited = sorted(int(number) for number in SECTION.findall(passage))
         assert cited, f"the cited passage names no section: {passage!r}"
         uncited = next(number for number in range(60) if number not in cited)
+        claimed = [cited[0], cited[-1]]
 
         shown = last_reply(page)
         expect(shown).to_have_text(
-            re.compile(r"Apples were shipped\s*ledger\.docx\s*\. They went north\s*ledger\.docx")
+            re.compile(
+                rf"Shipments went north\s*ledger\.docx\s*\. Entry {cited[0]} records .* crates"
+                rf"\s*ledger\.docx"
+            )
         )
         markers = shown.get_by_role("button", name="View source: ledger.docx", exact=True)
         expect(markers).to_have_count(2)
@@ -269,19 +276,21 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         def section(number: int):
             return file_panel(page, "ledger.docx").get_by_text(LEDGER[number], exact=True)
 
-        def expect_opened_at_the_passage() -> None:
+        def expect_opened_at_the_passage(marked: list[int]) -> None:
             expect(file_tab(page, "ledger.docx")).to_have_attribute("aria-selected", "true")
             # the answer stays readable beside the document
             expect(chat_input(page)).to_be_visible()
             expect(page.get_by_role("dialog")).to_have_count(0)
             expect_in_view(section(cited[0]))
-            for number in cited:
+            for number in marked:
                 expect_marked(section(number))
-            expect(section(uncited)).to_be_attached()
-            assert not is_marked(section(uncited)), f"section {uncited} is marked, never cited"
+            for number in [uncited, *(number for number in cited if number not in marked)]:
+                expect(section(number)).to_be_attached()
+                assert not is_marked(section(number)), f"section {number} is marked, uncited"
 
+        # the first marker's sentence draws on no line of its own, so it cites the whole passage
         markers.first.click()
-        expect_opened_at_the_passage()
+        expect_opened_at_the_passage(cited)
 
         # resting on the highlight shows the passage retrieval cited
         hover_mark_over(page, section(cited[-1]))
@@ -308,16 +317,16 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         expect(file_tab(page, "ledger.docx")).to_have_count(0)
         expect(markers.last).to_be_visible()
 
-        # the second marker, by keyboard
+        # the second marker, by keyboard, marks only the two entries its sentence names
         markers.last.focus()
         page.keyboard.press("Enter")
-        expect_opened_at_the_passage()
+        expect_opened_at_the_passage(claimed)
         page.get_by_role("button", name="Close ledger.docx").click()
 
         page.reload()
         expect_reply(page, "End.")
         last_reply(page).get_by_role("button", name="View source: ledger.docx").first.click()
-        expect_opened_at_the_passage()
+        expect_opened_at_the_passage(cited)
 
         phone = page_for(account, path=urlsplit(page.url).path, **PHONE)
         expect_reply(phone, "End.")
@@ -336,6 +345,17 @@ def test_a_cited_word_document_opens_beside_the_chat_at_the_cited_passage(
         expect_reply(page, "End.")
         last_reply(page).get_by_role("button", name="View source: ledger.docx").first.click()
         expect(file_panel(page, "ledger.docx")).to_contain_text(LEDGER[cited[0]])
+
+
+def _ledger_answer(request: dict) -> str:
+    """A reply on the ledger passage the model was sent, its second claim naming two entries."""
+    sent = "\n".join(str(message.get("content")) for message in request["messages"])
+    entries = [number for number, line in enumerate(LEDGER) if line in sent]
+    first, last = (entries[0], entries[-1]) if entries else (0, 0)
+    return (
+        f"Shipments went north [1]. Entry {first} records {first * 7} crates, and entry {last} "
+        f"records {last * 7} crates [1]. End."
+    )
 
 
 REPORT = ["The heron colony nests near the old mill.", "Otters were seen by the weir in May."]
@@ -403,6 +423,13 @@ TRAIL = [
 ]
 
 
+def _trail_answer(request: dict) -> str:
+    """A reply on the first trail note of the passage the model was sent."""
+    sent = "\n".join(str(message.get("content")) for message in request["messages"])
+    number = next((number for number, line in enumerate(TRAIL) if line in sent), 0)
+    return f"Past marker {number} the path climbs {number * 3} metres [1]. End."
+
+
 def test_a_passage_cited_from_a_long_text_file_shows_where_it_sits_in_the_file(
     page_for, make_user, upstream, one_passage_retrieval
 ):
@@ -411,7 +438,7 @@ def test_a_passage_cited_from_a_long_text_file_shows_where_it_sits_in_the_file(
     page = page_for(account)
     attach(page, page, [("trail.md", "text/markdown", "\n\n".join(TRAIL).encode())])
     expect(page.get_by_role("button", name=re.compile("trail.md"))).to_be_visible()
-    _ask(page, upstream, "The path climbs [1]. End.", "End.")
+    _ask(page, upstream, _trail_answer, "End.")
     passage = _cited_passage(account, page, "trail.md")
     cited = [line for line in TRAIL if line in passage]
     assert cited and len(cited) < len(TRAIL), f"the reply cites no part of the file: {passage!r}"
@@ -422,8 +449,10 @@ def test_a_passage_cited_from_a_long_text_file_shows_where_it_sits_in_the_file(
     )
 
     last_reply(page).get_by_role("button", name="View source: trail.md").click()
-    # the file shows around the passage, and only the passage is marked
+    # the file shows around the passage, and only the cited line the reply draws on is marked
     around_line = page.get_by_text(around).first
     expect(around_line, "the text around the cited passage is not shown").to_be_attached()
     expect_marked(page.get_by_text(cited[0]).first)
     assert not is_marked(around_line), f"the uncited line {around!r} is marked"
+    for other in cited[1:2]:
+        assert not is_marked(page.get_by_text(other).first), f"{other!r} is marked, never drawn on"
