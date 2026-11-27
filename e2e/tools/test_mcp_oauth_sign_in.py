@@ -39,12 +39,12 @@ from utils.chat_ui import expect_reply, integration_row, send
 from utils.menus import late_menu_entry
 from utils.tool_servers import (
     choose_auth,
+    choose_type,
     make_public,
     open_add_connection,
     open_tools_menu,
     press_to_sign_in,
     save,
-    switch_to_mcp,
     tool_output,
 )
 
@@ -107,7 +107,7 @@ def test_the_admin_registers_the_server_and_a_person_signs_in_from_the_chat(
     name = f"Pilot Desk {token}"
     admin_page = page_for(make_user(role="admin"))
     form = open_add_connection(admin_page)
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
     form.get_by_label("Name", exact=True).fill(name)
     form.get_by_label("URL", exact=True).fill(mcp.url)
     choose_auth(form, "OAuth 2.1")
@@ -173,7 +173,7 @@ def test_disconnecting_signs_out_and_the_next_use_signs_in_again(
 
 def test_the_check_is_named_for_oauth_discovery_once_oauth_is_chosen(page_for, make_user, mcp):
     form = open_add_connection(page_for(make_user(role="admin")))
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
     form.get_by_label("URL", exact=True).fill(mcp.url)
 
     choose_auth(form, "OAuth 2.1")

@@ -37,6 +37,7 @@ from harness.openapi_server import authorization, calls_to, openapi_connection, 
 from utils.chat_ui import expect_reply, send
 from utils.tool_servers import (
     choose_auth,
+    choose_type,
     connection_form,
     connection_row,
     make_public,
@@ -69,6 +70,7 @@ def server_name():
 
 
 def fill_connection(form, name: str, url: str) -> None:
+    choose_type(form, "OpenAPI")
     form.get_by_label("Name", exact=True).fill(name)
     form.get_by_label("URL", exact=True).fill(url)
 

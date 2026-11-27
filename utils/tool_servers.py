@@ -37,9 +37,21 @@ def connection_form(page: Page, heading: str) -> Locator:
     return page.get_by_role("dialog").filter(has=page.get_by_role("heading", name=heading))
 
 
-def switch_to_mcp(form: Locator) -> None:
-    form.get_by_role("button", name="OpenAPI").click()
-    expect(form.get_by_role("button", name="MCP")).to_be_visible()
+CONNECTION_TYPES = {"OpenAPI": re.compile(r"^OpenAPI$"), "MCP": re.compile(r"^MCP\b")}
+
+
+def choose_type(form: Locator, kind: str) -> None:
+    """Set the dialog's Type to `kind` ("OpenAPI" or "MCP"), whichever type it opened with.
+
+    The Type is one button that names the chosen type and flips to the other one when pressed."""
+    any_type = re.compile("|".join(pattern.pattern for pattern in CONNECTION_TYPES.values()))
+    type_button = form.get_by_role("button", name=any_type)
+    expect(type_button).to_be_visible()
+    if not CONNECTION_TYPES[kind].search(type_button.inner_text().strip()):
+        type_button.click()
+    expect(type_button, f"the dialog's Type did not switch to {kind}").to_have_accessible_name(
+        CONNECTION_TYPES[kind]
+    )
 
 
 def choose_auth(form: Locator, label: str) -> None:

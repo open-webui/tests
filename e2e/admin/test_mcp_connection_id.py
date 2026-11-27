@@ -17,6 +17,7 @@ import pytest
 from playwright.sync_api import Locator, Page, expect
 
 from harness.mcp_server import TOOL_SERVERS, mcp_connection
+from utils.tool_servers import choose_type
 from utils.tooltips import tooltip_button
 
 pytestmark = [pytest.mark.journey, pytest.mark.requires_browser, pytest.mark.requires_source]
@@ -32,11 +33,6 @@ def open_add_dialog(page: Page) -> Locator:
     form = page.get_by_role("dialog").filter(has=page.get_by_role("heading", name="Add Connection"))
     expect(form).to_be_visible()
     return form
-
-
-def switch_to_mcp(form: Locator) -> None:
-    form.get_by_role("button", name="OpenAPI").click()
-    expect(form.get_by_role("button", name="MCP")).to_be_visible()
 
 
 def saved_connections(admin) -> list[dict]:
@@ -57,7 +53,7 @@ def admin_page(page_for, make_user, preserve):
 
 def test_the_connection_id_follows_the_name_of_an_mcp_server(admin_page):
     form = open_add_dialog(admin_page)
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
 
     form.get_by_label("Name", exact=True).fill("Harbour Notes")
 
@@ -66,7 +62,7 @@ def test_the_connection_id_follows_the_name_of_an_mcp_server(admin_page):
 
 def test_a_typed_connection_id_is_the_one_saved(admin_page, admin):
     form = open_add_dialog(admin_page)
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
     form.get_by_label("Name", exact=True).fill("Tide Table")
     form.get_by_label("Connection ID").fill("tides")
     form.get_by_label("URL", exact=True).fill(MCP_URL)
@@ -79,7 +75,7 @@ def test_a_typed_connection_id_is_the_one_saved(admin_page, admin):
 
 def test_an_empty_connection_id_is_generated_on_save(admin_page, admin):
     form = open_add_dialog(admin_page)
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
     form.get_by_label("Name", exact=True).fill("Pilot Boat")
     form.get_by_label("Connection ID").fill("")
     form.get_by_label("URL", exact=True).fill(MCP_URL)
@@ -92,7 +88,7 @@ def test_an_empty_connection_id_is_generated_on_save(admin_page, admin):
 
 def test_a_connection_id_with_a_colon_is_refused(admin_page, admin):
     form = open_add_dialog(admin_page)
-    switch_to_mcp(form)
+    choose_type(form, "MCP")
     form.get_by_label("Name", exact=True).fill("Buoy Log")
     form.get_by_label("Connection ID").fill("buoy:log")
     form.get_by_label("URL", exact=True).fill(MCP_URL)
@@ -108,6 +104,7 @@ def test_a_connection_id_with_a_colon_is_refused(admin_page, admin):
 
 def test_an_openapi_connection_keeps_an_optional_id(admin_page):
     form = open_add_dialog(admin_page)
+    choose_type(form, "OpenAPI")
 
     expect(form.get_by_label("ID", exact=False).first).to_be_visible()
     expect(form.get_by_text("(optional)")).to_be_visible()
