@@ -164,9 +164,10 @@ class ChatSurface:
         )
         tab = self.page.get_by_role("tab", name=side_tab_name(title))
         expect(tab).to_be_visible(timeout=REPLY_TIMEOUT_MS)
-        # a tab sharing the main chat's bar comes back behind it, unlike a tab split beside it
-        if tab.get_attribute("aria-selected") != "true":
-            tab.click()
+        # a tab sharing the main chat's bar came back behind it (open-webui/open-webui#35169)
+        expect(tab, "the reload put the selected tab behind the saved chat").to_have_attribute(
+            "aria-selected", "true"
+        )
         return side_chat_titled(self.page, title, self.place, self.beside_chat_id)
 
 
